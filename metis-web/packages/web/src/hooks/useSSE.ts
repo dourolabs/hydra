@@ -175,10 +175,9 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
 
 /**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
- * entity mutation events, and updates React Query caches. When entity data
- * is included in the event payload, the cache is updated directly to avoid
- * unnecessary HTTP re-fetches. Falls back to cache invalidation when entity
- * data is not available (backward compatibility).
+ * entity mutation events, and updates React Query caches directly from the
+ * entity data included in the event payload to avoid unnecessary HTTP
+ * re-fetches.
  */
 export function useSSE(): SSEConnectionState {
   const [state, setState] = useState<SSEConnectionState>("disconnected");
@@ -187,44 +186,10 @@ export function useSSE(): SSEConnectionState {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
-  /** Fallback: invalidate caches to trigger refetches (used when no entity data). */
-  const invalidateForEvent = useCallback(
-    (eventType: string, data: EntityEventData) => {
-      const { entity_type, entity_id } = data;
-
-      if (entity_type === "issue" || eventType.startsWith("issue_")) {
-        queryClient.invalidateQueries({ queryKey: ["issues"] });
-        queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["relations"] });
-        queryClient.invalidateQueries({ queryKey: ["issues", "batch"] });
-      } else if (entity_type === "session" || eventType.startsWith("session_")) {
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
-        // Invalidate batch session queries used by usePageIssueTrees
-        queryClient.invalidateQueries({ queryKey: ["sessions", "batch"] });
-      } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
-        queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["patches"] });
-        queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
-      } else if (entity_type === "document" || eventType.startsWith("document_")) {
-        queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
-      } else if (entity_type === "label" || eventType.startsWith("label_")) {
-        queryClient.invalidateQueries({ queryKey: ["labels"] });
-      }
-    },
-    [queryClient],
-  );
-
-  /** Apply a direct cache update from SSE entity data, or fall back to invalidation. */
+  /** Apply a direct cache update from SSE entity data. */
   const handleEntityEvent = useCallback(
     (eventType: string, data: EntityEventData) => {
       const { entity_type, entity_id, entity } = data;
-
-      // Fall back to invalidation if no entity data is provided
-      if (entity == null) {
-        invalidateForEvent(eventType, data);
-        return;
-      }
 
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
@@ -279,7 +244,7 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
     },
-    [queryClient, invalidateForEvent],
+    [queryClient],
   );
 
   const connect = useCallback(() => {
