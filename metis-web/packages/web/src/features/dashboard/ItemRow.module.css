@@ -82,7 +82,12 @@
 }
 
 .rowAttention {
-  box-shadow: inset 3px 0 0 var(--color-status-attention);
+  border-left: 3px solid var(--color-status-attention);
+  padding-left: calc(var(--space-3) - 3px);
+}
+
+.rowAttention.rowSwipeable {
+  padding-left: 0;
 }
 
 .icon {
@@ -283,6 +288,14 @@
 
   .swipeContent {
     padding: var(--space-2);
+  }
+
+  .rowAttention {
+    padding-left: calc(var(--space-2) - 3px);
+  }
+
+  .rowAttention.rowSwipeable {
+    padding-left: 0;
   }
 
   .labels {
