@@ -47,7 +47,7 @@ use sqlx::{
     migrate::Migrator,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
 use crate::config::DatabaseSection;
 
