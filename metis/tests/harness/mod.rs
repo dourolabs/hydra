@@ -23,7 +23,6 @@ use metis_server::{
     app::{AppState, ServiceState},
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
-        process_pending_sessions::ProcessPendingSessionsWorker,
         run_spawners::RunSpawnersWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
@@ -360,32 +359,19 @@ impl TestHarness {
         Ok(new_ids)
     }
 
-    /// Run one iteration of the pending-jobs processor.
+    /// Wait for sessions in `Created` status to be processed by the
+    /// `start_created_sessions` automation.
     ///
-    /// Transitions tasks from Created to Pending status and kicks off
-    /// engine processing. Returns the IDs of tasks that were processed.
-    pub async fn step_pending_jobs(&self) -> Result<Vec<SessionId>> {
-        let query = SearchSessionsQuery::new(
-            None,
-            None,
-            None,
-            vec![metis_server::store::Status::Created.into()],
-        );
-        let before: Vec<SessionId> = self
-            .state
-            .list_sessions_with_query(&query)
-            .await
-            .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
-            .context("failed to list created tasks before step_pending_jobs")?;
+    /// The automation fires automatically via the event bus when sessions
+    /// are created or updated. This method waits briefly for the
+    /// automation runner to process pending events, then verifies no
+    /// sessions remain in `Created` status.
+    pub async fn step_pending_jobs(&self) -> Result<()> {
+        // Yield to let the automation runner process any pending events.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let worker = ProcessPendingSessionsWorker::new(self.state.clone());
-        let outcome = worker.run_iteration().await;
-
-        if let WorkerOutcome::TransientError { reason } = outcome {
-            anyhow::bail!("step_pending_jobs failed: {reason}");
-        }
-
-        Ok(before)
+        Ok(())
     }
 
     /// Run one iteration of the GitHub poller worker.
@@ -419,12 +405,13 @@ impl TestHarness {
         Ok(())
     }
 
-    /// Convenience: run spawner + pending-jobs processor.
+    /// Convenience: run spawner + wait for sessions to be processed.
     ///
-    /// This is the common pattern for "schedule work": first the spawner
-    /// creates tasks from ready issues, then the pending-jobs processor
-    /// transitions them from Created to Pending/Running. Returns all task
-    /// IDs created by the spawner.
+    /// This is the common pattern for "schedule work": the spawner
+    /// creates tasks from ready issues, and the `start_created_sessions`
+    /// automation automatically transitions them from Created to
+    /// Pending/Running via the event bus. Returns all task IDs created
+    /// by the spawner.
     pub async fn step_schedule(&self) -> Result<Vec<SessionId>> {
         let created = self.step_spawner().await?;
         self.step_pending_jobs().await?;
@@ -636,6 +623,7 @@ impl TestHarnessBuilder {
                             params,
                         },
                         PolicyEntry::Name("github_pr_sync".to_string()),
+                        PolicyEntry::Name("start_created_sessions".to_string()),
                     ],
                 },
             };

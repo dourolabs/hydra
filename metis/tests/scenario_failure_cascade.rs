@@ -110,9 +110,9 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .await?;
 
     // ── Step 3: Spawn tasks for ready children A and B ────────────
-    // Use step_spawner to create tasks (Created status), then manually insert
-    // Running jobs in the mock engine to simulate active workers.
-    let spawned_tasks = harness.step_spawner().await?;
+    // step_schedule creates tasks and waits for the start_created_sessions
+    // automation to transition them from Created to Pending/Running.
+    let spawned_tasks = harness.step_schedule().await?;
     assert!(
         spawned_tasks.len() >= 2,
         "expected tasks for children A and B, got {}",
@@ -155,18 +155,6 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         );
         jobs.sessions[0].session_id.clone()
     };
-
-    // ── Step 4: Insert Running jobs into mock engine ──────────────
-    // Simulate active workers in the engine. The tasks in the store remain
-    // in Created status; the engine tracks the external job state.
-    harness
-        .engine()
-        .insert_job(&task_a, JobStatus::Running)
-        .await;
-    harness
-        .engine()
-        .insert_job(&task_b, JobStatus::Running)
-        .await;
 
     // ── Step 5: User drops the parent issue ───────────────────────
     user.update_issue_status(&parent_id, IssueStatus::Dropped)
@@ -235,9 +223,8 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     );
 
     // ── Step 8: step_monitor_jobs() reconciles → task statuses ────
-    // Since tasks in the store were Created (not Pending/Running), monitor
-    // doesn't pick them up. But the engine jobs are already killed. Verify
-    // that blocked child C never had a task.
+    // The engine jobs are already killed. Verify that blocked child C
+    // never had a task.
     harness.step_monitor_jobs().await?;
 
     let jobs_c = client

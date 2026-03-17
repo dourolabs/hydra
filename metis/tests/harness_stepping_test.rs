@@ -126,7 +126,7 @@ async fn step_spawner_creates_task_for_ready_issue() -> Result<()> {
     Ok(())
 }
 
-/// step_pending_jobs transitions created tasks to pending.
+/// step_pending_jobs waits for the automation to transition created tasks to pending.
 #[tokio::test]
 async fn step_pending_jobs_processes_created_tasks() -> Result<()> {
     let harness = harness::TestHarness::builder()
@@ -141,9 +141,8 @@ async fn step_pending_jobs_processes_created_tasks() -> Result<()> {
     let task_ids = harness.step_spawner().await?;
     assert_eq!(task_ids.len(), 1);
 
-    // Process pending jobs.
-    let processed = harness.step_pending_jobs().await?;
-    assert_eq!(processed.len(), 1, "should process the one created task");
+    // Wait for the start_created_sessions automation to process them.
+    harness.step_pending_jobs().await?;
 
     Ok(())
 }

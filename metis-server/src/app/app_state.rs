@@ -72,6 +72,7 @@ impl AppState {
                     PolicyEntry::Name("github_pr_sync".to_string()),
                     PolicyEntry::Name("notification_generation".to_string()),
                     PolicyEntry::Name("inbox_label".to_string()),
+                    PolicyEntry::Name("start_created_sessions".to_string()),
                 ],
             },
         };
