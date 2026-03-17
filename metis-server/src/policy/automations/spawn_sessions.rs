@@ -60,11 +60,10 @@ impl Automation for SpawnSessionsAutomation {
             }
         }
 
-        let agents = ctx
-            .app_state
-            .list_agents()
-            .await
-            .map_err(|e| AutomationError::Other(anyhow::anyhow!("failed to list agents: {e}")))?;
+        let agents =
+            ctx.app_state.list_agents().await.map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!("failed to list agents: {e}"))
+            })?;
 
         if agents.is_empty() {
             return Ok(());
@@ -146,8 +145,8 @@ fn event_summary(event: &ServerEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::event_bus::MutationPayload;
     use crate::app::Repository;
+    use crate::app::event_bus::MutationPayload;
     use crate::config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES};
     use crate::domain::agents::Agent;
     use crate::domain::documents::Document;
@@ -263,10 +262,7 @@ mod tests {
         Ok(())
     }
 
-    fn issue_created_event(
-        issue_id: metis_common::IssueId,
-        issue: Issue,
-    ) -> ServerEvent {
+    fn issue_created_event(issue_id: metis_common::IssueId, issue: Issue) -> ServerEvent {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue,
@@ -326,7 +322,11 @@ mod tests {
         automation.execute(&ctx).await?;
 
         let sessions = handles.state.list_sessions().await?;
-        assert_eq!(sessions.len(), 1, "expected exactly one session to be spawned");
+        assert_eq!(
+            sessions.len(),
+            1,
+            "expected exactly one session to be spawned"
+        );
 
         Ok(())
     }
