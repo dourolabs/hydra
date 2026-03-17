@@ -83,10 +83,11 @@ pub async fn list_relations(
 
     let transitive = query.transitive.unwrap_or(false);
 
-    // transitive=true requires exactly one of source_id/target_id + rel_type
+    // transitive=true requires rel_type + exactly one direction (source or target),
+    // either singular or plural form.
     if transitive {
-        let has_source = query.source_id.is_some();
-        let has_target = query.target_id.is_some();
+        let has_source = query.source_id.is_some() || query.source_ids.is_some();
+        let has_target = query.target_id.is_some() || query.target_ids.is_some();
         if query.rel_type.is_none() {
             return Err(ApiError::bad_request(
                 "transitive=true requires rel_type to be specified",
@@ -94,7 +95,7 @@ pub async fn list_relations(
         }
         if !(has_source ^ has_target) {
             return Err(ApiError::bad_request(
-                "transitive=true requires exactly one of source_id or target_id",
+                "transitive=true requires exactly one direction (source_id/source_ids or target_id/target_ids)",
             ));
         }
     }
@@ -128,7 +129,7 @@ pub async fn list_relations(
         }
         relations = merged;
     } else if query.source_ids.is_some() || query.target_ids.is_some() {
-        // Batch mode
+        // Batch mode (with or without transitive)
         let source_ids = query.source_ids.as_deref().map(parse_id_list).transpose()?;
         let target_ids = query.target_ids.as_deref().map(parse_id_list).transpose()?;
 
@@ -147,16 +148,29 @@ pub async fn list_relations(
             }
         }
 
-        relations = store
-            .get_relationships_batch(source_ids.as_deref(), target_ids.as_deref(), rel_type)
-            .await
-            .map_err(map_store_error)?;
+        if transitive {
+            relations = store
+                .get_relationships_transitive(
+                    source_ids.as_deref().unwrap_or(&[]),
+                    target_ids.as_deref().unwrap_or(&[]),
+                    rel_type.expect("validated above"),
+                )
+                .await
+                .map_err(map_store_error)?;
+        } else {
+            relations = store
+                .get_relationships_batch(source_ids.as_deref(), target_ids.as_deref(), rel_type)
+                .await
+                .map_err(map_store_error)?;
+        }
     } else if transitive {
-        // Transitive mode
+        // Transitive mode (single ID)
+        let source_ids: Vec<MetisId> = query.source_id.iter().cloned().collect();
+        let target_ids: Vec<MetisId> = query.target_id.iter().cloned().collect();
         relations = store
             .get_relationships_transitive(
-                query.source_id.as_ref(),
-                query.target_id.as_ref(),
+                &source_ids,
+                &target_ids,
                 rel_type.expect("validated above"),
             )
             .await

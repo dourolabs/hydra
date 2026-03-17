@@ -367,3 +367,236 @@ async fn remove_nonexistent_relation_returns_removed_false() -> anyhow::Result<(
 
     Ok(())
 }
+
+// ===== Batch transitive queries =====
+
+#[tokio::test]
+async fn list_relations_batch_transitive_with_target_ids() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create a tree: a -> b -> c, d -> b (both child-of)
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+    let d = create_issue(&client, &base, "issue-d").await?;
+
+    for (src, tgt) in [(&a, &b), (&b, &c), (&d, &b)] {
+        client
+            .post(format!("{base}/v1/relations"))
+            .json(&CreateRelationRequest {
+                source_id: src.clone(),
+                target_id: tgt.clone(),
+                rel_type: "child-of".to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // Batch transitive query with target_ids=b,c should return all ancestors of b and c
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?target_ids={b},{c}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // b has children a and d; c has child b which has children a and d
+    // target_ids traversal goes backward: for target b, finds a->b and d->b;
+    // for target c, finds b->c, then a->b, d->b
+    assert!(
+        list.relations.len() >= 3,
+        "batch transitive should return union of transitive results, got {}",
+        list.relations.len()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_batch_transitive_with_source_ids() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // a -> b -> c, d -> e (both child-of)
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+    let d = create_issue(&client, &base, "issue-d").await?;
+    let e = create_issue(&client, &base, "issue-e").await?;
+
+    for (src, tgt) in [(&a, &b), (&b, &c), (&d, &e)] {
+        client
+            .post(format!("{base}/v1/relations"))
+            .json(&CreateRelationRequest {
+                source_id: src.clone(),
+                target_id: tgt.clone(),
+                rel_type: "child-of".to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // Batch transitive from source_ids=a,d
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?source_ids={a},{d}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // a->b, b->c, d->e = 3 relations
+    assert_eq!(
+        list.relations.len(),
+        3,
+        "batch transitive from two source_ids should return union"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_batch_transitive_single_id_in_plural_param() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+
+    client
+        .post(format!("{base}/v1/relations"))
+        .json(&CreateRelationRequest {
+            source_id: a.clone(),
+            target_id: b.clone(),
+            rel_type: "child-of".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Single ID in plural param should work like singular
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?source_ids={a}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(list.relations.len(), 1);
+    assert_eq!(list.relations[0].source_id, a);
+    assert_eq!(list.relations[0].target_id, b);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_batch_transitive_empty_results() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+
+    // No relations exist, transitive should return empty
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?source_ids={a}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert!(
+        list.relations.is_empty(),
+        "transitive with no matching relations should return empty"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_batch_transitive_validation_rejects_both_directions() -> anyhow::Result<()>
+{
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Both source_ids and target_ids with transitive should fail
+    let resp = client
+        .get(format!(
+            "{base}/v1/relations?source_ids=x&target_ids=y&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_singular_transitive_still_works() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+
+    for (src, tgt) in [(&a, &b), (&b, &c)] {
+        client
+            .post(format!("{base}/v1/relations"))
+            .json(&CreateRelationRequest {
+                source_id: src.clone(),
+                target_id: tgt.clone(),
+                rel_type: "child-of".to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // Existing singular source_id + transitive should still work
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?source_id={a}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(list.relations.len(), 2, "a->b and b->c");
+
+    // Existing singular target_id + transitive should still work
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?target_id={c}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(list.relations.len(), 2, "b->c and a->b");
+
+    Ok(())
+}

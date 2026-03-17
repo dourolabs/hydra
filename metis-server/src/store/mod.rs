@@ -596,13 +596,13 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns object relationships reachable by transitively following edges
     /// of the given relationship type.
     ///
-    /// Starting from `source_id` (forward) or `target_id` (backward), follows
-    /// only edges of `rel_type`. At least one of `source_id` or `target_id`
-    /// must be provided.
+    /// Starting from `source_ids` (forward) or `target_ids` (backward), follows
+    /// only edges of `rel_type`. Exactly one of `source_ids` or `target_ids`
+    /// must be non-empty.
     async fn get_relationships_transitive(
         &self,
-        source_id: Option<&MetisId>,
-        target_id: Option<&MetisId>,
+        source_ids: &[MetisId],
+        target_ids: &[MetisId],
         rel_type: RelationshipType,
     ) -> Result<Vec<ObjectRelationship>, StoreError>;
 
