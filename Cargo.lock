@@ -2904,7 +2904,7 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "metis"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "metis-bff"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "metis-build-cache"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "async-trait",
  "aws-credential-types",
@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "metis-common"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "metis-s3"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "anyhow",
  "axum",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "metis-server"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3071,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "metis-single-player"
-version = "0.1.0"
+version = "0.4.62"
 dependencies = [
  "anyhow",
  "axum",
