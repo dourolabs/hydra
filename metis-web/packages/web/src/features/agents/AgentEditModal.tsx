@@ -64,6 +64,7 @@ export function AgentEditModal({
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
+      secrets: agent.secrets,
     });
   }, [agent.name, agent.prompt_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isValid, mutation]);
 

@@ -65,6 +65,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
+      secrets: [],
     });
   }, [name, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isValid, mutation]);
 

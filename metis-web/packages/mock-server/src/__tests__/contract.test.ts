@@ -520,6 +520,7 @@ describe("Agents", () => {
     max_tries: 5,
     max_simultaneous: 3,
     is_assignment_agent: false,
+    secrets: [],
   };
 
   it("round-trip: create → get → list → update → delete", async () => {
