@@ -6,7 +6,6 @@ import type {
   SessionSummaryRecord,
   ListIssuesResponse,
   ListSessionsResponse,
-  ListRelationsResponse,
 } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
@@ -91,53 +90,6 @@ const sessionList = (r: ListSessionsResponse) => r.sessions;
 const wrapSessions = (items: SessionSummaryRecord[]): ListSessionsResponse => ({ sessions: items });
 const sessionRecordId = (r: SessionSummaryRecord) => r.session_id;
 
-// ---------------------------------------------------------------------------
-// Tree cache mutation helpers — update usePageIssueTrees caches directly
-// so that tree-derived UI (status boxes, active indicators, artifact lists)
-// updates without re-fetching.
-// ---------------------------------------------------------------------------
-
-const wrapRels = (items: ListRelationsResponse["relations"]): ListRelationsResponse => ({
-  relations: items,
-});
-
-/** Add a child-of relation to all matching relation caches (direct + transitive). */
-function addChildOfRelation(
-  qc: QueryClient,
-  sourceId: string,
-  targetId: string,
-) {
-  const rel = { source_id: sourceId, target_id: targetId, rel_type: "child-of" as const };
-  // Update direct child-of caches
-  qc.setQueriesData<ListRelationsResponse>(
-    { queryKey: ["relations", "child-of"] },
-    (old) => {
-      if (!old) return old;
-      // Avoid duplicates
-      if (old.relations.some((r) => r.source_id === sourceId && r.target_id === targetId)) {
-        return old;
-      }
-      return wrapRels([...old.relations, rel]);
-    },
-  );
-}
-
-/** Remove a child-of relation from all matching relation caches. */
-function removeChildOfRelation(
-  qc: QueryClient,
-  sourceId: string,
-) {
-  qc.setQueriesData<ListRelationsResponse>(
-    { queryKey: ["relations", "child-of"] },
-    (old) => {
-      if (!old) return old;
-      const filtered = old.relations.filter((r) => r.source_id !== sourceId);
-      if (filtered.length === old.relations.length) return old;
-      return wrapRels(filtered);
-    },
-  );
-}
-
 /** Upsert an issue record into batch issue caches used by usePageIssueTrees. */
 function upsertBatchIssue(qc: QueryClient, entityId: string, record: IssueSummaryRecord) {
   upsertInList(qc, ["issues", "batch"], issueList, wrapIssues, issueRecordId, entityId, record);
@@ -200,7 +152,8 @@ export function useSSE(): SSEConnectionState {
           removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
           // Remove from tree caches
           removeBatchIssue(queryClient, entity_id);
-          removeChildOfRelation(queryClient, entity_id);
+          // Invalidate transitive child-of relation caches so trees recompute
+          queryClient.invalidateQueries({ queryKey: ["relations", "child-of"] });
         } else {
           const record = entity as unknown as IssueSummaryRecord;
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
@@ -208,14 +161,10 @@ export function useSSE(): SSEConnectionState {
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
           // Directly update batch issue caches so child statuses recompute
           upsertBatchIssue(queryClient, entity_id, record);
-          // Update child-of relation caches from the issue's dependencies
+          // Invalidate transitive child-of relation caches when a new issue
+          // is created (its child-of dependencies change the tree structure)
           if (eventType === "issue_created") {
-            const deps = record.issue?.dependencies ?? [];
-            for (const dep of deps) {
-              if (dep.type === "child-of") {
-                addChildOfRelation(queryClient, entity_id, dep.issue_id);
-              }
-            }
+            queryClient.invalidateQueries({ queryKey: ["relations", "child-of"] });
           }
         }
         // Invalidate paginated issue list and badge counts so the dashboard
@@ -241,12 +190,16 @@ export function useSSE(): SSEConnectionState {
         }
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         queryClient.invalidateQueries({ queryKey: ["patches"] });
+        // Invalidate has-patch relation caches so dashboard artifact lists refresh
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
         }
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
         queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
+        // Invalidate has-document relation caches so dashboard artifact lists refresh
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
