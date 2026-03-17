@@ -31,7 +31,7 @@ function buildServerFilters(
 
   if (filterRootId === "inbox") {
     if (inboxLabelId) filters.labels = inboxLabelId;
-    if (username) filters.assignee = username;
+    if (username) filters.creator = username;
   } else if (filterRootId === "my-issues") {
     if (username) filters.creator = username;
   } else if (filterRootId?.startsWith(LABEL_FILTER_PREFIX)) {
@@ -120,7 +120,7 @@ export function DashboardPage() {
   // per category, excluding terminal statuses (closed, failed, dropped, rejected).
   const inboxCountFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, assignee: username, status: "open,in-progress" };
+    return { labels: inboxLabelId, creator: username, status: "open,in-progress" };
   }, [inboxLabelId, username]);
 
   const myIssuesCountFilters = useMemo<IssueFilters>(() => {
@@ -146,7 +146,7 @@ export function DashboardPage() {
   // Uses multi-status filter to match the total queries above.
   const inboxActiveFilters = useMemo<IssueFilters>(() => {
     if (!activeIdsParam || !inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, assignee: username, ids: activeIdsParam, status: "open,in-progress" };
+    return { labels: inboxLabelId, creator: username, ids: activeIdsParam, status: "open,in-progress" };
   }, [activeIdsParam, inboxLabelId, username]);
 
   const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
