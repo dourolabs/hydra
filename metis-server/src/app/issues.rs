@@ -569,12 +569,14 @@ mod tests {
     use crate::{
         app::{
             ServerEvent,
-            test_helpers::{issue_with_status, start_test_automation_runner, task_for_issue},
+            test_helpers::{
+                issue_with_status, start_test_automation_runner, task_for_issue_with_status,
+            },
         },
         domain::actors::ActorRef,
         domain::issues::{IssueDependency, IssueDependencyType, IssueStatus},
         job_engine::{JobEngine, JobStatus},
-        store::ReadOnlyStore,
+        store::{ReadOnlyStore, Status},
         test_utils::{MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::Utc;
@@ -842,17 +844,26 @@ mod tests {
 
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
+            // Use Running status to avoid triggering start_created_sessions automation
             let (parent_task_id, _) = store
-                .add_session_with_actor(task_for_issue(&parent_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(
+                    task_for_issue_with_status(&parent_id, Status::Running),
+                    Utc::now(),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_session_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(
+                    task_for_issue_with_status(&child_id, Status::Running),
+                    Utc::now(),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
                 .add_session_with_actor(
-                    task_for_issue(&grandchild_id),
+                    task_for_issue_with_status(&grandchild_id, Status::Running),
                     Utc::now(),
                     ActorRef::test(),
                 )
@@ -1446,8 +1457,13 @@ mod tests {
 
         let (child_task_id,) = {
             let store = state.store.as_ref();
+            // Use Running status to avoid triggering start_created_sessions automation
             let (child_task_id, _) = store
-                .add_session_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(
+                    task_for_issue_with_status(&child_id, Status::Running),
+                    Utc::now(),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap();
             (child_task_id,)

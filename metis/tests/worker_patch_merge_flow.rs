@@ -67,15 +67,15 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
     }
 
     // ── 4. Create a job for the issue and start it ─────────────────
+    // The start_created_sessions automation will automatically transition
+    // the session from Created to Pending via the event bus.
     let job_id = harness
         .default_user()
         .create_session_for_issue(&repo, "merge the patch", &_parent_issue_id)
         .await?;
 
-    harness
-        .state()
-        .start_pending_task(job_id.clone(), ActorRef::test())
-        .await;
+    // Wait for the automation to process the session.
+    harness.step_pending_jobs().await?;
 
     harness
         .state()
@@ -206,15 +206,15 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
     }
 
     // ── 4. Create a job for the issue and start it ─────────────────
+    // The start_created_sessions automation will automatically transition
+    // the session from Created to Pending via the event bus.
     let job_id = harness
         .default_user()
         .create_session_for_issue(&repo, "merge and check branch", &parent_issue_id)
         .await?;
 
-    harness
-        .state()
-        .start_pending_task(job_id.clone(), ActorRef::test())
-        .await;
+    // Wait for the automation to process the session.
+    harness.step_pending_jobs().await?;
 
     harness
         .state()
@@ -359,6 +359,8 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
     }
 
     // ── 4. Create and start jobs for each patch ─────────────────
+    // The start_created_sessions automation will automatically transition
+    // sessions from Created to Pending via the event bus.
     let job_id_1 = harness
         .default_user()
         .create_session_for_issue(&repo, "merge patch 1", &parent_issue_1)
@@ -368,11 +370,10 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
         .create_session_for_issue(&repo, "merge patch 2", &parent_issue_2)
         .await?;
 
+    // Wait for the automation to process both sessions.
+    harness.step_pending_jobs().await?;
+
     for job_id in [&job_id_1, &job_id_2] {
-        harness
-            .state()
-            .start_pending_task(job_id.clone(), ActorRef::test())
-            .await;
         harness
             .state()
             .transition_task_to_running(job_id, ActorRef::test())

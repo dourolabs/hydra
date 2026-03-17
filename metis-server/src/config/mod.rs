@@ -653,8 +653,6 @@ impl Default for GithubPollerConfig {
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct SchedulerSection {
-    #[serde(default = "default_process_pending_scheduler")]
-    pub process_pending_sessions: WorkerSchedulerConfig,
     #[serde(default = "default_monitor_running_scheduler")]
     pub monitor_running_sessions: WorkerSchedulerConfig,
     #[serde(default = "default_run_spawners_scheduler")]
@@ -668,7 +666,6 @@ pub struct SchedulerSection {
 impl Default for SchedulerSection {
     fn default() -> Self {
         Self {
-            process_pending_sessions: default_process_pending_scheduler(),
             monitor_running_sessions: default_monitor_running_scheduler(),
             run_spawners: default_run_spawners_scheduler(),
             github_poller: default_github_poller_scheduler(),
@@ -767,13 +764,6 @@ const fn default_scheduler_max_backoff_secs() -> u64 {
     30
 }
 
-fn default_process_pending_scheduler() -> WorkerSchedulerConfig {
-    WorkerSchedulerConfig {
-        interval_secs: 2,
-        ..Default::default()
-    }
-}
-
 fn default_monitor_running_scheduler() -> WorkerSchedulerConfig {
     WorkerSchedulerConfig {
         interval_secs: 5,
@@ -837,7 +827,6 @@ mod tests {
         let background = BackgroundSection::default();
         let scheduler = background.scheduler;
 
-        assert_eq!(scheduler.process_pending_sessions.interval_secs, 2);
         assert_eq!(scheduler.monitor_running_sessions.interval_secs, 5);
         assert_eq!(scheduler.run_spawners.interval_secs, 3);
         assert_eq!(
@@ -846,8 +835,6 @@ mod tests {
         );
         assert_eq!(scheduler.cleanup_branches.interval_secs, 300);
 
-        assert_eq!(scheduler.process_pending_sessions.initial_backoff_secs, 1);
-        assert_eq!(scheduler.process_pending_sessions.max_backoff_secs, 30);
         assert_eq!(scheduler.monitor_running_sessions.initial_backoff_secs, 1);
         assert_eq!(scheduler.monitor_running_sessions.max_backoff_secs, 30);
         assert_eq!(scheduler.run_spawners.initial_backoff_secs, 1);

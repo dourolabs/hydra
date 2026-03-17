@@ -63,7 +63,13 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
     let status = check_state.get_session(&body.session_id).await?.status;
-    assert_eq!(status, Status::Created);
+    // The start_created_sessions automation transitions Created → Pending
+    // immediately via the event bus, so by the time we check the session
+    // it may already be Pending.
+    assert!(
+        status == Status::Created || status == Status::Pending,
+        "expected Created or Pending, got {status:?}"
+    );
     Ok(())
 }
 
@@ -482,9 +488,20 @@ async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let created: CreateSessionResponse = response.json().await?;
 
-    state
-        .transition_task_to_pending(&created.session_id, ActorRef::test())
-        .await?;
+    // The start_created_sessions automation transitions Created → Pending
+    // automatically via the event bus. Wait for it to complete.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let session = state.get_session(&created.session_id).await?;
+        if session.status != Status::Created {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for session to transition from Created");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
     state
         .transition_task_to_running(&created.session_id, ActorRef::test())
         .await?;

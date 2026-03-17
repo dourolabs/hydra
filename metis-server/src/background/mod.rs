@@ -1,6 +1,5 @@
 pub mod cleanup_branches;
 pub mod monitor_running_sessions;
-pub mod process_pending_sessions;
 pub mod run_spawners;
 pub mod scheduler;
 pub mod spawner;
