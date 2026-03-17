@@ -1,0 +1,295 @@
+use crate::{
+    app::AppState,
+    background::{
+        AgentQueue, Spawner,
+        scheduler::{ScheduledWorker, WorkerOutcome},
+        spawner::SharedSpawnAttempts,
+    },
+    domain::actors::ActorRef,
+};
+use async_trait::async_trait;
+use chrono::Utc;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
+
+const WORKER_NAME: &str = "run_spawners";
+
+/// Scheduled worker that runs configured agents once per iteration.
+/// Spawn attempt state is stored here so it persists across iterations.
+#[derive(Clone)]
+pub struct RunSpawnersWorker {
+    state: AppState,
+    spawn_attempts_by_agent: Arc<RwLock<HashMap<String, SharedSpawnAttempts>>>,
+}
+
+impl RunSpawnersWorker {
+    pub fn new(state: AppState) -> Self {
+        Self {
+            state,
+            spawn_attempts_by_agent: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl ScheduledWorker for RunSpawnersWorker {
+    async fn run_iteration(&self) -> WorkerOutcome {
+        info!(worker = WORKER_NAME, "worker iteration started");
+
+        let agents = match self.state.list_agents().await {
+            Ok(agents) => agents,
+            Err(err) => {
+                warn!(
+                    worker = WORKER_NAME,
+                    error = %err,
+                    "failed to load agents from database"
+                );
+                return WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                };
+            }
+        };
+
+        if agents.is_empty() {
+            info!(worker = WORKER_NAME, "no agents configured; worker idle");
+            return WorkerOutcome::Idle;
+        }
+
+        let mut queues = Vec::with_capacity(agents.len());
+        {
+            let mut attempts_map = self.spawn_attempts_by_agent.write().await;
+            for agent in agents {
+                let shared = attempts_map
+                    .entry(agent.name.clone())
+                    .or_insert_with(|| Arc::new(RwLock::new(HashMap::new())))
+                    .clone();
+                queues.push(AgentQueue::new(agent, shared));
+            }
+        }
+
+        let mut processed = 0usize;
+        let mut failure_reason: Option<String> = None;
+
+        for agent in &queues {
+            match agent.spawn(&self.state).await {
+                Ok(tasks) => {
+                    if tasks.is_empty() {
+                        continue;
+                    }
+
+                    info!(
+                        worker = WORKER_NAME,
+                        agent = agent.name(),
+                        count = tasks.len(),
+                        "agent produced tasks"
+                    );
+
+                    for task in tasks {
+                        match self
+                            .state
+                            .add_session(
+                                task,
+                                Utc::now(),
+                                ActorRef::System {
+                                    worker_name: WORKER_NAME.into(),
+                                    on_behalf_of: None,
+                                },
+                            )
+                            .await
+                        {
+                            Ok(hydra_id) => {
+                                processed += 1;
+                                info!(
+                                    worker = WORKER_NAME,
+                                    agent = agent.name(),
+                                    hydra_id = %hydra_id,
+                                    "added task produced by agent"
+                                );
+                            }
+                            Err(err) => {
+                                if failure_reason.is_none() {
+                                    failure_reason = Some(err.to_string());
+                                }
+                                warn!(
+                                    agent = agent.name(),
+                                    worker = WORKER_NAME,
+                                    error = %err,
+                                    "failed to add task from agent"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    if failure_reason.is_none() {
+                        failure_reason = Some(err.to_string());
+                    }
+                    warn!(
+                        worker = WORKER_NAME,
+                        agent = agent.name(),
+                        error = %err,
+                        "agent run failed"
+                    );
+                }
+            }
+        }
+
+        if let Some(reason) = failure_reason {
+            info!(
+                worker = WORKER_NAME,
+                "worker iteration completed with transient error"
+            );
+            return WorkerOutcome::TransientError { reason };
+        }
+
+        if processed == 0 {
+            info!(
+                worker = WORKER_NAME,
+                "agents produced no tasks; worker idle"
+            );
+            WorkerOutcome::Idle
+        } else {
+            info!(
+                worker = WORKER_NAME,
+                processed, "worker iteration completed successfully"
+            );
+            WorkerOutcome::Progress {
+                processed,
+                failed: 0,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::Repository,
+        config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        domain::agents::Agent,
+        domain::documents::Document,
+        domain::issues::{Issue, IssueStatus, IssueType, SessionSettings},
+        domain::users::Username,
+        test::{add_repository, test_state_handles},
+    };
+    use hydra_common::RepoName;
+    use std::str::FromStr;
+
+    async fn register_agent(
+        handles: &crate::test_utils::TestStateHandles,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let agent = Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            false,
+        );
+        handles.store.add_agent(agent).await?;
+
+        let doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: format!("prompt for {name}"),
+            path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+
+        Ok(())
+    }
+
+    fn issue_for_agent(agent: &str, repo_name: &RepoName) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "Test Title".to_string(),
+            "Run agent".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            Some(agent.to_string()),
+            Some(SessionSettings {
+                repo_name: Some(repo_name.clone()),
+                image: Some("agent-image".to_string()),
+                ..SessionSettings::default()
+            }),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn repository(_repo_name: &RepoName) -> Repository {
+        Repository::new(
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            Some("agent-image".to_string()),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn returns_idle_when_no_agents_configured() {
+        let handles = test_state_handles();
+        let worker = RunSpawnersWorker::new(handles.state);
+
+        assert_eq!(worker.run_iteration().await, WorkerOutcome::Idle);
+    }
+
+    #[tokio::test]
+    async fn enqueues_tasks_and_reports_progress() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let agent_name = "static";
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+
+        register_agent(&handles, agent_name).await?;
+
+        add_repository(&handles.state, repo_name.clone(), repository(&repo_name)).await?;
+        handles
+            .store
+            .add_issue(issue_for_agent(agent_name, &repo_name), &ActorRef::test())
+            .await?;
+
+        let worker = RunSpawnersWorker::new(handles.state.clone());
+
+        let outcome = worker.run_iteration().await;
+
+        assert_eq!(
+            outcome,
+            WorkerOutcome::Progress {
+                processed: 1,
+                failed: 0
+            }
+        );
+
+        let tasks = handles.state.list_sessions().await?;
+        assert_eq!(tasks.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn surfaces_errors_from_agents() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let agent_name = "failing";
+        let repo_name = RepoName::from_str("missing/repo")?;
+
+        register_agent(&handles, agent_name).await?;
+
+        handles
+            .store
+            .add_issue(issue_for_agent(agent_name, &repo_name), &ActorRef::test())
+            .await?;
+        let worker = RunSpawnersWorker::new(handles.state);
+
+        let outcome = worker.run_iteration().await;
+
+        assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
+
+        Ok(())
+    }
+}

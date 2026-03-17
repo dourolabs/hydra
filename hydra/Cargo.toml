@@ -1,0 +1,51 @@
+[package]
+name = "hydra"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+vendored-openssl = [
+    "git2/vendored-openssl",
+    "openssl-sys/vendored",
+    "hydra-common/vendored-openssl",
+]
+
+[[bin]]
+name = "hydra"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+async-trait = "0.1"
+bytes = "1.6"
+clap = { version = "4.5", features = ["derive", "env"] }
+futures = "0.3"
+shellexpand = "3.1"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "process", "fs", "io-util", "io-std", "time"] }
+toml = "0.8"
+hydra-common = { path = "../hydra-common" }
+hydra-build-cache = { path = "../hydra-build-cache" }
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+rpassword = "5"
+tempfile = "3.13"
+textwrap = { version = "0.16", features = ["terminal_size"] }
+chrono = { version = "0.4", features = ["clock"] }
+owo-colors = "4.1"
+serde_yaml_ng = "0.10"
+serde_json = "1.0"
+getrandom = "0.2"
+sha2 = "0.10"
+git2 = { workspace = true }
+libc = "0.2"
+shlex = "1.3"
+thiserror = "1.0"
+octocrab = "0.49"
+openssl-sys = { workspace = true }
+
+[dev-dependencies]
+httpmock = "0.7"
+hydra-server = { path = "../hydra-server", features = ["test-utils"] }
+jsonwebtoken = "10"
+openssl = "0.10"
