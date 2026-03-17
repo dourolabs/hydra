@@ -1396,50 +1396,34 @@ impl ReadOnlyStore for MemoryStore {
 
     async fn get_relationships_transitive(
         &self,
-        source_ids: &[MetisId],
-        target_ids: &[MetisId],
+        ids: &[MetisId],
+        direction: super::TransitiveDirection,
         rel_type: super::RelationshipType,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
 
-        if !source_ids.is_empty() {
-            // Forward traversal: follow source -> target edges
-            let mut queue = std::collections::VecDeque::new();
-            for start in source_ids {
-                if visited.insert(start.clone()) {
-                    queue.push_back(start.clone());
-                }
+        for start in ids {
+            if visited.insert(start.clone()) {
+                queue.push_back(start.clone());
             }
+        }
 
-            while let Some(current) = queue.pop_front() {
-                for entry in self.object_relationships.iter() {
-                    let rel = entry.value();
-                    if rel.rel_type == rel_type && rel.source_id == current {
-                        result.push(rel.clone());
-                        if visited.insert(rel.target_id.clone()) {
-                            queue.push_back(rel.target_id.clone());
-                        }
-                    }
+        while let Some(current) = queue.pop_front() {
+            for entry in self.object_relationships.iter() {
+                let rel = entry.value();
+                if rel.rel_type != rel_type {
+                    continue;
                 }
-            }
-        } else if !target_ids.is_empty() {
-            // Backward traversal: follow target -> source edges
-            let mut queue = std::collections::VecDeque::new();
-            for start in target_ids {
-                if visited.insert(start.clone()) {
-                    queue.push_back(start.clone());
-                }
-            }
-
-            while let Some(current) = queue.pop_front() {
-                for entry in self.object_relationships.iter() {
-                    let rel = entry.value();
-                    if rel.rel_type == rel_type && rel.target_id == current {
-                        result.push(rel.clone());
-                        if visited.insert(rel.source_id.clone()) {
-                            queue.push_back(rel.source_id.clone());
-                        }
+                let (match_field, next_field) = match direction {
+                    super::TransitiveDirection::Forward => (&rel.source_id, &rel.target_id),
+                    super::TransitiveDirection::Backward => (&rel.target_id, &rel.source_id),
+                };
+                if *match_field == current {
+                    result.push(rel.clone());
+                    if visited.insert(next_field.clone()) {
+                        queue.push_back(next_field.clone());
                     }
                 }
             }
@@ -7084,7 +7068,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_relationships_transitive_follows_same_type_only() {
-        use crate::store::RelationshipType;
+        use crate::store::{RelationshipType, TransitiveDirection};
 
         let store = MemoryStore::new();
         let actor_ref = ActorRef::test();
@@ -7127,7 +7111,11 @@ mod tests {
 
         // Forward transitive from A following child-of
         let results = store
-            .get_relationships_transitive(&[a.clone()], &[], RelationshipType::ChildOf)
+            .get_relationships_transitive(
+                &[a.clone()],
+                TransitiveDirection::Forward,
+                RelationshipType::ChildOf,
+            )
             .await
             .unwrap();
         // Should find A->B and B->C, but NOT B->P
@@ -7140,14 +7128,22 @@ mod tests {
 
         // Backward transitive from C following child-of
         let results = store
-            .get_relationships_transitive(&[], &[c.clone()], RelationshipType::ChildOf)
+            .get_relationships_transitive(
+                &[c.clone()],
+                TransitiveDirection::Backward,
+                RelationshipType::ChildOf,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Transitive has-patch from B should only find B->P
         let results = store
-            .get_relationships_transitive(&[b.clone()], &[], RelationshipType::HasPatch)
+            .get_relationships_transitive(
+                &[b.clone()],
+                TransitiveDirection::Forward,
+                RelationshipType::HasPatch,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

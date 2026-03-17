@@ -312,8 +312,8 @@ impl ReadOnlyStore for FailingStore {
 
     async fn get_relationships_transitive(
         &self,
-        _source_ids: &[MetisId],
-        _target_ids: &[MetisId],
+        _ids: &[MetisId],
+        _direction: crate::store::TransitiveDirection,
         _rel_type: crate::store::RelationshipType,
     ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         fail()

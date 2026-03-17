@@ -1562,12 +1562,12 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn get_relationships_transitive(
         &self,
-        source_ids: &[MetisId],
-        target_ids: &[MetisId],
+        ids: &[MetisId],
+        direction: crate::store::TransitiveDirection,
         rel_type: crate::store::RelationshipType,
     ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         self.inner
-            .get_relationships_transitive(source_ids, target_ids, rel_type)
+            .get_relationships_transitive(ids, direction, rel_type)
             .await
     }
 

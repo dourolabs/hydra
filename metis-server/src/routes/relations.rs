@@ -149,12 +149,16 @@ pub async fn list_relations(
         }
 
         if transitive {
-            relations = store
-                .get_relationships_transitive(
-                    source_ids.as_deref().unwrap_or(&[]),
+            let (ids, direction) = if let Some(ref ids) = source_ids {
+                (ids.as_slice(), crate::store::TransitiveDirection::Forward)
+            } else {
+                (
                     target_ids.as_deref().unwrap_or(&[]),
-                    rel_type.expect("validated above"),
+                    crate::store::TransitiveDirection::Backward,
                 )
+            };
+            relations = store
+                .get_relationships_transitive(ids, direction, rel_type.expect("validated above"))
                 .await
                 .map_err(map_store_error)?;
         } else {
@@ -164,15 +168,21 @@ pub async fn list_relations(
                 .map_err(map_store_error)?;
         }
     } else if transitive {
-        // Transitive mode (single ID)
-        let source_ids: Vec<MetisId> = query.source_id.iter().cloned().collect();
-        let target_ids: Vec<MetisId> = query.target_id.iter().cloned().collect();
-        relations = store
-            .get_relationships_transitive(
-                &source_ids,
-                &target_ids,
-                rel_type.expect("validated above"),
+        // Transitive mode (single ID): convert source_id/target_id into (id, direction)
+        let (ids, direction) = if let Some(ref sid) = query.source_id {
+            (
+                vec![sid.clone()],
+                crate::store::TransitiveDirection::Forward,
             )
+        } else {
+            // target_id must be Some (validated by XOR check above)
+            (
+                vec![query.target_id.as_ref().unwrap().clone()],
+                crate::store::TransitiveDirection::Backward,
+            )
+        };
+        relations = store
+            .get_relationships_transitive(&ids, direction, rel_type.expect("validated above"))
             .await
             .map_err(map_store_error)?;
     } else {

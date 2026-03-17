@@ -78,6 +78,15 @@ impl FromStr for ObjectKind {
     }
 }
 
+/// Direction for transitive relationship traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitiveDirection {
+    /// Follow source -> target edges (find all descendants).
+    Forward,
+    /// Follow target -> source edges (find all ancestors).
+    Backward,
+}
+
 /// The type of relationship between two objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationshipType {
@@ -596,13 +605,13 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns object relationships reachable by transitively following edges
     /// of the given relationship type.
     ///
-    /// Starting from `source_ids` (forward) or `target_ids` (backward), follows
-    /// only edges of `rel_type`. Exactly one of `source_ids` or `target_ids`
-    /// must be non-empty.
+    /// Starting from `ids`, follows edges in `direction`:
+    /// - `Forward`: follows source -> target edges (finds descendants)
+    /// - `Backward`: follows target -> source edges (finds ancestors)
     async fn get_relationships_transitive(
         &self,
-        source_ids: &[MetisId],
-        target_ids: &[MetisId],
+        ids: &[MetisId],
+        direction: TransitiveDirection,
         rel_type: RelationshipType,
     ) -> Result<Vec<ObjectRelationship>, StoreError>;
 
