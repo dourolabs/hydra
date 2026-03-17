@@ -1,7 +1,8 @@
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type {
   IssueSummaryRecord,
+  RelationResponse,
   SessionSummaryRecord,
 } from "@metis/api";
 import { apiClient } from "../../api/client";
@@ -18,18 +19,34 @@ export interface IssueTreeData {
   documentIds: string[];
 }
 
+/** The complete collected set of data for building issue trees. */
+interface CollectedSet {
+  pageIssueIds: string[];
+  childRelations: RelationResponse[];
+  issueMap: Map<string, IssueSummaryRecord>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
+  patchRelations: RelationResponse[];
+  documentRelations: RelationResponse[];
+  username: string;
+}
+
 // ---------------------------------------------------------------------------
-// Step 1: Fetch direct child relations for page issue IDs
+// Step 1 (Seed): Page issues come from the caller
 // ---------------------------------------------------------------------------
 
-function useChildRelations(pageIssueIds: string[]) {
+// ---------------------------------------------------------------------------
+// Step 2 (Expand): Collect all transitive descendants via child-of relations
+// ---------------------------------------------------------------------------
+
+function useExpandedChildRelations(pageIssueIds: string[]) {
   const targetIds = pageIssueIds.join(",");
   return useQuery({
-    queryKey: ["relations", "child-of", targetIds],
+    queryKey: ["relations", "child-of", "transitive", targetIds],
     queryFn: () =>
       apiClient.listRelations({
         target_ids: targetIds,
         rel_type: "child-of",
+        transitive: true,
       }),
     enabled: pageIssueIds.length > 0,
     staleTime: 30_000,
@@ -38,96 +55,166 @@ function useChildRelations(pageIssueIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Fetch transitive descendants for issues that have children
+// Step 3 (Artifacts): Collect patches and documents for expanded set
 // ---------------------------------------------------------------------------
 
-function useTransitiveRelations(parentIdsWithChildren: string[]) {
-  const results = useQueries({
-    queries: parentIdsWithChildren.map((id) => ({
-      queryKey: ["relations", "child-of", "transitive", id],
-      queryFn: () =>
-        apiClient.listRelations({
-          target_id: id,
-          rel_type: "child-of",
-          transitive: true,
-        }),
-      enabled: parentIdsWithChildren.length > 0,
-      staleTime: 30_000,
-      select: (data: { relations: { source_id: string; target_id: string; rel_type: string }[] }) => data.relations,
-    })),
-    combine: (queryResults) => ({
-      data: queryResults.flatMap((r) => r.data ?? []),
-      isLoading: queryResults.some((r) => r.isLoading),
-    }),
-  });
-  return results;
-}
-
-// ---------------------------------------------------------------------------
-// Step 3: Fetch child issue details
-// ---------------------------------------------------------------------------
-
-function useChildIssueDetails(childIds: string[]) {
-  const ids = childIds.join(",");
+function useArtifactRelations(
+  allIssueIds: string[],
+  relType: "has-patch" | "has-document",
+) {
+  const targetIds = allIssueIds.join(",");
   return useQuery({
-    queryKey: ["issues", "batch", ids],
-    queryFn: () => apiClient.listIssues({ ids }),
-    enabled: childIds.length > 0,
+    queryKey: ["relations", relType, targetIds],
+    queryFn: () =>
+      apiClient.listRelations({
+        target_ids: targetIds,
+        rel_type: relType,
+      }),
+    enabled: allIssueIds.length > 0,
     staleTime: 30_000,
-    select: (data) => data.issues,
+    select: (data) => data.relations,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Fetch sessions for all descendants
+// Step 4 (Sessions): Collect sessions for expanded set
 // ---------------------------------------------------------------------------
 
-function useDescendantSessions(descendantIds: string[]) {
-  const spawned_from_ids = descendantIds.join(",");
+function useSessions(allIssueIds: string[]) {
+  const spawned_from_ids = allIssueIds.join(",");
   return useQuery({
     queryKey: ["sessions", "batch", spawned_from_ids],
     queryFn: () =>
       apiClient.listSessions({ spawned_from_ids }),
-    enabled: descendantIds.length > 0,
+    enabled: allIssueIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.sessions,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Fetch artifact relations (patches, documents)
+// Step 5 (Summary records): Fetch issue summaries for all descendants
 // ---------------------------------------------------------------------------
 
-function usePatchRelations(pageIssueIds: string[], allDescendantIds: string[]) {
-  const allIds = [...new Set([...pageIssueIds, ...allDescendantIds])];
-  const objectIds = allIds.join(",");
+function useIssueSummaries(descendantIds: string[]) {
+  const ids = descendantIds.join(",");
   return useQuery({
-    queryKey: ["relations", "has-patch", objectIds],
-    queryFn: () =>
-      apiClient.listRelations({
-        target_ids: objectIds,
-        rel_type: "has-patch",
-      }),
-    enabled: allIds.length > 0,
+    queryKey: ["issues", "batch", ids],
+    queryFn: () => apiClient.listIssues({ ids }),
+    enabled: descendantIds.length > 0,
     staleTime: 30_000,
-    select: (data) => data.relations,
+    select: (data) => data.issues,
   });
 }
 
-function useDocumentRelations(pageIssueIds: string[], allDescendantIds: string[]) {
-  const allIds = [...new Set([...pageIssueIds, ...allDescendantIds])];
-  const objectIds = allIds.join(",");
-  return useQuery({
-    queryKey: ["relations", "has-document", objectIds],
-    queryFn: () =>
-      apiClient.listRelations({
-        target_ids: objectIds,
-        rel_type: "has-document",
-      }),
-    enabled: allIds.length > 0,
-    staleTime: 30_000,
-    select: (data) => data.relations,
-  });
+// ---------------------------------------------------------------------------
+// Step 6 (Build trees): Pure function that builds tree data from collected set
+// ---------------------------------------------------------------------------
+
+function buildIssueTrees(set: CollectedSet): {
+  treeDataMap: Map<string, IssueTreeData>;
+  isActiveMap: Map<string, boolean>;
+  childStatusMap: Map<string, ChildStatus[]>;
+} {
+  const treeDataMap = new Map<string, IssueTreeData>();
+
+  // Build parent→children map from child-of relations
+  const childrenMap = new Map<string, string[]>();
+  for (const rel of set.childRelations) {
+    const children = childrenMap.get(rel.target_id) ?? [];
+    if (!children.includes(rel.source_id)) {
+      children.push(rel.source_id);
+    }
+    childrenMap.set(rel.target_id, children);
+  }
+
+  // Memoized active-session check
+  const activeCache = new Map<string, boolean>();
+  function isActive(issueId: string): boolean {
+    const cached = activeCache.get(issueId);
+    if (cached !== undefined) return cached;
+
+    const sessions = set.sessionsByIssue.get(issueId) ?? [];
+    if (
+      sessions.some(
+        (s) => s.session.status === "running" || s.session.status === "pending",
+      )
+    ) {
+      activeCache.set(issueId, true);
+      return true;
+    }
+
+    const children = childrenMap.get(issueId) ?? [];
+    const result = children.some((childId) => isActive(childId));
+    activeCache.set(issueId, result);
+    return result;
+  }
+
+  for (const pageIssueId of set.pageIssueIds) {
+    // Direct child statuses
+    const directChildIds = childrenMap.get(pageIssueId) ?? [];
+    const childStatuses: ChildStatus[] = [];
+    for (const childId of directChildIds) {
+      const child = set.issueMap.get(childId);
+      if (!child) continue;
+      childStatuses.push({
+        id: childId,
+        status: child.issue.status,
+        hasActiveTask: isActive(childId),
+        assignedToUser: !!(
+          set.username && child.issue.assignee === set.username
+        ),
+      });
+    }
+
+    // Collect all descendants for artifact attribution
+    const descendants = new Set<string>([pageIssueId]);
+    const queue = [pageIssueId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const cid of childrenMap.get(current) ?? []) {
+        if (!descendants.has(cid)) {
+          descendants.add(cid);
+          queue.push(cid);
+        }
+      }
+    }
+
+    // Patches linked to this issue's subtree
+    const patchIds: string[] = [];
+    for (const rel of set.patchRelations) {
+      if (descendants.has(rel.target_id)) {
+        patchIds.push(rel.source_id);
+      }
+    }
+
+    // Documents linked to this issue's subtree
+    const documentIds: string[] = [];
+    for (const rel of set.documentRelations) {
+      if (descendants.has(rel.target_id)) {
+        documentIds.push(rel.source_id);
+      }
+    }
+
+    treeDataMap.set(pageIssueId, {
+      childStatuses,
+      isActive: isActive(pageIssueId),
+      patchIds,
+      documentIds,
+    });
+  }
+
+  // Derived maps for consumer convenience
+  const isActiveMap = new Map<string, boolean>();
+  const childStatusMap = new Map<string, ChildStatus[]>();
+  for (const [id, data] of treeDataMap) {
+    isActiveMap.set(id, data.isActive);
+    if (data.childStatuses.length > 0) {
+      childStatusMap.set(id, data.childStatuses);
+    }
+  }
+
+  return { treeDataMap, isActiveMap, childStatusMap };
 }
 
 // ---------------------------------------------------------------------------
@@ -152,33 +239,6 @@ function groupSessionsByIssue(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: check if any descendant has active sessions
-// ---------------------------------------------------------------------------
-
-function hasActiveSession(
-  issueId: string,
-  childrenMap: Map<string, string[]>,
-  sessionsByIssue: Map<string, SessionSummaryRecord[]>,
-  cache: Map<string, boolean>,
-): boolean {
-  const cached = cache.get(issueId);
-  if (cached !== undefined) return cached;
-
-  const sessions = sessionsByIssue.get(issueId) ?? [];
-  if (sessions.some((s) => s.session.status === "running" || s.session.status === "pending")) {
-    cache.set(issueId, true);
-    return true;
-  }
-
-  const children = childrenMap.get(issueId) ?? [];
-  const result = children.some((childId) =>
-    hasActiveSession(childId, childrenMap, sessionsByIssue, cache),
-  );
-  cache.set(issueId, result);
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Main hook
 // ---------------------------------------------------------------------------
 
@@ -186,208 +246,89 @@ export function usePageIssueTrees(
   pageIssues: IssueSummaryRecord[],
   username: string,
 ) {
+  // Step 1: Seed set — page issue IDs
   const pageIssueIds = useMemo(
     () => pageIssues.map((i) => i.issue_id),
     [pageIssues],
   );
 
-  // Step 1: Get direct children
-  const { data: directChildRelations, isLoading: childRelLoading } =
-    useChildRelations(pageIssueIds);
+  // Step 2: Expand — collect all transitive descendants
+  const { data: childRelations, isLoading: relationsLoading } =
+    useExpandedChildRelations(pageIssueIds);
 
-  // Determine which page issues have children
-  const parentsWithChildren = useMemo(() => {
-    if (!directChildRelations) return [];
-    const parents = new Set<string>();
-    for (const rel of directChildRelations) {
-      parents.add(rel.target_id);
-    }
-    return Array.from(parents);
-  }, [directChildRelations]);
-
-  // Direct child IDs (for fetching details)
-  const directChildIds = useMemo(() => {
-    if (!directChildRelations) return [];
+  // Derive the full expanded issue set (page issues + all descendants)
+  const allDescendantIds = useMemo(() => {
+    if (!childRelations) return [];
     const ids = new Set<string>();
-    for (const rel of directChildRelations) {
+    for (const rel of childRelations) {
       ids.add(rel.source_id);
     }
     return Array.from(ids);
-  }, [directChildRelations]);
+  }, [childRelations]);
 
-  // Step 2: Get transitive descendants
-  const { data: transitiveRelations, isLoading: transitiveLoading } =
-    useTransitiveRelations(parentsWithChildren);
-
-  // All descendant IDs (direct + transitive)
-  const allDescendantIds = useMemo(() => {
-    const ids = new Set(directChildIds);
-    if (transitiveRelations) {
-      for (const rel of transitiveRelations) {
-        ids.add(rel.source_id);
-      }
-    }
-    return Array.from(ids);
-  }, [directChildIds, transitiveRelations]);
-
-  // Build parent→children map from all relations
-  const childrenMap = useMemo(() => {
-    const map = new Map<string, string[]>();
-    const allRelations = [
-      ...(directChildRelations ?? []),
-      ...(transitiveRelations ?? []),
-    ];
-    for (const rel of allRelations) {
-      const children = map.get(rel.target_id) ?? [];
-      if (!children.includes(rel.source_id)) {
-        children.push(rel.source_id);
-      }
-      map.set(rel.target_id, children);
-    }
-    return map;
-  }, [directChildRelations, transitiveRelations]);
-
-  // Step 3: Fetch child issue details
-  const { data: childIssues, isLoading: childIssuesLoading } =
-    useChildIssueDetails(directChildIds);
-
-  // Step 4: Fetch sessions for all descendants + page issues
   const allIssueIds = useMemo(
     () => [...new Set([...pageIssueIds, ...allDescendantIds])],
     [pageIssueIds, allDescendantIds],
   );
-  const { data: descendantSessions, isLoading: sessionsLoading } =
-    useDescendantSessions(allIssueIds);
 
-  // Step 5: Fetch artifact relations
-  const { data: patchRelations, isLoading: patchRelLoading } =
-    usePatchRelations(pageIssueIds, allDescendantIds);
-  const { data: documentRelations, isLoading: docRelLoading } =
-    useDocumentRelations(pageIssueIds, allDescendantIds);
+  // Step 3: Artifacts — collect patches and documents for expanded set
+  const { data: patchRelations, isLoading: patchLoading } =
+    useArtifactRelations(allIssueIds, "has-patch");
+  const { data: documentRelations, isLoading: docLoading } =
+    useArtifactRelations(allIssueIds, "has-document");
 
-  // Group sessions
+  // Step 4: Sessions — collect sessions for expanded set
+  const { data: sessions, isLoading: sessionsLoading } =
+    useSessions(allIssueIds);
+
+  // Step 5: Summary records — fetch issue summaries for descendants
+  const { data: descendantIssues, isLoading: issuesLoading } =
+    useIssueSummaries(allDescendantIds);
+
+  // Build lookup maps
+  const issueMap = useMemo(() => {
+    const map = new Map<string, IssueSummaryRecord>();
+    for (const issue of pageIssues) {
+      map.set(issue.issue_id, issue);
+    }
+    if (descendantIssues) {
+      for (const issue of descendantIssues) {
+        map.set(issue.issue_id, issue);
+      }
+    }
+    return map;
+  }, [pageIssues, descendantIssues]);
+
   const sessionsByIssue = useMemo(
-    () => groupSessionsByIssue(descendantSessions ?? []),
-    [descendantSessions],
+    () => groupSessionsByIssue(sessions ?? []),
+    [sessions],
   );
 
-  // Build per-issue tree data
-  const treeDataMap = useMemo(() => {
-    const map = new Map<string, IssueTreeData>();
-    if (!directChildRelations) return map;
-
-    const childIssueMap = new Map<string, IssueSummaryRecord>();
-    if (childIssues) {
-      for (const issue of childIssues) {
-        childIssueMap.set(issue.issue_id, issue);
-      }
-    }
-
-    const activeCache = new Map<string, boolean>();
-
-    for (const pageIssueId of pageIssueIds) {
-      // Child statuses
-      const childIds = childrenMap.get(pageIssueId) ?? [];
-      const childStatuses: ChildStatus[] = [];
-      for (const childId of childIds) {
-        const child = childIssueMap.get(childId);
-        if (!child) continue;
-        childStatuses.push({
-          id: childId,
-          status: child.issue.status,
-          hasActiveTask: hasActiveSession(
-            childId,
-            childrenMap,
-            sessionsByIssue,
-            activeCache,
-          ),
-          assignedToUser: !!(username && child.issue.assignee === username),
-        });
-      }
-
-      // isActive for the page issue itself
-      const isActive = hasActiveSession(
-        pageIssueId,
-        childrenMap,
+  // Step 6: Build trees — pure function of the collected set
+  const { treeDataMap, isActiveMap, childStatusMap } = useMemo(
+    () =>
+      buildIssueTrees({
+        pageIssueIds,
+        childRelations: childRelations ?? [],
+        issueMap,
         sessionsByIssue,
-        activeCache,
-      );
-
-      // Collect descendants for this page issue
-      const descendants = new Set<string>([pageIssueId]);
-      const queue = [pageIssueId];
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        for (const cid of childrenMap.get(current) ?? []) {
-          if (!descendants.has(cid)) {
-            descendants.add(cid);
-            queue.push(cid);
-          }
-        }
-      }
-
-      // Patch IDs from has-patch relations
-      const patchIds: string[] = [];
-      if (patchRelations) {
-        for (const rel of patchRelations) {
-          if (descendants.has(rel.target_id)) {
-            patchIds.push(rel.source_id);
-          }
-        }
-      }
-
-      // Document IDs from has-document relations
-      const documentIds: string[] = [];
-      if (documentRelations) {
-        for (const rel of documentRelations) {
-          if (descendants.has(rel.target_id)) {
-            documentIds.push(rel.source_id);
-          }
-        }
-      }
-
-      map.set(pageIssueId, {
-        childStatuses,
-        isActive,
-        patchIds,
-        documentIds,
-      });
-    }
-
-    return map;
-  }, [
-    pageIssueIds,
-    directChildRelations,
-    childrenMap,
-    childIssues,
-    sessionsByIssue,
-    patchRelations,
-    documentRelations,
-    username,
-  ]);
-
-  // isActiveMap for compatibility
-  const isActiveMap = useMemo(() => {
-    const map = new Map<string, boolean>();
-    for (const [id, data] of treeDataMap) {
-      map.set(id, data.isActive);
-    }
-    return map;
-  }, [treeDataMap]);
-
-  // childStatusMap for compatibility
-  const childStatusMap = useMemo(() => {
-    const map = new Map<string, ChildStatus[]>();
-    for (const [id, data] of treeDataMap) {
-      if (data.childStatuses.length > 0) {
-        map.set(id, data.childStatuses);
-      }
-    }
-    return map;
-  }, [treeDataMap]);
+        patchRelations: patchRelations ?? [],
+        documentRelations: documentRelations ?? [],
+        username,
+      }),
+    [
+      pageIssueIds,
+      childRelations,
+      issueMap,
+      sessionsByIssue,
+      patchRelations,
+      documentRelations,
+      username,
+    ],
+  );
 
   const isLoading =
-    childRelLoading || transitiveLoading || childIssuesLoading || sessionsLoading || patchRelLoading || docRelLoading;
+    relationsLoading || patchLoading || docLoading || sessionsLoading || issuesLoading;
 
   return {
     treeDataMap,
