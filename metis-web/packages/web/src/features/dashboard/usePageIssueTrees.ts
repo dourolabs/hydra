@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type {
   IssueSummaryRecord,
@@ -42,19 +42,25 @@ function useChildRelations(pageIssueIds: string[]) {
 // ---------------------------------------------------------------------------
 
 function useTransitiveRelations(parentIdsWithChildren: string[]) {
-  const targetIds = parentIdsWithChildren.join(",");
-  return useQuery({
-    queryKey: ["relations", "child-of", "transitive", targetIds],
-    queryFn: () =>
-      apiClient.listRelations({
-        target_ids: targetIds,
-        rel_type: "child-of",
-        transitive: true,
-      }),
-    enabled: parentIdsWithChildren.length > 0,
-    staleTime: 30_000,
-    select: (data) => data.relations,
+  const results = useQueries({
+    queries: parentIdsWithChildren.map((id) => ({
+      queryKey: ["relations", "child-of", "transitive", id],
+      queryFn: () =>
+        apiClient.listRelations({
+          target_id: id,
+          rel_type: "child-of",
+          transitive: true,
+        }),
+      enabled: parentIdsWithChildren.length > 0,
+      staleTime: 30_000,
+      select: (data: { relations: { source_id: string; target_id: string; rel_type: string }[] }) => data.relations,
+    })),
+    combine: (queryResults) => ({
+      data: queryResults.flatMap((r) => r.data ?? []),
+      isLoading: queryResults.some((r) => r.isLoading),
+    }),
   });
+  return results;
 }
 
 // ---------------------------------------------------------------------------

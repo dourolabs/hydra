@@ -93,7 +93,7 @@ describe("useSubtreeIssues", () => {
     });
 
     expect(mockListRelations).toHaveBeenCalledWith({
-      target_ids: rootId,
+      target_id: rootId,
       rel_type: "child-of",
       transitive: true,
     });
