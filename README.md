@@ -1,8 +1,10 @@
 # Metis
 
-Metis is an agent dashboard that lets you manage lots of Claude Code instances working in parallel. Instead of operating at the level of code, you operate at the level of tasks -- what needs to be done? You assign work through an issue tracker, and agents on your team take care of the implementation details. You survey their progress, review their work, and offer course corrections as needed.
+Metis is an open-source AI orchestration layer that lets developers coordinate dozens of agents working simultaneously across tasks, issues, and environments.
+You assign work through an issue tracker, and Metis automatically spins up agents to implement.
+You survey their progress, review their work, and offer course corrections as needed.
 
-![Metis Dashboard](docs/images/readme-dashboard.png)
+![Metis Dashboard](docs/images/readme-dashboard-2.gif)
 
 ## Getting Started
 
@@ -13,7 +15,7 @@ Metis ships a single-player mode that bundles the CLI, server, and web dashboard
 ```bash
 git clone https://github.com/dourolabs/metis.git
 cd metis
-cargo build -p metis-single-player --features embedded-frontend
+cargo build -p metis-single-player
 ```
 
 Add the binary to your path:
@@ -31,6 +33,8 @@ metis server init
 ```
 
 This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT. When it finishes, the server is running and the CLI is configured to talk to it.
+
+**Note** Metis runs with agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine. No warranties or rebates are provided if you choose Local and Claude `rm -rf`s your machine. The Docker engine is a little more painful to set up, but it's worth it for the isolation.
 
 When Docker is selected as the job engine, the init command automatically builds the `metis-worker:latest` image. This image is used to run agent sessions and includes Node.js, the GitHub CLI, ripgrep, Claude Code, Codex, Playwright, and the Metis CLI itself.
 

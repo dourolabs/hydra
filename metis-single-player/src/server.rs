@@ -376,7 +376,7 @@ fn prompt_job_engine() -> Result<String> {
     eprintln!();
     eprintln!("Select job engine:");
     eprintln!("  1) Docker (recommended) - runs jobs in isolated containers [{docker_status}]");
-    eprintln!("  2) Local - runs jobs directly on this computer (less isolation)");
+    eprintln!("  2) Local - runs jobs directly on this computer (**dangerous**)");
     eprint!("Choice [{default_choice}]: ");
     io::stderr().flush()?;
 
@@ -416,6 +416,8 @@ fn prompt_job_engine() -> Result<String> {
 }
 
 fn prompt_github_pat() -> Result<String> {
+    eprint!("");
+    eprint!("Metis integrates with GitHub so agents can send you pull requests.");    
     eprint!("Enter your GitHub Personal Access Token (PAT): ");
     io::stderr().flush()?;
     let token = rpassword::prompt_password_stdout("").context("failed to read GitHub PAT")?;
