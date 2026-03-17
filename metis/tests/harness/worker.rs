@@ -79,13 +79,7 @@ impl BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<CommandOutput> {
-        let first_token = command_string.split_whitespace().next();
-        let command_to_run = if first_token == Some("metis") {
-            let metis_path = metis_bin();
-            command_string.replacen("metis", &metis_path.to_string_lossy(), 1)
-        } else {
-            command_string.to_string()
-        };
+        let command_to_run = replace_metis_in_command(command_string);
 
         let output = tokio::process::Command::new("bash")
             .arg("-c")
@@ -150,6 +144,90 @@ impl WorkerCommands for BashCommands {
 
 fn metis_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_metis"))
+}
+
+/// Replace all command-position occurrences of `metis` in a shell command
+/// string with the test binary path. Handles compound commands joined by
+/// `&&`, `||`, `;`, or `|`.
+fn replace_metis_in_command(command_string: &str) -> String {
+    let metis_path = metis_bin();
+    let metis_path_str = metis_path.to_string_lossy();
+    let mut result = String::with_capacity(command_string.len());
+    let mut remaining = command_string;
+
+    // Process the first segment, then each subsequent segment after a shell operator.
+    loop {
+        let trimmed = remaining.trim_start();
+        if trimmed.starts_with("metis")
+            && trimmed[5..]
+                .chars()
+                .next()
+                .is_none_or(|c| c.is_whitespace())
+        {
+            // Preserve leading whitespace, then replace "metis"
+            let leading_ws = &remaining[..remaining.len() - trimmed.len()];
+            result.push_str(leading_ws);
+            result.push_str(&metis_path_str);
+            remaining = &trimmed[5..];
+        }
+
+        // Find the next shell operator
+        if let Some((before, op, after)) = find_next_shell_operator(remaining) {
+            result.push_str(before);
+            result.push_str(op);
+            remaining = after;
+        } else {
+            result.push_str(remaining);
+            break;
+        }
+    }
+
+    result
+}
+
+/// Find the next shell operator (`&&`, `||`, `;`, or `|`) in the string,
+/// returning the text before it, the operator itself, and the text after.
+/// Respects single and double quotes.
+fn find_next_shell_operator(s: &str) -> Option<(&str, &str, &str)> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    i += 1;
+                }
+                i += 1; // skip closing quote
+            }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' {
+                        i += 1; // skip escaped char
+                    }
+                    i += 1;
+                }
+                i += 1; // skip closing quote
+            }
+            b'&' if i + 1 < bytes.len() && bytes[i + 1] == b'&' => {
+                return Some((&s[..i], "&&", &s[i + 2..]));
+            }
+            b'|' if i + 1 < bytes.len() && bytes[i + 1] == b'|' => {
+                return Some((&s[..i], "||", &s[i + 2..]));
+            }
+            b';' => {
+                return Some((&s[..i], ";", &s[i + 1..]));
+            }
+            b'|' => {
+                return Some((&s[..i], "|", &s[i + 1..]));
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    None
 }
 
 /// Ensure the job's environment variables include the server URL, auth
