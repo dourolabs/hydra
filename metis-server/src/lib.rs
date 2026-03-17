@@ -477,50 +477,55 @@ pub async fn setup_local_auth(
         on_behalf_of: None,
     };
 
-    // Create the actor and user if they don't already exist.
-    match store.get_actor(&actor_name).await {
-        Ok(_) => {
-            info!("local auth actor already exists in store, skipping actor creation");
-        }
-        Err(StoreError::ActorNotFound(_)) => {
-            let (actor, auth_token) = Actor::new_for_user(username.clone());
-            store.add_actor(actor.clone(), &system_actor).await?;
-
-            let user = User::new(
-                username.clone(),
-                None, // no GitHub user ID for PAT-based local mode
-                false,
-            );
-            match store.add_user(user.clone(), &system_actor).await {
-                Ok(()) => {}
-                Err(StoreError::UserAlreadyExists(_)) => {}
-                Err(err) => return Err(err.into()),
-            }
-
-            // Write the auth token to a file if auth_token_file is configured.
-            if let Some(path) = config.auth.auth_token_file() {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!(
-                            "failed to create directory for auth token at {}",
-                            parent.display()
-                        )
-                    })?;
-                }
-                std::fs::write(path, &auth_token)
-                    .with_context(|| format!("failed to write auth token to {}", path.display()))?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                        .with_context(|| {
-                            format!("failed to set permissions on {}", path.display())
-                        })?;
-                }
-                info!("auth token written to {}", path.display());
-            }
-        }
+    // Create or update the actor and user, always regenerating the auth token
+    // so the token file stays in sync with the DB even across re-init scenarios.
+    let actor_exists = match store.get_actor(&actor_name).await {
+        Ok(_) => true,
+        Err(StoreError::ActorNotFound(_)) => false,
         Err(err) => return Err(err.into()),
+    };
+
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
+
+    if actor_exists {
+        store.update_actor(actor.clone(), &system_actor).await?;
+        info!("local auth actor updated with fresh token");
+    } else {
+        store.add_actor(actor.clone(), &system_actor).await?;
+        info!("local auth actor created");
+    }
+
+    // Ensure the user record exists (idempotent).
+    let user = User::new(
+        username.clone(),
+        None, // no GitHub user ID for PAT-based local mode
+        false,
+    );
+    match store.add_user(user.clone(), &system_actor).await {
+        Ok(()) => {}
+        Err(StoreError::UserAlreadyExists(_)) => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    // Write the auth token to a file if auth_token_file is configured.
+    if let Some(path) = config.auth.auth_token_file() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create directory for auth token at {}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(path, &auth_token)
+            .with_context(|| format!("failed to write auth token to {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+        }
+        info!("auth token written to {}", path.display());
     }
 
     // Always store the GitHub PAT from config into the encrypted secret store.

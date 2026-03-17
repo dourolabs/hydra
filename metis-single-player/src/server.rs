@@ -135,6 +135,10 @@ fn cmd_init() -> Result<()> {
         build_worker_image();
     }
 
+    // Delete any stale auth-token file from a previous run so that
+    // wait_for_auth_token() only returns once the server has written a fresh one.
+    let _ = fs::remove_file(expand_path(AUTH_TOKEN_PATH));
+
     // Start the server in-process so it creates the local user and auth token.
     println!("Starting server...");
     start_server_in_process()?;
@@ -145,6 +149,9 @@ fn cmd_init() -> Result<()> {
     // Wait for the auth token file to appear (the server writes it on startup).
     let token_path = expand_path(AUTH_TOKEN_PATH);
     let auth_token = wait_for_auth_token(&token_path)?;
+
+    // Verify the token actually works before proceeding.
+    verify_auth_token(&auth_token)?;
 
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
     config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
@@ -639,6 +646,17 @@ fn wait_for_auth_token(token_path: &Path) -> Result<String> {
          The server may have failed to start — check logs with `metis server logs`.",
         token_path.display()
     );
+}
+
+/// Verify that the auth token is accepted by the server by calling GET /v1/whoami.
+fn verify_auth_token(auth_token: &str) -> Result<()> {
+    let client = MetisClient::new(LOCAL_SERVER_URL, auth_token)?;
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    rt.block_on(client.whoami()).context(
+        "auth token verification failed — the server rejected the token. \
+         Try removing ~/.metis/server and running `metis server init` again.",
+    )?;
+    Ok(())
 }
 
 fn wait_for_server_healthy() -> Result<()> {

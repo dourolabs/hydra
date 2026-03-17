@@ -148,10 +148,10 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Calling setup_local_auth twice with the same persistent store should reuse
-/// the existing actor and leave the token file unchanged.
+/// Calling setup_local_auth twice with the same persistent store regenerates
+/// the token and updates the actor hash so the new token file is always valid.
 #[tokio::test]
-async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()> {
+async fn setup_local_auth_regenerates_token_on_reinit() -> anyhow::Result<()> {
     let tmp_dir = tempfile::TempDir::new()?;
     let token_path = tmp_dir.path().join("auth-token");
 
@@ -170,22 +170,101 @@ async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()>
     let token_after_first = std::fs::read_to_string(&token_path)?;
     assert!(!token_after_first.is_empty());
 
-    // Second call with the SAME store: actor exists, so actor creation is
-    // skipped and the token file remains unchanged.
+    // Second call with the SAME store: actor exists, token is regenerated.
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     let token_after_second = std::fs::read_to_string(&token_path)?;
-    assert_eq!(
-        token_after_first, token_after_second,
-        "auth token should be stable across server restarts"
+    assert!(
+        !token_after_second.is_empty(),
+        "token file should be non-empty after re-init"
     );
 
-    // The actor in the store should still verify the original token.
+    // The new token should verify against the updated actor hash.
     let actor = store.as_ref().get_actor("u-local").await?;
-    let parsed = AuthToken::parse(&token_after_first)?;
+    let parsed_new = AuthToken::parse(&token_after_second)?;
+    assert!(
+        actor.item.verify_auth_token(&parsed_new),
+        "actor should verify the newly generated token"
+    );
+
+    Ok(())
+}
+
+/// When a stale token file exists but the actor is gone (e.g., DB was deleted),
+/// setup_local_auth creates a fresh actor and overwrites the token file.
+#[tokio::test]
+async fn setup_local_auth_overwrites_stale_token_file() -> anyhow::Result<()> {
+    let tmp_dir = tempfile::TempDir::new()?;
+    let token_path = tmp_dir.path().join("auth-token");
+
+    // Simulate a stale token file from a previous run.
+    std::fs::write(&token_path, "u-local:stale-token-value")?;
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: Some(token_path.clone()),
+    };
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    // The token file should have been overwritten with a valid token.
+    let token = std::fs::read_to_string(&token_path)?;
+    assert_ne!(
+        token, "u-local:stale-token-value",
+        "stale token should be replaced"
+    );
+
+    let actor = store.as_ref().get_actor("u-local").await?;
+    let parsed = AuthToken::parse(&token)?;
     assert!(
         actor.item.verify_auth_token(&parsed),
-        "actor should verify the persisted token after restart"
+        "actor should verify the fresh token that replaced the stale one"
+    );
+
+    Ok(())
+}
+
+/// When the actor exists in the DB but the token file was deleted,
+/// setup_local_auth regenerates the token and writes a new file.
+#[tokio::test]
+async fn setup_local_auth_recreates_deleted_token_file() -> anyhow::Result<()> {
+    let tmp_dir = tempfile::TempDir::new()?;
+    let token_path = tmp_dir.path().join("auth-token");
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: Some(token_path.clone()),
+    };
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+
+    // First call: creates actor and writes token file.
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+    assert!(token_path.exists());
+
+    // Simulate token file deletion (e.g., user deleted config dir but DB persists).
+    std::fs::remove_file(&token_path)?;
+    assert!(!token_path.exists());
+
+    // Second call: actor exists, token file is recreated.
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    assert!(token_path.exists(), "token file should be recreated");
+    let token = std::fs::read_to_string(&token_path)?;
+    assert!(!token.is_empty());
+
+    let actor = store.as_ref().get_actor("u-local").await?;
+    let parsed = AuthToken::parse(&token)?;
+    assert!(
+        actor.item.verify_auth_token(&parsed),
+        "actor should verify the recreated token"
     );
 
     Ok(())
