@@ -3156,7 +3156,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
-        let agent = row_to_agent(row);
+        let agent = row_to_agent(row)?;
         if agent.deleted {
             return Err(StoreError::AgentNotFound(name.to_string()));
         }
@@ -3173,7 +3173,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        Ok(rows.into_iter().map(row_to_agent).collect())
+        rows.into_iter().map(row_to_agent).collect()
     }
 
     // ---- Label (read-only) ----
@@ -4531,9 +4531,10 @@ fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
     })
 }
 
-fn row_to_agent(row: AgentRow) -> Agent {
-    let secrets: Vec<String> = serde_json::from_value(row.secrets).unwrap_or_default();
-    Agent {
+fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
+    let secrets: Vec<String> = serde_json::from_value(row.secrets)
+        .map_err(|e| StoreError::Internal(format!("invalid secrets JSON in database: {e}")))?;
+    Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
         max_tries: row.max_tries,
@@ -4543,7 +4544,7 @@ fn row_to_agent(row: AgentRow) -> Agent {
         deleted: row.deleted,
         created_at: row.created_at,
         updated_at: row.updated_at,
-    }
+    })
 }
 
 /// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
@@ -6789,6 +6790,53 @@ mod tests {
         assert_eq!(fetched.max_simultaneous, 12);
         assert!(!fetched.is_assignment_agent);
         assert!(!fetched.deleted);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_secrets_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create agent with secrets
+        let agent = Agent::new(
+            "swe".to_string(),
+            "/agents/swe/prompt.md".to_string(),
+            3,
+            i32::MAX,
+            false,
+            vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
+        );
+        store.add_agent(agent).await.unwrap();
+
+        // GET — verify secrets persisted
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(
+            fetched.secrets,
+            vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()]
+        );
+
+        // UPDATE — change secrets
+        let mut updated = fetched;
+        updated.secrets = vec!["NEW_SECRET".to_string()];
+        store.update_agent(updated).await.unwrap();
+
+        let fetched2 = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched2.secrets, vec!["NEW_SECRET".to_string()]);
+
+        // LIST — verify secrets appear in list results
+        let list = store.list_agents().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].secrets, vec!["NEW_SECRET".to_string()]);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_default_secrets_is_empty_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        store.add_agent(sample_agent()).await.unwrap();
+
+        let fetched = store.get_agent("test-agent").await.unwrap();
+        assert!(fetched.secrets.is_empty());
     }
 
     #[sqlx::test(migrations = "./migrations")]

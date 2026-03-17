@@ -337,8 +337,15 @@ mod tests {
             max_simultaneous: 4,
             is_assignment_agent: false,
         };
-        let response =
-            AgentResponse::new(AgentRecord::new("writer", "draft this", "", 2, 4, false, Vec::new()));
+        let response = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft this",
+            "",
+            2,
+            4,
+            false,
+            Vec::new(),
+        ));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
@@ -413,9 +420,24 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
-        let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false, Vec::new()));
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "revised",
+            "",
+            3,
+            10,
+            false,
+            Vec::new(),
+        ));
 
         let prompt_file = write_prompt_file("revised");
 
@@ -460,10 +482,24 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
-        let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            true,
+            Vec::new(),
+        ));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -504,10 +540,24 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
-        let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            true,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -548,10 +598,24 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
-        let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            true,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            3,
+            i32::MAX,
+            true,
+            Vec::new(),
+        ));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
