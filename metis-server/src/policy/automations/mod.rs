@@ -5,6 +5,7 @@ pub mod kill_tasks_on_failure;
 pub mod notification_automation;
 pub mod patch_workflow;
 mod review_helpers;
+pub mod spawn_sessions;
 pub mod start_created_sessions;
 pub mod sync_review_request_issues;
 
@@ -14,5 +15,6 @@ pub use inbox_label::InboxLabelAutomation;
 pub use kill_tasks_on_failure::KillTasksOnFailureAutomation;
 pub use notification_automation::NotificationAutomation;
 pub use patch_workflow::PatchWorkflowAutomation;
+pub use spawn_sessions::SpawnSessionsAutomation;
 pub use start_created_sessions::StartCreatedSessionsAutomation;
 pub use sync_review_request_issues::SyncReviewRequestIssuesAutomation;
