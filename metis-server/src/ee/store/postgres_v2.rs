@@ -3481,16 +3481,26 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_relationships_transitive(
         &self,
-        source_id: Option<&MetisId>,
-        target_id: Option<&MetisId>,
+        source_ids: &[MetisId],
+        target_ids: &[MetisId],
         rel_type: crate::store::RelationshipType,
     ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
-        let (sql, start_id) = if let Some(sid) = source_id {
-            let sql = format!(
+        if source_ids.is_empty() && target_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids: Vec<&str> = if !source_ids.is_empty() {
+            source_ids.iter().map(|id| id.as_ref()).collect()
+        } else {
+            target_ids.iter().map(|id| id.as_ref()).collect()
+        };
+
+        let sql = if !source_ids.is_empty() {
+            format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
-                     WHERE source_id = $1 AND rel_type = $2 \
+                     WHERE source_id = ANY($1) AND rel_type = $2 \
                    UNION \
                      SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
@@ -3499,14 +3509,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            );
-            (sql, sid.as_ref())
-        } else if let Some(tid) = target_id {
-            let sql = format!(
+            )
+        } else {
+            format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
-                     WHERE target_id = $1 AND rel_type = $2 \
+                     WHERE target_id = ANY($1) AND rel_type = $2 \
                    UNION \
                      SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
@@ -3515,14 +3524,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            );
-            (sql, tid.as_ref())
-        } else {
-            return Ok(Vec::new());
+            )
         };
 
         let rows = sqlx::query_as::<_, ObjectRelationshipRow>(&sql)
-            .bind(start_id)
+            .bind(&ids)
             .bind(rel_type.as_str())
             .fetch_all(&self.pool)
             .await
@@ -7403,7 +7409,7 @@ mod tests {
 
         // Forward transitive from A following child-of
         let results = store
-            .get_relationships_transitive(Some(&a), None, RelationshipType::ChildOf)
+            .get_relationships_transitive(&[a.clone()], &[], RelationshipType::ChildOf)
             .await
             .unwrap();
         // Should find A->B and B->C, but NOT B->P
@@ -7416,14 +7422,14 @@ mod tests {
 
         // Backward transitive from C following child-of
         let results = store
-            .get_relationships_transitive(None, Some(&c), RelationshipType::ChildOf)
+            .get_relationships_transitive(&[], &[c.clone()], RelationshipType::ChildOf)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Transitive has-patch from B should only find B->P
         let results = store
-            .get_relationships_transitive(Some(&b), None, RelationshipType::HasPatch)
+            .get_relationships_transitive(&[b.clone()], &[], RelationshipType::HasPatch)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

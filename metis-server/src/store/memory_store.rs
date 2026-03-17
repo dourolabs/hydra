@@ -1396,18 +1396,21 @@ impl ReadOnlyStore for MemoryStore {
 
     async fn get_relationships_transitive(
         &self,
-        source_id: Option<&MetisId>,
-        target_id: Option<&MetisId>,
+        source_ids: &[MetisId],
+        target_ids: &[MetisId],
         rel_type: super::RelationshipType,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
-        if let Some(start) = source_id {
+        if !source_ids.is_empty() {
             // Forward traversal: follow source -> target edges
             let mut queue = std::collections::VecDeque::new();
-            queue.push_back(start.clone());
-            visited.insert(start.clone());
+            for start in source_ids {
+                if visited.insert(start.clone()) {
+                    queue.push_back(start.clone());
+                }
+            }
 
             while let Some(current) = queue.pop_front() {
                 for entry in self.object_relationships.iter() {
@@ -1420,11 +1423,14 @@ impl ReadOnlyStore for MemoryStore {
                     }
                 }
             }
-        } else if let Some(start) = target_id {
+        } else if !target_ids.is_empty() {
             // Backward traversal: follow target -> source edges
             let mut queue = std::collections::VecDeque::new();
-            queue.push_back(start.clone());
-            visited.insert(start.clone());
+            for start in target_ids {
+                if visited.insert(start.clone()) {
+                    queue.push_back(start.clone());
+                }
+            }
 
             while let Some(current) = queue.pop_front() {
                 for entry in self.object_relationships.iter() {
@@ -7121,7 +7127,7 @@ mod tests {
 
         // Forward transitive from A following child-of
         let results = store
-            .get_relationships_transitive(Some(&a), None, RelationshipType::ChildOf)
+            .get_relationships_transitive(&[a.clone()], &[], RelationshipType::ChildOf)
             .await
             .unwrap();
         // Should find A->B and B->C, but NOT B->P
@@ -7134,14 +7140,14 @@ mod tests {
 
         // Backward transitive from C following child-of
         let results = store
-            .get_relationships_transitive(None, Some(&c), RelationshipType::ChildOf)
+            .get_relationships_transitive(&[], &[c.clone()], RelationshipType::ChildOf)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Transitive has-patch from B should only find B->P
         let results = store
-            .get_relationships_transitive(Some(&b), None, RelationshipType::HasPatch)
+            .get_relationships_transitive(&[b.clone()], &[], RelationshipType::HasPatch)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

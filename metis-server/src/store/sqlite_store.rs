@@ -3480,52 +3480,69 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_relationships_transitive(
         &self,
-        source_id: Option<&MetisId>,
-        target_id: Option<&MetisId>,
+        source_ids: &[MetisId],
+        target_ids: &[MetisId],
         rel_type: super::RelationshipType,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
-        let (sql, start_id) = if let Some(sid) = source_id {
-            let sql = format!(
+        if source_ids.is_empty() && target_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sql = if !source_ids.is_empty() {
+            let placeholders = (1..=source_ids.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let rel_param = source_ids.len() + 1;
+            format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
-                     WHERE source_id = ?1 AND rel_type = ?2 \
+                     WHERE source_id IN ({placeholders}) AND rel_type = ?{rel_param} \
                    UNION \
                      SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.source_id = tr.target_id \
-                     WHERE r.rel_type = ?2 \
+                     WHERE r.rel_type = ?{rel_param} \
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            );
-            (sql, sid.as_ref())
-        } else if let Some(tid) = target_id {
-            let sql = format!(
+            )
+        } else {
+            let placeholders = (1..=target_ids.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let rel_param = target_ids.len() + 1;
+            format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
-                     WHERE target_id = ?1 AND rel_type = ?2 \
+                     WHERE target_id IN ({placeholders}) AND rel_type = ?{rel_param} \
                    UNION \
                      SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.target_id = tr.source_id \
-                     WHERE r.rel_type = ?2 \
+                     WHERE r.rel_type = ?{rel_param} \
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            );
-            (sql, tid.as_ref())
-        } else {
-            return Ok(Vec::new());
+            )
         };
 
-        let rows = sqlx::query_as::<_, ObjectRelationshipRow>(&sql)
-            .bind(start_id)
-            .bind(rel_type.as_str())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
+        let ids: &[MetisId] = if !source_ids.is_empty() {
+            source_ids
+        } else {
+            target_ids
+        };
+
+        let mut query = sqlx::query_as::<_, ObjectRelationshipRow>(&sql);
+        for id in ids {
+            query = query.bind(id.as_ref());
+        }
+        query = query.bind(rel_type.as_str());
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
         rows.into_iter().map(parse_relationship_row).collect()
     }
 
@@ -7537,7 +7554,7 @@ mod tests {
 
         // Forward transitive from A following child-of
         let results = store
-            .get_relationships_transitive(Some(&a), None, RelationshipType::ChildOf)
+            .get_relationships_transitive(&[a.clone()], &[], RelationshipType::ChildOf)
             .await
             .unwrap();
         // Should find A->B and B->C, but NOT B->P
@@ -7550,14 +7567,14 @@ mod tests {
 
         // Backward transitive from C following child-of
         let results = store
-            .get_relationships_transitive(None, Some(&c), RelationshipType::ChildOf)
+            .get_relationships_transitive(&[], &[c.clone()], RelationshipType::ChildOf)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Transitive has-patch from B should only find B->P
         let results = store
-            .get_relationships_transitive(Some(&b), None, RelationshipType::HasPatch)
+            .get_relationships_transitive(&[b.clone()], &[], RelationshipType::HasPatch)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
