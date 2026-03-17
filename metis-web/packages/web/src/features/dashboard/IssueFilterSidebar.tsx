@@ -167,8 +167,6 @@ export function IssueFilterSidebar({
     return computeLabelProgress(labels, allIssues, isActiveMap, username);
   }, [labels, allIssues, isActiveMap, username]);
 
-  if (labelProgressList.length === 0) return null;
-
   const renderIssueList = (hideWhenCollapsed: boolean) => (
     <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
       <FilterItem
