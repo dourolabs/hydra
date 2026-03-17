@@ -10,7 +10,6 @@ pub fn build_bff_router(inner_app: Router, auto_login_token: String) -> Router {
     let config = BffConfig {
         cookie_secure: false,
         frontend_assets: FrontendAssets::Embedded,
-        cache: None,
     };
     let bff_state = BffState::new(upstream, config, Some(auto_login_token));
     metis_bff::build_bff_router(bff_state)

@@ -13,10 +13,7 @@ path = "src/main.rs"
 [dependencies]
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
-dashmap = "6.1"
-futures = "0.3"
 http = "1"
-metis = { path = "../metis" }
 metis-common = { path = "../metis-common" }
 mime_guess = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
