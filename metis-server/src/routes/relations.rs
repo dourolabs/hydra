@@ -152,13 +152,18 @@ pub async fn list_relations(
             .await
             .map_err(map_store_error)?;
     } else if transitive {
-        // Transitive mode
-        relations = store
-            .get_relationships_transitive(
-                query.source_id.as_ref(),
-                query.target_id.as_ref(),
-                rel_type.expect("validated above"),
+        // Transitive mode: convert source_id/target_id into (id, direction)
+        let (id, direction) = if let Some(ref sid) = query.source_id {
+            (sid, crate::store::TransitiveDirection::Forward)
+        } else {
+            // target_id must be Some (validated by XOR check above)
+            (
+                query.target_id.as_ref().unwrap(),
+                crate::store::TransitiveDirection::Backward,
             )
+        };
+        relations = store
+            .get_relationships_transitive(id, direction, rel_type.expect("validated above"))
             .await
             .map_err(map_store_error)?;
     } else {
