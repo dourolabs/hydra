@@ -191,6 +191,9 @@ export function useSSE(): SSEConnectionState {
     (eventType: string, data: EntityEventData) => {
       const { entity_type, entity_id, entity } = data;
 
+      // Ignore events without entity data (e.g., if the server failed to serialize)
+      if (entity == null) return;
+
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
