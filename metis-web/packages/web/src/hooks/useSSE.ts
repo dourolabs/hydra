@@ -215,6 +215,10 @@ export function useSSE(): SSEConnectionState {
             }
           }
         }
+        // Invalidate paginated issue list and badge counts so the dashboard
+        // live-updates when issues are created, updated, or deleted.
+        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+        queryClient.invalidateQueries({ queryKey: ["issueCount"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
