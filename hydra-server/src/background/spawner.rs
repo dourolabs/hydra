@@ -185,6 +185,103 @@ impl AgentQueue {
             .map(|v| v as i32)
             .unwrap_or(self.agent.max_tries)
     }
+
+    /// Check whether a single issue is eligible for spawning and, if so,
+    /// build and return the session. This is the per-issue counterpart of the
+    /// bulk `spawn()` method and is intended for event-driven automations that
+    /// already know which issue to evaluate.
+    pub(crate) async fn spawn_for_issue(
+        &self,
+        state: &AppState,
+        issue_id: &IssueId,
+        issue: &Issue,
+        task_state: &AgentTaskState,
+    ) -> anyhow::Result<Option<Session>> {
+        // Assignment check.
+        if self.agent.is_assignment_agent {
+            if let Some(name) = &issue.assignee {
+                if name != &self.agent.name {
+                    return Ok(None);
+                }
+            }
+        } else if issue.assignee.as_deref() != Some(self.agent.name.as_str()) {
+            return Ok(None);
+        }
+
+        // Skip terminal issues.
+        if matches!(
+            issue.status,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        ) {
+            return Ok(None);
+        }
+
+        // Dependency readiness.
+        let is_ready = state
+            .is_issue_ready(issue_id)
+            .await
+            .context("failed to determine if issue is ready")?;
+        if !is_ready {
+            return Ok(None);
+        }
+
+        // Capacity check.
+        let active_tasks = task_state.running_tasks + task_state.pending_tasks;
+        let max_simultaneous = self.agent.max_simultaneous as usize;
+        if max_simultaneous == 0 || active_tasks >= max_simultaneous {
+            return Ok(None);
+        }
+
+        // Already has an active session.
+        if task_state.existing_issue_ids.contains(issue_id) {
+            return Ok(None);
+        }
+
+        // Parent has a running task.
+        if parent_has_running_task(state, issue).await? {
+            return Ok(None);
+        }
+
+        // Resolve prompt.
+        let prompt = state
+            .resolve_agent_prompt(&self.agent.prompt_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to fetch prompt for agent '{}' at path '{}'",
+                    self.agent.name, self.agent.prompt_path
+                )
+            })?;
+
+        let maybe_task = self.build_task(state, issue_id, issue, &prompt).await?;
+        let Some(task) = maybe_task else {
+            return Ok(None);
+        };
+
+        // Spawn attempt tracking.
+        let max_tries = self.max_tries_for_issue(issue);
+        let children_snapshot = {
+            let child_ids = state.get_issue_children(issue_id).await.unwrap_or_default();
+            let mut snapshot = HashMap::new();
+            for child_id in child_ids {
+                if let Ok(child) = state.get_issue(&child_id, false).await {
+                    snapshot.insert(child_id, child.version);
+                }
+            }
+            snapshot
+        };
+        if !self
+            .register_spawn_attempt(issue_id, issue.status, children_snapshot, max_tries)
+            .await
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(task))
+    }
 }
 
 #[async_trait]
@@ -312,13 +409,13 @@ impl Spawner for AgentQueue {
     }
 }
 
-struct AgentTaskState {
-    existing_issue_ids: HashSet<IssueId>,
-    running_tasks: usize,
-    pending_tasks: usize,
+pub(crate) struct AgentTaskState {
+    pub(crate) existing_issue_ids: HashSet<IssueId>,
+    pub(crate) running_tasks: usize,
+    pub(crate) pending_tasks: usize,
 }
 
-async fn agent_task_state(
+pub(crate) async fn agent_task_state(
     state: &AppState,
     agent_name: &str,
 ) -> Result<AgentTaskState, StoreError> {
@@ -359,7 +456,10 @@ async fn agent_task_state(
     Ok(task_state)
 }
 
-async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool, StoreError> {
+pub(crate) async fn parent_has_running_task(
+    state: &AppState,
+    issue: &Issue,
+) -> Result<bool, StoreError> {
     for dependency in issue
         .dependencies
         .iter()

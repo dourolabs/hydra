@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::app::event_bus::{EventType, ServerEvent};
 use crate::background::spawner::SharedSpawnAttempts;
-use crate::background::{AgentQueue, Spawner};
+use crate::background::{AgentQueue, agent_task_state};
 use crate::domain::actors::ActorRef;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
@@ -86,10 +86,47 @@ impl Automation for SpawnSessionsAutomation {
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
-        for agent in &queues {
-            match agent.spawn(ctx.app_state).await {
-                Ok(tasks) => {
-                    for task in tasks {
+        // Collect the issues to evaluate based on the event type.
+        let target_issues: Vec<_> = match ctx.event {
+            ServerEvent::IssueCreated { issue_id, .. }
+            | ServerEvent::IssueUpdated { issue_id, .. } => {
+                // For issue events, evaluate only the specific issue.
+                match ctx.app_state.get_issue(issue_id, false).await {
+                    Ok(versioned) => vec![(issue_id.clone(), versioned.item)],
+                    Err(_) => vec![],
+                }
+            }
+            _ => {
+                // For session events (and any other), capacity may have changed
+                // so we need to scan all issues.
+                ctx.app_state
+                    .list_issues()
+                    .await
+                    .map_err(|e| {
+                        AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}"))
+                    })?
+                    .into_iter()
+                    .map(|(id, v)| (id, v.item))
+                    .collect()
+            }
+        };
+
+        for queue in &queues {
+            let task_state = agent_task_state(ctx.app_state, &queue.agent.name)
+                .await
+                .map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "failed to get task state for agent '{}': {e}",
+                        queue.agent.name
+                    ))
+                })?;
+
+            for (issue_id, issue) in &target_issues {
+                match queue
+                    .spawn_for_issue(ctx.app_state, issue_id, issue, &task_state)
+                    .await
+                {
+                    Ok(Some(task)) => {
                         match ctx
                             .app_state
                             .add_session(task, chrono::Utc::now(), actor.clone())
@@ -98,7 +135,7 @@ impl Automation for SpawnSessionsAutomation {
                             Ok(session_id) => {
                                 tracing::info!(
                                     automation = AUTOMATION_NAME,
-                                    agent = agent.name(),
+                                    agent = queue.agent.name,
                                     session_id = %session_id,
                                     event = ?event_summary(ctx.event),
                                     "spawned session"
@@ -107,21 +144,23 @@ impl Automation for SpawnSessionsAutomation {
                             Err(err) => {
                                 tracing::warn!(
                                     automation = AUTOMATION_NAME,
-                                    agent = agent.name(),
+                                    agent = queue.agent.name,
                                     error = %err,
                                     "failed to add spawned session"
                                 );
                             }
                         }
                     }
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        agent = agent.name(),
-                        error = %err,
-                        "agent spawn check failed"
-                    );
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            automation = AUTOMATION_NAME,
+                            agent = queue.agent.name,
+                            issue_id = %issue_id,
+                            error = %err,
+                            "spawn_for_issue check failed"
+                        );
+                    }
                 }
             }
         }
