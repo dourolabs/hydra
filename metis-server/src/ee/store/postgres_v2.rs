@@ -1733,6 +1733,19 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         bindings.push(spawned_from.as_ref().to_string());
     }
 
+    if !query.spawned_from_ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .spawned_from_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("spawned_from IN ({})", placeholders.join(", ")));
+        for id in &query.spawned_from_ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -7511,5 +7524,65 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].target_id, p);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_sessions_filters_by_spawned_from_ids(pool: PgStorePool) {
+        let store = Arc::new(PostgresStoreV2::new(pool));
+        let handles = test_state_with_store(store.clone());
+
+        let (issue_a, _) = handles
+            .store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_b, _) = handles
+            .store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_c, _) = handles
+            .store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_a = sample_session();
+        task_a.spawned_from = Some(issue_a.clone());
+        let (task_a_id, _) = handles
+            .store
+            .add_session(task_a, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_b = sample_session();
+        task_b.spawned_from = Some(issue_b.clone());
+        let (task_b_id, _) = handles
+            .store
+            .add_session(task_b, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_c = sample_session();
+        task_c.spawned_from = Some(issue_c.clone());
+        handles
+            .store
+            .add_session(task_c, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter by spawned_from_ids should return only matching sessions
+        let mut query = SearchSessionsQuery::default();
+        query.spawned_from_ids = vec![issue_a.clone(), issue_b.clone()];
+        let sessions: HashSet<_> = handles
+            .store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(sessions, HashSet::from([task_a_id, task_b_id]));
     }
 }
