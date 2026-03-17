@@ -1,4 +1,4 @@
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type {
   IssueSummaryRecord,
@@ -39,25 +39,23 @@ interface CollectedSet {
 // ---------------------------------------------------------------------------
 
 function useExpandedChildRelations(pageIssueIds: string[]) {
-  const results = useQueries({
-    queries: pageIssueIds.map((id) => ({
-      queryKey: ["relations", "child-of", "transitive", id],
-      queryFn: () =>
-        apiClient.listRelations({
-          target_id: id,
-          rel_type: "child-of",
-          transitive: true,
-        }),
-      enabled: pageIssueIds.length > 0,
-      staleTime: 30_000,
-      select: (data: { relations: RelationResponse[] }) => data.relations,
-    })),
-    combine: (queryResults) => ({
-      data: queryResults.flatMap((r) => r.data ?? []),
-      isLoading: queryResults.some((r) => r.isLoading),
-    }),
+  const sortedIds = useMemo(
+    () => [...pageIssueIds].sort(),
+    [pageIssueIds],
+  );
+  const targetIds = sortedIds.join(",");
+  return useQuery({
+    queryKey: ["relations", "child-of", "transitive", ...sortedIds],
+    queryFn: () =>
+      apiClient.listRelations({
+        target_ids: targetIds,
+        rel_type: "child-of",
+        transitive: true,
+      }),
+    enabled: pageIssueIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.relations,
   });
-  return results;
 }
 
 // ---------------------------------------------------------------------------
