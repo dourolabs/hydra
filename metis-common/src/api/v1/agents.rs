@@ -24,6 +24,8 @@ pub struct AgentRecord {
     pub max_simultaneous: i32,
     #[serde(default)]
     pub is_assignment_agent: bool,
+    #[serde(default)]
+    pub secrets: Vec<String>,
 }
 
 impl AgentRecord {
@@ -34,6 +36,7 @@ impl AgentRecord {
         max_tries: i32,
         max_simultaneous: i32,
         is_assignment_agent: bool,
+        secrets: Vec<String>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -42,6 +45,7 @@ impl AgentRecord {
             max_tries,
             max_simultaneous,
             is_assignment_agent,
+            secrets,
         }
     }
 }
@@ -61,6 +65,8 @@ pub struct UpsertAgentRequest {
     pub max_simultaneous: i32,
     #[serde(default)]
     pub is_assignment_agent: bool,
+    #[serde(default)]
+    pub secrets: Vec<String>,
 }
 
 impl UpsertAgentRequest {
@@ -77,6 +83,7 @@ impl UpsertAgentRequest {
             max_tries,
             max_simultaneous,
             is_assignment_agent: false,
+            secrets: Vec::new(),
         }
     }
 }
@@ -90,6 +97,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
             is_assignment_agent: request.is_assignment_agent,
+            secrets: request.secrets,
         }
     }
 }
@@ -103,6 +111,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
             is_assignment_agent: record.is_assignment_agent,
+            secrets: record.secrets,
         }
     }
 }

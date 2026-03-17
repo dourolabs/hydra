@@ -188,6 +188,7 @@ mod tests {
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
+            Vec::new(),
         );
         handles.store.add_agent(agent).await?;
 

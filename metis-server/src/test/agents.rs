@@ -32,6 +32,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             3,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
+            Vec::new(),
         );
         store.add_agent(agent).await.unwrap();
 

@@ -725,7 +725,8 @@
       "prompt_path": "/agents/swe/prompt.md",
       "max_tries": 3,
       "max_simultaneous": 5,
-      "is_assignment_agent": true
+      "is_assignment_agent": true,
+      "secrets": []
     },
     "reviewer": {
       "name": "reviewer",
@@ -733,7 +734,8 @@
       "prompt_path": "/agents/reviewer/prompt.md",
       "max_tries": 1,
       "max_simultaneous": 5,
-      "is_assignment_agent": false
+      "is_assignment_agent": false,
+      "secrets": []
     },
     "ops": {
       "name": "ops",
@@ -741,7 +743,8 @@
       "prompt_path": "/agents/ops/prompt.md",
       "max_tries": 2,
       "max_simultaneous": 3,
-      "is_assignment_agent": false
+      "is_assignment_agent": false,
+      "secrets": []
     }
   },
   "labels": {

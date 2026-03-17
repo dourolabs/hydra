@@ -544,6 +544,7 @@ impl TestHarnessBuilder {
                 3,
                 10,
                 is_assignment,
+                Vec::new(),
             );
             store
                 .add_agent(agent)

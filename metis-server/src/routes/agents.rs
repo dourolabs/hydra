@@ -161,6 +161,7 @@ fn normalize_and_build_agent(
         payload.max_tries,
         payload.max_simultaneous,
         payload.is_assignment_agent,
+        payload.secrets,
     );
 
     Ok((agent, prompt_text))
@@ -182,6 +183,7 @@ fn agent_to_record(agent: Agent, prompt: String) -> AgentRecord {
         agent.max_tries,
         agent.max_simultaneous,
         agent.is_assignment_agent,
+        agent.secrets,
     )
 }
 
