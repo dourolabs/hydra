@@ -42,7 +42,7 @@ You can use the `metis server` command to start/stop/check the status of the ser
 ### 3. Add a git repository
 
 Open the frontend at http://localhost:8080/ and click "Create Issue".
-Tell the agent "add the git repo <git url>  " (e.g https://github.com/dourolabs/metis.git).
+Tell the agent "add the git repo (git url)  ".
 The agent will register the repo in the system and additionally work on a Dockerfile with the dependencies your repo needs.
 You can register as many git repositories as you'd like.
 
@@ -55,12 +55,12 @@ When agents have work for you to review, they'll make issues assigned to you.
 ## Core Concepts
 
 A core design principle of Metis is that *agents and humans have equal access*.
-All of the functionality described below is available to your agents -- you can access any of this by simply making an issue for them.
+All of the functionality described below is available to your agents.
 
 ### Issues
 
 All work in Metis is represented by issues. Issues are the fundamental unit of work, assigned to either agents or users. 
-Issues have a statuses, which is typically: `Open`, `InProgress`, `Closed`.
+Issues have a status, which is typically: `Open`, `InProgress`, `Closed` or `Failed`.
 They form a graph with two types of relationships: `blocked-on` (issue X cannot start until Y is closed) and `child-of` (issue X is a subtask of Y).
 The system uses this graph to determine which issues are ready to work on, and automatically spawns agents for ready issues.
 
@@ -75,9 +75,8 @@ Metis comes with three default agents, created automatically during `metis serve
 - **`reviewer`** -- Code review agent. Reviews patches and provides feedback.
 
 Agents are configured on the server settings page, and their prompts and memory are stored in the document store.
-(You can also ask your agents to make more agents.)
 
-### Document Store
+### Documents
 
 The document store is a shared space for markdown artifacts -- design docs, runbooks, agent prompts / memory, and other reference material.
 Check out the documents tab of the frontend to see what's in the store and edit any documents.
