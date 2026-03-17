@@ -44,7 +44,7 @@ use std::{
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
-    /// List Metis issues. Returns summary records with truncated descriptions; use `get` or `describe` for complete details.
+    /// List Hydra issues. Returns summary records with truncated descriptions; use `get` or `describe` for complete details.
     List {
         /// Filter by issue ID.
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]

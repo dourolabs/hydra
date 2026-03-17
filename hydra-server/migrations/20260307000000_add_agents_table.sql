@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS hydra.agents (
+CREATE TABLE IF NOT EXISTS metis.agents (
     name TEXT PRIMARY KEY,
     prompt_path TEXT NOT NULL,
     max_tries INT NOT NULL DEFAULT 3,
@@ -11,5 +11,5 @@ CREATE TABLE IF NOT EXISTS hydra.agents (
 
 -- Enforce at most one non-deleted assignment agent.
 CREATE UNIQUE INDEX agents_assignment_idx
-    ON hydra.agents (is_assignment_agent)
+    ON metis.agents (is_assignment_agent)
     WHERE is_assignment_agent = TRUE AND NOT deleted;

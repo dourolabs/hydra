@@ -496,7 +496,7 @@ fn render_session_records_pretty(
     writer: &mut impl Write,
 ) -> Result<()> {
     if jobs.is_empty() {
-        writeln!(writer, "No Metis sessions found.")?;
+        writeln!(writer, "No Hydra sessions found.")?;
         writer.flush()?;
         return Ok(());
     }
@@ -548,7 +548,7 @@ fn render_session_summary_records_pretty(
     writer: &mut impl Write,
 ) -> Result<()> {
     if jobs.is_empty() {
-        writeln!(writer, "No Metis sessions found.")?;
+        writeln!(writer, "No Hydra sessions found.")?;
         writer.flush()?;
         return Ok(());
     }

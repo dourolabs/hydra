@@ -326,7 +326,7 @@ impl HydraClientUnauthenticated {
     /// Construct a new client with a custom `reqwest::Client`.
     pub fn with_http_client(base_url: impl AsRef<str>, http: HttpClient) -> Result<Self> {
         let url = Url::parse(base_url.as_ref())
-            .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
+            .with_context(|| format!("invalid Hydra server URL '{}'", base_url.as_ref()))?;
 
         Ok(Self {
             base_url: url,
@@ -339,7 +339,7 @@ impl HydraClientUnauthenticated {
         &self.base_url
     }
 
-    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
+    /// Call `POST /v1/login` to exchange a GitHub token for a Hydra login token.
     pub async fn login(&self, request: &LoginRequest) -> Result<(String, HydraClient)> {
         self.login_with_http_client(self.http.clone(), request)
             .await
@@ -420,7 +420,7 @@ impl HydraClient {
         http: HttpClient,
     ) -> Result<Self> {
         let url = Url::parse(base_url.as_ref())
-            .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
+            .with_context(|| format!("invalid Hydra server URL '{}'", base_url.as_ref()))?;
 
         Ok(Self {
             base_url: url,

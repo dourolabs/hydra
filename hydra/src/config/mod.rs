@@ -177,7 +177,7 @@ pub fn store_auth_token(config_path: &Path, server_url: &str, auth_token: &str) 
 }
 
 fn parse_server_url(url: &str) -> Result<Url> {
-    Url::parse(url.trim()).with_context(|| format!("invalid Metis server URL '{url}'"))
+    Url::parse(url.trim()).with_context(|| format!("invalid Hydra server URL '{url}'"))
 }
 
 #[cfg(test)]
