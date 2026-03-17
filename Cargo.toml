@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "metis",
-    "metis-server",
-    "metis-common",
-    "metis-build-cache",
-    "metis-bff",
-    "metis-s3",
-    "metis-single-player",
+    "hydra",
+    "hydra-server",
+    "hydra-common",
+    "hydra-build-cache",
+    "hydra-bff",
+    "hydra-s3",
+    "hydra-single-player",
 ]
 resolver = "2"
 
