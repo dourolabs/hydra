@@ -32,9 +32,12 @@ function makePatch(id: string): PatchVersionRecord {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title: `Patch ${id}`,
+      description: "",
+      diff: "",
       status: "Open",
       is_automatic_backup: false,
       creator: "alice",
+      reviews: [],
       review_summary: { count: 0, approved: false },
       service_repo_name: "test-repo",
     },
