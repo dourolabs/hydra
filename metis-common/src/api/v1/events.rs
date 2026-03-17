@@ -171,7 +171,8 @@ pub struct EntityEventData {
     pub timestamp: DateTime<Utc>,
     /// Full entity state after the mutation, serialized as a version record
     /// (e.g., `IssueVersionRecord`, `SessionVersionRecord`, etc.).
-    pub entity: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<serde_json::Value>,
 }
 
 /// Data payload for the connected event sent on initial SSE connection.

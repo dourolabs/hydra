@@ -166,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn parses_entity_event() {
-        let raw = b"event: job_updated\nid: 5\ndata: {\"entity_type\":\"job\",\"entity_id\":\"s-abcd\",\"version\":3,\"timestamp\":\"2026-01-01T00:00:00Z\",\"entity\":null}\n\n";
+        let raw = b"event: job_updated\nid: 5\ndata: {\"entity_type\":\"job\",\"entity_id\":\"s-abcd\",\"version\":3,\"timestamp\":\"2026-01-01T00:00:00Z\"}\n\n";
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let event = stream.next().await.unwrap().unwrap();

@@ -402,21 +402,15 @@ async fn serialize_entity(
     version: u64,
     timestamp: DateTime<Utc>,
     state: &AppState,
-) -> serde_json::Value {
+) -> Option<serde_json::Value> {
     let value = match payload.as_ref() {
         MutationPayload::Issue { new, .. } => {
             let api_issue: metis_common::api::v1::issues::Issue = new.clone().into();
             let summary = IssueSummary::from(&api_issue);
-            let issue_id: IssueId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse issue ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
             let creation_time = if version == 1 {
                 timestamp
             } else {
+                let issue_id: IssueId = entity_id.parse().ok()?;
                 state
                     .get_issue(&issue_id, true)
                     .await
@@ -424,6 +418,7 @@ async fn serialize_entity(
                     .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
+            let issue_id: IssueId = entity_id.parse().ok()?;
             let labels = state
                 .get_labels_for_object(&metis_common::MetisId::from(issue_id.clone()))
                 .await
@@ -437,23 +432,11 @@ async fn serialize_entity(
                 creation_time,
                 labels,
             );
-            match serde_json::to_value(record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize issue entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(record).ok()?
         }
         MutationPayload::Patch { new, .. } => {
             let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
-            let patch_id: PatchId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse patch ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
+            let patch_id: PatchId = entity_id.parse().ok()?;
             let creation_time = if version == 1 {
                 timestamp
             } else {
@@ -479,22 +462,10 @@ async fn serialize_entity(
             );
             let summary_record =
                 metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
-            match serde_json::to_value(summary_record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize patch entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Session { new, .. } => {
-            let task_id: SessionId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse session ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
+            let task_id: SessionId = entity_id.parse().ok()?;
             let mut api_task: metis_common::api::v1::sessions::Session = new.clone().into();
             if let Ok(log) = state.get_status_log(&task_id).await {
                 api_task.creation_time = log.creation_time();
@@ -510,23 +481,11 @@ async fn serialize_entity(
             );
             let summary_record =
                 metis_common::api::v1::sessions::SessionSummaryRecord::from(&full_record);
-            match serde_json::to_value(summary_record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize session entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
-            let doc_id: DocumentId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse document ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
+            let doc_id: DocumentId = entity_id.parse().ok()?;
             let creation_time = if version == 1 {
                 timestamp
             } else {
@@ -551,22 +510,10 @@ async fn serialize_entity(
                 labels,
             );
             let summary_record = DocumentSummaryRecord::from(&full_record);
-            match serde_json::to_value(summary_record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize document entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Label { new, .. } => {
-            let label_id: LabelId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse label ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
+            let label_id: LabelId = entity_id.parse().ok()?;
             let record = metis_common::api::v1::labels::LabelRecord::new(
                 label_id,
                 new.name.clone(),
@@ -576,26 +523,14 @@ async fn serialize_entity(
                 new.created_at,
                 new.updated_at,
             );
-            match serde_json::to_value(record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize label entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(record).ok()?
         }
         MutationPayload::Message { new, .. } => {
             let api_msg: metis_common::api::v1::messages::Message = new.clone().into();
-            let msg_id: MessageId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse message ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
             let creation_time = if version == 1 {
                 timestamp
             } else {
+                let msg_id: MessageId = entity_id.parse().ok()?;
                 state
                     .store()
                     .get_message(&msg_id)
@@ -605,45 +540,27 @@ async fn serialize_entity(
                     .unwrap_or(timestamp)
             };
             let record = VersionedMessage::new(
-                msg_id,
+                entity_id.parse().ok()?,
                 version,
                 timestamp,
                 api_msg,
                 Some(payload.actor().clone()),
                 creation_time,
             );
-            match serde_json::to_value(record) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize message entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(record).ok()?
         }
         MutationPayload::Notification { new, .. } => {
             let api_notification: metis_common::api::v1::notifications::Notification =
                 new.clone().into();
-            let notification_id: NotificationId = match entity_id.parse() {
-                Ok(id) => id,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to parse notification ID in serialize_entity");
-                    return serde_json::Value::Null;
-                }
-            };
+            let notification_id: NotificationId = entity_id.parse().ok()?;
             let response = metis_common::api::v1::notifications::NotificationResponse::new(
                 notification_id,
                 api_notification,
             );
-            match serde_json::to_value(response) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(entity_id, error = %e, "failed to serialize notification entity");
-                    serde_json::Value::Null
-                }
-            }
+            serde_json::to_value(response).ok()?
         }
     };
-    value
+    Some(value)
 }
 
 /// Converts a ServerEvent into an SSE event type and data payload.
@@ -998,7 +915,7 @@ mod tests {
         assert_eq!(data.entity_id, issue_id.to_string());
         assert_eq!(data.version, 1);
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
 
         // Verify the entity has the shape of an IssueVersionRecord.
@@ -1043,7 +960,9 @@ mod tests {
         let (event_type, data) = server_event_to_sse(&event, &state).await;
 
         assert_eq!(event_type, SseEventType::IssueUpdated);
-        let entity = data.entity;
+        let entity = data
+            .entity
+            .expect("entity should be present for update events");
         let issue_obj = entity.get("issue").expect("should contain issue field");
         assert_eq!(
             issue_obj.get("description").unwrap().as_str().unwrap(),
@@ -1078,7 +997,9 @@ mod tests {
 
         let (_, data) = server_event_to_sse(&event, &state).await;
 
-        let entity = data.entity;
+        let entity = data
+            .entity
+            .expect("entity should be present for delete events");
         let issue_obj = entity.get("issue").expect("should contain issue field");
         assert!(issue_obj.get("deleted").unwrap().as_bool().unwrap());
     }
@@ -1128,7 +1049,7 @@ mod tests {
         assert_eq!(data.entity_type, "job");
         assert_eq!(data.entity_id, task_id.to_string());
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
         let task_obj = obj.get("session").expect("should contain session field");
 
@@ -1173,7 +1094,7 @@ mod tests {
         let (event_type, data) = server_event_to_sse(&event, &state).await;
 
         assert_eq!(event_type, SseEventType::SessionCreated);
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
         let task_obj = obj.get("session").expect("should contain session field");
 
@@ -1225,7 +1146,7 @@ mod tests {
         assert_eq!(data.entity_id, message_id.to_string());
         assert_eq!(data.version, 1);
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
         assert_eq!(
             obj.get("message_id").unwrap().as_str().unwrap(),
@@ -1275,7 +1196,9 @@ mod tests {
         assert_eq!(data.entity_id, message_id.to_string());
         assert_eq!(data.version, 2);
 
-        let entity = data.entity;
+        let entity = data
+            .entity
+            .expect("entity should be present for update events");
         let msg_obj = entity.get("message").expect("should contain message field");
         assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "updated");
     }
@@ -1323,7 +1246,7 @@ mod tests {
         assert_eq!(data.entity_id, notification_id.to_string());
         assert_eq!(data.version, 1);
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
 
         // Verify it has the shape of a NotificationResponse.
@@ -1539,7 +1462,7 @@ mod tests {
 
         let (_, data) = server_event_to_sse(&event, &state).await;
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let issue_obj = entity.get("issue").expect("should contain issue field");
         let labels = issue_obj
             .get("labels")
@@ -1606,7 +1529,7 @@ mod tests {
 
         let (_, data) = server_event_to_sse(&event, &state).await;
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let patch_obj = entity.get("patch").expect("should contain patch field");
         let labels = patch_obj
             .get("labels")
@@ -1665,7 +1588,7 @@ mod tests {
 
         let (_, data) = server_event_to_sse(&event, &state).await;
 
-        let entity = data.entity;
+        let entity = data.entity.expect("entity should be present");
         let doc_obj = entity
             .get("document")
             .expect("should contain document field");
