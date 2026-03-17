@@ -2132,6 +2132,201 @@ dependencies = [
 ]
 
 [[package]]
+name = "hydra"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "clap",
+ "futures",
+ "getrandom 0.2.17",
+ "git2",
+ "httpmock",
+ "hydra-build-cache",
+ "hydra-common",
+ "hydra-server",
+ "jsonwebtoken",
+ "libc",
+ "octocrab",
+ "openssl",
+ "openssl-sys",
+ "owo-colors",
+ "reqwest",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "shellexpand",
+ "shlex",
+ "tempfile",
+ "textwrap",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "hydra-bff"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "http 1.4.0",
+ "hydra-common",
+ "hydra-server",
+ "mime_guess",
+ "reqwest",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hydra-build-cache"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "aws-smithy-runtime-api",
+ "aws-types",
+ "bytes",
+ "futures",
+ "git2",
+ "globset",
+ "hydra-common",
+ "hydra-s3",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "zstd",
+]
+
+[[package]]
+name = "hydra-common"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "git2",
+ "indexmap 2.13.0",
+ "octocrab",
+ "openssl-sys",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "serde_yaml_ng",
+ "ts-rs",
+]
+
+[[package]]
+name = "hydra-s3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "httpdate",
+ "hydra-common",
+ "md5",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tower 0.5.3",
+ "tower-http 0.6.8",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "hydra-server"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bollard",
+ "chrono",
+ "dashmap",
+ "futures",
+ "git2",
+ "httpmock",
+ "hydra-common",
+ "jsonwebtoken",
+ "k8s-openapi",
+ "kube",
+ "mime",
+ "octocrab",
+ "openssl",
+ "openssl-sys",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "serde_yaml_ng",
+ "sha2",
+ "shellexpand",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "hydra-single-player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-extra",
+ "base64 0.22.1",
+ "clap",
+ "getrandom 0.2.17",
+ "http 1.4.0",
+ "hydra",
+ "hydra-bff",
+ "hydra-common",
+ "hydra-server",
+ "libc",
+ "reqwest",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "shellexpand",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "hyper"
 version = "0.14.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2901,201 +3096,6 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
-
-[[package]]
-name = "metis"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "clap",
- "futures",
- "getrandom 0.2.17",
- "git2",
- "httpmock",
- "jsonwebtoken",
- "libc",
- "metis-build-cache",
- "metis-common",
- "metis-server",
- "octocrab",
- "openssl",
- "openssl-sys",
- "owo-colors",
- "reqwest",
- "rpassword",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "shellexpand",
- "shlex",
- "tempfile",
- "textwrap",
- "thiserror 1.0.69",
- "tokio",
- "toml",
-]
-
-[[package]]
-name = "metis-bff"
-version = "0.1.0"
-dependencies = [
- "axum",
- "axum-extra",
- "http 1.4.0",
- "metis-common",
- "metis-server",
- "mime_guess",
- "reqwest",
- "rust-embed",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.5.3",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "metis-build-cache"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "aws-credential-types",
- "aws-sdk-s3",
- "aws-smithy-runtime-api",
- "aws-types",
- "bytes",
- "futures",
- "git2",
- "globset",
- "metis-common",
- "metis-s3",
- "tar",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "walkdir",
- "zstd",
-]
-
-[[package]]
-name = "metis-common"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "chrono",
- "git2",
- "indexmap 2.13.0",
- "octocrab",
- "openssl-sys",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "serde_yaml_ng",
- "ts-rs",
-]
-
-[[package]]
-name = "metis-s3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "httpdate",
- "md5",
- "metis-common",
- "serde",
- "serde_json",
- "shellexpand",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "tower 0.5.3",
- "tower-http 0.6.8",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "metis-server"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "bollard",
- "chrono",
- "dashmap",
- "futures",
- "git2",
- "httpmock",
- "jsonwebtoken",
- "k8s-openapi",
- "kube",
- "metis-common",
- "mime",
- "octocrab",
- "openssl",
- "openssl-sys",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "serde_yaml_ng",
- "sha2",
- "shellexpand",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "metis-single-player"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "axum-extra",
- "base64 0.22.1",
- "clap",
- "getrandom 0.2.17",
- "http 1.4.0",
- "libc",
- "metis",
- "metis-bff",
- "metis-common",
- "metis-server",
- "reqwest",
- "rpassword",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "shellexpand",
- "tokio",
- "tower 0.5.3",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "mime"

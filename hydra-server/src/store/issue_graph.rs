@@ -1,0 +1,108 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use super::StoreError;
+use crate::domain::issues::{
+    IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
+};
+use hydra_common::IssueId;
+
+pub(crate) struct IssueGraphContext {
+    known_issues: HashSet<IssueId>,
+    forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+    reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+}
+
+impl IssueGraphContext {
+    pub(crate) fn from_dependency_maps(
+        known_issues: HashSet<IssueId>,
+        forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+        reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+    ) -> Self {
+        Self {
+            known_issues,
+            forward,
+            reverse,
+        }
+    }
+
+    pub(crate) fn apply_filters(
+        &self,
+        filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError> {
+        let mut intersection: Option<HashSet<IssueId>> = None;
+
+        for filter in filters {
+            let literal = filter.literal_issue_id();
+            if !self.known_issues.contains(literal) {
+                return Err(StoreError::IssueNotFound(literal.clone()));
+            }
+
+            let adjacency = self.adjacency(filter.wildcard_position(), filter.dependency_type);
+            let matches = collect_matches(adjacency, literal, filter.wildcard_kind());
+
+            match &mut intersection {
+                Some(existing) => existing.retain(|id| matches.contains(id)),
+                None => intersection = Some(matches),
+            }
+
+            if let Some(existing) = &intersection {
+                if existing.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        Ok(intersection.unwrap_or_default())
+    }
+
+    fn adjacency(
+        &self,
+        side: IssueGraphFilterSide,
+        dependency_type: IssueDependencyType,
+    ) -> Option<&HashMap<IssueId, Vec<IssueId>>> {
+        match side {
+            IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
+            IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
+        }
+    }
+}
+
+fn collect_matches(
+    adjacency: Option<&HashMap<IssueId, Vec<IssueId>>>,
+    literal: &IssueId,
+    wildcard: IssueGraphWildcard,
+) -> HashSet<IssueId> {
+    let Some(map) = adjacency else {
+        return HashSet::new();
+    };
+
+    match wildcard {
+        IssueGraphWildcard::Immediate => map
+            .get(literal)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        IssueGraphWildcard::Transitive => {
+            let mut matches = HashSet::new();
+            let mut visited = HashSet::new();
+            let mut queue = VecDeque::new();
+
+            visited.insert(literal.clone());
+            queue.push_back(literal.clone());
+
+            while let Some(current) = queue.pop_front() {
+                if let Some(neighbors) = map.get(&current) {
+                    for neighbor in neighbors {
+                        if visited.insert(neighbor.clone()) {
+                            queue.push_back(neighbor.clone());
+                        }
+                        matches.insert(neighbor.clone());
+                    }
+                }
+            }
+
+            matches
+        }
+    }
+}

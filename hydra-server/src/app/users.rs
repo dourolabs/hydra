@@ -1,0 +1,240 @@
+use crate::{
+    domain::{
+        actors::{Actor, ActorRef, store_github_token_secrets},
+        users::{User, UserSummary, Username},
+    },
+    store::{ReadOnlyStore, StoreError},
+};
+use hydra_common::{SessionId, api::v1 as api};
+use octocrab::Octocrab;
+use serde::Deserialize;
+use thiserror::Error;
+
+use super::app_state::AppState;
+
+pub(crate) const WORKER_NAME_LOGIN: &str = "login";
+
+#[derive(Debug, Error)]
+pub enum LoginError {
+    #[error("invalid github token: {0}")]
+    InvalidGithubToken(String),
+    #[error("github user '{username}' is not in an allowed organization")]
+    ForbiddenGithubOrg { username: String },
+    #[error("login store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+}
+
+impl AppState {
+    pub async fn login_with_github_token(
+        &self,
+        github_token: String,
+        github_refresh_token: String,
+        actor: ActorRef,
+    ) -> Result<api::login::LoginResponse, LoginError> {
+        let (user, _actor, login_token) = self
+            .create_actor_for_github_token(github_token, github_refresh_token, actor)
+            .await?;
+
+        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
+
+        Ok(api::login::LoginResponse::new(login_token, user_summary))
+    }
+
+    async fn create_actor_for_github_token(
+        &self,
+        github_token: String,
+        github_refresh_token: String,
+        login_actor: ActorRef,
+    ) -> Result<(User, Actor, String), LoginError> {
+        let github_client = Octocrab::builder()
+            .base_uri(self.config.github_api_base_url().to_string())
+            .map_err(|err| LoginError::Store {
+                source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
+            })?
+            .personal_token(github_token.clone())
+            .build()
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+        let github_user = github_client
+            .current()
+            .user()
+            .await
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+        let username = Username::from(github_user.login);
+
+        let allowed_orgs = &self.config.hydra.allowed_orgs;
+        if !allowed_orgs.is_empty() {
+            #[derive(Deserialize)]
+            struct GithubOrg {
+                login: String,
+            }
+
+            let orgs: Vec<GithubOrg> = github_client
+                .get("/user/orgs", None::<&()>)
+                .await
+                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+            let is_allowed = orgs.iter().any(|org| {
+                allowed_orgs
+                    .iter()
+                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
+            });
+
+            if !is_allowed {
+                return Err(LoginError::ForbiddenGithubOrg {
+                    username: username.to_string(),
+                });
+            }
+        }
+
+        let user = User {
+            username: username.clone(),
+            github_user_id: Some(github_user.id.into_inner()),
+            deleted: false,
+        };
+
+        let (actor, auth_token) = Actor::new_for_user(username);
+
+        if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    // User already exists — continue to store tokens in
+                    // encrypted user_secrets below.
+                }
+                other => return Err(LoginError::Store { source: other }),
+            }
+        }
+
+        // Store tokens in encrypted user_secrets.
+        store_github_token_secrets(self, &user.username, &github_token, &github_refresh_token)
+            .await;
+
+        if let Err(err) = self
+            .store
+            .add_actor(actor.clone(), login_actor.clone())
+            .await
+        {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    self.store
+                        .update_actor(actor.clone(), login_actor)
+                        .await
+                        .map_err(|source| LoginError::Store { source })?;
+                }
+                other => return Err(LoginError::Store { source: other }),
+            }
+        }
+
+        Ok((user, actor, auth_token))
+    }
+
+    pub(crate) async fn create_actor_for_job(
+        &self,
+        task_id: SessionId,
+        lifecycle_actor: ActorRef,
+    ) -> Result<(Actor, String), StoreError> {
+        let task = self.get_session(&task_id).await?;
+        let creator = task.creator;
+        let (actor, auth_token) = if let Some(issue_id) = task.spawned_from {
+            Actor::new_for_issue(issue_id, creator)
+        } else {
+            Actor::new_for_session(task_id, creator)
+        };
+        if let Err(err) = self
+            .store
+            .add_actor(actor.clone(), lifecycle_actor.clone())
+            .await
+        {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    // Multiple tasks for the same issue share the same ActorId::Issue
+                    // but get separate auth tokens. Update the existing actor entry.
+                    self.store
+                        .update_actor(actor.clone(), lifecycle_actor)
+                        .await?;
+                }
+                other => return Err(other),
+            }
+        }
+        Ok((actor, auth_token))
+    }
+
+    pub async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        let store = self.store.as_ref();
+        store.get_actor(name).await.map(|actor| actor.item)
+    }
+
+    pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        let store = self.store.as_ref();
+        store.get_user(username, false).await.map(|user| user.item)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoginError;
+    use crate::{
+        domain::{actors::ActorRef, users::Username},
+        test_utils::{github_user_response, test_state_with_github_api_base_url},
+    };
+    use httpmock::prelude::*;
+
+    #[tokio::test]
+    async fn login_persists_user_and_actor() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let _mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let response = handles
+            .state
+            .login_with_github_token(
+                "gh-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
+            .await
+            .expect("login should succeed");
+
+        assert!(!response.login_token.is_empty());
+        assert_eq!(response.user.username.as_str(), "octo");
+
+        let store_read = handles.store.as_ref();
+        let user = store_read.get_user(&Username::from("octo"), false).await?;
+        let actors = store_read.list_actors().await?;
+        assert_eq!(actors.len(), 1);
+        assert_eq!(user.item.username.as_str(), "octo");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_returns_error_for_invalid_token() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let _mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(401);
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let err = handles
+            .state
+            .login_with_github_token(
+                "bad-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
+            .await
+            .expect_err("login should fail for invalid token");
+
+        assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
+    }
+}

@@ -1,1 +1,0 @@
-ALTER TABLE metis.issues_v2 ADD COLUMN title TEXT NOT NULL DEFAULT '';

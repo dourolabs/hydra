@@ -1,0 +1,9 @@
+[server]
+# Host/IP address for the HTTP listener.
+bind_host = "0.0.0.0"
+# Port for the HTTP listener.
+bind_port = 9090
+
+[storage]
+# Base filesystem path used to store S3 objects.
+root_dir = "/var/lib/hydra/s3"
