@@ -176,7 +176,7 @@ pub async fn get_events(
 struct EventFilter {
     entity_types: Option<Vec<String>>,
     issue_ids: Option<Vec<IssueId>>,
-    job_ids: Option<Vec<SessionId>>,
+    session_ids: Option<Vec<SessionId>>,
     patch_ids: Option<Vec<PatchId>>,
     label_ids: Option<Vec<LabelId>>,
     document_ids: Option<Vec<DocumentId>>,
@@ -202,7 +202,7 @@ impl EventFilter {
             .transpose()
             .map_err(|e| format!("invalid issue_ids: {e}"))?;
 
-        let job_ids = query
+        let session_ids = query
             .session_ids
             .as_ref()
             .map(|s| {
@@ -211,7 +211,7 @@ impl EventFilter {
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()
-            .map_err(|e| format!("invalid job_ids: {e}"))?;
+            .map_err(|e| format!("invalid session_ids: {e}"))?;
 
         let patch_ids = query
             .patch_ids
@@ -271,7 +271,7 @@ impl EventFilter {
         Ok(Self {
             entity_types,
             issue_ids,
-            job_ids,
+            session_ids,
             patch_ids,
             label_ids,
             document_ids,
@@ -299,8 +299,8 @@ impl EventFilter {
                     }
                 }
             }
-            EntityId::Task(id) => {
-                if let Some(ids) = &self.job_ids {
+            EntityId::Session(id) => {
+                if let Some(ids) = &self.session_ids {
                     if !ids.contains(id) {
                         return false;
                     }
@@ -351,7 +351,7 @@ impl EventFilter {
 #[derive(Debug)]
 enum EntityId<'a> {
     Issue(&'a IssueId),
-    Task(&'a SessionId),
+    Session(&'a SessionId),
     Patch(&'a PatchId),
     Label(&'a LabelId),
     Document(&'a DocumentId),
@@ -371,7 +371,9 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", EntityId::Patch(patch_id)),
 
         ServerEvent::SessionCreated { session_id, .. }
-        | ServerEvent::SessionUpdated { session_id, .. } => ("jobs", EntityId::Task(session_id)),
+        | ServerEvent::SessionUpdated { session_id, .. } => {
+            ("sessions", EntityId::Session(session_id))
+        }
 
         ServerEvent::LabelCreated { label_id, .. }
         | ServerEvent::LabelUpdated { label_id, .. }
@@ -661,7 +663,7 @@ async fn server_event_to_sse(
             ..
         } => (
             SseEventType::SessionCreated,
-            "job",
+            "session",
             session_id.to_string(),
             *version,
             *timestamp,
@@ -675,7 +677,7 @@ async fn server_event_to_sse(
             ..
         } => (
             SseEventType::SessionUpdated,
-            "job",
+            "session",
             session_id.to_string(),
             *version,
             *timestamp,
@@ -1046,7 +1048,7 @@ mod tests {
         let (event_type, data) = server_event_to_sse(&event, &state).await;
 
         assert_eq!(event_type, SseEventType::SessionUpdated);
-        assert_eq!(data.entity_type, "job");
+        assert_eq!(data.entity_type, "session");
         assert_eq!(data.entity_id, task_id.to_string());
 
         let entity = data.entity.expect("entity should be present");
