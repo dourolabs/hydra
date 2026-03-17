@@ -16,6 +16,7 @@ use metis_common::{
     patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,
     sessions::SearchSessionsQuery,
+    task_status::Status,
     users::{User, Username},
     IssueId, PatchId, RepoName, SessionId,
 };
@@ -363,15 +364,35 @@ impl TestHarness {
     /// `start_created_sessions` automation.
     ///
     /// The automation fires automatically via the event bus when sessions
-    /// are created or updated. This method waits briefly for the
-    /// automation runner to process pending events, then verifies no
-    /// sessions remain in `Created` status.
+    /// are created or updated. This method polls until no sessions remain
+    /// in `Created` status, with a timeout to avoid hanging.
     pub async fn step_pending_jobs(&self) -> Result<()> {
-        // Yield to let the automation runner process any pending events.
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let timeout = std::time::Duration::from_secs(5);
+        let poll_interval = std::time::Duration::from_millis(25);
+        let deadline = tokio::time::Instant::now() + timeout;
 
-        Ok(())
+        // Yield once to let the automation runner start processing.
+        tokio::task::yield_now().await;
+
+        loop {
+            let query = SearchSessionsQuery::new(None, None, None, vec![Status::Created]);
+            let created_sessions = self
+                .state
+                .list_sessions_with_query(&query)
+                .await
+                .context("failed to query sessions in step_pending_jobs")?;
+            if created_sessions.is_empty() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "step_pending_jobs timed out after {:.1}s: {} session(s) still in Created status",
+                    timeout.as_secs_f64(),
+                    created_sessions.len()
+                );
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     /// Run one iteration of the GitHub poller worker.

@@ -835,7 +835,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 5);
-    assert_eq!(engine.automation_count(), 8);
+    assert_eq!(engine.automation_count(), 9);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -856,12 +856,13 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("github_pr_sync".to_string()),
                 PolicyEntry::Name("notification_generation".to_string()),
                 PolicyEntry::Name("inbox_label".to_string()),
+                PolicyEntry::Name("start_created_sessions".to_string()),
             ],
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
-    assert_eq!(explicit_engine.automation_count(), 8);
+    assert_eq!(explicit_engine.automation_count(), 9);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked

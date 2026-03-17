@@ -32,6 +32,10 @@ pub fn sample_task() -> Session {
 }
 
 pub fn task_for_issue(issue_id: &IssueId) -> Session {
+    task_for_issue_with_status(issue_id, Status::Created)
+}
+
+pub fn task_for_issue_with_status(issue_id: &IssueId, status: Status) -> Session {
     Session::new(
         "Spawn me".to_string(),
         BundleSpec::None,
@@ -43,7 +47,7 @@ pub fn task_for_issue(issue_id: &IssueId) -> Session {
         None,
         None,
         None,
-        Status::Created,
+        status,
         None,
         None,
     )
