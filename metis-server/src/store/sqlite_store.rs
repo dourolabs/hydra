@@ -3480,21 +3480,22 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_relationships_transitive(
         &self,
-        source_ids: &[MetisId],
-        target_ids: &[MetisId],
+        ids: &[MetisId],
+        direction: super::TransitiveDirection,
         rel_type: super::RelationshipType,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
-        if source_ids.is_empty() && target_ids.is_empty() {
+        if ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let sql = if !source_ids.is_empty() {
-            let placeholders = (1..=source_ids.len())
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let rel_param = source_ids.len() + 1;
-            format!(
+        let placeholders = (1..=ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rel_param = ids.len() + 1;
+
+        let sql = match direction {
+            super::TransitiveDirection::Forward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
@@ -3507,14 +3508,8 @@ impl ReadOnlyStore for SqliteStore {
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            )
-        } else {
-            let placeholders = (1..=target_ids.len())
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let rel_param = target_ids.len() + 1;
-            format!(
+            ),
+            super::TransitiveDirection::Backward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
                      SELECT source_id, source_kind, target_id, target_kind, rel_type \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
@@ -3527,13 +3522,7 @@ impl ReadOnlyStore for SqliteStore {
                  ) \
                  SELECT source_id, source_kind, target_id, target_kind, rel_type \
                  FROM transitive_rels"
-            )
-        };
-
-        let ids: &[MetisId] = if !source_ids.is_empty() {
-            source_ids
-        } else {
-            target_ids
+            ),
         };
 
         let mut query = sqlx::query_as::<_, ObjectRelationshipRow>(&sql);
@@ -7520,7 +7509,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_relationships_transitive_follows_same_type_only() {
-        use crate::store::RelationshipType;
+        use crate::store::{RelationshipType, TransitiveDirection};
 
         let store = create_test_store().await;
         let actor = ActorRef::test();
@@ -7554,7 +7543,11 @@ mod tests {
 
         // Forward transitive from A following child-of
         let results = store
-            .get_relationships_transitive(&[a.clone()], &[], RelationshipType::ChildOf)
+            .get_relationships_transitive(
+                &[a.clone()],
+                TransitiveDirection::Forward,
+                RelationshipType::ChildOf,
+            )
             .await
             .unwrap();
         // Should find A->B and B->C, but NOT B->P
@@ -7567,14 +7560,22 @@ mod tests {
 
         // Backward transitive from C following child-of
         let results = store
-            .get_relationships_transitive(&[], &[c.clone()], RelationshipType::ChildOf)
+            .get_relationships_transitive(
+                &[c.clone()],
+                TransitiveDirection::Backward,
+                RelationshipType::ChildOf,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Transitive has-patch from B should only find B->P
         let results = store
-            .get_relationships_transitive(&[b.clone()], &[], RelationshipType::HasPatch)
+            .get_relationships_transitive(
+                &[b.clone()],
+                TransitiveDirection::Forward,
+                RelationshipType::HasPatch,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
