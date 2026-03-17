@@ -10,8 +10,8 @@ use crate::{
         agents::Agent,
         documents::Document,
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
-            SessionSettings, TodoItem,
+            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
+            TodoItem,
         },
         labels::Label,
         messages::Message,
@@ -50,7 +50,6 @@ use sqlx::{
 use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
 
 use crate::config::DatabaseSection;
-use crate::store::issue_graph::IssueGraphContext;
 
 pub type PgStorePool = Pool<Postgres>;
 
@@ -467,74 +466,6 @@ impl PostgresStoreV2 {
         }
 
         Ok(())
-    }
-
-    /// Builds an IssueGraphContext from the object_relationships table
-    /// and known issue IDs, avoiding the need to load all issue data.
-    async fn build_issue_graph_from_relationships(&self) -> Result<IssueGraphContext, StoreError> {
-        // Get all known issue IDs
-        let issue_ids_sql =
-            format!("SELECT DISTINCT id FROM {TABLE_ISSUES_V2} WHERE deleted = false");
-        let known_ids: Vec<String> = sqlx::query_scalar(&issue_ids_sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        let known_issues: HashSet<IssueId> = known_ids
-            .into_iter()
-            .filter_map(|id| id.parse::<IssueId>().ok())
-            .collect();
-
-        // Get all issue-to-issue relationships (child-of and blocked-on)
-        let rels_sql = format!(
-            "SELECT source_id, target_id, rel_type FROM {TABLE_OBJECT_RELATIONSHIPS} \
-             WHERE source_kind = 'issue' AND target_kind = 'issue' \
-             AND rel_type IN ('child-of', 'blocked-on')"
-        );
-        let rows = sqlx::query_as::<_, (String, String, String)>(&rels_sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-
-        for (source_id, target_id, rel_type) in rows {
-            let Ok(source) = source_id.parse::<IssueId>() else {
-                continue;
-            };
-            let Ok(target) = target_id.parse::<IssueId>() else {
-                continue;
-            };
-            let dep_type = match rel_type.as_str() {
-                "child-of" => IssueDependencyType::ChildOf,
-                "blocked-on" => IssueDependencyType::BlockedOn,
-                _ => continue,
-            };
-
-            // forward: target_id → [source_ids] (same as from_issues builds)
-            forward
-                .entry(dep_type)
-                .or_default()
-                .entry(target.clone())
-                .or_default()
-                .push(source.clone());
-
-            // reverse: source_id → [target_ids]
-            reverse
-                .entry(dep_type)
-                .or_default()
-                .entry(source)
-                .or_default()
-                .push(target);
-        }
-
-        Ok(IssueGraphContext::from_dependency_maps(
-            known_issues,
-            forward,
-            reverse,
-        ))
     }
 
     // -------------------------------------------------------------------------
@@ -2110,14 +2041,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         Ok(count as u64)
-    }
-
-    async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
-        let context = self.build_issue_graph_from_relationships().await?;
-        context.apply_filters(filters)
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -5573,7 +5496,6 @@ mod tests {
             vec![],
             None,
             Some("original_unique_description_abc123".to_string()),
-            Vec::new(),
             None,
         );
         let old_results = store.list_issues(&old_query).await.unwrap();
@@ -5589,7 +5511,6 @@ mod tests {
             vec![],
             None,
             Some("changed_unique_description_xyz789".to_string()),
-            Vec::new(),
             None,
         );
         let new_results = store.list_issues(&new_query).await.unwrap();
@@ -7080,7 +7001,7 @@ mod tests {
         store.add_issue(closed, &actor).await.unwrap();
 
         // Count all issues
-        let query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
 
         // Count only bugs
@@ -7089,7 +7010,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -7100,7 +7020,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -7216,7 +7135,7 @@ mod tests {
         }
 
         // Count should return 5 even when limit is set
-        let mut query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
+        let mut query = SearchIssuesQuery::new(None, vec![], None, None, None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
@@ -7246,7 +7165,7 @@ mod tests {
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
         // list_issues should return 3 issues, each at their latest version.
-        let query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, None, None);
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 3);
 
@@ -7258,7 +7177,7 @@ mod tests {
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
         // to get the remaining 1.
-        let mut query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
+        let mut query = SearchIssuesQuery::new(None, vec![], None, None, None);
         query.limit = Some(2);
         let page1 = store.list_issues(&query).await.unwrap();
         // limit+1 is fetched internally but caller sees at most limit+1 rows;
@@ -7266,7 +7185,7 @@ mod tests {
         assert!(page1.len() >= 2);
 
         // count_issues should still return the total (3), not affected by versions.
-        let count_query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
+        let count_query = SearchIssuesQuery::new(None, vec![], None, None, None);
         assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
 
         // Filter by status=InProgress should return only the updated issue.
@@ -7275,7 +7194,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::InProgress],
             None,
             None,
-            Vec::new(),
             None,
         );
         let filtered = store.list_issues(&query).await.unwrap();

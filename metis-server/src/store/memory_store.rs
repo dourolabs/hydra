@@ -3,15 +3,12 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
-use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
     documents::Document,
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
-    },
+    issues::{Issue, IssueDependency, IssueStatus, IssueType},
     labels::Label,
     messages::Message,
     notifications::Notification,
@@ -685,60 +682,6 @@ impl ReadOnlyStore for MemoryStore {
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
         Ok(self.filter_issues(query).count() as u64)
-    }
-
-    async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
-        if filters.is_empty() {
-            return Ok(HashSet::new());
-        }
-
-        // Build forward maps from object_relationships (target -> [sources])
-        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        for dep_type in [IssueDependencyType::ChildOf, IssueDependencyType::BlockedOn] {
-            let rel_type = super::RelationshipType::from(dep_type);
-            let mut map: HashMap<IssueId, Vec<IssueId>> = HashMap::new();
-            for entry in self.object_relationships.iter() {
-                if entry.key().1 == rel_type {
-                    if let (Ok(target_id), Ok(source_id)) = (
-                        IssueId::try_from(entry.key().2.clone()),
-                        IssueId::try_from(entry.key().0.clone()),
-                    ) {
-                        map.entry(target_id).or_default().push(source_id);
-                    }
-                }
-            }
-            forward.insert(dep_type, map);
-        }
-
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        for entry in self.issues.iter() {
-            let issue_id = entry.key();
-            if let Some(latest) = entry.value().last() {
-                for dependency in &latest.item.dependencies {
-                    reverse
-                        .entry(dependency.dependency_type)
-                        .or_default()
-                        .entry(issue_id.clone())
-                        .or_default()
-                        .push(dependency.issue_id.clone());
-                }
-            }
-        }
-
-        let context = IssueGraphContext::from_dependency_maps(
-            self.issues
-                .iter()
-                .map(|entry| entry.key().clone())
-                .collect(),
-            forward,
-            reverse,
-        );
-        context.apply_filters(filters)
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -2177,10 +2120,7 @@ mod tests {
     use crate::{
         domain::{
             actors::{Actor, ActorId, ActorRef},
-            issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
-                IssueType,
-            },
+            issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
             patches::{GithubPr, Patch, PatchStatus},
             sessions::BundleSpec,
             task_status::Event,
@@ -2887,204 +2827,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-    }
-
-    #[tokio::test]
-    async fn graph_filter_returns_children() {
-        let store = MemoryStore::new();
-
-        let (parent, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (child, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (_grandchild, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    child.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let filter: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
-        let matches = store.search_issue_graph(&[filter]).await.unwrap();
-
-        assert_eq!(matches, HashSet::from([child]));
-    }
-
-    #[tokio::test]
-    async fn graph_filter_returns_transitive_children() {
-        let store = MemoryStore::new();
-
-        let (parent, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (child, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (grandchild, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    child.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let filter: IssueGraphFilter = format!("**:child-of:{parent}").parse().unwrap();
-        let matches = store.search_issue_graph(&[filter]).await.unwrap();
-
-        assert_eq!(matches, HashSet::from([child, grandchild]));
-    }
-
-    #[tokio::test]
-    async fn graph_filter_returns_ancestors_for_right_wildcards() {
-        let store = MemoryStore::new();
-
-        let (root, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (child, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    root.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (grandchild, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    child.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let filter: IssueGraphFilter = format!("{grandchild}:child-of:**").parse().unwrap();
-        let matches = store.search_issue_graph(&[filter]).await.unwrap();
-
-        assert_eq!(matches, HashSet::from([root, child]));
-    }
-
-    #[tokio::test]
-    async fn graph_filters_intersect_multiple_constraints() {
-        let store = MemoryStore::new();
-
-        let (parent, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (blocker, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (other_parent, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (other_blocker, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let (matching_issue, _) = store
-            .add_issue(
-                sample_issue(vec![
-                    IssueDependency::new(IssueDependencyType::ChildOf, parent.clone()),
-                    IssueDependency::new(IssueDependencyType::BlockedOn, blocker.clone()),
-                ]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let (non_matching_child, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (non_matching_blocked, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::BlockedOn,
-                    blocker.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (unrelated_issue, _) = store
-            .add_issue(
-                sample_issue(vec![
-                    IssueDependency::new(IssueDependencyType::ChildOf, other_parent),
-                    IssueDependency::new(IssueDependencyType::BlockedOn, other_blocker),
-                ]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let filter_a: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
-        let filter_b: IssueGraphFilter = format!("*:blocked-on:{blocker}").parse().unwrap();
-
-        let matches = store
-            .search_issue_graph(&[filter_a, filter_b])
-            .await
-            .unwrap();
-
-        assert_eq!(matches, HashSet::from([matching_issue]));
-        assert!(!matches.contains(&non_matching_child));
-        assert!(!matches.contains(&non_matching_blocked));
-        assert!(!matches.contains(&unrelated_issue));
-    }
-
-    #[tokio::test]
-    async fn graph_filter_errors_when_literal_missing() {
-        let store = MemoryStore::new();
-        let missing = IssueId::new();
-
-        store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let filter: IssueGraphFilter = format!("*:child-of:{missing}").parse().unwrap();
-        let result = store.search_issue_graph(&[filter]).await;
-
-        assert!(matches!(result, Err(StoreError::IssueNotFound(id)) if id == missing));
     }
 
     #[tokio::test]
@@ -4270,7 +4012,6 @@ mod tests {
                 vec![],
                 None,
                 None,
-                Vec::new(),
                 Some(true),
             ))
             .await
@@ -4833,7 +4574,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         let issues = store.list_issues(&query).await.unwrap();
@@ -4846,7 +4586,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         let issues = store.list_issues(&query).await.unwrap();
@@ -4878,7 +4617,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::Open],
             None,
             None,
-            Vec::new(),
             None,
         );
         let issues = store.list_issues(&query).await.unwrap();
@@ -4891,7 +4629,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
-            Vec::new(),
             None,
         );
         let issues = store.list_issues(&query).await.unwrap();
@@ -4918,27 +4655,13 @@ mod tests {
             .unwrap();
 
         // Filter by assignee
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![],
-            Some("alice".to_string()),
-            None,
-            Vec::new(),
-            None,
-        );
+        let query = SearchIssuesQuery::new(None, vec![], Some("alice".to_string()), None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, assigned_issue_id);
 
         // Case-insensitive assignee matching
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![],
-            Some("ALICE".to_string()),
-            None,
-            Vec::new(),
-            None,
-        );
+        let query = SearchIssuesQuery::new(None, vec![], Some("ALICE".to_string()), None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, assigned_issue_id);
@@ -4958,14 +4681,7 @@ mod tests {
         store.add_issue(issue2, &ActorRef::test()).await.unwrap();
 
         // Search for "login"
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            Some("login".to_string()),
-            Vec::new(),
-            None,
-        );
+        let query = SearchIssuesQuery::new(None, vec![], None, Some("login".to_string()), None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, issue1_id);
@@ -4982,7 +4698,7 @@ mod tests {
 
         // Search by issue ID prefix
         let id_prefix = issue_id.to_string()[..4].to_string();
-        let query = SearchIssuesQuery::new(None, vec![], None, Some(id_prefix), Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, Some(id_prefix), None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, issue_id);
@@ -5019,7 +4735,6 @@ mod tests {
             vec![],
             Some("alice".to_string()),
             None,
-            Vec::new(),
             None,
         );
         let issues = store.list_issues(&query).await.unwrap();
@@ -6817,14 +6532,8 @@ mod tests {
         store.add_issue(closed, &actor).await.unwrap();
 
         // Count all issues
-        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            Vec::new(),
-            None,
-        );
+        let query =
+            metis_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
 
         // Count only bugs
@@ -6833,7 +6542,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -6844,7 +6552,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -6973,14 +6680,8 @@ mod tests {
         }
 
         // Count should return 5 even when limit is set
-        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            Vec::new(),
-            None,
-        );
+        let mut query =
+            metis_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }

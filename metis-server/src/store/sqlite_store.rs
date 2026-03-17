@@ -3,8 +3,8 @@ use crate::domain::{
     agents::Agent,
     documents::Document,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
-        SessionSettings, TodoItem,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
+        TodoItem,
     },
     labels::Label,
     messages::Message,
@@ -13,7 +13,6 @@ use crate::domain::{
     secrets::SecretRef,
     users::{User, Username},
 };
-use crate::store::issue_graph::IssueGraphContext;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -32,7 +31,7 @@ use metis_common::{
 };
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskError, TaskStatusLog};
@@ -1220,69 +1219,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Builds an IssueGraphContext from the object_relationships table
-    /// and known issue IDs, avoiding the need to load all issue data.
-    async fn build_issue_graph_from_relationships(&self) -> Result<IssueGraphContext, StoreError> {
-        let issue_ids_sql = format!("SELECT DISTINCT id FROM {TABLE_ISSUES_V2} WHERE deleted = 0");
-        let known_ids: Vec<String> = sqlx::query_scalar(&issue_ids_sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        let known_issues: HashSet<IssueId> = known_ids
-            .into_iter()
-            .filter_map(|id| id.parse::<IssueId>().ok())
-            .collect();
-
-        let rels_sql = format!(
-            "SELECT source_id, target_id, rel_type FROM {TABLE_OBJECT_RELATIONSHIPS} \
-             WHERE source_kind = 'issue' AND target_kind = 'issue' \
-             AND rel_type IN ('child-of', 'blocked-on')"
-        );
-        let rows = sqlx::query_as::<_, (String, String, String)>(&rels_sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-
-        for (source_id, target_id, rel_type) in rows {
-            let Ok(source) = source_id.parse::<IssueId>() else {
-                continue;
-            };
-            let Ok(target) = target_id.parse::<IssueId>() else {
-                continue;
-            };
-            let dep_type = match rel_type.as_str() {
-                "child-of" => IssueDependencyType::ChildOf,
-                "blocked-on" => IssueDependencyType::BlockedOn,
-                _ => continue,
-            };
-
-            forward
-                .entry(dep_type)
-                .or_default()
-                .entry(target.clone())
-                .or_default()
-                .push(source.clone());
-
-            reverse
-                .entry(dep_type)
-                .or_default()
-                .entry(source)
-                .or_default()
-                .push(target);
-        }
-
-        Ok(IssueGraphContext::from_dependency_maps(
-            known_issues,
-            forward,
-            reverse,
-        ))
-    }
-
     // ---- Notification helpers ----
 
     fn row_to_notification(&self, row: &NotificationRow) -> Result<Notification, StoreError> {
@@ -2098,14 +2034,6 @@ impl ReadOnlyStore for SqliteStore {
             .map_err(map_sqlx_error)?;
 
         Ok(count as u64)
-    }
-
-    async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
-        let context = self.build_issue_graph_from_relationships().await?;
-        context.apply_filters(filters)
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -4437,6 +4365,7 @@ mod tests {
     use crate::domain::sessions::BundleSpec;
     use chrono::Duration;
     use metis_common::SessionId;
+    use std::collections::HashSet;
 
     async fn create_test_store() -> SqliteStore {
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
@@ -5182,41 +5111,6 @@ mod tests {
             store.get_issue_blocked_on(&blocker_id).await.unwrap(),
             vec![child_id]
         );
-    }
-
-    #[tokio::test]
-    async fn graph_filter_returns_children() {
-        let store = create_test_store().await;
-
-        let (parent, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (child, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (_grandchild, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    child.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let filter: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
-        let matches = store.search_issue_graph(&[filter]).await.unwrap();
-
-        assert_eq!(matches, HashSet::from([child]));
     }
 
     #[tokio::test]
@@ -7278,14 +7172,8 @@ mod tests {
         store.add_issue(closed, &actor).await.unwrap();
 
         // Count all issues
-        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            Vec::new(),
-            None,
-        );
+        let query =
+            metis_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
 
         // Count only bugs
@@ -7294,7 +7182,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -7305,7 +7192,6 @@ mod tests {
             vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
@@ -7415,14 +7301,8 @@ mod tests {
         }
 
         // Count should return 5 even when limit is set
-        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            Vec::new(),
-            None,
-        );
+        let mut query =
+            metis_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }

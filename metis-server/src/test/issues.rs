@@ -618,7 +618,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         ))
         .send()
@@ -641,7 +640,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             vec![],
             Some("OWNER-1".to_string()),
             None,
-            Vec::new(),
             None,
         ))
         .send()
@@ -664,7 +662,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
-            Vec::new(),
             None,
         ))
         .send()
@@ -931,7 +928,6 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
             vec![],
             None,
             None,
-            Vec::new(),
             Some(true),
         ))
         .send()

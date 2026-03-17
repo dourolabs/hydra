@@ -1,6 +1,6 @@
 use crate::{
     domain::actors::ActorRef,
-    domain::issues::{Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, TodoItem},
+    domain::issues::{Issue, IssueDependencyType, IssueStatus, TodoItem},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -108,14 +108,6 @@ impl AppState {
     ) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let store = self.store.as_ref();
         store.get_issue_versions(issue_id).await
-    }
-
-    pub async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
-        let store = self.store.as_ref();
-        store.search_issue_graph(filters).await
     }
 
     pub async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {

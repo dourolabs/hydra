@@ -1,9 +1,8 @@
 use super::users::Username;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, RepoName};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
-use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -181,160 +180,6 @@ impl TodoItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IssueGraphFilterSide {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IssueGraphWildcard {
-    Immediate,
-    Transitive,
-}
-
-impl IssueGraphWildcard {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            IssueGraphWildcard::Immediate => "*",
-            IssueGraphWildcard::Transitive => "**",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IssueGraphSelector {
-    Issue(IssueId),
-    Wildcard(IssueGraphWildcard),
-}
-
-impl IssueGraphSelector {
-    fn parse(raw: &str) -> Result<Self, String> {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err("graph selector must not be empty".to_string());
-        }
-
-        if trimmed == IssueGraphWildcard::Immediate.as_str() {
-            return Ok(IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate));
-        }
-
-        if trimmed == IssueGraphWildcard::Transitive.as_str() {
-            return Ok(IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive));
-        }
-
-        let issue_id = IssueId::from_str(trimmed)
-            .map_err(|err| format!("invalid issue id in graph filter: {err}"))?;
-        Ok(IssueGraphSelector::Issue(issue_id))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IssueGraphFilter {
-    pub lhs: IssueGraphSelector,
-    pub dependency_type: IssueDependencyType,
-    pub rhs: IssueGraphSelector,
-}
-
-impl IssueGraphFilter {
-    pub fn new(
-        lhs: IssueGraphSelector,
-        dependency_type: IssueDependencyType,
-        rhs: IssueGraphSelector,
-    ) -> Self {
-        Self {
-            lhs,
-            dependency_type,
-            rhs,
-        }
-    }
-
-    pub fn wildcard_position(&self) -> IssueGraphFilterSide {
-        if matches!(self.lhs, IssueGraphSelector::Wildcard(_)) {
-            IssueGraphFilterSide::Left
-        } else {
-            IssueGraphFilterSide::Right
-        }
-    }
-
-    pub fn wildcard_kind(&self) -> IssueGraphWildcard {
-        match (&self.lhs, &self.rhs) {
-            (IssueGraphSelector::Wildcard(kind), _) => *kind,
-            (_, IssueGraphSelector::Wildcard(kind)) => *kind,
-            _ => unreachable!("graph filters always have a wildcard selector"),
-        }
-    }
-
-    pub fn literal_issue_id(&self) -> &IssueId {
-        match (&self.lhs, &self.rhs) {
-            (IssueGraphSelector::Issue(id), IssueGraphSelector::Wildcard(_)) => id,
-            (IssueGraphSelector::Wildcard(_), IssueGraphSelector::Issue(id)) => id,
-            _ => unreachable!("graph filters always have exactly one literal selector"),
-        }
-    }
-}
-
-impl fmt::Display for IssueGraphFilter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}",
-            self.lhs.as_str(),
-            self.dependency_type.as_str(),
-            self.rhs.as_str()
-        )
-    }
-}
-
-impl IssueGraphSelector {
-    pub fn as_str(&self) -> String {
-        match self {
-            IssueGraphSelector::Issue(issue_id) => issue_id.as_ref().to_string(),
-            IssueGraphSelector::Wildcard(wildcard) => wildcard.as_str().to_string(),
-        }
-    }
-}
-
-impl FromStr for IssueGraphFilter {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 3 {
-            return Err("invalid graph filter format, expected 'lhs:dependency:rhs'".to_string());
-        }
-
-        let lhs = parts[0];
-        let dependency_type = parts[1];
-        let rhs = parts[2];
-
-        let lhs = IssueGraphSelector::parse(lhs)?;
-        let rhs = IssueGraphSelector::parse(rhs)?;
-        let dependency_type = IssueDependencyType::from_str(dependency_type)
-            .map_err(|err| format!("invalid dependency type in graph filter: {err}"))?;
-        Ok(IssueGraphFilter::new(lhs, dependency_type, rhs))
-    }
-}
-
-impl Serialize for IssueGraphFilter {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for IssueGraphFilter {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        raw.parse().map_err(de::Error::custom)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
     #[serde(rename = "type")]
@@ -456,15 +301,6 @@ impl SessionSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum IssueConversionError {
-    #[error("invalid graph filter '{filter}': {reason}")]
-    InvalidGraphFilter {
-        filter: IssueGraphFilter,
-        reason: String,
-    },
-}
-
 impl From<api::issues::IssueStatus> for IssueStatus {
     fn from(value: api::issues::IssueStatus) -> Self {
         match value {
@@ -568,93 +404,6 @@ impl From<TodoItem> for api::issues::TodoItem {
     }
 }
 
-impl From<api::issues::IssueGraphFilterSide> for IssueGraphFilterSide {
-    fn from(value: api::issues::IssueGraphFilterSide) -> Self {
-        match value {
-            api::issues::IssueGraphFilterSide::Left => IssueGraphFilterSide::Left,
-            api::issues::IssueGraphFilterSide::Right => IssueGraphFilterSide::Right,
-            _ => unreachable!("unsupported IssueGraphFilterSide variant"),
-        }
-    }
-}
-
-impl From<IssueGraphFilterSide> for api::issues::IssueGraphFilterSide {
-    fn from(value: IssueGraphFilterSide) -> Self {
-        match value {
-            IssueGraphFilterSide::Left => api::issues::IssueGraphFilterSide::Left,
-            IssueGraphFilterSide::Right => api::issues::IssueGraphFilterSide::Right,
-        }
-    }
-}
-
-impl From<api::issues::IssueGraphWildcard> for IssueGraphWildcard {
-    fn from(value: api::issues::IssueGraphWildcard) -> Self {
-        match value {
-            api::issues::IssueGraphWildcard::Immediate => IssueGraphWildcard::Immediate,
-            api::issues::IssueGraphWildcard::Transitive => IssueGraphWildcard::Transitive,
-            _ => unreachable!("unsupported IssueGraphWildcard variant"),
-        }
-    }
-}
-
-impl From<IssueGraphWildcard> for api::issues::IssueGraphWildcard {
-    fn from(value: IssueGraphWildcard) -> Self {
-        match value {
-            IssueGraphWildcard::Immediate => api::issues::IssueGraphWildcard::Immediate,
-            IssueGraphWildcard::Transitive => api::issues::IssueGraphWildcard::Transitive,
-        }
-    }
-}
-
-impl From<api::issues::IssueGraphSelector> for IssueGraphSelector {
-    fn from(value: api::issues::IssueGraphSelector) -> Self {
-        match value {
-            api::issues::IssueGraphSelector::Issue(id) => IssueGraphSelector::Issue(id),
-            api::issues::IssueGraphSelector::Wildcard(kind) => {
-                IssueGraphSelector::Wildcard(kind.into())
-            }
-            _ => unreachable!("unsupported IssueGraphSelector variant"),
-        }
-    }
-}
-
-impl From<IssueGraphSelector> for api::issues::IssueGraphSelector {
-    fn from(value: IssueGraphSelector) -> Self {
-        match value {
-            IssueGraphSelector::Issue(id) => api::issues::IssueGraphSelector::Issue(id),
-            IssueGraphSelector::Wildcard(kind) => {
-                api::issues::IssueGraphSelector::Wildcard(kind.into())
-            }
-        }
-    }
-}
-
-impl From<api::issues::IssueGraphFilter> for IssueGraphFilter {
-    fn from(value: api::issues::IssueGraphFilter) -> Self {
-        IssueGraphFilter {
-            lhs: value.lhs.into(),
-            dependency_type: value.dependency_type.into(),
-            rhs: value.rhs.into(),
-        }
-    }
-}
-
-impl TryFrom<IssueGraphFilter> for api::issues::IssueGraphFilter {
-    type Error = IssueConversionError;
-
-    fn try_from(value: IssueGraphFilter) -> Result<Self, Self::Error> {
-        api::issues::IssueGraphFilter::new(
-            value.lhs.clone().into(),
-            value.dependency_type.into(),
-            value.rhs.clone().into(),
-        )
-        .map_err(|reason| IssueConversionError::InvalidGraphFilter {
-            filter: value,
-            reason,
-        })
-    }
-}
-
 impl From<api::issues::SessionSettings> for SessionSettings {
     fn from(value: api::issues::SessionSettings) -> Self {
         Self {
@@ -734,28 +483,6 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn issue_graph_filters_roundtrip() {
-        let left = IssueId::new();
-        let right = IssueId::new();
-        let raw = format!("{}:blocked-on:{}", left.as_ref(), right.as_ref());
-        let filter = IssueGraphFilter::from_str(&raw).expect("should parse filter");
-        assert_eq!(filter.to_string(), raw);
-    }
-
-    #[test]
-    fn issue_graph_filters_roundtrip_wildcards() {
-        let raw = "**:blocked-on:*";
-        let filter = IssueGraphFilter::from_str(raw).expect("should parse filter");
-        assert_eq!(filter.to_string(), raw);
-    }
-
-    #[test]
-    fn issue_graph_filters_fail_on_empty_selector() {
-        let filter = IssueGraphFilter::from_str("  :blocked-on:*");
-        assert!(filter.is_err());
-    }
-
-    #[test]
     fn issue_roundtrip_json() {
         let dependency_id = IssueId::new();
         let patch_id = PatchId::new();
@@ -807,39 +534,6 @@ mod tests {
         assert_eq!(decoded.description, issue.description);
         assert_eq!(decoded.todo_list.len(), 1);
         assert_eq!(decoded.session_settings, session_settings);
-    }
-
-    #[test]
-    fn issue_graph_filter_conversion_rejects_missing_wildcard() {
-        let left = IssueId::new();
-        let right = IssueId::new();
-        let filter = IssueGraphFilter::new(
-            IssueGraphSelector::Issue(left),
-            IssueDependencyType::ChildOf,
-            IssueGraphSelector::Issue(right),
-        );
-
-        let result = api::issues::IssueGraphFilter::try_from(filter);
-        assert!(matches!(
-            result,
-            Err(IssueConversionError::InvalidGraphFilter { .. })
-        ));
-    }
-
-    #[test]
-    fn issue_graph_filter_converts_with_single_wildcard() {
-        let issue_id = IssueId::new();
-        let filter = IssueGraphFilter::new(
-            IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate),
-            IssueDependencyType::BlockedOn,
-            IssueGraphSelector::Issue(issue_id),
-        );
-
-        let api_filter: api::issues::IssueGraphFilter =
-            api::issues::IssueGraphFilter::try_from(filter.clone())
-                .expect("conversion should work");
-
-        assert_eq!(api_filter.to_string(), filter.to_string());
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
     documents::Document,
-    issues::{Issue, IssueGraphFilter},
+    issues::Issue,
     labels::Label,
     messages::Message,
     notifications::Notification,
@@ -26,10 +26,9 @@ use metis_common::{
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::{fmt, str::FromStr};
 
-pub(crate) mod issue_graph;
 mod memory_store;
 #[cfg(feature = "postgres")]
 pub use crate::ee::store::migration;
@@ -312,8 +311,6 @@ pub trait ReadOnlyStore: Send + Sync {
     /// By default, deleted issues are filtered out unless `include_deleted: true`
     /// is set in the query.
     ///
-    /// Note: Graph filters (search_issue_graph) are handled separately as they
-    /// require graph traversal that doesn't fit in the store layer.
     async fn list_issues(
         &self,
         query: &SearchIssuesQuery,
@@ -321,15 +318,6 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Counts issues matching the search query, ignoring pagination (cursor/limit).
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
-
-    /// Applies dependency graph filters and returns the matching issue IDs.
-    ///
-    /// Filters are intersected, and any filter referencing a missing issue
-    /// should return `StoreError::IssueNotFound`.
-    async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError>;
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
