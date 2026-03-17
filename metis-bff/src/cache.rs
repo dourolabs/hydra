@@ -110,11 +110,9 @@ impl EntityCache {
             SseEventType::IssueCreated | SseEventType::IssueUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("issue event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: IssueSummaryRecord = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("issue entity: {e}")))?;
-                    self.issues.insert(record.issue_id.clone(), record);
-                }
+                let record: IssueSummaryRecord = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("issue entity: {e}")))?;
+                self.issues.insert(record.issue_id.clone(), record);
             }
             SseEventType::IssueDeleted => {
                 let event: EntityEventData = serde_json::from_str(data)
@@ -133,11 +131,9 @@ impl EntityCache {
             SseEventType::PatchCreated | SseEventType::PatchUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("patch event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: PatchSummaryRecord = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("patch entity: {e}")))?;
-                    self.patches.insert(record.patch_id.clone(), record);
-                }
+                let record: PatchSummaryRecord = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("patch entity: {e}")))?;
+                self.patches.insert(record.patch_id.clone(), record);
             }
             SseEventType::PatchDeleted => {
                 let event: EntityEventData = serde_json::from_str(data)
@@ -156,22 +152,18 @@ impl EntityCache {
             SseEventType::SessionCreated | SseEventType::SessionUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("session event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: SessionSummaryRecord = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("session entity: {e}")))?;
-                    self.sessions.insert(record.session_id.clone(), record);
-                }
+                let record: SessionSummaryRecord = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("session entity: {e}")))?;
+                self.sessions.insert(record.session_id.clone(), record);
             }
 
             // Document events
             SseEventType::DocumentCreated | SseEventType::DocumentUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("document event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: DocumentSummaryRecord = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("document entity: {e}")))?;
-                    self.documents.insert(record.document_id.clone(), record);
-                }
+                let record: DocumentSummaryRecord = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("document entity: {e}")))?;
+                self.documents.insert(record.document_id.clone(), record);
             }
             SseEventType::DocumentDeleted => {
                 let event: EntityEventData = serde_json::from_str(data)
@@ -190,11 +182,9 @@ impl EntityCache {
             SseEventType::LabelCreated | SseEventType::LabelUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("label event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: LabelSummary = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("label entity: {e}")))?;
-                    self.labels.insert(record.label_id.clone(), record);
-                }
+                let record: LabelSummary = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("label entity: {e}")))?;
+                self.labels.insert(record.label_id.clone(), record);
             }
             SseEventType::LabelDeleted => {
                 let event: EntityEventData = serde_json::from_str(data)
@@ -213,23 +203,19 @@ impl EntityCache {
             SseEventType::MessageCreated | SseEventType::MessageUpdated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("message event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: VersionedMessage = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("message entity: {e}")))?;
-                    self.messages.insert(record.message_id.clone(), record);
-                }
+                let record: VersionedMessage = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("message entity: {e}")))?;
+                self.messages.insert(record.message_id.clone(), record);
             }
 
             // Notification events
             SseEventType::NotificationCreated => {
                 let event: EntityEventData = serde_json::from_str(data)
                     .map_err(|e| CacheError::Parse(format!("notification event: {e}")))?;
-                if let Some(entity) = &event.entity {
-                    let record: NotificationResponse = serde_json::from_value(entity.clone())
-                        .map_err(|e| CacheError::Parse(format!("notification entity: {e}")))?;
-                    self.notifications
-                        .insert(record.notification_id.clone(), record);
-                }
+                let record: NotificationResponse = serde_json::from_value(event.entity.clone())
+                    .map_err(|e| CacheError::Parse(format!("notification entity: {e}")))?;
+                self.notifications
+                    .insert(record.notification_id.clone(), record);
             }
         }
 
