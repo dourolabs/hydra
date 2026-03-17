@@ -52,6 +52,7 @@ async fn register_agent(harness: &harness::TestHarness, name: &str) {
         3,
         10,
         false,
+        Vec::new(),
     );
     harness.store().add_agent(agent).await.unwrap();
 

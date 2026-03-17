@@ -240,6 +240,7 @@ struct AgentRow {
     max_tries: i32,
     max_simultaneous: i32,
     is_assignment_agent: bool,
+    secrets: String,
     deleted: bool,
     created_at: String,
     updated_at: String,
@@ -293,12 +294,15 @@ struct MessageRow {
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     let created_at = parse_sqlite_timestamp(&row.created_at)?;
     let updated_at = parse_sqlite_timestamp(&row.updated_at)?;
+    let secrets: Vec<String> = serde_json::from_str(&row.secrets)
+        .map_err(|e| StoreError::Internal(format!("invalid secrets JSON in database: {e}")))?;
     Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
         is_assignment_agent: row.is_assignment_agent,
+        secrets,
         deleted: row.deleted,
         created_at,
         updated_at,
@@ -3138,7 +3142,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, deleted, created_at, updated_at \
+                    is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
         let row = sqlx::query_as::<_, AgentRow>(&sql)
@@ -3157,7 +3161,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, deleted, created_at, updated_at \
+                    is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
         );
         let rows = sqlx::query_as::<_, AgentRow>(&sql)
@@ -4088,18 +4092,22 @@ impl Store for SqliteStore {
                 }
 
                 let now = Utc::now().to_rfc3339();
+                let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize secrets: {e}"))
+                })?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
-                         is_assignment_agent = ?4, deleted = 0, \
-                         created_at = ?5, updated_at = ?6 \
-                     WHERE name = ?7"
+                         is_assignment_agent = ?4, secrets = ?5, deleted = 0, \
+                         created_at = ?6, updated_at = ?7 \
+                     WHERE name = ?8"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(&secrets_json)
                     .bind(&now)
                     .bind(&now)
                     .bind(&agent.name)
@@ -4123,11 +4131,14 @@ impl Store for SqliteStore {
                     }
                 }
 
+                let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize secrets: {e}"))
+                })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
-                      deleted, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                      secrets, deleted, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -4135,6 +4146,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(&secrets_json)
                     .bind(agent.deleted)
                     .bind(agent.created_at.to_rfc3339())
                     .bind(agent.updated_at.to_rfc3339())
@@ -4164,17 +4176,20 @@ impl Store for SqliteStore {
             }
         }
 
+        let secrets_json = serde_json::to_string(&agent.secrets)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
-                 is_assignment_agent = ?4, updated_at = ?5 \
-             WHERE name = ?6"
+                 is_assignment_agent = ?4, secrets = ?5, updated_at = ?6 \
+             WHERE name = ?7"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
             .bind(agent.is_assignment_agent)
+            .bind(&secrets_json)
             .bind(Utc::now().to_rfc3339())
             .bind(&agent.name)
             .execute(&self.pool)
@@ -6258,6 +6273,7 @@ mod tests {
             3,
             i32::MAX,
             false,
+            Vec::new(),
         )
     }
 
@@ -6425,6 +6441,44 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
+    }
+
+    #[tokio::test]
+    async fn agent_secrets_round_trip() {
+        let store = create_test_store().await;
+        let agent = Agent::new(
+            "swe".to_string(),
+            "/agents/swe/prompt.md".to_string(),
+            3,
+            i32::MAX,
+            false,
+            vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
+        );
+        store.add_agent(agent).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(
+            fetched.secrets,
+            vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()]
+        );
+
+        // Update secrets
+        let mut updated = fetched;
+        updated.secrets = vec!["NEW_SECRET".to_string()];
+        store.update_agent(updated).await.unwrap();
+
+        let fetched2 = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched2.secrets, vec!["NEW_SECRET".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn agent_default_secrets_is_empty() {
+        let store = create_test_store().await;
+        let agent = sample_agent("swe");
+        store.add_agent(agent).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert!(fetched.secrets.is_empty());
     }
 
     // ---- Label helpers ----

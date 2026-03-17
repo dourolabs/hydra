@@ -245,8 +245,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", "", 3, i32::MAX, false),
-            AgentRecord::new("beta", "", "", 3, i32::MAX, false),
+            AgentRecord::new("alpha", "", "", 3, i32::MAX, false, Vec::new()),
+            AgentRecord::new("beta", "", "", 3, i32::MAX, false, Vec::new()),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -278,6 +278,7 @@ mod tests {
             2,
             5,
             true,
+            Vec::new(),
         )];
         let mut output = Vec::new();
 
@@ -305,6 +306,7 @@ mod tests {
             3,
             i32::MAX,
             false,
+            Vec::new(),
         ));
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/swe");
@@ -336,7 +338,7 @@ mod tests {
             is_assignment_agent: false,
         };
         let response =
-            AgentResponse::new(AgentRecord::new("writer", "draft this", "", 2, 4, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft this", "", 2, 4, false, Vec::new()));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
@@ -344,7 +346,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 2,
                 "max_simultaneous": 4,
-                "is_assignment_agent": false
+                "is_assignment_agent": false,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&response);
         });
@@ -381,6 +384,7 @@ mod tests {
             3,
             i32::MAX,
             true,
+            Vec::new(),
         ));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/agents").json_body(json!({
@@ -389,7 +393,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": true
+                "is_assignment_agent": true,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&response);
         });
@@ -409,8 +414,8 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
-        let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
+        let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false, Vec::new()));
 
         let prompt_file = write_prompt_file("revised");
 
@@ -425,7 +430,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 3,
                 "max_simultaneous": 10,
-                "is_assignment_agent": false
+                "is_assignment_agent": false,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&updated);
         });
@@ -455,9 +461,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -470,7 +476,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": true
+                "is_assignment_agent": true,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&updated);
         });
@@ -498,9 +505,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false, Vec::new()));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -513,7 +520,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false
+                "is_assignment_agent": false,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&updated);
         });
@@ -541,9 +549,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true, Vec::new()));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -556,7 +564,8 @@ mod tests {
                 "prompt_path": "",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": true
+                "is_assignment_agent": true,
+                "secrets": []
             }));
             then.status(200).json_body_obj(&updated);
         });
@@ -607,7 +616,7 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new("writer", "", "", 3, i32::MAX, false);
+        let deleted = AgentRecord::new("writer", "", "", 3, i32::MAX, false, Vec::new());
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)

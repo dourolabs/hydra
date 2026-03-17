@@ -393,6 +393,7 @@ mod tests {
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
+                Vec::new(),
             ),
             attempts,
         )
@@ -789,6 +790,7 @@ mod tests {
                     DEFAULT_AGENT_MAX_TRIES,
                     DEFAULT_AGENT_MAX_SIMULTANEOUS,
                     true,
+                    Vec::new(),
                 ),
                 shared_attempts(),
             )
@@ -1465,6 +1467,7 @@ mod tests {
             5,
             10,
             true,
+            Vec::new(),
         );
 
         let queue = AgentQueue::new(agent, shared_attempts());

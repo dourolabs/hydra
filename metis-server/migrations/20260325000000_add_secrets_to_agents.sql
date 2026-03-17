@@ -1,0 +1,1 @@
+ALTER TABLE metis.agents ADD COLUMN secrets JSONB NOT NULL DEFAULT '[]';

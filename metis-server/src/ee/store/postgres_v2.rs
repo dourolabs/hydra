@@ -1500,6 +1500,7 @@ struct AgentRow {
     max_tries: i32,
     max_simultaneous: i32,
     is_assignment_agent: bool,
+    secrets: serde_json::Value,
     deleted: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -3146,7 +3147,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, deleted, created_at, updated_at \
+                    is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = $1"
         );
         let row = sqlx::query_as::<_, AgentRow>(&sql)
@@ -3165,7 +3166,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, deleted, created_at, updated_at \
+                    is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = false ORDER BY name"
         );
         let rows = sqlx::query_as::<_, AgentRow>(&sql)
@@ -4183,18 +4184,22 @@ impl Store for PostgresStoreV2 {
                 }
 
                 let now = Utc::now();
+                let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize secrets: {e}"))
+                })?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
-                         is_assignment_agent = $4, deleted = false, \
-                         created_at = $5, updated_at = $6 \
-                     WHERE name = $7"
+                         is_assignment_agent = $4, secrets = $5, deleted = false, \
+                         created_at = $6, updated_at = $7 \
+                     WHERE name = $8"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(&secrets_json)
                     .bind(now)
                     .bind(now)
                     .bind(&agent.name)
@@ -4219,11 +4224,14 @@ impl Store for PostgresStoreV2 {
                     }
                 }
 
+                let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize secrets: {e}"))
+                })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
-                      deleted, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+                      secrets, deleted, created_at, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -4231,6 +4239,7 @@ impl Store for PostgresStoreV2 {
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(&secrets_json)
                     .bind(agent.deleted)
                     .bind(agent.created_at)
                     .bind(agent.updated_at)
@@ -4262,17 +4271,20 @@ impl Store for PostgresStoreV2 {
             }
         }
 
+        let secrets_json = serde_json::to_value(&agent.secrets)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
-                 is_assignment_agent = $4, updated_at = $5 \
-             WHERE name = $6"
+                 is_assignment_agent = $4, secrets = $5, updated_at = $6 \
+             WHERE name = $7"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
             .bind(agent.is_assignment_agent)
+            .bind(&secrets_json)
             .bind(Utc::now())
             .bind(&agent.name)
             .execute(&self.pool)
@@ -4520,12 +4532,14 @@ fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
 }
 
 fn row_to_agent(row: AgentRow) -> Agent {
+    let secrets: Vec<String> = serde_json::from_value(row.secrets).unwrap_or_default();
     Agent {
         name: row.name,
         prompt_path: row.prompt_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
         is_assignment_agent: row.is_assignment_agent,
+        secrets,
         deleted: row.deleted,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -6594,6 +6608,7 @@ mod tests {
             3,
             5,
             false,
+            Vec::new(),
         )
     }
 
@@ -6622,6 +6637,7 @@ mod tests {
             5,
             10,
             false,
+            Vec::new(),
         );
         store.update_agent(updated).await.unwrap();
 
@@ -6681,6 +6697,7 @@ mod tests {
             3,
             5,
             true,
+            Vec::new(),
         );
         store.add_agent(agent_a).await.unwrap();
 
@@ -6691,6 +6708,7 @@ mod tests {
             3,
             5,
             true,
+            Vec::new(),
         );
         let add_result = store.add_agent(agent_b).await;
         assert!(
@@ -6705,6 +6723,7 @@ mod tests {
             3,
             5,
             false,
+            Vec::new(),
         );
         store.add_agent(agent_b_no_assign).await.unwrap();
 
@@ -6715,6 +6734,7 @@ mod tests {
             3,
             5,
             true,
+            Vec::new(),
         );
         let update_result = store.update_agent(agent_b_assign).await;
         assert!(
@@ -6730,6 +6750,7 @@ mod tests {
             3,
             5,
             true,
+            Vec::new(),
         );
         store.add_agent(agent_c).await.unwrap();
     }
@@ -6756,6 +6777,7 @@ mod tests {
             7,
             12,
             false,
+            Vec::new(),
         );
         store.add_agent(reactivated).await.unwrap();
 

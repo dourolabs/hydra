@@ -6607,6 +6607,7 @@ mod tests {
             3,
             i32::MAX,
             false,
+            Vec::new(),
         )
     }
 
