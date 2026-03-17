@@ -423,8 +423,8 @@ fn prompt_job_engine() -> Result<String> {
 }
 
 fn prompt_github_pat() -> Result<String> {
-    eprint!("");
-    eprint!("Metis integrates with GitHub so agents can send you pull requests.");
+    eprintln!("");
+    eprintln!("Metis integrates with GitHub so agents can send you pull requests.");
     eprint!("Enter your GitHub Personal Access Token (PAT): ");
     io::stderr().flush()?;
     let token = rpassword::prompt_password_stdout("").context("failed to read GitHub PAT")?;
@@ -472,7 +472,7 @@ enum ModelProvider {
 /// Returns the provider enum and the model string to store in config.
 fn prompt_model_choice() -> Result<(ModelProvider, String)> {
     eprintln!();
-    eprintln!("Select default model:");
+    eprintln!("Metis runs either the Codex or Claude Code CLI. Which would you prefer by default:");
     eprintln!("  1) Codex (OpenAI gpt-4o)");
     eprintln!("  2) Claude (Anthropic opus)");
     eprint!("Choice [2]: ");
