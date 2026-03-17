@@ -21,12 +21,12 @@ use metis_common::{
     activity_log_for_issue_versions, activity_log_for_patch_versions,
     activity_log_for_session_versions,
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
+    api::v1::relations::ListRelationsRequest,
     constants::ENV_METIS_ISSUE_ID,
     issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
-        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueSummaryRecord,
-        IssueType, IssueVersionRecord, ReplaceTodoListRequest, SearchIssuesQuery, SessionSettings,
-        SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
+        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueId,
+        IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord, ReplaceTodoListRequest,
+        SearchIssuesQuery, SessionSettings, SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
     patches::{PatchVersionRecord, Review},
     sessions::{SearchSessionsQuery, Session, SessionSummaryRecord},
@@ -723,22 +723,33 @@ async fn fetch_child_issues(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
 ) -> Result<Vec<IssueVersionRecord>> {
-    let filter = IssueGraphFilter::new(
-        IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
-        IssueDependencyType::ChildOf,
-        IssueGraphSelector::Issue(issue_id.clone()),
-    )
-    .map_err(|err| anyhow!(err))?;
+    let relations_response = client
+        .list_relations(&ListRelationsRequest {
+            target_id: Some(issue_id.clone().into()),
+            rel_type: Some("child-of".to_string()),
+            transitive: Some(true),
+            ..Default::default()
+        })
+        .await
+        .with_context(|| format!("failed to fetch child relations for issue '{issue_id}'"))?;
+
+    let child_ids: Vec<IssueId> = relations_response
+        .relations
+        .into_iter()
+        .map(|r| IssueId::try_from(r.source_id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow!(e))
+        .with_context(|| format!("invalid child issue ID in relations for '{issue_id}'"))?;
+
+    if child_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = SearchIssuesQuery::new(None, vec![], None, None, vec![], None);
+    query.ids = child_ids;
 
     let response = client
-        .list_issues(&SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            vec![filter],
-            None,
-        ))
+        .list_issues(&query)
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
@@ -2192,6 +2203,7 @@ mod tests {
         UpsertIssueResponse,
     };
     use metis_common::{
+        api::v1::relations::{ListRelationsResponse, RelationResponse},
         patches::{ListPatchVersionsResponse, Patch, PatchStatus, PatchVersionRecord, Review},
         sessions::{BundleSpec, ListSessionsResponse, Session},
         task_status::Status,
@@ -2549,17 +2561,24 @@ mod tests {
                 .path(format!("/v1/issues/{parent_id}").as_str());
             then.status(200).json_body_obj(&parent_issue);
         });
-        let graph_query = IssueGraphFilter::new(
-            IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
-            IssueDependencyType::ChildOf,
-            IssueGraphSelector::Issue(root_id.clone()),
-        )
-        .unwrap()
-        .to_string();
+        let list_relations_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/relations")
+                .query_param("target_id", root_id.as_ref())
+                .query_param("rel_type", "child-of")
+                .query_param("transitive", "true");
+            then.status(200).json_body_obj(&ListRelationsResponse {
+                relations: vec![RelationResponse {
+                    source_id: child_issue.issue_id.clone().into(),
+                    target_id: root_id.clone().into(),
+                    rel_type: "child-of".to_string(),
+                }],
+            });
+        });
         let list_children_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
-                .query_param("graph", graph_query.as_str());
+                .query_param("ids", child_issue.issue_id.as_ref());
             then.status(200)
                 .json_body_obj(&ListIssuesResponse::new(vec![IssueSummaryRecord::from(
                     &child_issue,
@@ -2751,6 +2770,7 @@ mod tests {
 
         root_issue_mock.assert();
         parent_issue_mock.assert();
+        list_relations_mock.assert();
         list_children_mock.assert();
         root_patch_mock.assert();
         parent_patch_mock.assert();
@@ -2764,6 +2784,7 @@ mod tests {
         list_sessions_mock.assert();
         assert_eq!(root_issue_mock.hits(), 1);
         assert_eq!(parent_issue_mock.hits(), 1);
+        assert_eq!(list_relations_mock.hits(), 1);
         assert_eq!(list_children_mock.hits(), 1);
         assert_eq!(root_patch_mock.hits(), 1);
         assert_eq!(parent_patch_mock.hits(), 1);
