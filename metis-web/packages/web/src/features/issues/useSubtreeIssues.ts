@@ -15,7 +15,7 @@ export function useSubtreeIssues(rootIssueId: string | null) {
     queryKey: ["relations", "child-of", "transitive", rootIssueId],
     queryFn: () =>
       apiClient.listRelations({
-        target_ids: rootIssueId!,
+        target_id: rootIssueId!,
         rel_type: "child-of",
         transitive: true,
       }),
