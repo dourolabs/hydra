@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
-import { useSubtreeIssues } from "../features/issues/useSubtreeIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -38,7 +37,7 @@ function buildServerFilters(
     const labelId = filterRootId.slice(LABEL_FILTER_PREFIX.length);
     filters.labels = labelId;
   }
-  // For "everything" (null) or specific issue root IDs, no extra server filters
+  // For "everything" (null), no extra server filters
 
   return filters;
 }
@@ -74,12 +73,7 @@ export function DashboardPage() {
   const { data: inboxLabel } = useInboxLabel();
   const inboxLabelId = inboxLabel?.label_id;
 
-  // Determine if the current filter is a "special" filter (inbox, my-issues, label)
-  // vs. a specific issue root or "everything"
-  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
-  const isMyIssuesFilter = filterRootId === "my-issues";
   const isInboxFilter = filterRootId === "inbox";
-  const isSpecialFilter = isInboxFilter || isMyIssuesFilter || isLabelFilter;
 
   // Build server-side filters for the paginated query
   const serverFilters = useMemo(
@@ -87,33 +81,20 @@ export function DashboardPage() {
     [filterRootId, username, inboxLabelId, searchQuery],
   );
 
-  // For special filters (inbox, my-issues, label) and "everything", use paginated query
-  // For specific issue roots, use the subtree hook via relationships API
-  const usePaginated = isSpecialFilter || filterRootId === null;
-  const isSpecificRoot = !isSpecialFilter && filterRootId !== null;
-
   const {
     data: paginatedData,
     isLoading: paginatedLoading,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters, usePaginated);
-
-  // For specific issue root, fetch subtree via relationships API
-  const { data: subtreeIssues, isLoading: subtreeLoading } = useSubtreeIssues(
-    isSpecificRoot ? filterRootId : null,
-  );
+  } = usePaginatedIssues(serverFilters);
 
   // Flatten paginated pages into a single array
   const issues = useMemo(() => {
-    if (usePaginated) {
-      return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
-    }
-    return subtreeIssues ?? [];
-  }, [usePaginated, paginatedData, subtreeIssues]);
+    return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
+  }, [paginatedData]);
 
-  const isLoading = usePaginated ? paginatedLoading : subtreeLoading;
+  const isLoading = paginatedLoading;
 
   // Badge count queries (count-only, no issue data fetched).
   // Uses multi-status filter to get open + in-progress counts in a single call
@@ -266,7 +247,7 @@ export function DashboardPage() {
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
           inboxLabelId={isInboxFilter && inboxLabel ? inboxLabel.label_id : undefined}
-          hasNextPage={usePaginated && (hasNextPage ?? false)}
+          hasNextPage={hasNextPage ?? false}
           isFetchingNextPage={isFetchingNextPage}
           onLoadMore={handleLoadMore}
         />
