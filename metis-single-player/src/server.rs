@@ -424,7 +424,7 @@ fn prompt_job_engine() -> Result<String> {
 
 fn prompt_github_pat() -> Result<String> {
     eprint!("");
-    eprint!("Metis integrates with GitHub so agents can send you pull requests.");    
+    eprint!("Metis integrates with GitHub so agents can send you pull requests.");
     eprint!("Enter your GitHub Personal Access Token (PAT): ");
     io::stderr().flush()?;
     let token = rpassword::prompt_password_stdout("").context("failed to read GitHub PAT")?;
