@@ -12,6 +12,7 @@ use crate::{
     },
     store::{Session, Status, StoreError},
 };
+use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
@@ -430,32 +431,31 @@ pub(crate) async fn agent_task_state(
         running_tasks: 0,
         pending_tasks: 0,
     };
-    let task_ids = state.list_sessions().await?;
+    let mut query = SearchSessionsQuery::default();
+    query.status = vec![Status::Created.into(), Status::Pending.into(), Status::Running.into()];
+    let sessions = state.list_sessions_with_query(&query).await?;
 
-    for task_id in task_ids {
-        if let Ok(Session { env_vars, .. }) = state.get_session(&task_id).await {
-            if !matches!(
-                env_vars.get(AGENT_NAME_ENV_VAR),
-                Some(current) if current == agent_name
-            ) {
-                continue;
-            }
+    for (_session_id, versioned_session) in sessions {
+        let session = &versioned_session.item;
+        if !matches!(
+            session.env_vars.get(AGENT_NAME_ENV_VAR),
+            Some(current) if current == agent_name
+        ) {
+            continue;
+        }
 
-            let status = state.get_session(&task_id).await?.status;
-            match status {
-                Status::Created => task_state.pending_tasks += 1,
-                Status::Pending | Status::Running => task_state.running_tasks += 1,
-                _ => {}
-            }
+        match session.status {
+            Status::Created => task_state.pending_tasks += 1,
+            Status::Pending | Status::Running => task_state.running_tasks += 1,
+            _ => {}
+        }
 
-            if let Some(issue_id) = env_vars
-                .get(ISSUE_ID_ENV_VAR)
-                .and_then(|value| value.parse::<IssueId>().ok())
-            {
-                if matches!(status, Status::Created | Status::Pending | Status::Running) {
-                    task_state.existing_issue_ids.insert(issue_id);
-                }
-            }
+        if let Some(issue_id) = session
+            .env_vars
+            .get(ISSUE_ID_ENV_VAR)
+            .and_then(|value| value.parse::<IssueId>().ok())
+        {
+            task_state.existing_issue_ids.insert(issue_id);
         }
     }
 
