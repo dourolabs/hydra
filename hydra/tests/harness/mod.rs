@@ -21,22 +21,15 @@ use hydra_common::{
     IssueId, PatchId, RepoName, SessionId,
 };
 use hydra_server::{
-    app::{
-        event_bus::{MutationPayload, ServerEvent},
-        AppState, ServiceState,
-    },
+    app::{default_policy_config, AppState, ServiceState},
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
     domain::actors::{Actor, ActorRef},
     policy::{
-        automations::spawn_sessions::SpawnSessionsAutomation,
-        config::{PolicyConfig, PolicyEntry, PolicyList},
-        context::AutomationContext,
-        integrations::github_pr_poller::GithubPollerWorker,
+        config::PolicyEntry, integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
-        Automation,
     },
     store::{MemoryStore, Store},
     test_utils::{
@@ -182,10 +175,9 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
-    /// Shared `SpawnSessionsAutomation` instance that maintains spawn attempt
-    /// tracking across `step_spawner` calls, exercising the same code path
-    /// used in production by the event-driven automation.
-    spawn_sessions: SpawnSessionsAutomation,
+    /// Tracks session IDs already returned by previous `step_schedule` calls
+    /// so each call returns only newly-created sessions.
+    seen_sessions: std::sync::Mutex<HashSet<SessionId>>,
 }
 
 impl TestHarness {
@@ -335,75 +327,6 @@ impl TestHarness {
 
     // ── Background worker stepping ──────────────────────────────────
 
-    /// Run one iteration of the spawner logic via the `SpawnSessionsAutomation`.
-    ///
-    /// Finds ready issues, creates tasks for them, and returns the IDs of
-    /// newly created tasks. Returns an empty vec when no issues are ready.
-    ///
-    /// Delegates to the same `SpawnSessionsAutomation` used in production,
-    /// ensuring tests exercise the real event-driven spawning code path.
-    pub async fn step_spawner(&self) -> Result<Vec<SessionId>> {
-        let before: HashSet<SessionId> = self
-            .state
-            .list_sessions()
-            .await
-            .context("failed to list tasks before step_spawner")?
-            .into_iter()
-            .collect();
-
-        // Build a synthetic SessionUpdated event to trigger a full scan of
-        // all issues (the automation does a full scan for non-issue events).
-        let dummy_session = hydra_server::domain::sessions::Session::new(
-            String::new(),
-            hydra_server::domain::sessions::BundleSpec::None,
-            None,
-            hydra_server::domain::users::Username::from("step_spawner"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            hydra_server::domain::task_status::Status::Complete,
-            None,
-            None,
-        );
-        let event = ServerEvent::SessionUpdated {
-            seq: 0,
-            session_id: SessionId::new(),
-            version: 1,
-            timestamp: chrono::Utc::now(),
-            payload: Arc::new(MutationPayload::Session {
-                old: Some(dummy_session.clone()),
-                new: dummy_session,
-                actor: ActorRef::test(),
-            }),
-        };
-
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &self.state,
-            store: self.state.store(),
-        };
-        self.spawn_sessions
-            .execute(&ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("step_spawner automation failed: {e}"))?;
-
-        let after = self
-            .state
-            .list_sessions()
-            .await
-            .context("failed to list tasks after step_spawner")?;
-
-        let new_ids: Vec<SessionId> = after
-            .into_iter()
-            .filter(|id| !before.contains(id))
-            .collect();
-
-        Ok(new_ids)
-    }
-
     /// Wait for sessions in `Created` status to be processed by the
     /// `start_created_sessions` automation.
     ///
@@ -470,17 +393,62 @@ impl TestHarness {
         Ok(())
     }
 
-    /// Convenience: run spawner + wait for sessions to be processed.
+    /// Wait for the `spawn_sessions` automation to create sessions for
+    /// ready issues, then wait for `start_created_sessions` to process
+    /// them. Returns the IDs of sessions created since the last call.
     ///
-    /// This is the common pattern for "schedule work": the spawner
-    /// creates tasks from ready issues, and the `start_created_sessions`
-    /// automation automatically transitions them from Created to
-    /// Pending/Running via the event bus. Returns all task IDs created
-    /// by the spawner.
+    /// Sessions are spawned automatically by the policy engine when
+    /// issues are created or updated. This method polls until new
+    /// sessions appear (or times out), waits for them to be processed,
+    /// and returns only sessions not seen in previous calls.
     pub async fn step_schedule(&self) -> Result<Vec<SessionId>> {
-        let created = self.step_spawner().await?;
+        let seen = self.seen_sessions.lock().unwrap().clone();
+
+        let timeout = std::time::Duration::from_secs(5);
+        let poll_interval = std::time::Duration::from_millis(25);
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        // Yield to let the automation runner process pending events.
+        tokio::task::yield_now().await;
+
+        loop {
+            let current: HashSet<SessionId> = self
+                .state
+                .list_sessions()
+                .await
+                .context("failed to list sessions in step_schedule")?
+                .into_iter()
+                .collect();
+
+            if current.iter().any(|id| !seen.contains(id)) {
+                break;
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+
+        // Wait for any Created sessions to transition.
         self.step_pending_jobs().await?;
-        Ok(created)
+
+        // Collect all sessions and return only the ones not previously seen.
+        let all = self
+            .state
+            .list_sessions()
+            .await
+            .context("failed to list sessions after step_schedule")?;
+        let new_ids: Vec<SessionId> = all.into_iter().filter(|id| !seen.contains(id)).collect();
+
+        // Mark these sessions as seen for future calls.
+        let mut seen = self.seen_sessions.lock().unwrap();
+        for id in &new_ids {
+            seen.insert(id.clone());
+        }
+
+        Ok(new_ids)
     }
 }
 
@@ -670,29 +638,17 @@ impl TestHarnessBuilder {
         if let Some(pwc) = self.patch_workflow_config {
             let params = serde_yaml_ng::to_value(&pwc)
                 .context("failed to serialize PatchWorkflowConfig to YAML")?;
-            let policy_config = PolicyConfig {
-                global: PolicyList {
-                    restrictions: vec![
-                        PolicyEntry::Name("issue_lifecycle_validation".to_string()),
-                        PolicyEntry::Name("task_state_machine".to_string()),
-                        PolicyEntry::Name("duplicate_branch_name".to_string()),
-                        PolicyEntry::Name("running_job_validation".to_string()),
-                        PolicyEntry::Name("require_creator".to_string()),
-                    ],
-                    automations: vec![
-                        PolicyEntry::Name("cascade_issue_status".to_string()),
-                        PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                        PolicyEntry::Name("close_merge_request_issues".to_string()),
-                        PolicyEntry::Name("sync_review_request_issues".to_string()),
-                        PolicyEntry::WithParams {
-                            name: "patch_workflow".to_string(),
-                            params,
-                        },
-                        PolicyEntry::Name("github_pr_sync".to_string()),
-                        PolicyEntry::Name("start_created_sessions".to_string()),
-                    ],
-                },
-            };
+            let mut policy_config = default_policy_config();
+            // Replace the default patch_workflow entry with the parameterized one.
+            for entry in &mut policy_config.global.automations {
+                if matches!(entry, PolicyEntry::Name(n) if n == "patch_workflow") {
+                    *entry = PolicyEntry::WithParams {
+                        name: "patch_workflow".to_string(),
+                        params: params.clone(),
+                    };
+                    break;
+                }
+            }
             let registry = build_default_registry();
             let engine = registry
                 .build(&policy_config)
@@ -755,8 +711,7 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
-            spawn_sessions: SpawnSessionsAutomation::new(None)
-                .expect("SpawnSessionsAutomation::new should not fail"),
+            seen_sessions: std::sync::Mutex::new(HashSet::new()),
         })
     }
 }

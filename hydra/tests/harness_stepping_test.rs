@@ -40,122 +40,89 @@ async fn create_spawnable_issue(
     Ok(response.issue_id)
 }
 
-/// Helper: register an agent queue in the harness by adding it to the DB store
-/// and creating a prompt document.
-async fn register_agent(harness: &harness::TestHarness, name: &str) {
-    use hydra_server::domain::actors::ActorRef;
-    use hydra_server::domain::{agents::Agent, documents::Document};
-
-    let agent = Agent::new(
-        name.to_string(),
-        format!("/agents/{name}/prompt.md"),
-        3,
-        10,
-        false,
-        Vec::new(),
-    );
-    harness.store().add_agent(agent).await.unwrap();
-
-    let doc = Document {
-        title: format!("{name} prompt"),
-        body_markdown: format!("test prompt for {name}"),
-        path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-        created_by: None,
-        deleted: false,
-    };
-    harness
-        .store()
-        .add_document(doc, &ActorRef::test())
-        .await
-        .unwrap();
-}
-
-/// step_spawner with no agents configured returns empty vec.
+/// When no agents are configured, no sessions are spawned automatically.
 #[tokio::test]
-async fn step_spawner_no_agents_returns_empty() -> Result<()> {
+async fn auto_spawn_no_agents_returns_empty() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("test-org/test-repo")
         .build()
         .await?;
 
-    let created = harness.step_spawner().await?;
+    let created = harness.step_schedule().await?;
     assert!(
         created.is_empty(),
-        "no agents configured, should create no tasks"
+        "no agents configured, should create no sessions"
     );
 
     Ok(())
 }
 
-/// step_spawner with no ready issues returns empty vec.
+/// When no ready issues exist, no sessions are spawned automatically.
 #[tokio::test]
-async fn step_spawner_no_ready_issues_returns_empty() -> Result<()> {
+async fn auto_spawn_no_ready_issues_returns_empty() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("test-org/test-repo")
+        .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
-    register_agent(&harness, "swe").await;
 
-    let created = harness.step_spawner().await?;
+    let created = harness.step_schedule().await?;
     assert!(
         created.is_empty(),
-        "no issues exist, should create no tasks"
+        "no issues exist, should create no sessions"
     );
 
     Ok(())
 }
 
-/// step_spawner creates a task when there is a ready issue assigned to an agent.
+/// Sessions are spawned automatically when an issue is created with an agent.
 #[tokio::test]
-async fn step_spawner_creates_task_for_ready_issue() -> Result<()> {
+async fn auto_spawn_creates_session_for_ready_issue() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
+        .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
-    register_agent(&harness, "swe").await;
 
     let _issue_id =
         create_spawnable_issue(&harness, "swe", "acme/app", "implement feature").await?;
 
-    let created = harness.step_spawner().await?;
+    let created = harness.step_schedule().await?;
     assert_eq!(
         created.len(),
         1,
-        "spawner should create exactly one task for the ready issue"
+        "spawn_sessions automation should create exactly one session for the ready issue"
     );
 
     Ok(())
 }
 
-/// step_pending_jobs waits for the automation to transition created tasks to pending.
+/// step_pending_jobs waits for the automation to transition created sessions to pending.
 #[tokio::test]
-async fn step_pending_jobs_processes_created_tasks() -> Result<()> {
+async fn step_pending_jobs_processes_created_sessions() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
+        .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
-    register_agent(&harness, "swe").await;
 
     let _issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "process test").await?;
 
-    // Create tasks via spawner.
-    let task_ids = harness.step_spawner().await?;
+    // step_schedule waits for sessions to be spawned and processed.
+    let task_ids = harness.step_schedule().await?;
     assert_eq!(task_ids.len(), 1);
-
-    // Wait for the start_created_sessions automation to process them.
-    harness.step_pending_jobs().await?;
 
     Ok(())
 }
 
 /// step_schedule combines spawner + pending jobs in one call.
 #[tokio::test]
-async fn step_schedule_creates_and_processes_tasks() -> Result<()> {
+async fn step_schedule_creates_and_processes_sessions() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
+        .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
-    register_agent(&harness, "swe").await;
 
     let _issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "schedule test").await?;
 
@@ -163,7 +130,7 @@ async fn step_schedule_creates_and_processes_tasks() -> Result<()> {
     assert_eq!(
         task_ids.len(),
         1,
-        "step_schedule should return the task created by the spawner"
+        "step_schedule should return the session created by the automation"
     );
 
     Ok(())
@@ -202,9 +169,9 @@ async fn stepping_is_deterministic() -> Result<()> {
     async fn run_scenario() -> Result<Vec<hydra_common::SessionId>> {
         let harness = harness::TestHarness::builder()
             .with_repo("acme/deterministic")
+            .with_agent("swe", "You are a software engineer")
             .build()
             .await?;
-        register_agent(&harness, "swe").await;
         create_spawnable_issue(&harness, "swe", "acme/deterministic", "determinism test").await?;
         harness.step_schedule().await
     }
@@ -215,35 +182,35 @@ async fn stepping_is_deterministic() -> Result<()> {
     assert_eq!(
         result1.len(),
         result2.len(),
-        "same scenario should produce same number of tasks"
+        "same scenario should produce same number of sessions"
     );
-    // Both should produce exactly 1 task.
+    // Both should produce exactly 1 session.
     assert_eq!(result1.len(), 1);
     assert_eq!(result2.len(), 1);
 
     Ok(())
 }
 
-/// step_spawner does not create duplicate tasks for the same issue.
+/// The automation does not create duplicate sessions for the same issue.
 #[tokio::test]
-async fn step_spawner_no_duplicate_tasks() -> Result<()> {
+async fn auto_spawn_no_duplicate_sessions() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/dedup")
+        .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
-    register_agent(&harness, "swe").await;
 
     create_spawnable_issue(&harness, "swe", "acme/dedup", "dedup test").await?;
 
-    // First step: should create a task.
-    let first = harness.step_spawner().await?;
+    // First step_schedule: should return the automatically-created session.
+    let first = harness.step_schedule().await?;
     assert_eq!(first.len(), 1);
 
-    // Second step: issue already has an active task, should not create another.
-    let second = harness.step_spawner().await?;
+    // Second step_schedule: issue already has an active session, no new ones expected.
+    let second = harness.step_schedule().await?;
     assert!(
         second.is_empty(),
-        "spawner should not create duplicate tasks for the same issue"
+        "automation should not create duplicate sessions for the same issue"
     );
 
     Ok(())

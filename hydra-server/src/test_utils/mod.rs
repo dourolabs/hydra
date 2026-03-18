@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, Repository, ServiceState},
+    app::{AppState, Repository, ServiceState, default_policy_config},
     config::{
         AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, GithubAppSection,
         HydraSection, JobEngineConfig, JobSection, SchedulerSection, StorageConfig,
@@ -10,7 +10,6 @@ use crate::{
         secrets::SecretManager,
     },
     job_engine::JobEngine,
-    policy::config::{PolicyConfig, PolicyEntry, PolicyList},
     run_with_state,
     store::{MemoryStore, Store, StoreError},
 };
@@ -93,31 +92,7 @@ pub fn test_app_config() -> AppConfig {
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
-        // Explicit policy config that excludes `spawn_sessions` — the test
-        // harness wires it manually via `step_spawner()` so including it in
-        // the default automations would cause sessions to be created twice.
-        policies: Some(PolicyConfig {
-            global: PolicyList {
-                restrictions: vec![
-                    PolicyEntry::Name("issue_lifecycle_validation".to_string()),
-                    PolicyEntry::Name("task_state_machine".to_string()),
-                    PolicyEntry::Name("duplicate_branch_name".to_string()),
-                    PolicyEntry::Name("running_job_validation".to_string()),
-                    PolicyEntry::Name("require_creator".to_string()),
-                ],
-                automations: vec![
-                    PolicyEntry::Name("cascade_issue_status".to_string()),
-                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                    PolicyEntry::Name("close_merge_request_issues".to_string()),
-                    PolicyEntry::Name("sync_review_request_issues".to_string()),
-                    PolicyEntry::Name("patch_workflow".to_string()),
-                    PolicyEntry::Name("github_pr_sync".to_string()),
-                    PolicyEntry::Name("notification_generation".to_string()),
-                    PolicyEntry::Name("inbox_label".to_string()),
-                    PolicyEntry::Name("start_created_sessions".to_string()),
-                ],
-            },
-        }),
+        policies: Some(default_policy_config()),
     }
 }
 
