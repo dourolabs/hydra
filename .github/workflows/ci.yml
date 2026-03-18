@@ -94,7 +94,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Regenerate TypeScript types from Rust structs
-        run: TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings
+        run: TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p hydra-common --features ts export_bindings
 
       - name: Check generated types are up-to-date
         run: git diff --exit-code metis-web/packages/api/src/generated/
