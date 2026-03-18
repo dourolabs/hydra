@@ -20,12 +20,13 @@ function validateSecretName(name: string): string | null {
 interface AddSecretFormProps {
   username: string;
   existingNames: string[];
+  adding: boolean;
+  onClose: () => void;
 }
 
-export function AddSecretForm({ username, existingNames }: AddSecretFormProps) {
+export function AddSecretForm({ username, existingNames, adding, onClose }: AddSecretFormProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
-  const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
@@ -36,16 +37,13 @@ export function AddSecretForm({ username, existingNames }: AddSecretFormProps) {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
       addToast(`${variables.secretName} saved`, "success");
-      setAdding(false);
+      onClose();
       setName("");
       setValue("");
       setNameError(null);
     },
     onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to save secret",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to save secret", "error");
     },
   });
 
@@ -79,11 +77,11 @@ export function AddSecretForm({ username, existingNames }: AddSecretFormProps) {
   }, [name, value, existingNames, setMutation]);
 
   const handleCancel = useCallback(() => {
-    setAdding(false);
+    onClose();
     setName("");
     setValue("");
     setNameError(null);
-  }, []);
+  }, [onClose]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -98,23 +96,12 @@ export function AddSecretForm({ username, existingNames }: AddSecretFormProps) {
   );
 
   if (!adding) {
-    return (
-      <div className={styles.addSecretRow}>
-        <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
-          + Add Secret
-        </Button>
-      </div>
-    );
+    return null;
   }
 
   return (
     <div className={styles.addSecretForm} onKeyDown={handleKeyDown}>
-      <Input
-        placeholder="SECRET_NAME"
-        value={name}
-        onChange={handleNameChange}
-        autoFocus
-      />
+      <Input placeholder="SECRET_NAME" value={name} onChange={handleNameChange} autoFocus />
       {nameError && <span className={styles.validationError}>{nameError}</span>}
       <Input
         type="password"
