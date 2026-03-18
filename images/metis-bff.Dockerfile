@@ -20,7 +20,7 @@ COPY hydra-web/packages/ui/ ./packages/ui/
 COPY hydra-web/packages/web/ ./packages/web/
 
 # Build packages in dependency order: api → ui → web
-RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
+RUN pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web build
 
 # ── Stage 2: Cargo chef planner ──────────────────────────────────
 FROM rust:1.88.0 AS planner

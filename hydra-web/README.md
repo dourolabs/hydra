@@ -2,9 +2,9 @@
 
 Web interface for Metis. This is a pnpm monorepo containing three packages:
 
-- **`@metis/api`** — Typed API client with auto-generated TypeScript types from metis-server Rust structs
-- **`@metis/ui`** — React component library with a dark terminal-inspired theme (JetBrains Mono font, `#0a0a0a` background, `#00cc66` green accent)
-- **`@metis/web`** — React 19 SPA frontend + Hono BFF (Backend-for-Frontend) server
+- **`@hydra/api`** — Typed API client with auto-generated TypeScript types from metis-server Rust structs
+- **`@hydra/ui`** — React component library with a dark terminal-inspired theme (JetBrains Mono font, `#0a0a0a` background, `#00cc66` green accent)
+- **`@hydra/web`** — React 19 SPA frontend + Hono BFF (Backend-for-Frontend) server
 
 The BFF server proxies authenticated API requests to metis-server and serves the React SPA's static assets.
 
@@ -42,7 +42,7 @@ pnpm typecheck   # TypeScript type checking across all packages
 
 ## Regenerating TypeScript types
 
-The `@metis/api` package contains TypeScript type definitions auto-generated from Rust structs in `metis-common` using [ts-rs](https://github.com/Aleph-Alpha/ts-rs). These generated files are committed to the repository so that `@metis/api` can be built without a Rust toolchain.
+The `@hydra/api` package contains TypeScript type definitions auto-generated from Rust structs in `metis-common` using [ts-rs](https://github.com/Aleph-Alpha/ts-rs). These generated files are committed to the repository so that `@hydra/api` can be built without a Rust toolchain.
 
 When Rust API types change in `metis-common`, regenerate the TypeScript types:
 
