@@ -407,8 +407,8 @@ fn diff_to_string(diff: &Diff) -> Result<String> {
 
 fn disable_diff_color() -> EnvGuard {
     let git_config_parameters = env::var("GIT_CONFIG_PARAMETERS")
-        .map(|existing| format!("{existing}\ncolor.ui=never"))
-        .unwrap_or_else(|_| "color.ui=never".to_string());
+        .map(|existing| format!("{existing} 'color.ui=never'"))
+        .unwrap_or_else(|_| "'color.ui=never'".to_string());
     EnvGuard::set(&[
         ("NO_COLOR", Some("1")),
         ("CLICOLOR_FORCE", Some("0")),
@@ -938,7 +938,7 @@ mod tests {
             ("COLORTERM", Some("truecolor")),
             ("CLICOLOR_FORCE", Some("1")),
             ("FORCE_COLOR", Some("1")),
-            ("GIT_CONFIG_PARAMETERS", Some("color.ui=always")),
+            ("GIT_CONFIG_PARAMETERS", Some("'color.ui=always'")),
         ]);
 
         let diff = workdir_diff(tempdir.path())?;
