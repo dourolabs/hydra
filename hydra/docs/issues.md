@@ -79,7 +79,7 @@ Append todos with `--add`; prefix the text with `[x]` to mark the entry complete
 # File a bug that inherits the current job's repo/image
 hydra issues create \
   --current-issue-id i-root \
-  --type bug --assignee swe --repo-name dourolabs/metis \
+  --type bug --assignee swe --repo-name dourolabs/hydra \
   --deps child-of:i-root --progress "Triaging logs" \
   "API times out when payload > 5MB"
 

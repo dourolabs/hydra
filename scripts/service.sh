@@ -112,8 +112,8 @@ database:
 
 service:
   repositories:
-    "dourolabs/metis":
-      remote_url: "https://github.com/dourolabs/metis.git"
+    "dourolabs/hydra":
+      remote_url: "https://github.com/dourolabs/hydra.git"
       default_branch: "main"
 
 github_app:
