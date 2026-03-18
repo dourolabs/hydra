@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKER_IMAGE="${WORKER_IMAGE:-metis-worker:latest}"
-SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
-S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
+WORKER_IMAGE="${WORKER_IMAGE:-hydra-worker:latest}"
+SERVER_IMAGE="${SERVER_IMAGE:-hydra-server:latest}"
+S3_IMAGE="${S3_IMAGE:-hydra-s3:latest}"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-local-dev}"
 
 require_cmd() {

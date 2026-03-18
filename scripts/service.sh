@@ -8,9 +8,9 @@ COMMAND="${1:-start}"
 #   NAMESPACE=my-app ./setup-server-client.sh
 
 NAMESPACE="${NAMESPACE:-metis}"
-SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
-CLIENT_IMAGE="${CLIENT_IMAGE:-metis-worker:latest}"
-S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
+SERVER_IMAGE="${SERVER_IMAGE:-hydra-server:latest}"
+CLIENT_IMAGE="${CLIENT_IMAGE:-hydra-worker:latest}"
+S3_IMAGE="${S3_IMAGE:-hydra-s3:latest}"
 SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
 
 # Service type for external access:
@@ -584,7 +584,7 @@ spec:
         app: ${S3_SERVICE_NAME}
     spec:
       containers:
-        - name: metis-s3
+        - name: hydra-s3
           image: ${S3_IMAGE}
           imagePullPolicy: IfNotPresent
           ports:
