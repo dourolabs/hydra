@@ -356,7 +356,7 @@ mod tests {
         let remote_repo = GitRepository::init(remote_dir.path())?;
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let repository = Repository::new(
             remote_dir.path().to_str().unwrap().to_string(),
             None,

@@ -487,8 +487,8 @@ mod tests {
         let dependency_id = IssueId::new();
         let patch_id = PatchId::new();
         let session_settings = SessionSettings {
-            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
-            remote_url: Some("https://github.com/dourolabs/metis".to_string()),
+            repo_name: Some(RepoName::from_str("dourolabs/hydra").unwrap()),
+            remote_url: Some("https://github.com/dourolabs/hydra".to_string()),
             image: Some("worker:latest".to_string()),
             model: Some("gpt-4o".to_string()),
             branch: Some("main".to_string()),
@@ -540,7 +540,7 @@ mod tests {
     fn session_settings_roundtrip_preserves_secrets() {
         let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
         let session_settings = SessionSettings {
-            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            repo_name: Some(RepoName::from_str("dourolabs/hydra").unwrap()),
             remote_url: None,
             image: Some("worker:latest".to_string()),
             model: None,

@@ -1375,7 +1375,7 @@ mod tests {
         let server = MockServer::start();
         let client = hydra_client(&server);
         let patch_id = patch_id("p-asset-output");
-        let asset_url = "https://github.com/dourolabs/metis/assets/123";
+        let asset_url = "https://github.com/dourolabs/hydra/assets/123";
         let path = format!("/v1/patches/{}/assets", patch_id.as_ref());
 
         let mock = server.mock(|when, then| {

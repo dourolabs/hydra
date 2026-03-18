@@ -564,9 +564,9 @@ mod tests {
     }
 
     fn repository() -> (RepoName, Repository) {
-        let repo_name = RepoName::from_str("dourolabs/metis").expect("repo name should parse");
+        let repo_name = RepoName::from_str("dourolabs/hydra").expect("repo name should parse");
         let repository = Repository::new(
-            "https://github.com/dourolabs/metis.git".to_string(),
+            "https://github.com/dourolabs/hydra.git".to_string(),
             Some("main".to_string()),
             Some("repo-image".to_string()),
             None,
@@ -1727,7 +1727,7 @@ mod tests {
         assert_eq!(
             resolved.context.bundle,
             Bundle::GitRepository {
-                url: "https://github.com/dourolabs/metis.git".to_string(),
+                url: "https://github.com/dourolabs/hydra.git".to_string(),
                 rev: default_branch,
             }
         );

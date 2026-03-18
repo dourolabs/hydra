@@ -4767,7 +4767,7 @@ mod tests {
     #[ignore]
     async fn repository_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let config = sample_repository_config();
 
         store

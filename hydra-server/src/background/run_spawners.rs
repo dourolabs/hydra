@@ -245,7 +245,7 @@ mod tests {
     async fn enqueues_tasks_and_reports_progress() -> anyhow::Result<()> {
         let handles = test_state_handles();
         let agent_name = "static";
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
 
         register_agent(&handles, agent_name).await?;
 
