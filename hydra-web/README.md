@@ -1,4 +1,4 @@
-# metis-web
+# hydra-web
 
 Web interface for Metis. This is a pnpm monorepo containing three packages:
 
@@ -17,7 +17,7 @@ The BFF server proxies authenticated API requests to metis-server and serves the
 ## Getting started
 
 ```bash
-cd metis-web
+cd hydra-web
 pnpm install
 ```
 
@@ -47,7 +47,7 @@ The `@metis/api` package contains TypeScript type definitions auto-generated fro
 When Rust API types change in `metis-common`, regenerate the TypeScript types:
 
 ```bash
-cd metis-web
+cd hydra-web
 pnpm generate-types
 ```
 
@@ -70,7 +70,7 @@ Users provide a Metis API token via `POST /auth/login`. The BFF validates the to
 ## Project structure
 
 ```
-metis-web/
+hydra-web/
 ├── packages/
 │   ├── api/
 │   │   └── src/

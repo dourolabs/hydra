@@ -1,6 +1,6 @@
-# metis-web Agent Guidelines
+# hydra-web Agent Guidelines
 
-This document helps AI agents and developers navigate the metis-web frontend codebase. Read this before making changes to avoid duplicating existing utilities or diverging from established patterns.
+This document helps AI agents and developers navigate the hydra-web frontend codebase. Read this before making changes to avoid duplicating existing utilities or diverging from established patterns.
 
 ## Project Structure Overview
 
@@ -65,11 +65,11 @@ Theme tokens are defined in `packages/ui/src/theme/tokens.css`.
 - **Never create direct `fetch` calls** — add methods to `MetisApiClient` instead.
 
 ## Cross-Workspace Build Verification
-When Rust API types in `metis-common` change, TypeScript types must be regenerated. Run `pnpm typecheck` from the `metis-web/` directory to verify the frontend still compiles against the updated types.
+When Rust API types in `metis-common` change, TypeScript types must be regenerated. Run `pnpm typecheck` from the `hydra-web/` directory to verify the frontend still compiles against the updated types.
 
 ## Build / Dev Commands
 
-Run from the `metis-web/` directory:
+Run from the `hydra-web/` directory:
 
 | Command | Purpose |
 |---------|---------|
@@ -94,7 +94,7 @@ Before submitting a patch, verify your changes using the dev testing stack.
 
 ### Quick start
 
-1. Install dependencies: `cd metis-web && pnpm install`
+1. Install dependencies: `cd hydra-web && pnpm install`
 2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @metis/web exec playwright install chromium`
 3. Run E2E tests: `pnpm e2e`
    - Playwright automatically starts the mock server, BFF, and frontend via its `webServer` config
