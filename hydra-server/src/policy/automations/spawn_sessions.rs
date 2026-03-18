@@ -16,7 +16,7 @@ const AUTOMATION_NAME: &str = "spawn_sessions";
 ///
 /// Replaces the polling-based `RunSpawners` background job by reacting
 /// to `IssueCreated`, `IssueUpdated`, and `SessionUpdated` events.
-/// Reuses the same `AgentQueue::spawn()` eligibility logic from `spawner.rs`.
+/// Reuses the same `AgentQueue::spawn_for_issue()` eligibility logic from `agent_queue.rs`.
 ///
 /// Spawn attempt tracking is maintained in-memory per agent to prevent
 /// infinite session spawns, matching the behavior of the old polling job.
