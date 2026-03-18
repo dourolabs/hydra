@@ -2,6 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::issues::{Issue, IssueStatus, IssueType, SessionSettings, UpsertIssueRequest};
+use hydra_common::sessions::SearchSessionsQuery;
 use hydra_common::users::Username;
 use std::str::FromStr;
 
@@ -48,9 +49,14 @@ async fn auto_spawn_no_agents_returns_empty() -> Result<()> {
         .build()
         .await?;
 
-    let created = harness.step_schedule().await?;
+    // Wait for any pending processing, then verify no sessions exist.
+    harness.step_pending_jobs().await?;
+    let all_sessions = harness
+        .state()
+        .list_sessions_with_query(&SearchSessionsQuery::new(None, None, None, vec![]))
+        .await?;
     assert!(
-        created.is_empty(),
+        all_sessions.is_empty(),
         "no agents configured, should create no sessions"
     );
 
@@ -66,9 +72,14 @@ async fn auto_spawn_no_ready_issues_returns_empty() -> Result<()> {
         .build()
         .await?;
 
-    let created = harness.step_schedule().await?;
+    // Wait for any pending processing, then verify no sessions exist.
+    harness.step_pending_jobs().await?;
+    let all_sessions = harness
+        .state()
+        .list_sessions_with_query(&SearchSessionsQuery::new(None, None, None, vec![]))
+        .await?;
     assert!(
-        created.is_empty(),
+        all_sessions.is_empty(),
         "no issues exist, should create no sessions"
     );
 
@@ -84,10 +95,9 @@ async fn auto_spawn_creates_session_for_ready_issue() -> Result<()> {
         .build()
         .await?;
 
-    let _issue_id =
-        create_spawnable_issue(&harness, "swe", "acme/app", "implement feature").await?;
+    let issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "implement feature").await?;
 
-    let created = harness.step_schedule().await?;
+    let created = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(
         created.len(),
         1,
@@ -106,31 +116,31 @@ async fn step_pending_jobs_processes_created_sessions() -> Result<()> {
         .build()
         .await?;
 
-    let _issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "process test").await?;
+    let issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "process test").await?;
 
-    // step_schedule waits for sessions to be spawned and processed.
-    let task_ids = harness.step_schedule().await?;
+    // await_sessions waits for sessions to be spawned and processed.
+    let task_ids = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(task_ids.len(), 1);
 
     Ok(())
 }
 
-/// step_schedule combines spawner + pending jobs in one call.
+/// await_sessions waits for sessions and processes them in one call.
 #[tokio::test]
-async fn step_schedule_creates_and_processes_sessions() -> Result<()> {
+async fn await_sessions_creates_and_processes_sessions() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
         .with_agent("swe", "You are a software engineer")
         .build()
         .await?;
 
-    let _issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "schedule test").await?;
+    let issue_id = create_spawnable_issue(&harness, "swe", "acme/app", "schedule test").await?;
 
-    let task_ids = harness.step_schedule().await?;
+    let task_ids = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(
         task_ids.len(),
         1,
-        "step_schedule should return the session created by the automation"
+        "await_sessions should return the session created by the automation"
     );
 
     Ok(())
@@ -172,8 +182,10 @@ async fn stepping_is_deterministic() -> Result<()> {
             .with_agent("swe", "You are a software engineer")
             .build()
             .await?;
-        create_spawnable_issue(&harness, "swe", "acme/deterministic", "determinism test").await?;
-        harness.step_schedule().await
+        let issue_id =
+            create_spawnable_issue(&harness, "swe", "acme/deterministic", "determinism test")
+                .await?;
+        harness.await_sessions(&issue_id, 1).await
     }
 
     let result1 = run_scenario().await?;
@@ -200,17 +212,23 @@ async fn auto_spawn_no_duplicate_sessions() -> Result<()> {
         .build()
         .await?;
 
-    create_spawnable_issue(&harness, "swe", "acme/dedup", "dedup test").await?;
+    let issue_id = create_spawnable_issue(&harness, "swe", "acme/dedup", "dedup test").await?;
 
-    // First step_schedule: should return the automatically-created session.
-    let first = harness.step_schedule().await?;
+    // First await_sessions: should return the automatically-created session.
+    let first = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(first.len(), 1);
 
-    // Second step_schedule: issue already has an active session, no new ones expected.
-    let second = harness.step_schedule().await?;
-    assert!(
-        second.is_empty(),
+    // Second await_sessions: issue already has an active session, calling again
+    // should return the same single session (no duplicates created).
+    let second = harness.await_sessions(&issue_id, 1).await?;
+    assert_eq!(
+        second.len(),
+        1,
         "automation should not create duplicate sessions for the same issue"
+    );
+    assert_eq!(
+        first[0], second[0],
+        "both calls should return the same session"
     );
 
     Ok(())
