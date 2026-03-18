@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 import type { IssueSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "../computeIssueProgress";
@@ -33,6 +34,17 @@ const mockLabels = [
 
 vi.mock("../../labels/useLabels", () => ({
   useLabels: () => ({ data: mockLabels }),
+}));
+
+vi.mock("../../issues/usePaginatedIssues", () => ({
+  useIssueCount: (filters: { labels?: string; status?: string }) => {
+    // lbl-1 has 2 total issues, 1 closed
+    if (filters.labels === "lbl-1") {
+      if (filters.status === "closed") return { data: 1 };
+      return { data: 2 };
+    }
+    return { data: 0 };
+  },
 }));
 
 vi.mock("../StatusBoxes", () => ({
@@ -101,6 +113,10 @@ function renderSidebar(overrides: Partial<Parameters<typeof IssueFilterSidebar>[
 // --- Tests ---
 
 describe("IssueFilterSidebar", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
