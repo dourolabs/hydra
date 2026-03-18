@@ -31,8 +31,8 @@ function buildRelationsFromIssues(store: Store): RelationResponse[] {
     // Patch relations: issue owns patches
     for (const patchId of entry.data.patches ?? []) {
       relations.push({
-        source_id: patchId,
-        target_id: id,
+        source_id: id,
+        target_id: patchId,
         rel_type: "has-patch",
       });
     }
