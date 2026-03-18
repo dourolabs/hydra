@@ -2,6 +2,7 @@ import type {
   IssueSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
+  DocumentVersionRecord,
 } from "@hydra/api";
 
 export type WorkItem =
@@ -23,7 +24,7 @@ export type WorkItem =
   | {
       kind: "document";
       id: string;
-      data: DocumentSummaryRecord;
+      data: DocumentSummaryRecord | DocumentVersionRecord;
       lastUpdated: string;
       isTerminal: boolean;
       sourceIssueId: string | undefined;

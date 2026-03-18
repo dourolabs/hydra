@@ -1,7 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
-import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import {
+  usePaginatedIssues,
+  useIssueCount,
+  type IssueFilters,
+} from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -129,7 +133,12 @@ export function DashboardPage() {
   // Uses multi-status filter to match the total queries above.
   const inboxActiveFilters = useMemo<IssueFilters>(() => {
     if (!activeIdsParam || !inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, ids: activeIdsParam, status: "open,in-progress" };
+    return {
+      labels: inboxLabelId,
+      creator: username,
+      ids: activeIdsParam,
+      status: "open,in-progress",
+    };
   }, [activeIdsParam, inboxLabelId, username]);
 
   const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
@@ -138,8 +147,14 @@ export function DashboardPage() {
   }, [activeIdsParam, username]);
 
   const activeCountEnabled = !!activeIdsParam;
-  const { data: inboxActiveCount = 0 } = useIssueCount(inboxActiveFilters, activeCountEnabled && inboxEnabled);
-  const { data: myIssuesActiveCount = 0 } = useIssueCount(myIssuesActiveFilters, activeCountEnabled && myIssuesEnabled);
+  const { data: inboxActiveCount = 0 } = useIssueCount(
+    inboxActiveFilters,
+    activeCountEnabled && inboxEnabled,
+  );
+  const { data: myIssuesActiveCount = 0 } = useIssueCount(
+    myIssuesActiveFilters,
+    activeCountEnabled && myIssuesEnabled,
+  );
 
   const inboxCount = Math.max(0, inboxTotalCount - inboxActiveCount);
   const myIssuesCount = Math.max(0, myIssuesTotalCount - myIssuesActiveCount);
@@ -213,7 +228,7 @@ export function DashboardPage() {
       items.push({
         kind: "document" as const,
         id: doc.document_id,
-        data: doc as unknown as import("@hydra/api").DocumentSummaryRecord,
+        data: doc,
         lastUpdated: doc.timestamp,
         isTerminal: false,
         sourceIssueId: artifactToIssue.get(doc.document_id),
@@ -225,20 +240,26 @@ export function DashboardPage() {
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
-      setSearchParams((prev) => {
-        prev.set("selected", "inbox");
-        return prev;
-      }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          prev.set("selected", "inbox");
+          return prev;
+        },
+        { replace: true },
+      );
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
       setFilterRootId(rootId);
-      setSearchParams((prev) => {
-        prev.set("selected", rootId ?? "everything");
-        return prev;
-      }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          prev.set("selected", rootId ?? "everything");
+          return prev;
+        },
+        { replace: true },
+      );
     },
     [setSearchParams],
   );
