@@ -6,7 +6,7 @@ on:
       - v*
   pull_request:
     paths:
-      - .github/workflows/release-metis-cli.yml
+      - .github/workflows/release-hydra-cli.yml
 
 permissions:
   contents: write
@@ -219,7 +219,7 @@ jobs:
 
       - name: Publish tagged release to public repo
         env:
-          GH_TOKEN: ${{ secrets.METIS_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.HYDRA_RELEASES_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release view "$TAG" -R dourolabs/metis-releases >/dev/null 2>&1 || \
@@ -230,7 +230,7 @@ jobs:
 
       - name: Publish latest release to public repo
         env:
-          GH_TOKEN: ${{ secrets.METIS_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.HYDRA_RELEASES_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release delete latest -R dourolabs/metis-releases --yes --cleanup-tag 2>/dev/null || true
