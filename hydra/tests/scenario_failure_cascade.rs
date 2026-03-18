@@ -12,7 +12,6 @@ use anyhow::Result;
 use harness::test_job_settings_full;
 use hydra_common::{
     issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType},
-    sessions::SearchSessionsQuery,
     RepoName,
 };
 use hydra_server::job_engine::JobStatus;
@@ -110,50 +109,21 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .await?;
 
     // ── Step 3: Spawn tasks for ready children A and B ────────────
-    // step_schedule creates tasks and waits for the start_created_sessions
-    // automation to transition them from Created to Pending/Running.
-    let spawned_tasks = harness.step_schedule().await?;
-    assert!(
-        spawned_tasks.len() >= 2,
-        "expected tasks for children A and B, got {}",
-        spawned_tasks.len()
-    );
+    // step_pending_jobs waits for the start_created_sessions automation
+    // to transition sessions from Created to Pending/Running.
+    harness.step_pending_jobs().await?;
 
     // Identify which task belongs to which issue.
-    let client = harness.client()?;
-
     let task_a = {
-        let jobs = client
-            .list_sessions(&SearchSessionsQuery::new(
-                None,
-                Some(child_a_id.clone()),
-                None,
-                vec![],
-            ))
-            .await?;
-        assert_eq!(
-            jobs.sessions.len(),
-            1,
-            "child A should have exactly one task"
-        );
-        jobs.sessions[0].session_id.clone()
+        let task_ids = harness.list_sessions_for_issue(&child_a_id, vec![]).await?;
+        assert_eq!(task_ids.len(), 1, "child A should have exactly one task");
+        task_ids[0].clone()
     };
 
     let task_b = {
-        let jobs = client
-            .list_sessions(&SearchSessionsQuery::new(
-                None,
-                Some(child_b_id.clone()),
-                None,
-                vec![],
-            ))
-            .await?;
-        assert_eq!(
-            jobs.sessions.len(),
-            1,
-            "child B should have exactly one task"
-        );
-        jobs.sessions[0].session_id.clone()
+        let task_ids = harness.list_sessions_for_issue(&child_b_id, vec![]).await?;
+        assert_eq!(task_ids.len(), 1, "child B should have exactly one task");
+        task_ids[0].clone()
     };
 
     // ── Step 5: User drops the parent issue ───────────────────────
@@ -227,16 +197,9 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     // never had a task.
     harness.step_monitor_jobs().await?;
 
-    let jobs_c = client
-        .list_sessions(&SearchSessionsQuery::new(
-            None,
-            Some(child_c_id.clone()),
-            None,
-            vec![],
-        ))
-        .await?;
+    let jobs_c = harness.list_sessions_for_issue(&child_c_id, vec![]).await?;
     assert!(
-        jobs_c.sessions.is_empty(),
+        jobs_c.is_empty(),
         "child C was blocked and should never have had a task spawned"
     );
 

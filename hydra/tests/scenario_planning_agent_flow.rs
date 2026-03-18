@@ -58,7 +58,8 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
         .await?;
 
     // ── Step 2: PM picks up parent issue ─────────────────────────────
-    let pm_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks = harness.list_sessions_for_issue(&parent_id, vec![]).await?;
     assert_eq!(pm_tasks.len(), 1, "spawner should create one task for PM");
     let pm_task_id = &pm_tasks[0];
 
@@ -136,11 +137,12 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     );
 
     // ── Step 4: Schedule — child 1 ready, child 2 blocked ───────────
-    let swe_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks = harness.list_sessions_for_issue(&child1_id, vec![]).await?;
     assert_eq!(
         swe_tasks.len(),
         1,
-        "only child 1 should be spawned (child 2 is blocked)"
+        "child 1 should have exactly one session (child 2 is blocked)"
     );
     let swe1_task_id = &swe_tasks[0];
 
@@ -237,7 +239,10 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     // ── Step 9: SWE issue re-spawns and agent closes child 1 ────────
     // All workflow children are terminal, so child 1 (still Open/InProgress)
     // becomes spawnable again. The agent closes it via the CLI.
-    let swe1_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe1_close_tasks = harness
+        .list_sessions_for_issue(&child1_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         swe1_close_tasks.len(),
         1,
@@ -255,7 +260,8 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     child1_closed.assert_status(IssueStatus::Closed);
 
     // ── Step 10: Child 2 should now be ready ─────────────────────────
-    let swe2_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe2_tasks = harness.list_sessions_for_issue(&child2_id, vec![]).await?;
     assert_eq!(
         swe2_tasks.len(),
         1,
@@ -321,7 +327,10 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     mr2.assert_status(IssueStatus::Closed);
 
     // ── Step 13: SWE issue re-spawns and agent closes child 2 ───────
-    let swe2_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe2_close_tasks = harness
+        .list_sessions_for_issue(&child2_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         swe2_close_tasks.len(),
         1,
@@ -340,7 +349,10 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
 
     // ── Step 14: PM re-spawns and closes parent ─────────────────────
     // All children are terminal, so parent becomes spawnable again.
-    let pm_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_close_tasks = harness
+        .list_sessions_for_issue(&parent_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_close_tasks.len(),
         1,
@@ -405,7 +417,8 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
         .await?;
 
     // ── Step 2: PM picks up parent and creates two children ──────────
-    let pm_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks = harness.list_sessions_for_issue(&parent_id, vec![]).await?;
     assert_eq!(pm_tasks.len(), 1);
 
     // PM worker creates child 1 and sets parent to in-progress.
@@ -457,7 +470,8 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     parent.assert_status(IssueStatus::InProgress);
 
     // ── Step 3: SWE picks up child 1 and explicitly fails ────────────
-    let swe_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks = harness.list_sessions_for_issue(&child1_id, vec![]).await?;
     assert_eq!(swe_tasks.len(), 1, "child 1 should be spawned for SWE");
     let swe_task_id = &swe_tasks[0];
 
@@ -482,7 +496,10 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     // Parent is in-progress with no ready descendants (child 1 is failed,
     // child 2 is blocked/dropped). The spawner should create a new task
     // for the parent.
-    let pm_tasks_round2 = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks_round2 = harness
+        .list_sessions_for_issue(&parent_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_tasks_round2.len(),
         1,
@@ -526,7 +543,8 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     child3_check.assert_status(IssueStatus::Open);
 
     // ── Step 7: SWE succeeds on replacement child and closes it ──────
-    let swe_tasks_round2 = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks_round2 = harness.list_sessions_for_issue(&child3_id, vec![]).await?;
     assert_eq!(
         swe_tasks_round2.len(),
         1,
@@ -552,7 +570,10 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     // ── Step 8: PM re-spawns and closes parent ──────────────────────
     // All children are terminal (child 1 failed, child 2 blocked/dropped,
     // child 3 closed), so parent becomes spawnable again.
-    let pm_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_close_tasks = harness
+        .list_sessions_for_issue(&parent_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_close_tasks.len(),
         1,
@@ -637,7 +658,8 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .await?;
 
     // ── Step 2: PM picks up parent and creates two children ──────────
-    let pm_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks = harness.list_sessions_for_issue(&parent_id, vec![]).await?;
     assert_eq!(pm_tasks.len(), 1);
 
     harness
@@ -688,11 +710,12 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     parent.assert_status(IssueStatus::InProgress);
 
     // ── Step 3: SWE picks up child 1 (job starts) ───────────────────
-    let swe_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks = harness.list_sessions_for_issue(&child1_id, vec![]).await?;
     assert_eq!(
         swe_tasks.len(),
         1,
-        "only child 1 should be spawned (child 2 is blocked)"
+        "child 1 should have exactly one session (child 2 is blocked)"
     );
 
     // ── Step 4: User rejects child 1 ────────────────────────────────
@@ -716,7 +739,10 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     // ── Step 6: Parent becomes ready for re-spawning ─────────────────
     // Parent is in-progress with no ready descendants (child 1 is rejected,
     // child 2 is blocked). The spawner should create a new task for the parent.
-    let pm_tasks_round2 = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks_round2 = harness
+        .list_sessions_for_issue(&parent_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_tasks_round2.len(),
         1,
@@ -758,7 +784,8 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     child3_check.assert_status(IssueStatus::Open);
 
     // ── Step 8: SWE succeeds on replacement child and closes it ──────
-    let swe_tasks_round2 = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks_round2 = harness.list_sessions_for_issue(&child3_id, vec![]).await?;
     assert_eq!(
         swe_tasks_round2.len(),
         1,
@@ -781,7 +808,10 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     child3_closed.assert_status(IssueStatus::Closed);
 
     // ── Step 9: PM re-spawns and closes parent ──────────────────────
-    let pm_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_close_tasks = harness
+        .list_sessions_for_issue(&parent_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_close_tasks.len(),
         1,

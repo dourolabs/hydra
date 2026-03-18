@@ -126,8 +126,9 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
         )
         .await?;
 
-    // step_schedule() spawns a task for the issue.
-    let task_ids = harness.step_schedule().await?;
+    // Automation spawns a task for the issue.
+    harness.step_pending_jobs().await?;
+    let task_ids = harness.list_sessions_for_issue(&issue_id, vec![]).await?;
     assert_eq!(task_ids.len(), 1);
     let job_id = &task_ids[0];
 

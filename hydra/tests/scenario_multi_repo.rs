@@ -4,7 +4,6 @@ use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, TestHarness};
 use hydra_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
-    sessions::SearchSessionsQuery,
     task_status::Status,
 };
 use std::str::FromStr;
@@ -42,7 +41,8 @@ async fn multi_repo_workflow() -> Result<()> {
         .await?;
 
     // PM agent spawns and creates child issues via worker CLI.
-    let pm_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks = harness.list_sessions_for_issue(&parent_id, vec![]).await?;
     assert_eq!(pm_tasks.len(), 1, "should spawn exactly one PM task");
 
     // PM worker creates child 1 (org/app) and child 2 (org/cluster, blocked-on child 1),
@@ -96,27 +96,17 @@ async fn multi_repo_workflow() -> Result<()> {
         "child 2 should be blocked-on child 1"
     );
 
-    // step_schedule: child 1 is ready (child 2 is blocked). With automatic
-    // spawning, additional sessions (e.g. PM re-spawns) may also appear.
-    let task_ids = harness.step_schedule().await?;
-    assert!(!task_ids.is_empty(), "at least child 1 should be scheduled");
+    // Child 1 is ready (child 2 is blocked).
+    harness.step_pending_jobs().await?;
 
-    // Find child 1's session specifically.
-    let client = harness.client()?;
-    let child1_sessions = client
-        .list_sessions(&SearchSessionsQuery::new(
-            None,
-            Some(child1_id.clone()),
-            None,
-            vec![],
-        ))
-        .await?;
+    // Find child 1's session.
+    let child1_task_ids = harness.list_sessions_for_issue(&child1_id, vec![]).await?;
     assert_eq!(
-        child1_sessions.sessions.len(),
+        child1_task_ids.len(),
         1,
         "child 1 should have exactly one session"
     );
-    let job1_id = child1_sessions.sessions[0].session_id.clone();
+    let job1_id = child1_task_ids[0].clone();
 
     // SWE worker on child 1 creates patch in org/app repo.
     let result1 = harness
@@ -160,28 +150,17 @@ async fn multi_repo_workflow() -> Result<()> {
     user.update_issue_status(&child2_id, IssueStatus::InProgress)
         .await?;
 
-    // step_schedule: child 2 is now ready (blocker resolved).
-    let task_ids2 = harness.step_schedule().await?;
-    assert!(
-        !task_ids2.is_empty(),
-        "child 2 should now be scheduled (blocker resolved)"
-    );
+    // Child 2 is now ready (blocker resolved).
+    harness.step_pending_jobs().await?;
 
-    // Find child 2's session specifically.
-    let child2_sessions = client
-        .list_sessions(&SearchSessionsQuery::new(
-            None,
-            Some(child2_id.clone()),
-            None,
-            vec![],
-        ))
-        .await?;
+    // Find child 2's session.
+    let child2_task_ids = harness.list_sessions_for_issue(&child2_id, vec![]).await?;
     assert_eq!(
-        child2_sessions.sessions.len(),
+        child2_task_ids.len(),
         1,
         "child 2 should have exactly one session"
     );
-    let job2_id = child2_sessions.sessions[0].session_id.clone();
+    let job2_id = child2_task_ids[0].clone();
 
     // SWE worker on child 2 creates patch in org/cluster repo.
     let result2 = harness

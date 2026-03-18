@@ -8,6 +8,7 @@ use harness::{
 use hydra_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
+    task_status::Status,
 };
 
 /// Scenario 14: Full end-to-end pipeline.
@@ -34,7 +35,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     let parent_issue_id = user.create_issue("Implement user settings page").await?;
 
     // ── Step 2: PM agent picks up the parent issue ──────────────────
-    let pm_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_tasks = harness
+        .list_sessions_for_issue(&parent_issue_id, vec![])
+        .await?;
     assert_eq!(pm_tasks.len(), 1, "expected one task for PM agent");
 
     // PM worker creates a child issue assigned to SWE.
@@ -73,7 +77,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     parent.assert_status(IssueStatus::InProgress);
 
     // ── Step 3: SWE agent picks up the child issue ──────────────────
-    let swe_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_tasks = harness
+        .list_sessions_for_issue(&swe_issue_id, vec![])
+        .await?;
     assert_eq!(swe_tasks.len(), 1, "expected one task for SWE agent");
 
     // SWE worker makes changes and creates a patch.
@@ -236,7 +243,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // ── Step 9: SWE closes child issue (via worker) ─────────────────
     // Spawn a job on the SWE issue and have the worker close it via CLI.
-    let swe_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let swe_close_tasks = harness
+        .list_sessions_for_issue(&swe_issue_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         swe_close_tasks.len(),
         1,
@@ -254,7 +264,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // ── Step 10: PM closes parent issue (via worker) ────────────────
     // Spawn a job on the parent issue and have the worker close it via CLI.
-    let pm_close_tasks = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let pm_close_tasks = harness
+        .list_sessions_for_issue(&parent_issue_id, vec![Status::Pending, Status::Running])
+        .await?;
     assert_eq!(
         pm_close_tasks.len(),
         1,

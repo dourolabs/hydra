@@ -37,7 +37,7 @@ use hydra_server::{
         GitRemote, MockJobEngine, TestServer,
     },
 };
-use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 
 pub use assertions::{
@@ -175,9 +175,6 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
-    /// Tracks session IDs already returned by previous `step_schedule` calls
-    /// so each call returns only newly-created sessions.
-    seen_sessions: std::sync::Mutex<HashSet<SessionId>>,
 }
 
 impl TestHarness {
@@ -362,6 +359,26 @@ impl TestHarness {
         }
     }
 
+    /// List session IDs for a specific issue, optionally filtered by status.
+    ///
+    /// Use an empty `statuses` vector to return all sessions for the issue.
+    /// Use `vec![Status::Pending, Status::Running]` to return only active
+    /// sessions (useful when an issue has been re-spawned and you need
+    /// the latest session).
+    pub async fn list_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+        statuses: Vec<Status>,
+    ) -> Result<Vec<SessionId>> {
+        let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, statuses);
+        let sessions = self
+            .state
+            .list_sessions_with_query(&query)
+            .await
+            .context("failed to query sessions for issue")?;
+        Ok(sessions.into_iter().map(|(id, _)| id).collect())
+    }
+
     /// Run one iteration of the GitHub poller worker.
     ///
     /// Synchronizes open patches with their GitHub PR state (reviews, CI
@@ -391,64 +408,6 @@ impl TestHarness {
         }
 
         Ok(())
-    }
-
-    /// Wait for the `spawn_sessions` automation to create sessions for
-    /// ready issues, then wait for `start_created_sessions` to process
-    /// them. Returns the IDs of sessions created since the last call.
-    ///
-    /// Sessions are spawned automatically by the policy engine when
-    /// issues are created or updated. This method polls until new
-    /// sessions appear (or times out), waits for them to be processed,
-    /// and returns only sessions not seen in previous calls.
-    pub async fn step_schedule(&self) -> Result<Vec<SessionId>> {
-        let seen = self.seen_sessions.lock().unwrap().clone();
-
-        let timeout = std::time::Duration::from_secs(5);
-        let poll_interval = std::time::Duration::from_millis(25);
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        // Yield to let the automation runner process pending events.
-        tokio::task::yield_now().await;
-
-        loop {
-            let current: HashSet<SessionId> = self
-                .state
-                .list_sessions()
-                .await
-                .context("failed to list sessions in step_schedule")?
-                .into_iter()
-                .collect();
-
-            if current.iter().any(|id| !seen.contains(id)) {
-                break;
-            }
-
-            if tokio::time::Instant::now() >= deadline {
-                break;
-            }
-
-            tokio::time::sleep(poll_interval).await;
-        }
-
-        // Wait for any Created sessions to transition.
-        self.step_pending_jobs().await?;
-
-        // Collect all sessions and return only the ones not previously seen.
-        let all = self
-            .state
-            .list_sessions()
-            .await
-            .context("failed to list sessions after step_schedule")?;
-        let new_ids: Vec<SessionId> = all.into_iter().filter(|id| !seen.contains(id)).collect();
-
-        // Mark these sessions as seen for future calls.
-        let mut seen = self.seen_sessions.lock().unwrap();
-        for id in &new_ids {
-            seen.insert(id.clone());
-        }
-
-        Ok(new_ids)
     }
 }
 
@@ -711,7 +670,6 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
-            seen_sessions: std::sync::Mutex::new(HashSet::new()),
         })
     }
 }

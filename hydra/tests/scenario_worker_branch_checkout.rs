@@ -30,7 +30,7 @@ async fn worker_checks_out_non_default_branch() -> Result<()> {
     remote.create_branch("feature-xyz", "feature.txt", "feature content\n")?;
 
     // Create an issue (targeting main by default) and schedule a task.
-    let _issue_id = user
+    let issue_id = user
         .create_issue_with_settings(
             "Test branch checkout",
             hydra_common::issues::IssueType::Task,
@@ -40,7 +40,8 @@ async fn worker_checks_out_non_default_branch() -> Result<()> {
         )
         .await?;
 
-    let task_ids = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let task_ids = harness.list_sessions_for_issue(&issue_id, vec![]).await?;
     assert_eq!(task_ids.len(), 1, "should spawn exactly one task");
     let job_id = &task_ids[0];
 

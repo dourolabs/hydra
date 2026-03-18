@@ -33,7 +33,7 @@ async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
     let user = harness.default_user();
 
     // Create an issue and spawn a task.
-    let _swe_issue_id = user
+    let swe_issue_id = user
         .create_issue_with_settings(
             "Backup patch test",
             IssueType::Task,
@@ -43,7 +43,10 @@ async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
         )
         .await?;
 
-    let task_ids = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let task_ids = harness
+        .list_sessions_for_issue(&swe_issue_id, vec![])
+        .await?;
     assert_eq!(task_ids.len(), 1);
 
     // Run the worker, which creates a normal patch via explicit CLI command.
@@ -127,7 +130,7 @@ async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
     let user = harness.default_user();
 
     // Create an issue and spawn a task.
-    let _swe_issue_id = user
+    let swe_issue_id = user
         .create_issue_with_settings(
             "Patch closure test",
             IssueType::Task,
@@ -137,7 +140,10 @@ async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
         )
         .await?;
 
-    let task_ids = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let task_ids = harness
+        .list_sessions_for_issue(&swe_issue_id, vec![])
+        .await?;
     assert_eq!(task_ids.len(), 1);
 
     // SWE worker creates a patch.

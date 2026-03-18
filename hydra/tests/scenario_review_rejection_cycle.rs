@@ -20,6 +20,7 @@ use harness::{
 use hydra_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::{GithubPr, PatchStatus, UpsertPatchRequest},
+    task_status::Status,
     RepoName,
 };
 use hydra_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
@@ -62,7 +63,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     // ── Step 2: Spawn a task for the SWE issue and run the worker ─
     // The worker creates a patch via `hydra patches create`, which sets up
     // the created_by chain that patch_workflow uses to discover the parent issue.
-    let task_ids = harness.step_schedule().await?;
+    harness.step_pending_jobs().await?;
+    let task_ids = harness
+        .list_sessions_for_issue(&swe_issue_id, vec![])
+        .await?;
     assert_eq!(
         task_ids.len(),
         1,
@@ -225,7 +229,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     // since the previous task completed. The worker then makes fixes and re-opens
     // the patch via CLI.
     {
-        let task_ids = harness.step_schedule().await?;
+        harness.step_pending_jobs().await?;
+        let task_ids = harness
+            .list_sessions_for_issue(&swe_issue_id, vec![Status::Pending, Status::Running])
+            .await?;
         assert_eq!(
             task_ids.len(),
             1,
