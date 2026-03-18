@@ -61,7 +61,7 @@ Initial Phase:
 
    **The Dockerfile.hydra replaces the default hydra-worker image for this repo.** It must include everything
    the hydra-worker image provides (agent runtime CLIs, supporting tools) PLUS the repo's own build dependencies.
-   Use `dourolabs/metis/images/hydra-worker.Dockerfile` as the reference for what the base worker image installs.
+   Use `dourolabs/hydra/images/hydra-worker.Dockerfile` as the reference for what the base worker image installs.
 
    ### Required: Agent runtime CLIs
 

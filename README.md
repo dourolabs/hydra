@@ -13,8 +13,8 @@ Hydra ships a single-player mode that bundles the CLI, server, and web dashboard
 ### 1. Clone and build
 
 ```bash
-git clone https://github.com/dourolabs/metis.git
-cd metis
+git clone https://github.com/dourolabs/hydra.git
+cd hydra
 cargo build -p hydra-single-player
 ```
 

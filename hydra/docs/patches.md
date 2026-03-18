@@ -82,7 +82,7 @@ Requires at least one field. Use this to reflect review outcomes or edit metadat
 
 ```bash
 hydra patches merge \
-  --repo dourolabs/metis \
+  --repo dourolabs/hydra \
   --branch main \
   [--patch-id p-123]
 ```
