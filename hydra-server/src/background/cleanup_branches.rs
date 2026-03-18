@@ -360,19 +360,19 @@ mod tests {
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
         let result = parse_github_owner_repo("https://github.com/dourolabs/metis.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
     fn parse_github_owner_repo_https_without_git_suffix() {
         let result = parse_github_owner_repo("https://github.com/dourolabs/metis");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
     fn parse_github_owner_repo_ssh() {
         let result = parse_github_owner_repo("git@github.com:dourolabs/metis.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
