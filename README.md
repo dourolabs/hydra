@@ -99,4 +99,4 @@ This allows sequential agents working on the same issue to pick up where the pre
 | `metis-common` | Shared models and types used across all crates. |
 | `metis-bff` | Backend-for-frontend layer: auth routes, API proxy, and embedded frontend serving. |
 | `metis-single-player` | All-in-one binary bundling CLI + server + BFF for local single-player use. |
-| `metis-web` | React 19 frontend with a dark terminal-inspired UI. A pnpm monorepo containing a typed API client (`@metis/api`), component library (`@metis/ui`), and the SPA + Hono BFF server (`@metis/web`). |
+| `hydra-web` | React 19 frontend with a dark terminal-inspired UI. A pnpm monorepo containing a typed API client (`@metis/api`), component library (`@metis/ui`), and the SPA + Hono BFF server (`@metis/web`). |

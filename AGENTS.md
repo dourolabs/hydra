@@ -4,7 +4,7 @@
 Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`; see `metis-server/AGENTS.md` for detailed route and background layout expectations. Copy each crate's sample config (`config.toml.sample` for metis CLI; `config.yaml.sample` for metis-server) to `config.toml` or `config.yaml` respectively for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
 
 ## Frontend Development
-For frontend development and visual testing, see `metis-web/AGENTS.md`.
+For frontend development and visual testing, see `hydra-web/AGENTS.md`.
 
 ## Build, Test, and Development Commands
 - `cargo check --workspace` quickly verifies the entire workspace compiles.
@@ -24,7 +24,7 @@ Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D 
 
 ## Testing Guidelines
 Run `cargo test --workspace` before opening a pull request. Keep tests near their code (shared helpers belong in `metis-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
-- When changing Rust API types in `metis-common`, you must also regenerate TypeScript types and run `cd metis-web && pnpm typecheck` to verify the frontend still compiles.
+- When changing Rust API types in `metis-common`, you must also regenerate TypeScript types and run `cd hydra-web && pnpm typecheck` to verify the frontend still compiles.
 
 ## Final Task Checklist
 Before finishing any task, you **must** run and fix all issues from these commands:

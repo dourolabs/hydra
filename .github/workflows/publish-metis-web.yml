@@ -58,5 +58,5 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
-          cache-from: type=gha,scope=metis-web
-          cache-to: type=gha,mode=max,scope=metis-web
+          cache-from: type=gha,scope=hydra-web
+          cache-to: type=gha,mode=max,scope=hydra-web

@@ -1,10 +1,10 @@
-# Deploying metis-web to Kubernetes
+# Deploying hydra-web to Kubernetes
 
-This document describes the Kubernetes manifests needed to deploy metis-web to the `dourolabs/metis-cluster` repository.
+This document describes the Kubernetes manifests needed to deploy hydra-web to the `dourolabs/metis-cluster` repository.
 
 ## Overview
 
-metis-web runs as a single container that serves both:
+hydra-web runs as a single container that serves both:
 - The React SPA (static assets)
 - The BFF (Backend-for-Frontend) API proxy that forwards authenticated requests to metis-server
 

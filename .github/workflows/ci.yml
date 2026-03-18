@@ -94,16 +94,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Regenerate TypeScript types from Rust structs
-        run: TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings
+        run: TS_RS_EXPORT_DIR=hydra-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings
 
       - name: Check generated types are up-to-date
-        run: git diff --exit-code metis-web/packages/api/src/generated/
+        run: git diff --exit-code hydra-web/packages/api/src/generated/
 
   ts-build:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: metis-web
+        working-directory: hydra-web
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -127,7 +127,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('metis-web/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('hydra-web/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
@@ -141,9 +141,9 @@ jobs:
         with:
           name: ts-build-dist
           path: |
-            metis-web/packages/api/dist
-            metis-web/packages/ui/dist
-            metis-web/packages/web/dist
+            hydra-web/packages/api/dist
+            hydra-web/packages/ui/dist
+            hydra-web/packages/web/dist
           retention-days: 1
 
       - name: Typecheck
@@ -157,7 +157,7 @@ jobs:
     needs: [ts-build]
     defaults:
       run:
-        working-directory: metis-web
+        working-directory: hydra-web
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -181,7 +181,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('metis-web/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('hydra-web/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
@@ -191,7 +191,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ts-build-dist
-          path: metis-web/packages
+          path: hydra-web/packages
 
       - name: Get Playwright version
         id: playwright-version
@@ -222,5 +222,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
-          path: metis-web/packages/web/test-results/
+          path: hydra-web/packages/web/test-results/
           retention-days: 7
