@@ -158,13 +158,13 @@ fn replace_hydra_in_command(command_string: &str) -> String {
     // Process the first segment, then each subsequent segment after a shell operator.
     loop {
         let trimmed = remaining.trim_start();
-        if trimmed.starts_with("metis")
+        if trimmed.starts_with("hydra")
             && trimmed[5..]
                 .chars()
                 .next()
                 .is_none_or(|c| c.is_whitespace())
         {
-            // Preserve leading whitespace, then replace "metis"
+            // Preserve leading whitespace, then replace "hydra"
             let leading_ws = &remaining[..remaining.len() - trimmed.len()];
             result.push_str(leading_ws);
             result.push_str(&hydra_path_str);

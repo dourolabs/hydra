@@ -27,11 +27,11 @@ async fn worker_surfaces_error_for_closing_issue_with_open_children() -> Result<
             &job_id,
             vec![
                 &format!(
-                    "metis --output-format jsonl issues create --deps child-of:{parent_id} \"issue with child\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee parent_id.txt"
+                    "hydra --output-format jsonl issues create --deps child-of:{parent_id} \"issue with child\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee parent_id.txt"
                 ),
-                "metis --output-format jsonl issues create --deps child-of:$(cat parent_id.txt) \"open child\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee child_id.txt",
+                "hydra --output-format jsonl issues create --deps child-of:$(cat parent_id.txt) \"open child\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee child_id.txt",
                 &format!(
-                    "metis issues update $(cat parent_id.txt) --status closed --deps child-of:{parent_id}"
+                    "hydra issues update $(cat parent_id.txt) --status closed --deps child-of:{parent_id}"
                 ),
             ],
         )
@@ -72,11 +72,11 @@ async fn worker_surfaces_error_for_closing_issue_with_open_todos() -> Result<()>
             &job_id,
             vec![
                 &format!(
-                    "metis --output-format jsonl issues create --deps child-of:{parent_id} \"issue with todos\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee issue_id.txt"
+                    "hydra --output-format jsonl issues create --deps child-of:{parent_id} \"issue with todos\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee issue_id.txt"
                 ),
-                "metis issues todo $(cat issue_id.txt) --add \"write more tests\"",
+                "hydra issues todo $(cat issue_id.txt) --add \"write more tests\"",
                 &format!(
-                    "metis issues update $(cat issue_id.txt) --status closed --deps child-of:{parent_id}"
+                    "hydra issues update $(cat issue_id.txt) --status closed --deps child-of:{parent_id}"
                 ),
             ],
         )

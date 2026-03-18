@@ -178,7 +178,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             let local_hostname = app_config.hydra.server_hostname.trim();
             if local_hostname.is_empty() {
                 anyhow::bail!(
-                    "metis.server_hostname must be configured when using \
+                    "hydra.server_hostname must be configured when using \
                      job_engine: \"local\""
                 );
             }
@@ -186,7 +186,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             let log_dir_path = log_dir
                 .as_ref()
                 .map(crate::config::expand_path)
-                .unwrap_or_else(|| std::env::temp_dir().join("metis-local-jobs"));
+                .unwrap_or_else(|| std::env::temp_dir().join("hydra-local-jobs"));
             info!(?log_dir_path, "using local process job engine");
             let engine = Arc::new(LocalJobEngine::new(local_server_url, log_dir_path, None));
             engine.start_reaper();
@@ -428,8 +428,8 @@ pub async fn run_with_state(
 
     let addr = listener.local_addr()?;
 
-    info!("metis-server listening on http://{}", addr);
-    println!("metis-server listening on http://{addr}");
+    info!("hydra-server listening on http://{}", addr);
+    println!("hydra-server listening on http://{addr}");
 
     let serve_result = axum::serve(listener, app).await;
     scheduler.shutdown().await;

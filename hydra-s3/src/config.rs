@@ -126,7 +126,7 @@ root_dir = "~/hydra-s3"
         let config = AppConfig::load(&path)?;
         assert_eq!(config.server.bind_host, "127.0.0.1");
         assert_eq!(config.server.bind_port, 9091);
-        assert!(config.storage_root().to_string_lossy().contains("metis-s3"));
+        assert!(config.storage_root().to_string_lossy().contains("hydra-s3"));
         Ok(())
     }
 }

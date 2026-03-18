@@ -314,7 +314,7 @@ async fn github_token_is_valid(config: &GithubAppSection, token: &str) -> Result
     let response = Client::new()
         .get(url)
         .header(ACCEPT, "application/json")
-        .header(USER_AGENT, "metis-server")
+        .header(USER_AGENT, "hydra-server")
         .bearer_auth(token)
         .send()
         .await
@@ -343,7 +343,7 @@ async fn refresh_github_token(
     let response = Client::new()
         .post(url)
         .header(ACCEPT, "application/json")
-        .header(USER_AGENT, "metis-server")
+        .header(USER_AGENT, "hydra-server")
         .form(&[
             ("client_id", config.client_id()),
             ("client_secret", config.client_secret()),

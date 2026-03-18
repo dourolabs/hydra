@@ -139,7 +139,7 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
                 "echo 'fix auth' >> auth.rs",
                 "git add auth.rs",
                 "git commit -m 'Fix authentication bug'",
-                "metis patches create --title 'Fix auth bug' --description 'Fixes the authentication issue'",
+                "hydra patches create --title 'Fix auth bug' --description 'Fixes the authentication issue'",
             ],
         )
         .await?;

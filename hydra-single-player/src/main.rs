@@ -9,7 +9,7 @@ use crate::server::ServerCommand;
 
 #[derive(Parser)]
 #[command(
-    name = "metis",
+    name = "hydra",
     version,
     about = "Hydra single-player: CLI + local server management"
 )]
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn parse_server_init_subcommand() {
-        let sp_cli = SinglePlayerCli::try_parse_from(["metis", "server", "init"]).expect("parse");
+        let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "server", "init"]).expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
                 command: ServerCommand::Init,
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn parse_issues_subcommand() {
-        let sp_cli = SinglePlayerCli::try_parse_from(["metis", "issues", "list"]).expect("parse");
+        let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "issues", "list"]).expect("parse");
         assert!(sp_cli.command.is_none());
         match sp_cli.cli.command {
             Some(cli::Commands::Issues { .. }) => {}
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn parse_without_subcommand_has_no_command() {
-        let sp_cli = SinglePlayerCli::try_parse_from(["metis"]).expect("parse");
+        let sp_cli = SinglePlayerCli::try_parse_from(["hydra"]).expect("parse");
         assert!(sp_cli.command.is_none());
         assert!(sp_cli.cli.command.is_none());
     }
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn parse_server_logs_with_options() {
         let sp_cli =
-            SinglePlayerCli::try_parse_from(["metis", "server", "logs", "-n", "100", "--follow"])
+            SinglePlayerCli::try_parse_from(["hydra", "server", "logs", "-n", "100", "--follow"])
                 .expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {

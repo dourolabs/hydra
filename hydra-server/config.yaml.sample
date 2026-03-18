@@ -1,10 +1,10 @@
-metis:
+hydra:
   # Namespace the CLI uses when creating Jobs.
   namespace: "default"
 
   # Required: base64-encoded 32-byte encryption key for user secrets.
   # Generate with: openssl rand -base64 32
-  METIS_SECRET_ENCRYPTION_KEY: "REPLACE_WITH_BASE64_ENCODED_32_BYTE_KEY"
+  HYDRA_SECRET_ENCRYPTION_KEY: "REPLACE_WITH_BASE64_ENCODED_32_BYTE_KEY"
 
   # Optional fallback if the OPENAI_API_KEY environment variable is unset.
   OPENAI_API_KEY: ""
@@ -22,12 +22,12 @@ metis:
 #
 # SQLite (default for single-player mode):
 storage_backend: "sqlite"
-sqlite_path: "metis.db"
+sqlite_path: "hydra.db"
 #
 # PostgreSQL (for production / multi-player mode):
 # storage_backend: "postgres"
 # database:
-#   url: "postgres://metis:metis@localhost:5432/metis"
+#   url: "postgres://hydra:hydra@localhost:5432/hydra"
 #   max_connections: 5
 #   min_connections: 1
 #   connect_timeout_secs: 5
@@ -71,7 +71,7 @@ github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 job:
   # Container image the worker Pod will execute.
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
   # Default model to use when job settings omit one.
   default_model: "gpt-4o"
   # CPU limit for worker pods (e.g., "500m", "1", "2.5").
@@ -102,13 +102,13 @@ build_cache:
   ## Local filesystem storage
   # storage:
   #   type: "filesystem"
-  #   root_dir: "/var/lib/metis/build-cache"
+  #   root_dir: "/var/lib/hydra/build-cache"
 
   ## S3 storage
   # storage:
   #   type: "s3"
   #   endpoint_url: "https://s3.amazonaws.com"
-  #   bucket: "metis-build-cache"
+  #   bucket: "hydra-build-cache"
   #   region: "us-east-1"
   #   access_key_id: ""
   #   secret_access_key: ""

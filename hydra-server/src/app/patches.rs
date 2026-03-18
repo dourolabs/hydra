@@ -344,13 +344,13 @@ mod tests {
             when.method(POST)
                 .path("/repos/octo/repo/pulls")
                 .json_body_partial(
-                    r#"{"title":"New patch","head":"metis-t-test","base":"main","body":"New patch description"}"#,
+                    r#"{"title":"New patch","head":"hydra-t-test","base":"main","body":"New patch description"}"#,
                 );
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(github_pull_request_response(
                     99,
-                    "metis-t-test",
+                    "hydra-t-test",
                     "main",
                     "https://example.com/pr/99",
                 ));
@@ -409,7 +409,7 @@ mod tests {
             Vec::new(),
             repo_name,
             None,
-            Some("metis-t-test".to_string()),
+            Some("hydra-t-test".to_string()),
             None,
             None,
         );
@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(github.number, 99);
         assert_eq!(github.owner, "octo");
         assert_eq!(github.repo, "repo");
-        assert_eq!(github.head_ref.as_deref(), Some("metis-t-test"));
+        assert_eq!(github.head_ref.as_deref(), Some("hydra-t-test"));
         assert_eq!(github.base_ref.as_deref(), Some("main"));
         assert_eq!(github.url.as_deref(), Some("https://example.com/pr/99"));
 

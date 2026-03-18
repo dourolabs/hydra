@@ -43,7 +43,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_id = IssueId::new();
     let dependency_id = IssueId::new();
     let patch_id = PatchId::new();
-    let repo_name = RepoName::new("dourolabs", "metis")?;
+    let repo_name = RepoName::new("dourolabs", "hydra")?;
     let username: Username = "future-user".into();
 
     let status_log_json = forward_status_log_json(now);
@@ -735,7 +735,7 @@ fn forward_patch_json(
             "service_repo_name": repo_name,
             "github": {
                 "owner": "dourolabs",
-                "repo": "metis",
+                "repo": "hydra",
                 "number": 1,
                 "head_ref": "future-head",
                 "base_ref": "main",
@@ -777,7 +777,7 @@ fn forward_patch_summary_json(
             "service_repo_name": repo_name,
             "github": {
                 "owner": "dourolabs",
-                "repo": "metis",
+                "repo": "hydra",
                 "number": 1,
                 "head_ref": "future-head",
                 "base_ref": "main",

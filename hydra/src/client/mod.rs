@@ -360,7 +360,7 @@ impl HydraClientUnauthenticated {
             .send()
             .await
             .context("failed to submit login request")?
-            .error_for_status_with_body("metis-server rejected login request")
+            .error_for_status_with_body("hydra-server rejected login request")
             .await?;
 
         let login_response = response
@@ -384,7 +384,7 @@ impl HydraClientUnauthenticated {
             .await
             .context("failed to fetch GitHub app client id")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching GitHub app client id",
+                "hydra-server returned an error while fetching GitHub app client id",
             )
             .await?;
 
@@ -450,7 +450,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create session request")?
-            .error_for_status_with_body("metis-server rejected create session request")
+            .error_for_status_with_body("hydra-server rejected create session request")
             .await?;
 
         response
@@ -468,7 +468,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch sessions list")?
-            .error_for_status_with_body("metis-server returned an error while listing sessions")
+            .error_for_status_with_body("hydra-server returned an error while listing sessions")
             .await?;
 
         response
@@ -490,7 +490,7 @@ impl HydraClient {
             .await
             .context("failed to fetch session versions")?
             .error_for_status_with_body(
-                "metis-server returned an error while listing session versions",
+                "hydra-server returned an error while listing session versions",
             )
             .await?;
 
@@ -509,7 +509,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch session")?
-            .error_for_status_with_body("metis-server returned an error while fetching session")
+            .error_for_status_with_body("hydra-server returned an error while fetching session")
             .await?;
 
         response
@@ -532,7 +532,7 @@ impl HydraClient {
             .await
             .context("failed to fetch session version")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching session version",
+                "hydra-server returned an error while fetching session version",
             )
             .await?;
 
@@ -551,7 +551,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit kill session request")?
-            .error_for_status_with_body("metis-server returned an error while killing session")
+            .error_for_status_with_body("hydra-server returned an error while killing session")
             .await?;
 
         response
@@ -578,7 +578,7 @@ impl HydraClient {
             .await
             .context("failed to request session logs")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching session logs",
+                "hydra-server returned an error while fetching session logs",
             )
             .await?;
 
@@ -612,7 +612,7 @@ impl HydraClient {
             .await
             .context("failed to submit set session status request")?
             .error_for_status_with_body(
-                "metis-server returned an error while setting session status",
+                "hydra-server returned an error while setting session status",
             )
             .await?;
 
@@ -632,7 +632,7 @@ impl HydraClient {
             .await
             .context("failed to request session context")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching session context",
+                "hydra-server returned an error while fetching session context",
             )
             .await?;
         response
@@ -650,7 +650,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create issue request")?
-            .error_for_status_with_body("metis-server rejected create issue request")
+            .error_for_status_with_body("hydra-server rejected create issue request")
             .await?;
 
         response
@@ -673,7 +673,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit update issue request")?
-            .error_for_status_with_body("metis-server returned an error while updating issue")
+            .error_for_status_with_body("hydra-server returned an error while updating issue")
             .await?;
 
         response
@@ -698,7 +698,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch issue")?
-            .error_for_status_with_body("metis-server returned an error while fetching issue")
+            .error_for_status_with_body("hydra-server returned an error while fetching issue")
             .await?;
 
         response
@@ -721,7 +721,7 @@ impl HydraClient {
             .await
             .context("failed to fetch issue version")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching issue version",
+                "hydra-server returned an error while fetching issue version",
             )
             .await?;
 
@@ -740,7 +740,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch issues list")?
-            .error_for_status_with_body("metis-server returned an error while listing issues")
+            .error_for_status_with_body("hydra-server returned an error while listing issues")
             .await?;
 
         response
@@ -762,7 +762,7 @@ impl HydraClient {
             .await
             .context("failed to fetch issue versions")?
             .error_for_status_with_body(
-                "metis-server returned an error while listing issue versions",
+                "hydra-server returned an error while listing issue versions",
             )
             .await?;
 
@@ -786,7 +786,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit add todo item request")?
-            .error_for_status_with_body("metis-server rejected add todo item request")
+            .error_for_status_with_body("hydra-server rejected add todo item request")
             .await?;
 
         response
@@ -809,7 +809,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit replace todo list request")?
-            .error_for_status_with_body("metis-server returned an error while replacing todo list")
+            .error_for_status_with_body("hydra-server returned an error while replacing todo list")
             .await?;
 
         response
@@ -834,7 +834,7 @@ impl HydraClient {
             .await
             .context("failed to submit todo status update request")?
             .error_for_status_with_body(
-                "metis-server returned an error while updating todo item status",
+                "hydra-server returned an error while updating todo item status",
             )
             .await?;
 
@@ -853,7 +853,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create patch request")?
-            .error_for_status_with_body("metis-server rejected create patch request")
+            .error_for_status_with_body("hydra-server rejected create patch request")
             .await?;
 
         response
@@ -876,7 +876,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit update patch request")?
-            .error_for_status_with_body("metis-server returned an error while updating patch")
+            .error_for_status_with_body("hydra-server returned an error while updating patch")
             .await?;
 
         response
@@ -894,7 +894,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch patch")?
-            .error_for_status_with_body("metis-server returned an error while fetching patch")
+            .error_for_status_with_body("hydra-server returned an error while fetching patch")
             .await?;
 
         response
@@ -917,7 +917,7 @@ impl HydraClient {
             .await
             .context("failed to fetch patch version")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching patch version",
+                "hydra-server returned an error while fetching patch version",
             )
             .await?;
 
@@ -936,7 +936,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch patches list")?
-            .error_for_status_with_body("metis-server returned an error while listing patches")
+            .error_for_status_with_body("hydra-server returned an error while listing patches")
             .await?;
 
         response
@@ -958,7 +958,7 @@ impl HydraClient {
             .await
             .context("failed to fetch patch versions")?
             .error_for_status_with_body(
-                "metis-server returned an error while listing patch versions",
+                "hydra-server returned an error while listing patch versions",
             )
             .await?;
 
@@ -980,7 +980,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create document request")?
-            .error_for_status_with_body("metis-server rejected create document request")
+            .error_for_status_with_body("hydra-server rejected create document request")
             .await?;
 
         response
@@ -1003,7 +1003,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit update document request")?
-            .error_for_status_with_body("metis-server returned an error while updating document")
+            .error_for_status_with_body("hydra-server returned an error while updating document")
             .await?;
 
         response
@@ -1028,7 +1028,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch document")?
-            .error_for_status_with_body("metis-server returned an error while fetching document")
+            .error_for_status_with_body("hydra-server returned an error while fetching document")
             .await?;
 
         response
@@ -1079,7 +1079,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch documents list")?
-            .error_for_status_with_body("metis-server returned an error while listing documents")
+            .error_for_status_with_body("hydra-server returned an error while listing documents")
             .await?;
 
         response
@@ -1101,7 +1101,7 @@ impl HydraClient {
             .await
             .context("failed to fetch document versions")?
             .error_for_status_with_body(
-                "metis-server returned an error while listing document versions",
+                "hydra-server returned an error while listing document versions",
             )
             .await?;
 
@@ -1125,7 +1125,7 @@ impl HydraClient {
             .await
             .context("failed to fetch document version")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching document version",
+                "hydra-server returned an error while fetching document version",
             )
             .await?;
 
@@ -1155,7 +1155,7 @@ impl HydraClient {
             .await
             .context("failed to submit patch asset upload")?
             .error_for_status_with_body(
-                "metis-server returned an error while uploading patch asset",
+                "hydra-server returned an error while uploading patch asset",
             )
             .await?;
 
@@ -1179,7 +1179,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch repositories list")?
-            .error_for_status_with_body("metis-server returned an error while listing repositories")
+            .error_for_status_with_body("hydra-server returned an error while listing repositories")
             .await?;
 
         response
@@ -1200,7 +1200,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create repository request")?
-            .error_for_status_with_body("metis-server rejected create repository request")
+            .error_for_status_with_body("hydra-server rejected create repository request")
             .await?;
 
         response
@@ -1226,7 +1226,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit update repository request")?
-            .error_for_status_with_body("metis-server returned an error while updating repository")
+            .error_for_status_with_body("hydra-server returned an error while updating repository")
             .await?;
 
         response
@@ -1247,7 +1247,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit delete repository request")?
-            .error_for_status_with_body("metis-server returned an error while deleting repository")
+            .error_for_status_with_body("hydra-server returned an error while deleting repository")
             .await?;
 
         let delete_response = response
@@ -1267,7 +1267,7 @@ impl HydraClient {
             .await
             .context("failed to fetch GitHub token")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching GitHub token",
+                "hydra-server returned an error while fetching GitHub token",
             )
             .await?;
 
@@ -1287,7 +1287,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch whoami response")?
-            .error_for_status_with_body("metis-server returned an error while fetching whoami")
+            .error_for_status_with_body("hydra-server returned an error while fetching whoami")
             .await?;
 
         response
@@ -1305,7 +1305,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch user info")?
-            .error_for_status_with_body("metis-server returned an error while fetching user info")
+            .error_for_status_with_body("hydra-server returned an error while fetching user info")
             .await?;
 
         response
@@ -1322,7 +1322,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to list user secrets")?
-            .error_for_status_with_body("metis-server returned an error while listing secrets")
+            .error_for_status_with_body("hydra-server returned an error while listing secrets")
             .await?;
 
         response
@@ -1342,7 +1342,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to set user secret")?
-            .error_for_status_with_body("metis-server returned an error while setting secret")
+            .error_for_status_with_body("hydra-server returned an error while setting secret")
             .await?;
         Ok(())
     }
@@ -1354,7 +1354,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to delete user secret")?
-            .error_for_status_with_body("metis-server returned an error while deleting secret")
+            .error_for_status_with_body("hydra-server returned an error while deleting secret")
             .await?;
         Ok(())
     }
@@ -1371,7 +1371,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch merge queue")?
-            .error_for_status_with_body("metis-server returned an error while fetching merge queue")
+            .error_for_status_with_body("hydra-server returned an error while fetching merge queue")
             .await?;
 
         response
@@ -1399,7 +1399,7 @@ impl HydraClient {
             .await
             .context("failed to submit enqueue merge patch request")?
             .error_for_status_with_body(
-                "metis-server returned an error while enqueuing merge patch",
+                "hydra-server returned an error while enqueuing merge patch",
             )
             .await?;
 
@@ -1417,7 +1417,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch agents list")?
-            .error_for_status_with_body("metis-server returned an error while listing agents")
+            .error_for_status_with_body("hydra-server returned an error while listing agents")
             .await?;
 
         response
@@ -1434,7 +1434,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch agent")?
-            .error_for_status_with_body("metis-server returned an error while fetching agent")
+            .error_for_status_with_body("hydra-server returned an error while fetching agent")
             .await?;
 
         response
@@ -1452,7 +1452,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create agent request")?
-            .error_for_status_with_body("metis-server returned an error while creating agent")
+            .error_for_status_with_body("hydra-server returned an error while creating agent")
             .await?;
 
         response
@@ -1474,7 +1474,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit update agent request")?
-            .error_for_status_with_body("metis-server returned an error while updating agent")
+            .error_for_status_with_body("hydra-server returned an error while updating agent")
             .await?;
 
         response
@@ -1491,7 +1491,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit delete agent request")?
-            .error_for_status_with_body("metis-server returned an error while deleting agent")
+            .error_for_status_with_body("hydra-server returned an error while deleting agent")
             .await?;
 
         response
@@ -1509,7 +1509,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit delete issue request")?
-            .error_for_status_with_body("metis-server returned an error while deleting issue")
+            .error_for_status_with_body("hydra-server returned an error while deleting issue")
             .await?;
 
         response
@@ -1527,7 +1527,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit delete patch request")?
-            .error_for_status_with_body("metis-server returned an error while deleting patch")
+            .error_for_status_with_body("hydra-server returned an error while deleting patch")
             .await?;
 
         response
@@ -1545,7 +1545,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit delete document request")?
-            .error_for_status_with_body("metis-server returned an error while deleting document")
+            .error_for_status_with_body("hydra-server returned an error while deleting document")
             .await?;
 
         response
@@ -1608,7 +1608,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit send message request")?
-            .error_for_status_with_body("metis-server returned an error while sending message")
+            .error_for_status_with_body("hydra-server returned an error while sending message")
             .await?;
 
         response
@@ -1626,7 +1626,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch messages list")?
-            .error_for_status_with_body("metis-server returned an error while listing messages")
+            .error_for_status_with_body("hydra-server returned an error while listing messages")
             .await?;
 
         response
@@ -1647,7 +1647,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit receive messages request")?
-            .error_for_status_with_body("metis-server returned an error while receiving messages")
+            .error_for_status_with_body("hydra-server returned an error while receiving messages")
             .await?;
 
         response
@@ -1669,7 +1669,7 @@ impl HydraClient {
             .await
             .context("failed to fetch notifications")?
             .error_for_status_with_body(
-                "metis-server returned an error while listing notifications",
+                "hydra-server returned an error while listing notifications",
             )
             .await?;
 
@@ -1688,7 +1688,7 @@ impl HydraClient {
             .await
             .context("failed to fetch unread notification count")?
             .error_for_status_with_body(
-                "metis-server returned an error while fetching unread count",
+                "hydra-server returned an error while fetching unread count",
             )
             .await?;
 
@@ -1711,7 +1711,7 @@ impl HydraClient {
             .await
             .context("failed to mark notification as read")?
             .error_for_status_with_body(
-                "metis-server returned an error while marking notification read",
+                "hydra-server returned an error while marking notification read",
             )
             .await?;
 
@@ -1740,7 +1740,7 @@ impl HydraClient {
             .await
             .context("failed to mark all notifications as read")?
             .error_for_status_with_body(
-                "metis-server returned an error while marking all notifications read",
+                "hydra-server returned an error while marking all notifications read",
             )
             .await?;
 
@@ -1759,7 +1759,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch labels list")?
-            .error_for_status_with_body("metis-server returned an error while listing labels")
+            .error_for_status_with_body("hydra-server returned an error while listing labels")
             .await?;
 
         response
@@ -1777,7 +1777,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create label request")?
-            .error_for_status_with_body("metis-server rejected create label request")
+            .error_for_status_with_body("hydra-server rejected create label request")
             .await?;
 
         response
@@ -1799,7 +1799,7 @@ impl HydraClient {
             .await
             .context("failed to add label association")?
             .error_for_status_with_body(
-                "metis-server returned an error while adding label association",
+                "hydra-server returned an error while adding label association",
             )
             .await?;
         Ok(())
@@ -1818,7 +1818,7 @@ impl HydraClient {
             .await
             .context("failed to remove label association")?
             .error_for_status_with_body(
-                "metis-server returned an error while removing label association",
+                "hydra-server returned an error while removing label association",
             )
             .await?;
         Ok(())
@@ -1832,7 +1832,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to submit create relation request")?
-            .error_for_status_with_body("metis-server rejected create relation request")
+            .error_for_status_with_body("hydra-server rejected create relation request")
             .await?;
         Ok(())
     }
@@ -1849,7 +1849,7 @@ impl HydraClient {
             .send()
             .await
             .context("failed to fetch relations list")?
-            .error_for_status_with_body("metis-server returned an error while listing relations")
+            .error_for_status_with_body("hydra-server returned an error while listing relations")
             .await?;
 
         response
@@ -2474,7 +2474,7 @@ mod tests {
         mock.assert();
         let message = format!("{error:#}");
         assert!(
-            message.contains("metis-server returned an error while updating repository"),
+            message.contains("hydra-server returned an error while updating repository"),
             "{message}"
         );
 
@@ -2592,7 +2592,7 @@ mod tests {
         mock.assert();
         let message = format!("{error:#}");
         assert!(
-            message.contains("metis-server returned an error while fetching user info"),
+            message.contains("hydra-server returned an error while fetching user info"),
             "{message}"
         );
         assert!(message.contains("404"), "{message}");

@@ -12,10 +12,10 @@ async fn s3_storage_client_round_trip_with_hydra_s3() -> Result<(), BuildCacheEr
     let storage_root = tempdir().expect("storage root");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+        .map_err(|err| BuildCacheError::io("binding hydra-s3 listener", err))?;
     let addr = listener
         .local_addr()
-        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+        .map_err(|err| BuildCacheError::io("reading hydra-s3 addr", err))?;
 
     let server_handle = tokio::spawn(hydra_s3::serve(listener, storage_root.path().to_path_buf()));
 
@@ -23,8 +23,8 @@ async fn s3_storage_client_round_trip_with_hydra_s3() -> Result<(), BuildCacheEr
         endpoint_url: format!("http://{addr}"),
         bucket: "build-cache-tests".to_string(),
         region: "us-east-1".to_string(),
-        access_key_id: Some("metis-test-access".to_string()),
-        secret_access_key: Some("metis-test-secret".to_string()),
+        access_key_id: Some("hydra-test-access".to_string()),
+        secret_access_key: Some("hydra-test-secret".to_string()),
         session_token: None,
     };
     let client = S3StorageClient::new(&config)?;
@@ -75,7 +75,7 @@ async fn wait_for_hydra_s3(client: &S3StorageClient) -> Result<(), BuildCacheErr
         }
     }
     Err(last_error
-        .unwrap_or_else(|| BuildCacheError::storage("waiting for metis-s3", "unknown error")))
+        .unwrap_or_else(|| BuildCacheError::storage("waiting for hydra-s3", "unknown error")))
 }
 
 #[tokio::test]
@@ -150,10 +150,10 @@ async fn s3_multipart_upload_for_large_files() -> Result<(), BuildCacheError> {
     let storage_root = tempdir().expect("storage root");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+        .map_err(|err| BuildCacheError::io("binding hydra-s3 listener", err))?;
     let addr = listener
         .local_addr()
-        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+        .map_err(|err| BuildCacheError::io("reading hydra-s3 addr", err))?;
 
     let server_handle = tokio::spawn(hydra_s3::serve(listener, storage_root.path().to_path_buf()));
 
@@ -219,10 +219,10 @@ async fn s3_accepts_large_uploads() -> Result<(), BuildCacheError> {
     let storage_root = tempdir().expect("storage root");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+        .map_err(|err| BuildCacheError::io("binding hydra-s3 listener", err))?;
     let addr = listener
         .local_addr()
-        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+        .map_err(|err| BuildCacheError::io("reading hydra-s3 addr", err))?;
 
     let server_handle = tokio::spawn(hydra_s3::serve(listener, storage_root.path().to_path_buf()));
 
@@ -274,10 +274,10 @@ async fn s3_small_file_download_uses_single_request() -> Result<(), BuildCacheEr
     let storage_root = tempdir().expect("storage root");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+        .map_err(|err| BuildCacheError::io("binding hydra-s3 listener", err))?;
     let addr = listener
         .local_addr()
-        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+        .map_err(|err| BuildCacheError::io("reading hydra-s3 addr", err))?;
 
     let server_handle = tokio::spawn(hydra_s3::serve(listener, storage_root.path().to_path_buf()));
 
@@ -328,10 +328,10 @@ async fn s3_ranged_download_for_large_files() -> Result<(), BuildCacheError> {
     let storage_root = tempdir().expect("storage root");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+        .map_err(|err| BuildCacheError::io("binding hydra-s3 listener", err))?;
     let addr = listener
         .local_addr()
-        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+        .map_err(|err| BuildCacheError::io("reading hydra-s3 addr", err))?;
 
     let server_handle = tokio::spawn(hydra_s3::serve(listener, storage_root.path().to_path_buf()));
 

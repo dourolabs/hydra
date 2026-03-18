@@ -202,7 +202,7 @@ impl AuthConfig {
 /// missing required variant fields (e.g., `github_token` for local mode).
 #[derive(Debug, Deserialize)]
 struct RawAppConfig {
-    pub metis: HydraSection,
+    pub hydra: HydraSection,
     pub job: JobSection,
     #[serde(default, flatten)]
     pub storage: Option<StorageConfig>,
@@ -244,7 +244,7 @@ impl<'de> Deserialize<'de> for AppConfig {
         let raw = RawAppConfig::deserialize(deserializer)?;
 
         Ok(Self {
-            hydra: raw.metis,
+            hydra: raw.hydra,
             job: raw.job,
             storage: raw.storage.unwrap_or_default(),
             job_engine: raw.job_engine.unwrap_or_default(),
@@ -318,7 +318,7 @@ pub struct HydraSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
-    #[serde(rename = "METIS_SECRET_ENCRYPTION_KEY")]
+    #[serde(rename = "HYDRA_SECRET_ENCRYPTION_KEY")]
     pub secret_encryption_key: String,
     #[serde(default)]
     pub allowed_orgs: Vec<String>,
@@ -346,23 +346,23 @@ impl HydraSection {
     fn validate(&self) -> Result<()> {
         ensure!(
             non_empty(&self.secret_encryption_key).is_some(),
-            "metis.METIS_SECRET_ENCRYPTION_KEY must be set"
+            "hydra.HYDRA_SECRET_ENCRYPTION_KEY must be set"
         );
         // Validate it's valid base64 and exactly 32 bytes
         {
             use base64::Engine;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(self.secret_encryption_key.trim())
-                .context("metis.METIS_SECRET_ENCRYPTION_KEY is not valid base64")?;
+                .context("hydra.HYDRA_SECRET_ENCRYPTION_KEY is not valid base64")?;
             ensure!(
                 bytes.len() == 32,
-                "metis.METIS_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes (got {})",
+                "hydra.HYDRA_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes (got {})",
                 bytes.len()
             );
         }
         ensure!(
             self.allowed_orgs.iter().all(|org| non_empty(org).is_some()),
-            "metis.allowed_orgs must not contain empty values"
+            "hydra.allowed_orgs must not contain empty values"
         );
         Ok(())
     }
@@ -711,7 +711,7 @@ pub(crate) fn non_empty(value: &str) -> Option<&str> {
 }
 
 fn default_sqlite_path() -> String {
-    "metis.db".to_string()
+    "hydra.db".to_string()
 }
 
 fn default_namespace() -> String {
@@ -907,13 +907,13 @@ mod tests {
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 
 github_app:
   app_id: 1
@@ -937,14 +937,14 @@ github_app:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: []
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
   cpu_limit: "500m"
   memory_limit: "1Gi"
   cpu_request: "500m"
@@ -975,14 +975,14 @@ github_app:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: [" ", ""]
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
   cpu_limit: "500m"
   memory_limit: "1Gi"
   cpu_request: "500m"
@@ -1002,7 +1002,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected blank allowed_orgs entry");
         assert!(error_chain_contains(
             &error,
-            "metis.allowed_orgs must not contain empty values"
+            "hydra.allowed_orgs must not contain empty values"
         ));
 
         Ok(())
@@ -1015,13 +1015,13 @@ github_app:
         fs::write(
             &path,
             r#"
-metis:
+hydra:
   allowed_orgs: []
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 
 github_app:
   app_id: 1
@@ -1036,7 +1036,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected missing secret_encryption_key");
         assert!(error_chain_contains(
             &error,
-            "missing field `METIS_SECRET_ENCRYPTION_KEY`"
+            "missing field `HYDRA_SECRET_ENCRYPTION_KEY`"
         ));
 
         Ok(())
@@ -1049,13 +1049,13 @@ github_app:
         fs::write(
             &path,
             r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "not-valid-base64!!!"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "not-valid-base64!!!"
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 
 github_app:
   app_id: 1
@@ -1070,7 +1070,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected invalid base64");
         assert!(error_chain_contains(
             &error,
-            "metis.METIS_SECRET_ENCRYPTION_KEY is not valid base64"
+            "hydra.HYDRA_SECRET_ENCRYPTION_KEY is not valid base64"
         ));
 
         Ok(())
@@ -1087,13 +1087,13 @@ github_app:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{short_key}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{short_key}"
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 
 github_app:
   app_id: 1
@@ -1109,7 +1109,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected wrong-length key");
         assert!(error_chain_contains(
             &error,
-            "metis.METIS_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes"
+            "hydra.HYDRA_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes"
         ));
 
         Ok(())
@@ -1123,14 +1123,14 @@ github_app:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: local
 github_token: "ghp_test_token"
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 "#
             ),
         )?;
@@ -1158,13 +1158,13 @@ job:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 "#
             ),
         )?;
@@ -1183,14 +1183,14 @@ job:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: local
 github_token: "ghp_test_token"
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 "#
             ),
         )?;
@@ -1209,15 +1209,15 @@ job:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: local
 github_token: "ghp_test_token"
 username: "alice"
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 "#
             ),
         )?;
@@ -1236,13 +1236,13 @@ job:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: github
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 
 github_app:
   app_id: 1
@@ -1269,13 +1269,13 @@ github_app:
             &path,
             format!(
                 r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: local
 
 job:
-  default_image: "metis-worker:latest"
+  default_image: "hydra-worker:latest"
 "#
             ),
         )?;

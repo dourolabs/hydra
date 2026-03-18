@@ -26,8 +26,8 @@ use tokio::sync::RwLock;
 /// Shared spawn attempt state that persists across scheduler iterations.
 pub type SharedSpawnAttempts = Arc<RwLock<HashMap<IssueId, SpawnAttempt>>>;
 
-pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
-pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
+pub const ISSUE_ID_ENV_VAR: &str = "HYDRA_ISSUE_ID";
+pub const AGENT_NAME_ENV_VAR: &str = "HYDRA_AGENT_NAME";
 
 #[async_trait]
 pub trait Spawner: Send + Sync {
@@ -699,7 +699,7 @@ mod tests {
                     "Fix the issue",
                     BundleSpec::None,
                     Some(issue_id.clone()),
-                    Some("metis-worker:latest"),
+                    Some("hydra-worker:latest"),
                     HashMap::from([
                         (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                         (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
@@ -921,7 +921,7 @@ mod tests {
                     "Parent task",
                     BundleSpec::None,
                     Some(parent_id.clone()),
-                    Some("metis-worker:latest"),
+                    Some("hydra-worker:latest"),
                     HashMap::from([
                         (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
                         (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
@@ -977,7 +977,7 @@ mod tests {
                     session_settings: SessionSettings {
                         repo_name: None,
                         remote_url: None,
-                        image: Some("metis-worker:latest".to_string()),
+                        image: Some("hydra-worker:latest".to_string()),
                         model: None,
                         branch: None,
                         max_retries: None,
@@ -1065,7 +1065,7 @@ mod tests {
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name),
                         remote_url: None,
-                        image: Some("metis-worker:latest".to_string()),
+                        image: Some("hydra-worker:latest".to_string()),
                         model: None,
                         branch: Some("main".to_string()),
                         max_retries: Some(1),
@@ -1843,7 +1843,7 @@ mod tests {
                     "Existing task",
                     BundleSpec::None,
                     Some(issue_id.clone()),
-                    Some("metis-worker:latest"),
+                    Some("hydra-worker:latest"),
                     HashMap::from([
                         (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                         (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),

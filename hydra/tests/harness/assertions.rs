@@ -342,7 +342,7 @@ impl PatchAssertions for PatchVersionRecord {
 /// ```ignore
 /// let job = user.client().get_session(&job_id).await?;
 /// job.assert_status(Status::Complete);
-/// job.assert_env_var("METIS_TOKEN", "secret");
+/// job.assert_env_var("HYDRA_TOKEN", "secret");
 /// ```
 pub trait JobAssertions {
     /// Assert the job has the expected status.

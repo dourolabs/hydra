@@ -45,7 +45,7 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
                 "echo 'fn greet() { println!(\"hello\"); }' > greet.rs",
                 "git add greet.rs",
                 "git commit -m 'Add greeting module'",
-                "metis patches create --title 'Add greeting module' --description 'Implements the greeting function'",
+                "hydra patches create --title 'Add greeting module' --description 'Implements the greeting function'",
             ],
         )
         .await?;

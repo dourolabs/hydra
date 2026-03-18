@@ -57,7 +57,7 @@ async fn worker_checks_out_non_default_branch() -> Result<()> {
                 "echo 'additional work' >> feature.txt",
                 "git add feature.txt",
                 "git commit -m 'Extend feature on feature-xyz'",
-                "metis patches create --title 'Feature branch work' --description 'Changes made after checking out feature-xyz'",
+                "hydra patches create --title 'Feature branch work' --description 'Changes made after checking out feature-xyz'",
             ],
         )
         .await?;

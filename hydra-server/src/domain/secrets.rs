@@ -24,7 +24,7 @@ pub const SECRET_GITHUB_REFRESH_TOKEN: &str = "GITHUB_REFRESH_TOKEN";
 /// - 1 to 128 characters
 /// - Only uppercase ASCII letters, digits, and underscores
 /// - Must start with an uppercase letter
-/// - Must not start with `METIS_` (reserved for system env vars)
+/// - Must not start with `HYDRA_` (reserved for system env vars)
 pub fn validate_secret_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 128 {
         return Err("secret name must be between 1 and 128 characters".to_string());
@@ -40,8 +40,8 @@ pub fn validate_secret_name(name: &str) -> Result<(), String> {
             "secret name must contain only uppercase letters, digits, and underscores".to_string(),
         );
     }
-    if name.starts_with("METIS_") {
-        return Err("secret name must not start with METIS_ (reserved prefix)".to_string());
+    if name.starts_with("HYDRA_") {
+        return Err("secret name must not start with HYDRA_ (reserved prefix)".to_string());
     }
     Ok(())
 }
@@ -252,9 +252,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_secret_name_metis_prefix_reserved() {
-        assert!(validate_secret_name("METIS_TOKEN").is_err());
-        assert!(validate_secret_name("METIS_SERVER_URL").is_err());
+    fn validate_secret_name_hydra_prefix_reserved() {
+        assert!(validate_secret_name("HYDRA_TOKEN").is_err());
+        assert!(validate_secret_name("HYDRA_SERVER_URL").is_err());
         // METIS without underscore is fine
         assert!(validate_secret_name("METISKEY").is_ok());
     }

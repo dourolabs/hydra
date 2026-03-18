@@ -475,7 +475,7 @@ mod tests {
             .expect("add path");
         let tree_id = index.write_tree().expect("write tree");
         let tree = repo.find_tree(tree_id).expect("tree");
-        let signature = Signature::now("metis", "metis@example.com").expect("signature");
+        let signature = Signature::now("hydra", "hydra@example.com").expect("signature");
         let parents = repo
             .head()
             .ok()

@@ -16,7 +16,7 @@ const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const GITHUB_SCOPE: &str = "read:user";
-const USER_AGENT_VALUE: &str = "metis-cli";
+const USER_AGENT_VALUE: &str = "hydra-cli";
 
 #[derive(Debug, Deserialize)]
 struct DeviceFlowResponse {

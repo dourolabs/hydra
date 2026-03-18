@@ -118,7 +118,7 @@ impl S3StorageClient {
                     secret_access_key,
                     session_token.cloned(),
                     None,
-                    "metis-build-cache",
+                    "hydra-build-cache",
                 );
                 Some(SharedCredentialsProvider::new(credentials))
             }

@@ -155,7 +155,7 @@ impl MergeQueueImpl {
         let tree_oid = index.write_tree_to(repo)?;
         let tree = repo.find_tree(tree_oid)?;
         let default_signature =
-            Signature::now("metis", "metis@localhost").map_err(MergeQueueError::Git)?;
+            Signature::now("hydra", "hydra@localhost").map_err(MergeQueueError::Git)?;
         let author_signature = repo.signature().unwrap_or(default_signature.clone());
         let committer_signature = repo.signature().unwrap_or(default_signature);
         let message = summary
@@ -782,6 +782,6 @@ mod tests {
     }
 
     fn test_signature() -> Result<Signature<'static>> {
-        Signature::now("metis", "metis@example.com").map_err(Into::into)
+        Signature::now("hydra", "hydra@example.com").map_err(Into::into)
     }
 }

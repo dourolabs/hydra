@@ -357,7 +357,7 @@ pub async fn create_patch_asset(
     let response = reqwest::Client::new()
         .post(upload_url)
         .header(ACCEPT, "application/vnd.github+json")
-        .header(USER_AGENT, "metis-server")
+        .header(USER_AGENT, "hydra-server")
         .header(AUTHORIZATION, format!("Bearer {}", token.github_token))
         .header(CONTENT_TYPE, content_type)
         .header(CONTENT_LENGTH, content_length)
@@ -582,7 +582,7 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
         } => ApiError::conflict(format!(
             "Can't create patch because an open patch '{existing_patch_id}' already exists \
              for branch '{branch_name}'. Consider updating that patch with: \
-             metis patches update {existing_patch_id}"
+             hydra patches update {existing_patch_id}"
         )),
         UpsertPatchError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }

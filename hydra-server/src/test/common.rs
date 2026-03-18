@@ -3,7 +3,7 @@ use hydra_common::{RepoName, SessionId};
 use std::str::FromStr;
 
 pub(crate) fn default_image() -> String {
-    "metis-worker:latest".to_string()
+    "hydra-worker:latest".to_string()
 }
 
 pub(crate) fn task_id(value: &str) -> SessionId {

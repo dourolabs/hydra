@@ -260,9 +260,9 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
     Ok(())
 }
 
-const HYDRA_WORKER_IMAGE: &str = "metis-worker:latest";
+const HYDRA_WORKER_IMAGE: &str = "hydra-worker:latest";
 
-/// Check whether the `metis-worker:latest` Docker image already exists locally.
+/// Check whether the `hydra-worker:latest` Docker image already exists locally.
 fn docker_image_exists(image: &str) -> bool {
     Command::new("docker")
         .args(["image", "inspect", image])
@@ -280,7 +280,7 @@ fn find_repo_root() -> Option<std::path::PathBuf> {
     // CARGO_MANIFEST_DIR points to hydra-single-player/ at compile time.
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent()?;
-    let dockerfile = repo_root.join("images/metis-worker.Dockerfile");
+    let dockerfile = repo_root.join("images/hydra-worker.Dockerfile");
     if dockerfile.exists() {
         Some(repo_root.to_path_buf())
     } else {
@@ -288,11 +288,11 @@ fn find_repo_root() -> Option<std::path::PathBuf> {
     }
 }
 
-/// Build the `metis-worker:latest` Docker image.
+/// Build the `hydra-worker:latest` Docker image.
 ///
 /// If the image already exists locally the build is skipped. On build failure
 /// the function prints a warning with manual build instructions. The config
-/// always references `metis-worker:latest` regardless of build outcome.
+/// always references `hydra-worker:latest` regardless of build outcome.
 fn build_worker_image() -> bool {
     // Skip if already present.
     if docker_image_exists(HYDRA_WORKER_IMAGE) {
@@ -308,7 +308,7 @@ fn build_worker_image() -> bool {
             );
             eprintln!(
                 "You can build it manually with: \
-                 docker build -t {HYDRA_WORKER_IMAGE} -f images/metis-worker.Dockerfile ."
+                 docker build -t {HYDRA_WORKER_IMAGE} -f images/hydra-worker.Dockerfile ."
             );
             return false;
         }
@@ -323,7 +323,7 @@ fn build_worker_image() -> bool {
             "-t",
             HYDRA_WORKER_IMAGE,
             "-f",
-            "images/metis-worker.Dockerfile",
+            "images/hydra-worker.Dockerfile",
             ".",
         ])
         .current_dir(&repo_root)
@@ -339,7 +339,7 @@ fn build_worker_image() -> bool {
             eprintln!("Warning: Docker build for '{HYDRA_WORKER_IMAGE}' failed.");
             eprintln!(
                 "You can retry manually with: \
-                 cd {} && docker build -t {HYDRA_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                 cd {} && docker build -t {HYDRA_WORKER_IMAGE} -f images/hydra-worker.Dockerfile .",
                 repo_root.display()
             );
             false
@@ -349,7 +349,7 @@ fn build_worker_image() -> bool {
             eprintln!("Warning: failed to run docker build: {e}");
             eprintln!(
                 "You can retry manually with: \
-                 cd {} && docker build -t {HYDRA_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                 cd {} && docker build -t {HYDRA_WORKER_IMAGE} -f images/hydra-worker.Dockerfile .",
                 repo_root.display()
             );
             false
@@ -720,7 +720,7 @@ fn start_server_in_process() -> Result<()> {
     // This is safe because we run before the tokio runtime is created
     // (no other threads exist yet).
     unsafe {
-        std::env::set_var("METIS_CONFIG", &config_path);
+        std::env::set_var("HYDRA_CONFIG", &config_path);
     }
 
     // Fork the process. The child runs the server; the parent records
@@ -771,7 +771,7 @@ fn start_server_in_process() -> Result<()> {
                     .expect("failed to create tokio runtime for in-process server");
                 let result = rt.block_on(run_server_with_bff());
                 if let Err(e) = result {
-                    eprintln!("metis-server exited with error: {e:#}");
+                    eprintln!("hydra-server exited with error: {e:#}");
                     std::process::exit(1);
                 }
                 std::process::exit(0);
@@ -1038,7 +1038,7 @@ mod tests {
         );
 
         // Verify the generated YAML contains all expected fields.
-        assert!(config.contains("METIS_SECRET_ENCRYPTION_KEY"));
+        assert!(config.contains("HYDRA_SECRET_ENCRYPTION_KEY"));
         assert!(config.contains("ghp_test123"));
         assert!(config.contains("auth_mode: local"));
         assert!(config.contains("storage_backend: sqlite"));
@@ -1261,7 +1261,7 @@ mod tests {
 
     #[test]
     fn store_auth_token_and_set_default_marks_local_server() {
-        let dir = std::env::temp_dir().join(format!("metis-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hydra-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let config_path = dir.join("config.toml");
         // Clean up any previous run.
@@ -1291,7 +1291,7 @@ mod tests {
         // Verify no staging server URL is present.
         let contents = fs::read_to_string(&config_path).expect("read config file");
         assert!(
-            !contents.contains("metis-staging"),
+            !contents.contains("hydra-staging"),
             "config should not contain staging server URL"
         );
 

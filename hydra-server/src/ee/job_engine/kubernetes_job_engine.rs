@@ -89,7 +89,7 @@ fn build_image_pull_secrets(image_pull_secrets: &[String]) -> Option<Vec<LocalOb
 impl KubernetesJobEngine {
     fn build_metadata_labels(job_uuid: &SessionId) -> BTreeMap<String, String> {
         let mut metadata_labels = BTreeMap::new();
-        metadata_labels.insert("metis-id".to_string(), job_uuid.to_string());
+        metadata_labels.insert("hydra-id".to_string(), job_uuid.to_string());
         metadata_labels
     }
 
@@ -122,7 +122,7 @@ impl KubernetesJobEngine {
         job.metadata
             .labels
             .as_ref()
-            .and_then(|labels| labels.get("metis-id"))
+            .and_then(|labels| labels.get("hydra-id"))
             .and_then(|value| value.parse::<SessionId>().ok())
     }
 
@@ -221,7 +221,7 @@ impl KubernetesJobEngine {
         pod.metadata
             .labels
             .as_ref()
-            .and_then(|labels| labels.get("metis-id"))
+            .and_then(|labels| labels.get("hydra-id"))
             .and_then(|value| value.parse::<SessionId>().ok())
     }
 
@@ -319,7 +319,7 @@ impl KubernetesJobEngine {
 
     async fn kill_pods_by_hydra_id(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
-        let selector = format!("metis-id={hydra_id}");
+        let selector = format!("hydra-id={hydra_id}");
         let lp = ListParams::default().labels(&selector);
         let pod_list = pods
             .list(&lp)
@@ -379,7 +379,7 @@ async fn find_kubernetes_job_by_hydra_id_impl(
     job_id: &SessionId,
 ) -> Result<Job, JobEngineError> {
     let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
-    let selector = format!("metis-id={job_id}");
+    let selector = format!("hydra-id={job_id}");
     let lp = ListParams::default().labels(&selector);
     let items = jobs
         .list(&lp)
@@ -403,7 +403,7 @@ async fn find_kubernetes_pod_by_hydra_id_impl(
     job_id: &SessionId,
 ) -> Result<Pod, JobEngineError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    let selector = format!("metis-id={job_id}");
+    let selector = format!("hydra-id={job_id}");
     let lp = ListParams::default().labels(&selector);
     let items = pods
         .list(&lp)
@@ -489,7 +489,7 @@ impl JobEngine for KubernetesJobEngine {
         cpu_request: String,
         memory_request: String,
     ) -> Result<(), JobEngineError> {
-        let job_name = format!("metis-worker-{hydra_id}");
+        let job_name = format!("hydra-worker-{hydra_id}");
 
         info!(hydra_id = %hydra_id, namespace = %self.namespace, "creating Kubernetes job");
 
@@ -504,10 +504,10 @@ impl JobEngine for KubernetesJobEngine {
         );
 
         let mut container = Container {
-            name: "metis-worker".to_string(),
+            name: "hydra-worker".to_string(),
             image: Some(image.to_string()),
             image_pull_policy: Some("Always".into()),
-            command: Some(vec!["metis".to_string()]),
+            command: Some(vec!["hydra".to_string()]),
             args: Some(vec![
                 "sessions".to_string(),
                 "worker-run".to_string(),
@@ -592,7 +592,7 @@ impl JobEngine for KubernetesJobEngine {
 
         let jobs_api: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
         let jobs = jobs_api
-            .list(&ListParams::default().labels("metis-id"))
+            .list(&ListParams::default().labels("hydra-id"))
             .await
             .map_err(|err| {
                 error!(error = ?err, namespace = %self.namespace, "failed to list jobs from Kubernetes");
@@ -608,7 +608,7 @@ impl JobEngine for KubernetesJobEngine {
 
         let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let pods = pods_api
-            .list(&ListParams::default().labels("metis-id"))
+            .list(&ListParams::default().labels("hydra-id"))
             .await
             .map_err(|err| {
                 error!(error = ?err, namespace = %self.namespace, "failed to list pods from Kubernetes");
@@ -822,7 +822,7 @@ mod tests {
             "http://example.com".to_string(),
         );
 
-        let merged = merge_env_vars(&job_id, &task_env, "metis.example.com", "auth-token");
+        let merged = merge_env_vars(&job_id, &task_env, "hydra.example.com", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
@@ -891,7 +891,7 @@ mod tests {
             metadata: ObjectMeta {
                 name: Some("pod-name".into()),
                 creation_timestamp: Some(creation.clone()),
-                labels: Some(BTreeMap::from([("metis-id".into(), job_id.to_string())])),
+                labels: Some(BTreeMap::from([("hydra-id".into(), job_id.to_string())])),
                 ..Default::default()
             },
             status: Some(PodStatus {
@@ -929,7 +929,7 @@ mod tests {
         let pod = Pod {
             metadata: ObjectMeta {
                 name: Some("pod-name".into()),
-                labels: Some(BTreeMap::from([("metis-id".into(), job_id.to_string())])),
+                labels: Some(BTreeMap::from([("hydra-id".into(), job_id.to_string())])),
                 ..Default::default()
             },
             status: Some(PodStatus {

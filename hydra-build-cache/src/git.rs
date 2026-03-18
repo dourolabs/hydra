@@ -96,7 +96,7 @@ mod tests {
     fn init_repo() -> (tempfile::TempDir, Repository, Signature<'static>) {
         let dir = tempdir().expect("tempdir");
         let repo = Repository::init(dir.path()).expect("init repo");
-        let signature = Signature::now("metis", "metis@example.com").expect("signature");
+        let signature = Signature::now("hydra", "hydra@example.com").expect("signature");
         (dir, repo, signature)
     }
 

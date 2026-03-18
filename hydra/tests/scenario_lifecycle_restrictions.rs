@@ -32,10 +32,10 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
             vec![
                 // Create a child issue under the parent.
                 &format!(
-                    "metis --output-format jsonl issues create --deps child-of:{parent_id} \"open child\""
+                    "hydra --output-format jsonl issues create --deps child-of:{parent_id} \"open child\""
                 ),
                 // Try to close the parent — should fail because the child is open.
-                &format!("metis issues update {parent_id} --status closed"),
+                &format!("hydra issues update {parent_id} --status closed"),
             ],
         )
         .await?;
@@ -63,9 +63,9 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
             &job_id2,
             vec![
                 // Close the child first.
-                &format!("metis issues update {child_id} --status closed"),
+                &format!("hydra issues update {child_id} --status closed"),
                 // Now close the parent — should succeed.
-                &format!("metis issues update {parent_id} --status closed"),
+                &format!("hydra issues update {parent_id} --status closed"),
             ],
         )
         .await?;
@@ -107,18 +107,18 @@ async fn cannot_close_issue_with_incomplete_todos() -> Result<()> {
             vec![
                 // Create a fresh issue to work with.
                 &format!(
-                    "metis --output-format jsonl issues create --deps child-of:{parent_id} \"issue with todos\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee target_id.txt"
+                    "hydra --output-format jsonl issues create --deps child-of:{parent_id} \"issue with todos\" | sed -n 's/^{{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee target_id.txt"
                 ),
                 // Add 3 todo items.
-                "metis issues todo $(cat target_id.txt) --add \"task one\"",
-                "metis issues todo $(cat target_id.txt) --add \"task two\"",
-                "metis issues todo $(cat target_id.txt) --add \"task three\"",
+                "hydra issues todo $(cat target_id.txt) --add \"task one\"",
+                "hydra issues todo $(cat target_id.txt) --add \"task two\"",
+                "hydra issues todo $(cat target_id.txt) --add \"task three\"",
                 // Mark only 2 of 3 as done.
-                "metis issues todo $(cat target_id.txt) --done 1",
-                "metis issues todo $(cat target_id.txt) --done 2",
+                "hydra issues todo $(cat target_id.txt) --done 1",
+                "hydra issues todo $(cat target_id.txt) --done 2",
                 // Try to close — should fail because todo 3 is incomplete.
                 &format!(
-                    "metis issues update $(cat target_id.txt) --status closed --deps child-of:{parent_id}"
+                    "hydra issues update $(cat target_id.txt) --status closed --deps child-of:{parent_id}"
                 ),
             ],
         )
@@ -147,10 +147,10 @@ async fn cannot_close_issue_with_incomplete_todos() -> Result<()> {
             &job_id2,
             vec![
                 // Mark the last todo as done.
-                &format!("metis issues todo {target_id} --done 3"),
+                &format!("hydra issues todo {target_id} --done 3"),
                 // Close the issue — should succeed now.
                 &format!(
-                    "metis issues update {target_id} --status closed --deps child-of:{parent_id}"
+                    "hydra issues update {target_id} --status closed --deps child-of:{parent_id}"
                 ),
             ],
         )
@@ -186,11 +186,11 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
             &job_id,
             vec![
                 // Create blocker issue A.
-                "metis --output-format jsonl issues create \"blocker A\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocker_id.txt",
+                "hydra --output-format jsonl issues create \"blocker A\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocker_id.txt",
                 // Create issue B blocked-on A.
-                "metis --output-format jsonl issues create --deps blocked-on:$(cat blocker_id.txt) \"blocked B\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocked_id.txt",
+                "hydra --output-format jsonl issues create --deps blocked-on:$(cat blocker_id.txt) \"blocked B\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocked_id.txt",
                 // Try to close B — should fail because blocker A is open.
-                "metis issues update $(cat blocked_id.txt) --status closed",
+                "hydra issues update $(cat blocked_id.txt) --status closed",
             ],
         )
         .await?;
@@ -220,8 +220,8 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
         .run_worker(
             &job_id2,
             vec![
-                &format!("metis issues update {blocker_id} --status closed"),
-                &format!("metis issues update {blocked_id} --status closed"),
+                &format!("hydra issues update {blocker_id} --status closed"),
+                &format!("hydra issues update {blocked_id} --status closed"),
             ],
         )
         .await?;
@@ -262,13 +262,13 @@ async fn failed_blocker_allows_closure() -> Result<()> {
             &job_id,
             vec![
                 // Create blocker issue A.
-                "metis --output-format jsonl issues create \"blocker A\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocker_id.txt",
+                "hydra --output-format jsonl issues create \"blocker A\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocker_id.txt",
                 // Create issue B blocked-on A.
-                "metis --output-format jsonl issues create --deps blocked-on:$(cat blocker_id.txt) \"blocked B\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocked_id.txt",
+                "hydra --output-format jsonl issues create --deps blocked-on:$(cat blocker_id.txt) \"blocked B\" | sed -n 's/^{\"issue_id\":\"\\([^\"]*\\)\".*/\\1/p' | tee blocked_id.txt",
                 // Mark A as failed.
-                "metis issues update $(cat blocker_id.txt) --status failed",
+                "hydra issues update $(cat blocker_id.txt) --status failed",
                 // Close B — should succeed because failed blocker is terminal.
-                "metis issues update $(cat blocked_id.txt) --status closed",
+                "hydra issues update $(cat blocked_id.txt) --status closed",
             ],
         )
         .await?;

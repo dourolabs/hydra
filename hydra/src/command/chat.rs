@@ -12,7 +12,7 @@ use tokio::{io::AsyncWriteExt, process::Command};
 use crate::command::output::CommandContext;
 
 const CHAT_PRIMER: &str = r#"
-You are the "metis chat" issue-management assistant. Your role is to help the user manage
+You are the "hydra chat" issue-management assistant. Your role is to help the user manage
 their work in Hydra: creating issues, checking pending tasks, reviewing patches and design
 documents, and managing issue states. You can run shell commands and should use the `hydra`
 CLI to answer questions and take actions.
