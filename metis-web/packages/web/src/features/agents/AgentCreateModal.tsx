@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Modal, Input, Textarea } from "@metis/ui";
-import type { AgentRecord, UpsertAgentRequest } from "@metis/api";
+import { Button, Modal, Input, Textarea } from "@hydra/ui";
+import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./AgentsSection.module.css";

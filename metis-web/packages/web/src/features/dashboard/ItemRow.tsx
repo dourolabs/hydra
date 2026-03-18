@@ -1,8 +1,8 @@
 import React, { useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
-import type { SessionSummaryRecord, LabelSummary } from "@metis/api";
+import { Avatar, Badge, useKeyboardClick } from "@hydra/ui";
+import type { SessionSummaryRecord, LabelSummary } from "@hydra/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./workItemTypes";
 import { StatusBoxes, StatusBoxesLoading } from "./StatusBoxes";

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Textarea, Select } from "@metis/ui";
-import type { SelectOption } from "@metis/ui";
-import type { RepositoryRecord } from "@metis/api";
+import { Button, Input, Textarea, Select } from "@hydra/ui";
+import type { SelectOption } from "@hydra/ui";
+import type { RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -30,10 +30,10 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { addToast } = useToast();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const [title, setTitle, clearTitleDraft] = useFormDraft("metis:draft:issue-creator:title", "");
-  const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-creator:description", "");
-  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-creator:assignee", "");
-  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-creator:repoName", "");
+  const [title, setTitle, clearTitleDraft] = useFormDraft("hydra:draft:issue-creator:title", "");
+  const [description, setDescription, clearDescriptionDraft] = useFormDraft("hydra:draft:issue-creator:description", "");
+  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("hydra:draft:issue-creator:assignee", "");
+  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("hydra:draft:issue-creator:repoName", "");
   const [showOptions, setShowOptions] = useState(false);
 
   const queryClient = useQueryClient();

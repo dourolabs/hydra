@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { SessionSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@hydra/api";
 import { formatDuration } from "../../utils/time";
 
 interface SessionDuration {

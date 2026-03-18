@@ -4,18 +4,18 @@ import type { HeartbeatEventData } from "./generated/HeartbeatEventData";
 import type { ResyncEventData } from "./generated/ResyncEventData";
 import type { ConnectedEventData } from "./generated/ConnectedEventData";
 
-/** A parsed SSE event from the metis-server /v1/events stream. */
-export type MetisEvent =
+/** A parsed SSE event from the hydra-server /v1/events stream. */
+export type HydraEvent =
   | { type: "entity"; eventType: SseEventType; data: EntityEventData; id: number }
   | { type: "connected"; data: ConnectedEventData; id: number }
   | { type: "resync"; data: ResyncEventData; id: number }
   | { type: "heartbeat"; data: HeartbeatEventData; id: number };
 
 /** Callback invoked for each parsed event. */
-export type MetisEventHandler = (event: MetisEvent) => void;
+export type HydraEventHandler = (event: HydraEvent) => void;
 
 /** Callback invoked when the connection encounters an error. */
-export type MetisEventErrorHandler = (error: Error) => void;
+export type HydraEventErrorHandler = (error: Error) => void;
 
 export interface EventSubscriptionOptions {
   /** SSE event types to filter (e.g. "issues,jobs"). */
@@ -36,7 +36,7 @@ const CONNECTED_EVENTS: ReadonlySet<string> = new Set(["connected"]);
 const RESYNC_EVENTS: ReadonlySet<string> = new Set(["resync"]);
 const HEARTBEAT_EVENTS: ReadonlySet<string> = new Set(["heartbeat"]);
 
-function parseEvent(eventType: string, data: string, id: string): MetisEvent | null {
+function parseEvent(eventType: string, data: string, id: string): HydraEvent | null {
   const parsedId = id ? Number(id) : 0;
 
   if (CONNECTED_EVENTS.has(eventType)) {
@@ -62,14 +62,14 @@ function parseEvent(eventType: string, data: string, id: string): MetisEvent | n
  * An SSE event stream subscription that wraps EventSource.
  * Call `close()` to disconnect.
  */
-export class MetisEventSource {
+export class HydraEventSource {
   private eventSource: EventSource;
   private closed = false;
 
   constructor(
     url: string,
-    private onEvent: MetisEventHandler,
-    private onError?: MetisEventErrorHandler,
+    private onEvent: HydraEventHandler,
+    private onError?: HydraEventErrorHandler,
   ) {
     this.eventSource = new EventSource(url);
 

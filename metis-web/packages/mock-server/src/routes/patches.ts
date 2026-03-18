@@ -12,7 +12,7 @@ import type {
   PatchSummaryRecord,
   PatchSummary,
   ReviewSummary,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "patches";
 const SSE_PREFIX = "patch";

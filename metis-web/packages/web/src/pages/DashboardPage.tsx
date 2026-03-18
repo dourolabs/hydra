@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Spinner } from "@metis/ui";
+import { Spinner } from "@hydra/ui";
 import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";

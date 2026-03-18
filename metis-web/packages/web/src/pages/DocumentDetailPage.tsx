@@ -1,8 +1,8 @@
 import { useState, useCallback } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@metis/ui";
-import type { DocumentVersionRecord } from "@metis/api";
+import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@hydra/ui";
+import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
 import { useToast } from "../features/toast/useToast";

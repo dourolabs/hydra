@@ -17,7 +17,7 @@ import type {
   SetSessionStatusResponse,
   WorkerContext,
   Status,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "sessions";
 const SSE_PREFIX = "session";

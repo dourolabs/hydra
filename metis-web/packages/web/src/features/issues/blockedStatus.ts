@@ -1,4 +1,4 @@
-import type { IssueSummaryRecord, IssueStatus } from "@metis/api";
+import type { IssueSummaryRecord, IssueStatus } from "@hydra/api";
 
 export interface BlockedStatus {
   blocked: boolean;

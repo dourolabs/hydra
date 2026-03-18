@@ -1,4 +1,4 @@
-import type { SessionSettings } from "@metis/api";
+import type { SessionSettings } from "@hydra/api";
 import styles from "./IssueSettings.module.css";
 
 interface IssueSettingsProps {

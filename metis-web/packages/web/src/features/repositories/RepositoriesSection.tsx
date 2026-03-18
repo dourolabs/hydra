@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Panel, Spinner, Button } from "@metis/ui";
-import type { RepositoryRecord } from "@metis/api";
+import { Panel, Spinner, Button } from "@hydra/ui";
+import type { RepositoryRecord } from "@hydra/api";
 import { useRepositories } from "../../hooks/useRepositories";
 import { RepositoryRow } from "./RepositoryRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";

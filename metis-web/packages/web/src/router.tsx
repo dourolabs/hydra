@@ -1,5 +1,5 @@
 import { createBrowserRouter } from "react-router-dom";
-import { ErrorBoundary } from "@metis/ui";
+import { ErrorBoundary } from "@hydra/ui";
 import { AppLayout } from "./layout/AppLayout";
 
 export const router = createBrowserRouter([

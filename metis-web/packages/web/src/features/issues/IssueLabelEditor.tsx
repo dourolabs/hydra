@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@metis/ui";
-import type { LabelSummary, LabelRecord } from "@metis/api";
+import { Button } from "@hydra/ui";
+import type { LabelSummary, LabelRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { LabelChip } from "../labels/LabelChip";
 import { LabelPicker } from "../labels/LabelPicker";

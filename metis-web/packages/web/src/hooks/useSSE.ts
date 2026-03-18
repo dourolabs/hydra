@@ -6,7 +6,7 @@ import type {
   SessionSummaryRecord,
   ListIssuesResponse,
   ListSessionsResponse,
-} from "@metis/api";
+} from "@hydra/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
 

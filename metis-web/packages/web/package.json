@@ -1,5 +1,5 @@
 {
-  "name": "@metis/web",
+  "name": "@hydra/web",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
-    "@metis/api": "workspace:*",
-    "@metis/ui": "workspace:*",
+    "@hydra/api": "workspace:*",
+    "@hydra/ui": "workspace:*",
     "@tanstack/react-query": "^5.90.21",
     "hono": "^4.11.10",
     "react": "^19.0.0",

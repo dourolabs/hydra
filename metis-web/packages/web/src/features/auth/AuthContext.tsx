@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react";
-import type { WhoAmIResponse } from "@metis/api";
+import type { WhoAmIResponse } from "@hydra/api";
 import { fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
 import { AuthContext } from "./auth-state";
 

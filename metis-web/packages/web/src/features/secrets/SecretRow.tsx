@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input } from "@metis/ui";
+import { Button, Input } from "@hydra/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./SecretsSection.module.css";

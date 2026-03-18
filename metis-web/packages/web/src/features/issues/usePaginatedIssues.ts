@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import type { SearchIssuesQuery, ListIssuesResponse } from "@metis/api";
+import type { SearchIssuesQuery, ListIssuesResponse } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 const PAGE_SIZE = 50;

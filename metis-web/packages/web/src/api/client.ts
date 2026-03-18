@@ -1,17 +1,17 @@
-import { MetisApiClient, ApiError } from "@metis/api";
+import { HydraApiClient, ApiError } from "@hydra/api";
 
 export { ApiError };
 
 /**
- * Shared MetisApiClient instance configured for the BFF proxy.
+ * Shared HydraApiClient instance configured for the BFF proxy.
  * All API calls to /api/v1/* go through this client.
  */
-export const apiClient = new MetisApiClient({ baseUrl: "/api" });
+export const apiClient = new HydraApiClient({ baseUrl: "/api" });
 
 /**
  * Low-level fetch wrapper for BFF-specific routes (e.g. /auth/*) that
- * are not part of the metis-server API and therefore not covered by
- * MetisApiClient.
+ * are not part of the hydra-server API and therefore not covered by
+ * HydraApiClient.
  */
 export async function apiFetch<T>(
   path: string,

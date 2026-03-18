@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Panel, Spinner, Button } from "@metis/ui";
-import type { AgentRecord } from "@metis/api";
+import { Panel, Spinner, Button } from "@hydra/ui";
+import type { AgentRecord } from "@hydra/api";
 import { useAgents } from "../../hooks/useAgents";
 import { AgentRow } from "./AgentRow";
 import { AgentCreateModal } from "./AgentCreateModal";

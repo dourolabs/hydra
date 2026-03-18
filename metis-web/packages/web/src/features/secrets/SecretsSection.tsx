@@ -1,4 +1,4 @@
-import { Panel, Spinner } from "@metis/ui";
+import { Panel, Spinner } from "@hydra/ui";
 import { useUsername } from "../auth/useUsername";
 import { useSecrets } from "./useSecrets";
 import { SecretRow } from "./SecretRow";

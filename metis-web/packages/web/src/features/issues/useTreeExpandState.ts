@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 
-const STORAGE_KEY = "metis:issue-tree-collapsed";
+const STORAGE_KEY = "hydra:issue-tree-collapsed";
 
 function loadCollapsedIds(): Set<string> {
   try {

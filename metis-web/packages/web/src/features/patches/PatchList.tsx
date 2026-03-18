@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Badge, Spinner } from "@metis/ui";
+import { Badge, Spinner } from "@hydra/ui";
 import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatchesByIssue } from "./usePatchesByIssue";
 import styles from "./PatchList.module.css";

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { MergeQueue, EnqueueMergePatchRequest } from "@metis/api";
+import type { MergeQueue, EnqueueMergePatchRequest } from "@hydra/api";
 
 // Simple in-memory merge queue keyed by "org/repo/branch"
 const mergeQueues = new Map<string, string[]>();

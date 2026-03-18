@@ -1,4 +1,4 @@
-import type { BadgeStatus } from "@metis/ui";
+import type { BadgeStatus } from "@hydra/ui";
 
 export const TERMINAL_STATUSES: Set<string> = new Set([
   "closed",

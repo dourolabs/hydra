@@ -1,5 +1,5 @@
 import { ApiError } from "./errors";
-import type { MetisId } from "./generated/MetisId";
+import type { HydraId } from "./generated/HydraId";
 import type { CreateSessionRequest } from "./generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "./generated/CreateSessionResponse";
 import type { SearchSessionsQuery } from "./generated/SearchSessionsQuery";
@@ -58,11 +58,11 @@ import type { ListSecretsResponse } from "./generated/ListSecretsResponse";
 import type { SetSecretRequest } from "./generated/SetSecretRequest";
 import type { VersionResponse } from "./generated/VersionResponse";
 import {
-  MetisEventSource,
+  HydraEventSource,
   buildEventsUrl,
   type EventSubscriptionOptions,
-  type MetisEventHandler,
-  type MetisEventErrorHandler,
+  type HydraEventHandler,
+  type HydraEventErrorHandler,
 } from "./sse";
 
 // ---------------------------------------------------------------------------
@@ -70,17 +70,17 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface RelationResponse {
-  source_id: MetisId;
-  target_id: MetisId;
+  source_id: HydraId;
+  target_id: HydraId;
   rel_type: string;
 }
 
 export interface ListRelationsRequest {
-  source_id?: MetisId;
+  source_id?: HydraId;
   source_ids?: string;
-  target_id?: MetisId;
+  target_id?: HydraId;
   target_ids?: string;
-  object_id?: MetisId;
+  object_id?: HydraId;
   rel_type?: string;
   transitive?: boolean;
 }
@@ -89,7 +89,7 @@ export interface ListRelationsResponse {
   relations: RelationResponse[];
 }
 
-export interface MetisApiClientOptions {
+export interface HydraApiClientOptions {
   /** Base URL prefix for API requests. Defaults to "/api". */
   baseUrl?: string;
 }
@@ -113,15 +113,15 @@ function toSearchParams(obj: Record<string, unknown>): URLSearchParams {
 }
 
 /**
- * Typed API client for the metis-server, mirroring the Rust MetisClientInterface.
+ * Typed API client for the hydra-server, mirroring the Rust HydraClientInterface.
  *
  * All requests go through the BFF proxy (default prefix `/api`) which injects
  * the authentication token from the HttpOnly cookie.
  */
-export class MetisApiClient {
+export class HydraApiClient {
   private readonly baseUrl: string;
 
-  constructor(options?: MetisApiClientOptions) {
+  constructor(options?: HydraApiClientOptions) {
     this.baseUrl = options?.baseUrl ?? "/api";
   }
 
@@ -595,14 +595,14 @@ export class MetisApiClient {
 
   /**
    * Open an SSE connection to GET /v1/events.
-   * Returns a MetisEventSource that can be closed with `.close()`.
+   * Returns a HydraEventSource that can be closed with `.close()`.
    */
   subscribeEvents(
-    onEvent: MetisEventHandler,
+    onEvent: HydraEventHandler,
     options?: EventSubscriptionOptions,
-    onError?: MetisEventErrorHandler,
-  ): MetisEventSource {
+    onError?: HydraEventErrorHandler,
+  ): HydraEventSource {
     const url = buildEventsUrl(this.baseUrl, options);
-    return new MetisEventSource(url, onEvent, onError);
+    return new HydraEventSource(url, onEvent, onError);
   }
 }

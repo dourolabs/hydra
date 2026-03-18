@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 import type { WorkItem } from "../workItemTypes";
-import type { SessionSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "../computeIssueProgress";
 
 // --- Mocks ---
@@ -34,7 +34,7 @@ vi.mock("../../../api/client", () => ({
   apiClient: { removeLabelFromObject: vi.fn() },
 }));
 
-vi.mock("@metis/ui", () => ({
+vi.mock("@hydra/ui", () => ({
   Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
   useKeyboardClick: (handler: () => void) => ({

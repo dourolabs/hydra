@@ -6,7 +6,7 @@ import { logger } from "./logger.js";
 export const proxy = new Hono();
 
 /**
- * API proxy: /api/v1/* -> metis-server /v1/*
+ * API proxy: /api/v1/* -> hydra-server /v1/*
  * Forwards the auth token from the cookie as an Authorization: Bearer header.
  */
 proxy.all("/*", async (c) => {
@@ -20,10 +20,10 @@ proxy.all("/*", async (c) => {
     return c.json({ error: "not authenticated" }, 401);
   }
 
-  // Strip the leading /api prefix to get the metis-server path
+  // Strip the leading /api prefix to get the hydra-server path
   const url = new URL(c.req.url);
   const targetPath = url.pathname.replace(/^\/api/, "");
-  const targetUrl = `${config.metisServerUrl}${targetPath}${url.search}`;
+  const targetUrl = `${config.hydraServerUrl}${targetPath}${url.search}`;
 
   const headers = new Headers(c.req.raw.headers);
   headers.set("Authorization", `Bearer ${token}`);

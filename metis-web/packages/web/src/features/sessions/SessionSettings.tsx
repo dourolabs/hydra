@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
-import type { Session } from "@metis/api";
-import { Badge } from "@metis/ui";
+import type { Session } from "@hydra/api";
+import { Badge } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./SessionSettings.module.css";

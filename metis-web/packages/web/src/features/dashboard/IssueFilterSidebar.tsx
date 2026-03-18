@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
-import type { IssueSummaryRecord, LabelRecord } from "@metis/api";
-import { useKeyboardClick } from "@metis/ui";
+import type { IssueSummaryRecord, LabelRecord } from "@hydra/api";
+import { useKeyboardClick } from "@hydra/ui";
 import { useLabels } from "../labels/useLabels";
 import type { ChildStatus } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";

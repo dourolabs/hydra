@@ -12,7 +12,7 @@ export function LoginPage() {
   return (
     <div className={styles.page}>
       <div className={styles.card}>
-        <h1 className={styles.title}>metis</h1>
+        <h1 className={styles.title}>hydra</h1>
         <p className={styles.subtitle}>Sign in to continue</p>
         <LoginForm />
       </div>
