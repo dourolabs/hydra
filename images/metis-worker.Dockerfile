@@ -15,8 +15,8 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --recipe-path recipe.json
 # Build the whole project
 COPY . .
-# Build only the metis CLI
-RUN cargo build --bin metis --release
+# Build only the hydra CLI
+RUN cargo build --bin hydra --release
 
 FROM rust:1.88.0
 ARG NODE_VERSION=22
@@ -127,9 +127,9 @@ USER root
 
 WORKDIR ${APP_HOME}
 
-# Copy the built metis CLI into PATH and make it accessible
-COPY --from=builder /app/target/release/metis /usr/local/bin/metis
-RUN chmod +x /usr/local/bin/metis
+# Copy the built hydra CLI into PATH and make it accessible
+COPY --from=builder /app/target/release/hydra /usr/local/bin/hydra
+RUN chmod +x /usr/local/bin/hydra
 
 # Ensure the worker user owns the app directory and can write to it
 RUN chown -R worker:worker ${APP_HOME}
