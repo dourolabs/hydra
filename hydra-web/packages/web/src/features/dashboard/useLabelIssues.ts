@@ -7,8 +7,10 @@ import { apiClient } from "../../api/client";
  * For each label, fetch its issues independently of the main dashboard filter.
  * Returns a map from label ID to the list of issues with that label.
  */
+const EMPTY_LABELS: LabelRecord[] = [];
+
 export function useLabelIssues(labels: LabelRecord[] | undefined) {
-  const labelList = labels ?? [];
+  const labelList = labels ?? EMPTY_LABELS;
 
   const queries = useQueries({
     queries: labelList.map((label) => ({
