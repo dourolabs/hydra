@@ -5,12 +5,12 @@ use crate::{
         HydraSection, JobEngineConfig, JobSection, SchedulerSection, StorageConfig,
         WorkerSchedulerConfig,
     },
-    policy::config::{PolicyConfig, PolicyEntry, PolicyList},
     domain::{
         actors::{Actor, ActorRef},
         secrets::SecretManager,
     },
     job_engine::JobEngine,
+    policy::config::{PolicyConfig, PolicyEntry, PolicyList},
     run_with_state,
     store::{MemoryStore, Store, StoreError},
 };
