@@ -143,11 +143,6 @@ background:
       interval_secs: 5
       initial_backoff_secs: 1
       max_backoff_secs: 30
-    run_spawners:
-      # Optional scheduler settings for the worker that executes spawners.
-      interval_secs: 3
-      initial_backoff_secs: 1
-      max_backoff_secs: 30
     github_poller:
       # Optional scheduler settings for the worker that syncs GitHub patches.
       interval_secs: 60

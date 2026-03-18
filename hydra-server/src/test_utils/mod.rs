@@ -96,10 +96,10 @@ pub fn test_app_config() -> AppConfig {
     }
 }
 
-/// Scheduler section that disables the background spawner to prevent it
-/// from racing with manual `step_schedule()` calls in integration tests.
-/// Other workers (pending-jobs, monitor, etc.) keep their default intervals
-/// so that task lifecycle transitions proceed normally.
+/// Scheduler section that disables the GitHub poller to prevent it from
+/// racing with manual `step_github_sync()` calls in integration tests.
+/// Other workers (monitor, etc.) keep their default intervals so that
+/// task lifecycle transitions proceed normally.
 fn test_scheduler_section() -> SchedulerSection {
     let inert = WorkerSchedulerConfig {
         interval_secs: 86_400, // 24 hours — effectively disabled
@@ -107,7 +107,6 @@ fn test_scheduler_section() -> SchedulerSection {
         max_backoff_secs: 86_400,
     };
     SchedulerSection {
-        run_spawners: inert.clone(),
         github_poller: inert,
         ..SchedulerSection::default()
     }

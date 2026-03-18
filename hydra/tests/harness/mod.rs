@@ -21,17 +21,22 @@ use hydra_common::{
     IssueId, PatchId, RepoName, SessionId,
 };
 use hydra_server::{
-    app::{AppState, ServiceState},
+    app::{
+        event_bus::{MutationPayload, ServerEvent},
+        AppState, ServiceState,
+    },
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
-        run_spawners::RunSpawnersWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
     domain::actors::{Actor, ActorRef},
     policy::{
+        automations::spawn_sessions::SpawnSessionsAutomation,
         config::{PolicyConfig, PolicyEntry, PolicyList},
+        context::AutomationContext,
         integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
+        Automation,
     },
     store::{MemoryStore, Store},
     test_utils::{
@@ -177,6 +182,10 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
+    /// Shared `SpawnSessionsAutomation` instance that maintains spawn attempt
+    /// tracking across `step_spawner` calls, exercising the same code path
+    /// used in production by the event-driven automation.
+    spawn_sessions: SpawnSessionsAutomation,
 }
 
 impl TestHarness {
@@ -326,10 +335,13 @@ impl TestHarness {
 
     // ── Background worker stepping ──────────────────────────────────
 
-    /// Run one iteration of the spawner worker.
+    /// Run one iteration of the spawner logic via the `SpawnSessionsAutomation`.
     ///
     /// Finds ready issues, creates tasks for them, and returns the IDs of
     /// newly created tasks. Returns an empty vec when no issues are ready.
+    ///
+    /// Delegates to the same `SpawnSessionsAutomation` used in production,
+    /// ensuring tests exercise the real event-driven spawning code path.
     pub async fn step_spawner(&self) -> Result<Vec<SessionId>> {
         let before: HashSet<SessionId> = self
             .state
@@ -339,12 +351,44 @@ impl TestHarness {
             .into_iter()
             .collect();
 
-        let worker = RunSpawnersWorker::new(self.state.clone());
-        let outcome = worker.run_iteration().await;
+        // Build a synthetic SessionUpdated event to trigger a full scan of
+        // all issues (the automation does a full scan for non-issue events).
+        let dummy_session = hydra_server::domain::sessions::Session::new(
+            String::new(),
+            hydra_server::domain::sessions::BundleSpec::None,
+            None,
+            hydra_server::domain::users::Username::from("step_spawner"),
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            hydra_server::domain::task_status::Status::Complete,
+            None,
+            None,
+        );
+        let event = ServerEvent::SessionUpdated {
+            seq: 0,
+            session_id: SessionId::new(),
+            version: 1,
+            timestamp: chrono::Utc::now(),
+            payload: Arc::new(MutationPayload::Session {
+                old: Some(dummy_session.clone()),
+                new: dummy_session,
+                actor: ActorRef::test(),
+            }),
+        };
 
-        if let WorkerOutcome::TransientError { reason } = outcome {
-            anyhow::bail!("step_spawner failed: {reason}");
-        }
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &self.state,
+            store: self.state.store(),
+        };
+        self.spawn_sessions
+            .execute(&ctx)
+            .await
+            .map_err(|e| anyhow::anyhow!("step_spawner automation failed: {e}"))?;
 
         let after = self
             .state
@@ -711,6 +755,8 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
+            spawn_sessions: SpawnSessionsAutomation::new(None)
+                .expect("SpawnSessionsAutomation::new should not fail"),
         })
     }
 }
