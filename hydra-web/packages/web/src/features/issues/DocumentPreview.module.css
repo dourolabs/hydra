@@ -48,7 +48,7 @@
 .bodyPreview {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
-  overflow: hidden;
+  overflow-y: auto;
   max-height: 200px;
 }
 
