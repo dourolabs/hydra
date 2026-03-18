@@ -47,6 +47,14 @@ vi.mock("../../issues/usePaginatedIssues", () => ({
   },
 }));
 
+// Mock useLabelIssues to return issues keyed by label ID.
+// The actual issues are defined in mockLabelIssues below and used in the mock.
+const mockLabelIssues = new Map<string, IssueSummaryRecord[]>();
+
+vi.mock("../useLabelIssues", () => ({
+  useLabelIssues: () => mockLabelIssues,
+}));
+
 vi.mock("../StatusBoxes", () => ({
   StatusBoxes: ({ children }: { children: ChildStatus[] }) => (
     <span data-testid="status-boxes">{children.length}</span>
@@ -89,11 +97,14 @@ function makeIssue(
 }
 
 function renderSidebar(overrides: Partial<Parameters<typeof IssueFilterSidebar>[0]> = {}) {
+  // Populate the mock label issues map for useLabelIssues
+  mockLabelIssues.clear();
+  mockLabelIssues.set("lbl-1", [
+    makeIssue("i-1", "open", [{ label_id: "lbl-1" }]),
+    makeIssue("i-2", "closed", [{ label_id: "lbl-1" }]),
+  ]);
+
   const defaultProps = {
-    allIssues: [
-      makeIssue("i-1", "open", [{ label_id: "lbl-1" }]),
-      makeIssue("i-2", "closed", [{ label_id: "lbl-1" }]),
-    ],
     activeFilter: null,
     onFilterChange: vi.fn(),
     collapsed: false,
