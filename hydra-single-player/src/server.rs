@@ -273,6 +273,8 @@ fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String>
 const SWE_PROMPT: &str = include_str!("../../prompts/agents/swe.md");
 const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
+const TESTER_PROMPT: &str = include_str!("../../prompts/agents/tester.md");
+const TESTER_MCP_CONFIG: &str = include_str!("../../prompts/agents/tester-mcp.json");
 
 // Embedded playbook content (compiled into the binary).
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
@@ -287,6 +289,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         ("swe", SWE_PROMPT, false),
         ("pm", PM_PROMPT, true),
         ("reviewer", REVIEWER_PROMPT, false),
+        ("tester", TESTER_PROMPT, false),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
@@ -305,7 +308,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     Ok(())
 }
 
-/// Upload default playbooks to the server's document store.
+/// Upload default playbooks and agent config documents to the server's document store.
 fn upload_default_playbooks(auth_token: &str) -> Result<()> {
     use hydra_common::api::v1::documents::{Document, UpsertDocumentRequest};
 
@@ -319,6 +322,11 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
             "Design Document Review",
             PLAYBOOK_DESIGN_REVIEW,
             "playbooks/design-review.md",
+        ),
+        (
+            "Tester MCP config",
+            TESTER_MCP_CONFIG,
+            "agents/tester/mcp-config.json",
         ),
     ];
 

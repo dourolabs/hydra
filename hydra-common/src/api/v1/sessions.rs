@@ -260,6 +260,11 @@ pub struct WorkerContext {
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_cache: Option<BuildCacheContext>,
+    /// Optional MCP server configuration JSON for the agent session.
+    /// When present, this is written to a temporary file and passed to the
+    /// claude CLI via `--mcp-config <path>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<String>,
 }
 
 impl WorkerContext {
@@ -276,7 +281,14 @@ impl WorkerContext {
             model,
             variables,
             build_cache,
+            mcp_config: None,
         }
+    }
+
+    /// Set the MCP configuration JSON for this worker context.
+    pub fn with_mcp_config(mut self, mcp_config: Option<String>) -> Self {
+        self.mcp_config = mcp_config;
+        self
     }
 }
 

@@ -124,6 +124,7 @@ impl WorkerCommands for BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         _output_path: &Path,
+        _mcp_config: Option<&str>,
     ) -> Result<String> {
         let mut last_output = String::new();
         for command_string in &self.commands {
