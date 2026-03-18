@@ -160,11 +160,11 @@ mod tests {
 
     #[test]
     fn parses_repo_name() {
-        let repo_name: RepoName = "dourolabs/metis".parse().unwrap();
+        let repo_name: RepoName = "dourolabs/hydra".parse().unwrap();
         assert_eq!(repo_name.organization, "dourolabs");
-        assert_eq!(repo_name.repo, "metis");
-        assert_eq!(repo_name.as_str(), "dourolabs/metis");
-        assert_eq!(repo_name.to_string(), "dourolabs/metis");
+        assert_eq!(repo_name.repo, "hydra");
+        assert_eq!(repo_name.as_str(), "dourolabs/hydra");
+        assert_eq!(repo_name.to_string(), "dourolabs/hydra");
     }
 
     #[test]
@@ -186,7 +186,7 @@ mod tests {
             Err(RepoNameError::EmptyRepository)
         ));
         assert!(matches!(
-            RepoName::from_str("dourolabs/metis/core"),
+            RepoName::from_str("dourolabs/hydra/core"),
             Err(RepoNameError::TooManySegments)
         ));
         assert!(matches!(
@@ -194,15 +194,15 @@ mod tests {
             Err(RepoNameError::InvalidOrganization)
         ));
         assert!(matches!(
-            RepoName::from_str("dourolabs/metis repo"),
+            RepoName::from_str("dourolabs/hydra repo"),
             Err(RepoNameError::InvalidRepository)
         ));
     }
 
     #[test]
     fn serializes_as_string() {
-        let repo_name: RepoName = "dourolabs/metis".parse().unwrap();
+        let repo_name: RepoName = "dourolabs/hydra".parse().unwrap();
         let value = serde_json::to_value(&repo_name).unwrap();
-        assert_eq!(value, json!("dourolabs/metis"));
+        assert_eq!(value, json!("dourolabs/hydra"));
     }
 }

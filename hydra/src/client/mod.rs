@@ -2366,7 +2366,7 @@ mod tests {
     async fn list_repositories_fetches_config() -> Result<()> {
         let server = MockServer::start();
         let repositories = vec![RepositoryRecord::new(
-            RepoName::from_str("dourolabs/metis")?,
+            RepoName::from_str("dourolabs/hydra")?,
             Repository::new(
                 "https://example.com/repo.git".to_string(),
                 Some("main".to_string()),
@@ -2486,7 +2486,7 @@ mod tests {
         let server = MockServer::start();
         let patch_id = PatchId::new();
         let expected_auth_header = format!("Bearer {TEST_HYDRA_TOKEN}");
-        let asset_url = "https://github.com/dourolabs/metis/assets/123";
+        let asset_url = "https://github.com/dourolabs/hydra/assets/123";
         let path = format!("/v1/patches/{patch_id}/assets");
 
         let mock = server.mock(|when, then| {

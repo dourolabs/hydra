@@ -835,8 +835,8 @@ mod tests {
     #[test]
     fn issue_todo_list_round_trips_in_order() {
         let session_settings = SessionSettings {
-            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
-            remote_url: Some("https://github.com/dourolabs/metis".to_string()),
+            repo_name: Some(RepoName::from_str("dourolabs/hydra").unwrap()),
+            remote_url: Some("https://github.com/dourolabs/hydra".to_string()),
             image: Some("worker:latest".to_string()),
             model: Some("gpt-4o".to_string()),
             branch: Some("main".to_string()),

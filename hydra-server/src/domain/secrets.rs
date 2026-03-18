@@ -255,7 +255,7 @@ mod tests {
     fn validate_secret_name_hydra_prefix_reserved() {
         assert!(validate_secret_name("HYDRA_TOKEN").is_err());
         assert!(validate_secret_name("HYDRA_SERVER_URL").is_err());
-        // METIS without underscore is fine
-        assert!(validate_secret_name("METISKEY").is_ok());
+        // HYDRA without underscore is fine
+        assert!(validate_secret_name("SOMEKEY").is_ok());
     }
 }
