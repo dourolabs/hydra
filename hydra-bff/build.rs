@@ -7,13 +7,13 @@ fn main() {
         return;
     }
 
-    let frontend_dir = Path::new("../metis-web");
+    let frontend_dir = Path::new("../hydra-web");
     let dist_dir = frontend_dir.join("packages/web/dist");
 
     // If the frontend source doesn't exist, skip the build gracefully.
     if !frontend_dir.join("package.json").exists() {
         println!(
-            "cargo:warning=metis-web directory not found at {}, skipping frontend build",
+            "cargo:warning=hydra-web directory not found at {}, skipping frontend build",
             frontend_dir.display()
         );
         // Create an empty dist directory so rust-embed doesn't fail.
@@ -77,9 +77,9 @@ fn main() {
     }
 
     // Tell cargo to re-run if the frontend source changes.
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/src");
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/index.html");
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/vite.config.ts");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/src");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/index.html");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/vite.config.ts");
 }
 
 fn ensure_dist_exists(dist_dir: &Path) {

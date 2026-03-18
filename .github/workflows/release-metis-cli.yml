@@ -110,15 +110,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('metis-web/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('hydra-web/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
-        working-directory: metis-web
+        working-directory: hydra-web
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        working-directory: metis-web
+        working-directory: hydra-web
         run: pnpm build
 
       - name: Upload frontend build
@@ -126,9 +126,9 @@ jobs:
         with:
           name: frontend-dist
           path: |
-            metis-web/packages/api/dist
-            metis-web/packages/ui/dist
-            metis-web/packages/web/dist
+            hydra-web/packages/api/dist
+            hydra-web/packages/ui/dist
+            hydra-web/packages/web/dist
           retention-days: 1
 
   build-single-player:
@@ -155,7 +155,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
-          path: metis-web/packages
+          path: hydra-web/packages
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.88.0

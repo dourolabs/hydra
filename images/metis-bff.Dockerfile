@@ -3,21 +3,21 @@ FROM node:22-slim AS spa-build
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-WORKDIR /app/metis-web
+WORKDIR /app/hydra-web
 
 # Copy workspace config and lockfile first for layer caching
-COPY metis-web/package.json metis-web/pnpm-workspace.yaml metis-web/pnpm-lock.yaml ./
-COPY metis-web/packages/api/package.json ./packages/api/package.json
-COPY metis-web/packages/ui/package.json ./packages/ui/package.json
-COPY metis-web/packages/web/package.json ./packages/web/package.json
+COPY hydra-web/package.json hydra-web/pnpm-workspace.yaml hydra-web/pnpm-lock.yaml ./
+COPY hydra-web/packages/api/package.json ./packages/api/package.json
+COPY hydra-web/packages/ui/package.json ./packages/ui/package.json
+COPY hydra-web/packages/web/package.json ./packages/web/package.json
 
 RUN pnpm install --frozen-lockfile
 
 # Copy source files
-COPY metis-web/tsconfig.base.json ./tsconfig.base.json
-COPY metis-web/packages/api/ ./packages/api/
-COPY metis-web/packages/ui/ ./packages/ui/
-COPY metis-web/packages/web/ ./packages/web/
+COPY hydra-web/tsconfig.base.json ./tsconfig.base.json
+COPY hydra-web/packages/api/ ./packages/api/
+COPY hydra-web/packages/ui/ ./packages/ui/
+COPY hydra-web/packages/web/ ./packages/web/
 
 # Build packages in dependency order: api → ui → web
 RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 
 COPY --from=builder /app/target/release/hydra-bff-server /usr/local/bin/hydra-bff-server
-COPY --from=spa-build /app/metis-web/packages/web/dist /app/dist
+COPY --from=spa-build /app/hydra-web/packages/web/dist /app/dist
 
 ENV RUST_LOG=info
 ENV PORT=4000

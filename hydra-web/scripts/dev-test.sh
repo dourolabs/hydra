@@ -1,5 +1,5 @@
 #!/bin/bash
-# metis-web/scripts/dev-test.sh
+# hydra-web/scripts/dev-test.sh
 # Start mock server + BFF + Vite dev server, then optionally run E2E tests.
 #
 # Usage:

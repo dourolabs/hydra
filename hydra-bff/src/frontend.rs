@@ -89,7 +89,7 @@ mod embedded {
     use rust_embed::Embed;
 
     #[derive(Embed)]
-    #[folder = "../metis-web/packages/web/dist"]
+    #[folder = "../hydra-web/packages/web/dist"]
     struct EmbeddedAssets;
 
     pub fn embedded_router() -> Router {

@@ -3,14 +3,14 @@ use std::process::Command;
 
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let web_dir = Path::new(&manifest_dir).join("../metis-web");
+    let web_dir = Path::new(&manifest_dir).join("../hydra-web");
     let dist_dir = web_dir.join("packages/web/dist");
 
     // Only run pnpm build if the hydra-web directory exists (it may not
     // during cross-compilation or in stripped source trees).
     if !web_dir.exists() {
         println!(
-            "cargo:warning=metis-web directory not found at {}; skipping frontend build",
+            "cargo:warning=hydra-web directory not found at {}; skipping frontend build",
             web_dir.display()
         );
         ensure_dist_dir(&dist_dir);
@@ -18,11 +18,11 @@ fn main() {
     }
 
     // Re-run this build script when frontend source files change.
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/src");
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/index.html");
-    println!("cargo:rerun-if-changed=../metis-web/packages/web/vite.config.ts");
-    println!("cargo:rerun-if-changed=../metis-web/packages/ui/src");
-    println!("cargo:rerun-if-changed=../metis-web/packages/api/src");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/src");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/index.html");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/web/vite.config.ts");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/ui/src");
+    println!("cargo:rerun-if-changed=../hydra-web/packages/api/src");
 
     // If dist already exists with content, skip the build.
     if dist_dir.join("index.html").exists() {
