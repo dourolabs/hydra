@@ -57,7 +57,18 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
       <div className={styles.top}>
         <Tooltip content="Dashboard" position="right">
           <Link to="/" className={styles.logo}>
-            M
+            <svg viewBox="0 0 512 512" width="28" height="28" aria-label="Hydra">
+              <path d="M256 420 C230 380,200 340,210 300 C215 280,230 270,256 260 C282 270,297 280,302 300 C312 340,282 380,256 420Z" fill="#00CC66" opacity="0.8"/>
+              <path d="M256 280 C220 260,170 230,140 190 C120 160,115 130,130 105 C140 88,155 80,170 85" fill="none" stroke="#00CC66" strokeWidth="28" strokeLinecap="round"/>
+              <path d="M170 85 C185 75,200 78,200 95 C200 108,185 115,170 108 C158 102,155 90,170 85Z" fill="#00CC66"/>
+              <circle cx="180" cy="92" r="4" fill="#0a0a0a"/>
+              <path d="M256 270 C256 240,256 200,256 160 C256 130,250 105,256 80 C260 65,270 55,280 60" fill="none" stroke="#00CC66" strokeWidth="28" strokeLinecap="round"/>
+              <path d="M268 58 C282 48,298 52,296 68 C295 82,278 88,268 78 C258 70,258 62,268 58Z" fill="#00CC66"/>
+              <circle cx="280" cy="65" r="4" fill="#0a0a0a"/>
+              <path d="M256 280 C292 260,342 230,372 190 C392 160,397 130,382 105 C372 88,357 80,342 85" fill="none" stroke="#00CC66" strokeWidth="28" strokeLinecap="round"/>
+              <path d="M342 85 C327 75,312 78,312 95 C312 108,327 115,342 108 C354 102,357 90,342 85Z" fill="#00CC66"/>
+              <circle cx="332" cy="92" r="4" fill="#0a0a0a"/>
+            </svg>
           </Link>
         </Tooltip>
 
