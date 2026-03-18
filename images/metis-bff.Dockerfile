@@ -42,7 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the full project
 COPY . .
-RUN cargo build --bin metis-bff-server --release
+RUN cargo build --bin hydra-bff-server --release
 
 # ── Stage 4: Runtime ─────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/metis-bff-server /usr/local/bin/metis-bff-server
+COPY --from=builder /app/target/release/hydra-bff-server /usr/local/bin/hydra-bff-server
 COPY --from=spa-build /app/metis-web/packages/web/dist /app/dist
 
 ENV RUST_LOG=info
@@ -64,4 +64,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-ENTRYPOINT ["metis-bff-server"]
+ENTRYPOINT ["hydra-bff-server"]
