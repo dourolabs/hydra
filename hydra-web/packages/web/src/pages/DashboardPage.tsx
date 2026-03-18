@@ -1,7 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
-import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import {
+  usePaginatedIssues,
+  useIssueCount,
+  type IssueFilters,
+} from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -9,6 +13,8 @@ import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemLi
 import type { WorkItem } from "../features/dashboard/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { useActiveSessionIssueIds } from "../features/dashboard/useActiveSessionIssueIds";
+import { usePatchesByIssue } from "../features/patches/usePatchesByIssue";
+import { useDocumentsByIds } from "../features/documents/useDocumentsByIds";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -127,7 +133,12 @@ export function DashboardPage() {
   // Uses multi-status filter to match the total queries above.
   const inboxActiveFilters = useMemo<IssueFilters>(() => {
     if (!activeIdsParam || !inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, ids: activeIdsParam, status: "open,in-progress" };
+    return {
+      labels: inboxLabelId,
+      creator: username,
+      ids: activeIdsParam,
+      status: "open,in-progress",
+    };
   }, [activeIdsParam, inboxLabelId, username]);
 
   const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
@@ -136,8 +147,14 @@ export function DashboardPage() {
   }, [activeIdsParam, username]);
 
   const activeCountEnabled = !!activeIdsParam;
-  const { data: inboxActiveCount = 0 } = useIssueCount(inboxActiveFilters, activeCountEnabled && inboxEnabled);
-  const { data: myIssuesActiveCount = 0 } = useIssueCount(myIssuesActiveFilters, activeCountEnabled && myIssuesEnabled);
+  const { data: inboxActiveCount = 0 } = useIssueCount(
+    inboxActiveFilters,
+    activeCountEnabled && inboxEnabled,
+  );
+  const { data: myIssuesActiveCount = 0 } = useIssueCount(
+    myIssuesActiveFilters,
+    activeCountEnabled && myIssuesEnabled,
+  );
 
   const inboxCount = Math.max(0, inboxTotalCount - inboxActiveCount);
   const myIssuesCount = Math.max(0, myIssuesTotalCount - myIssuesActiveCount);
@@ -150,42 +167,99 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  // Build flat work items from issues (no tree traversal needed;
-  // usePageIssueTrees provides supplementary tree data)
-  const allWorkItems = useMemo((): WorkItem[] => {
-    return issues.map((issue) => ({
-      kind: "issue" as const,
-      id: issue.issue_id,
-      data: issue,
-      lastUpdated: issue.timestamp,
-      isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
-    }));
-  }, [issues]);
-
   // Per-issue tree construction via relationships API
   const {
+    treeDataMap,
     isActiveMap,
     childStatusMap,
     sessionsByIssue,
     isLoading: pageTreeLoading,
   } = usePageIssueTrees(issues, username);
 
+  // Collect unique patch/document IDs and build reverse lookup (artifact -> source issue)
+  const { allPatchIds, allDocumentIds, artifactToIssue } = useMemo(() => {
+    const pIds = new Set<string>();
+    const dIds = new Set<string>();
+    const lookup = new Map<string, string>();
+    for (const [issueId, data] of treeDataMap) {
+      for (const id of data.patchIds) {
+        pIds.add(id);
+        if (!lookup.has(id)) lookup.set(id, issueId);
+      }
+      for (const id of data.documentIds) {
+        dIds.add(id);
+        if (!lookup.has(id)) lookup.set(id, issueId);
+      }
+    }
+    return {
+      allPatchIds: Array.from(pIds),
+      allDocumentIds: Array.from(dIds),
+      artifactToIssue: lookup,
+    };
+  }, [treeDataMap]);
+
+  // Fetch patch and document records
+  const { data: patchRecords } = usePatchesByIssue(allPatchIds);
+  const { data: documentRecords } = useDocumentsByIds(allDocumentIds);
+
+  // Build flat work items from issues, patches, and documents
+  const allWorkItems = useMemo((): WorkItem[] => {
+    const items: WorkItem[] = issues.map((issue) => ({
+      kind: "issue" as const,
+      id: issue.issue_id,
+      data: issue,
+      lastUpdated: issue.timestamp,
+      isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
+    }));
+
+    for (const patch of patchRecords) {
+      const status = patch.patch.status;
+      items.push({
+        kind: "patch" as const,
+        id: patch.patch_id,
+        data: patch,
+        lastUpdated: patch.timestamp,
+        isTerminal: status === "Merged" || status === "Closed",
+        sourceIssueId: artifactToIssue.get(patch.patch_id),
+      });
+    }
+
+    for (const doc of documentRecords) {
+      items.push({
+        kind: "document" as const,
+        id: doc.document_id,
+        data: doc,
+        lastUpdated: doc.timestamp,
+        isTerminal: false,
+        sourceIssueId: artifactToIssue.get(doc.document_id),
+      });
+    }
+
+    return items;
+  }, [issues, patchRecords, documentRecords, artifactToIssue]);
+
   useEffect(() => {
     if (!searchParams.has("selected")) {
-      setSearchParams((prev) => {
-        prev.set("selected", "inbox");
-        return prev;
-      }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          prev.set("selected", "inbox");
+          return prev;
+        },
+        { replace: true },
+      );
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
       setFilterRootId(rootId);
-      setSearchParams((prev) => {
-        prev.set("selected", rootId ?? "everything");
-        return prev;
-      }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          prev.set("selected", rootId ?? "everything");
+          return prev;
+        },
+        { replace: true },
+      );
     },
     [setSearchParams],
   );
