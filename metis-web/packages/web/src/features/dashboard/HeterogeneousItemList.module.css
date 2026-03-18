@@ -26,7 +26,9 @@
   font-size: var(--font-size-xs);
   padding: var(--space-1);
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .sidebarToggle:hover {
@@ -44,7 +46,9 @@
   color: var(--color-text-tertiary);
   padding: var(--space-1);
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .drawerToggle:hover {
@@ -105,7 +109,9 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .loadMoreButton:hover:not(:disabled) {
