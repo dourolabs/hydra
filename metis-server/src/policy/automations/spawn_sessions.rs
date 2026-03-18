@@ -121,9 +121,26 @@ impl Automation for SpawnSessionsAutomation {
                     ))
                 })?;
 
+            let max_simultaneous = queue.agent.max_simultaneous as usize;
+            let active_tasks = task_state.running_tasks + task_state.pending_tasks;
+            let mut remaining_capacity = max_simultaneous.saturating_sub(active_tasks);
+
+            // Resolve the prompt once per agent, lazily (only if needed).
+            let mut cached_prompt: Option<String> = None;
+
             for (issue_id, issue) in &target_issues {
+                if remaining_capacity == 0 {
+                    break;
+                }
+
                 match queue
-                    .spawn_for_issue(ctx.app_state, issue_id, issue, &task_state)
+                    .spawn_for_issue(
+                        ctx.app_state,
+                        issue_id,
+                        issue,
+                        &task_state,
+                        &mut cached_prompt,
+                    )
                     .await
                 {
                     Ok(Some(task)) => {
@@ -133,6 +150,7 @@ impl Automation for SpawnSessionsAutomation {
                             .await
                         {
                             Ok(session_id) => {
+                                remaining_capacity -= 1;
                                 tracing::info!(
                                     automation = AUTOMATION_NAME,
                                     agent = queue.agent.name,
