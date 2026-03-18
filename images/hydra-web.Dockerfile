@@ -53,7 +53,7 @@ COPY --from=build /app/hydra-web/packages/api/dist ./packages/api/dist
 COPY --from=build /app/hydra-web/packages/ui/dist ./packages/ui/dist
 
 ENV PORT=4000
-ENV METIS_SERVER_URL=http://server.metis.svc.cluster.local
+ENV HYDRA_SERVER_URL=http://server.hydra.svc.cluster.local
 ENV NODE_ENV=production
 
 EXPOSE 4000

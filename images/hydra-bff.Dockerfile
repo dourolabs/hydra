@@ -57,7 +57,7 @@ ENV RUST_LOG=info
 ENV PORT=4000
 ENV COOKIE_SECURE=true
 ENV FRONTEND_ASSETS_DIR=/app/dist
-ENV UPSTREAM_URL=http://server.metis.svc.cluster.local
+ENV UPSTREAM_URL=http://server.hydra.svc.cluster.local
 
 EXPOSE 4000
 
