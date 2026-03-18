@@ -37,7 +37,7 @@ export default defineConfig({
     },
     {
       command:
-        "METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server",
+        "HYDRA_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server",
       port: 4000,
       reuseExistingServer: true,
       cwd: "../..",

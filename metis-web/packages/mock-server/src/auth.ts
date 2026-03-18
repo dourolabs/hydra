@@ -13,7 +13,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     return await next();
   }
 
-  const cookieToken = getCookie(c, "metis_token");
+  const cookieToken = getCookie(c, "hydra_token");
   if (cookieToken) {
     c.set("username", DEV_USERNAME);
     return await next();

@@ -57,19 +57,19 @@ wait_for_url() {
 
 # Start mock server (port 8080)
 echo "Starting mock server..."
-pnpm --filter @metis/mock-server dev &
+pnpm --filter @hydra/mock-server dev &
 wait_for_url "http://localhost:8080/health" "Mock server" 30
 
 # Start BFF (port 4000), pointing at mock server
 echo "Starting BFF server..."
-METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @metis/web dev:server &
+HYDRA_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server &
 wait_for_url "http://localhost:4000/health" "BFF server" 30
 
 # Build API and UI packages, then start Vite dev server (port 3000)
 echo "Building API and UI packages..."
-pnpm --filter @metis/api build && pnpm --filter @metis/ui build
+pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build
 echo "Starting Vite dev server..."
-pnpm --filter @metis/web dev &
+pnpm --filter @hydra/web dev &
 wait_for_port 3000 "Vite dev server" 60
 
 echo ""
@@ -84,7 +84,7 @@ echo ""
 
 if [[ "${1:-}" == "--test" ]]; then
   echo "Running Playwright E2E tests..."
-  pnpm --filter @metis/web exec playwright test
+  pnpm --filter @hydra/web exec playwright test
   exit $?
 fi
 
