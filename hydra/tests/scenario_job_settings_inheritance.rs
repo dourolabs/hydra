@@ -43,8 +43,8 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
         )
         .await?;
 
-    // step_schedule() spawns a task for the issue.
-    let task_ids = harness.step_schedule().await?;
+    // await_sessions() spawns a task for the issue.
+    let task_ids = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(task_ids.len(), 1, "should spawn exactly one task");
     let job_id = &task_ids[0];
 
@@ -124,7 +124,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
         .await?;
 
     // PM agent spawns and creates a child issue via worker CLI.
-    let pm_tasks = harness.step_schedule().await?;
+    let pm_tasks = harness.await_sessions(&parent_id, 1).await?;
     assert_eq!(pm_tasks.len(), 1);
 
     let create_cmd = format!(
@@ -153,7 +153,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     );
 
     // Schedule the child issue (SWE picks it up).
-    let swe_tasks = harness.step_schedule().await?;
+    let swe_tasks = harness.await_sessions(&child_summary.issue_id, 1).await?;
     assert_eq!(swe_tasks.len(), 1, "child should be scheduled for SWE");
 
     // Verify the spawned task has the correct BundleSpec.

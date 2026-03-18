@@ -22,7 +22,7 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
     let repo = hydra_common::RepoName::from_str("acme/swe-repo")?;
 
     // Create an issue with repo job settings and assign to swe agent.
-    let _issue_id = user
+    let issue_id = user
         .create_issue_with_settings(
             "Add greeting module",
             hydra_common::issues::IssueType::Task,
@@ -32,8 +32,8 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
         )
         .await?;
 
-    // step_schedule() spawns a task for the issue.
-    let task_ids = harness.step_schedule().await?;
+    // await_sessions() spawns a task for the issue.
+    let task_ids = harness.await_sessions(&issue_id, 1).await?;
     assert_eq!(task_ids.len(), 1, "should spawn exactly one task");
     let job_id = &task_ids[0];
 

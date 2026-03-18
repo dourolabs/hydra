@@ -37,7 +37,7 @@ use hydra_server::{
         GitRemote, MockJobEngine, TestServer,
     },
 };
-use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 
 pub use assertions::{
@@ -175,9 +175,6 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
-    /// Tracks session IDs already returned by previous `step_schedule` calls
-    /// so each call returns only newly-created sessions.
-    seen_sessions: std::sync::Mutex<HashSet<SessionId>>,
 }
 
 impl TestHarness {
@@ -394,16 +391,21 @@ impl TestHarness {
     }
 
     /// Wait for the `spawn_sessions` automation to create sessions for
-    /// ready issues, then wait for `start_created_sessions` to process
-    /// them. Returns the IDs of sessions created since the last call.
+    /// the given issue, then wait for `start_created_sessions` to process
+    /// them. Returns the session IDs for that issue.
     ///
     /// Sessions are spawned automatically by the policy engine when
-    /// issues are created or updated. This method polls until new
-    /// sessions appear (or times out), waits for them to be processed,
-    /// and returns only sessions not seen in previous calls.
-    pub async fn step_schedule(&self) -> Result<Vec<SessionId>> {
-        let seen = self.seen_sessions.lock().unwrap().clone();
-
+    /// issues are created or updated. This method polls until at least
+    /// `min_count` sessions exist for the given issue (or times out),
+    /// waits for them to be processed, and returns the session IDs.
+    ///
+    /// Use `min_count = 1` for first-time spawns, or a higher value when
+    /// expecting re-spawns (e.g. after workflow children close).
+    pub async fn await_sessions(
+        &self,
+        issue_id: &IssueId,
+        min_count: usize,
+    ) -> Result<Vec<SessionId>> {
         let timeout = std::time::Duration::from_secs(5);
         let poll_interval = std::time::Duration::from_millis(25);
         let deadline = tokio::time::Instant::now() + timeout;
@@ -412,43 +414,33 @@ impl TestHarness {
         tokio::task::yield_now().await;
 
         loop {
-            let current: HashSet<SessionId> = self
+            let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
+            let sessions = self
                 .state
-                .list_sessions()
+                .list_sessions_with_query(&query)
                 .await
-                .context("failed to list sessions in step_schedule")?
-                .into_iter()
-                .collect();
+                .context("failed to query sessions in await_sessions")?;
 
-            if current.iter().any(|id| !seen.contains(id)) {
-                break;
+            if sessions.len() >= min_count {
+                // Wait for any Created sessions to transition.
+                self.step_pending_jobs().await?;
+
+                return Ok(sessions.into_iter().map(|(id, _)| id).collect());
             }
 
             if tokio::time::Instant::now() >= deadline {
-                break;
+                anyhow::bail!(
+                    "await_sessions timed out after {:.1}s: expected at least {} session(s) \
+                     for issue {}, found {}",
+                    timeout.as_secs_f64(),
+                    min_count,
+                    issue_id.as_ref(),
+                    sessions.len()
+                );
             }
 
             tokio::time::sleep(poll_interval).await;
         }
-
-        // Wait for any Created sessions to transition.
-        self.step_pending_jobs().await?;
-
-        // Collect all sessions and return only the ones not previously seen.
-        let all = self
-            .state
-            .list_sessions()
-            .await
-            .context("failed to list sessions after step_schedule")?;
-        let new_ids: Vec<SessionId> = all.into_iter().filter(|id| !seen.contains(id)).collect();
-
-        // Mark these sessions as seen for future calls.
-        let mut seen = self.seen_sessions.lock().unwrap();
-        for id in &new_ids {
-            seen.insert(id.clone());
-        }
-
-        Ok(new_ids)
     }
 }
 
@@ -711,7 +703,6 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
-            seen_sessions: std::sync::Mutex::new(HashSet::new()),
         })
     }
 }

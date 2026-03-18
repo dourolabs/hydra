@@ -34,7 +34,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     let parent_issue_id = user.create_issue("Implement user settings page").await?;
 
     // ── Step 2: PM agent picks up the parent issue ──────────────────
-    let pm_tasks = harness.step_schedule().await?;
+    let pm_tasks = harness.await_sessions(&parent_issue_id, 1).await?;
     assert_eq!(pm_tasks.len(), 1, "expected one task for PM agent");
 
     // PM worker creates a child issue assigned to SWE.
@@ -73,7 +73,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     parent.assert_status(IssueStatus::InProgress);
 
     // ── Step 3: SWE agent picks up the child issue ──────────────────
-    let swe_tasks = harness.step_schedule().await?;
+    let swe_tasks = harness.await_sessions(&swe_issue_id, 1).await?;
     assert_eq!(swe_tasks.len(), 1, "expected one task for SWE agent");
 
     // SWE worker makes changes and creates a patch.
@@ -236,15 +236,19 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // ── Step 9: SWE closes child issue (via worker) ─────────────────
     // Spawn a job on the SWE issue and have the worker close it via CLI.
-    let swe_close_tasks = harness.step_schedule().await?;
+    let swe_close_tasks = harness.await_sessions(&swe_issue_id, 2).await?;
     assert_eq!(
         swe_close_tasks.len(),
-        1,
-        "expected one task for SWE to close child issue"
+        2,
+        "expected two sessions for SWE issue (original + re-spawn)"
     );
+    let swe_close_task = swe_close_tasks
+        .iter()
+        .find(|id| !swe_tasks.contains(id))
+        .expect("should find a new session for SWE re-spawn");
     harness
         .run_worker(
-            &swe_close_tasks[0],
+            swe_close_task,
             vec![&format!(
                 "hydra issues update {} --status closed",
                 swe_issue_id.as_ref()
@@ -254,15 +258,19 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // ── Step 10: PM closes parent issue (via worker) ────────────────
     // Spawn a job on the parent issue and have the worker close it via CLI.
-    let pm_close_tasks = harness.step_schedule().await?;
+    let pm_close_tasks = harness.await_sessions(&parent_issue_id, 2).await?;
     assert_eq!(
         pm_close_tasks.len(),
-        1,
-        "expected one task for PM to close parent issue"
+        2,
+        "expected two sessions for parent issue (original + re-spawn)"
     );
+    let pm_close_task = pm_close_tasks
+        .iter()
+        .find(|id| !pm_tasks.contains(id))
+        .expect("should find a new session for PM re-spawn");
     harness
         .run_worker(
-            &pm_close_tasks[0],
+            pm_close_task,
             vec![&format!(
                 "hydra issues update {} --status closed",
                 parent_issue_id.as_ref()

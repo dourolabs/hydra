@@ -110,51 +110,24 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .await?;
 
     // ── Step 3: Spawn tasks for ready children A and B ────────────
-    // step_schedule creates tasks and waits for the start_created_sessions
-    // automation to transition them from Created to Pending/Running.
-    let spawned_tasks = harness.step_schedule().await?;
-    assert!(
-        spawned_tasks.len() >= 2,
-        "expected tasks for children A and B, got {}",
-        spawned_tasks.len()
+    // await_sessions waits for the spawn_sessions automation to create
+    // sessions and for start_created_sessions to process them.
+    let child_a_sessions = harness.await_sessions(&child_a_id, 1).await?;
+    assert_eq!(
+        child_a_sessions.len(),
+        1,
+        "child A should have exactly one task"
     );
+    let task_a = child_a_sessions[0].clone();
 
-    // Identify which task belongs to which issue.
     let client = harness.client()?;
-
-    let task_a = {
-        let jobs = client
-            .list_sessions(&SearchSessionsQuery::new(
-                None,
-                Some(child_a_id.clone()),
-                None,
-                vec![],
-            ))
-            .await?;
-        assert_eq!(
-            jobs.sessions.len(),
-            1,
-            "child A should have exactly one task"
-        );
-        jobs.sessions[0].session_id.clone()
-    };
-
-    let task_b = {
-        let jobs = client
-            .list_sessions(&SearchSessionsQuery::new(
-                None,
-                Some(child_b_id.clone()),
-                None,
-                vec![],
-            ))
-            .await?;
-        assert_eq!(
-            jobs.sessions.len(),
-            1,
-            "child B should have exactly one task"
-        );
-        jobs.sessions[0].session_id.clone()
-    };
+    let child_b_sessions = harness.await_sessions(&child_b_id, 1).await?;
+    assert_eq!(
+        child_b_sessions.len(),
+        1,
+        "child B should have exactly one task"
+    );
+    let task_b = child_b_sessions[0].clone();
 
     // ── Step 5: User drops the parent issue ───────────────────────
     user.update_issue_status(&parent_id, IssueStatus::Dropped)

@@ -62,7 +62,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     // ── Step 2: Spawn a task for the SWE issue and run the worker ─
     // The worker creates a patch via `hydra patches create`, which sets up
     // the created_by chain that patch_workflow uses to discover the parent issue.
-    let task_ids = harness.step_schedule().await?;
+    let task_ids = harness.await_sessions(&swe_issue_id, 1).await?;
     assert_eq!(
         task_ids.len(),
         1,
@@ -225,13 +225,16 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     // since the previous task completed. The worker then makes fixes and re-opens
     // the patch via CLI.
     {
-        let task_ids = harness.step_schedule().await?;
+        let task_ids = harness.await_sessions(&swe_issue_id, 2).await?;
         assert_eq!(
             task_ids.len(),
-            1,
-            "should spawn exactly one new task for the SWE issue"
+            2,
+            "should have two sessions for the SWE issue (original + re-spawn)"
         );
-        let swe_task_id_2 = &task_ids[0];
+        let swe_task_id_2 = task_ids
+            .iter()
+            .find(|id| *id != swe_task_id)
+            .expect("should find a new session ID different from the first");
 
         let patch_id_str = patch_id.as_ref();
         harness
