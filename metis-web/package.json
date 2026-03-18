@@ -10,7 +10,7 @@
     "dev:server": "pnpm -r --filter @metis/web dev:server",
     "dev:test": "./scripts/dev-test.sh",
     "e2e": "pnpm --filter @metis/web exec playwright test",
-    "generate-types": "cd .. && TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings && cd metis-web && prettier --write packages/api/src/generated/",
+    "generate-types": "cd .. && TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p hydra-common --features ts export_bindings && cd metis-web && prettier --write packages/api/src/generated/",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck"
