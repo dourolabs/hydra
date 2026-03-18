@@ -9,31 +9,13 @@ import { AgentDeleteModal } from "./AgentDeleteModal";
 import styles from "./AgentsSection.module.css";
 
 export function AgentsSection() {
-  const {
-    data: agents,
-    isLoading: agentsLoading,
-    error: agentsError,
-  } = useAgents();
+  const { data: agents, isLoading: agentsLoading, error: agentsError } = useAgents();
   const [agentCreateOpen, setAgentCreateOpen] = useState(false);
-  const [agentEditTarget, setAgentEditTarget] = useState<AgentRecord | null>(
-    null,
-  );
-  const [agentDeleteTarget, setAgentDeleteTarget] =
-    useState<AgentRecord | null>(null);
+  const [agentEditTarget, setAgentEditTarget] = useState<AgentRecord | null>(null);
+  const [agentDeleteTarget, setAgentDeleteTarget] = useState<AgentRecord | null>(null);
 
   return (
     <>
-      <div className={styles.headerRow}>
-        <span className={styles.sectionTitle}>Agents</span>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setAgentCreateOpen(true)}
-        >
-          Add Agent
-        </Button>
-      </div>
-
       {agentsLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
@@ -41,17 +23,21 @@ export function AgentsSection() {
       )}
 
       {agentsError && (
-        <p className={styles.error}>
-          Failed to load agents: {(agentsError as Error).message}
-        </p>
+        <p className={styles.error}>Failed to load agents: {(agentsError as Error).message}</p>
       )}
 
-      {agents && agents.length === 0 && (
-        <p className={styles.empty}>No agents configured.</p>
-      )}
-
-      {agents && agents.length > 0 && (
-        <Panel>
+      <Panel
+        header={
+          <div className={styles.panelHeaderRow}>
+            <span className={styles.sectionTitle}>Agents</span>
+            <Button variant="primary" size="sm" onClick={() => setAgentCreateOpen(true)}>
+              Add Agent
+            </Button>
+          </div>
+        }
+      >
+        {agents && agents.length === 0 && <p className={styles.empty}>No agents configured.</p>}
+        {agents && agents.length > 0 && (
           <div className={styles.agentList}>
             {agents.map((agent) => (
               <AgentRow
@@ -62,8 +48,8 @@ export function AgentsSection() {
               />
             ))}
           </div>
-        </Panel>
-      )}
+        )}
+      </Panel>
 
       <AgentCreateModal
         open={agentCreateOpen}

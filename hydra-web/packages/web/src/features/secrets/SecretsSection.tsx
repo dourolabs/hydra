@@ -6,7 +6,12 @@ import { AddSecretForm } from "./AddSecretForm";
 import styles from "./SecretsSection.module.css";
 
 const KNOWN_SECRETS = [
-  { name: "GH_TOKEN", label: "GitHub Token", description: "Automatically provided from your GitHub login. You can override it below if needed." },
+  {
+    name: "GH_TOKEN",
+    label: "GitHub Token",
+    description:
+      "Automatically provided from your GitHub login. You can override it below if needed.",
+  },
   { name: "OPENAI_API_KEY", label: "OpenAI API Key" },
   { name: "ANTHROPIC_API_KEY", label: "Anthropic API Key" },
   { name: "CLAUDE_CODE_OAUTH_TOKEN", label: "Claude Code OAuth Token" },
@@ -21,24 +26,16 @@ export function SecretsSection() {
 
   return (
     <div>
-      <div className={styles.headerRow}>
-        <span className={styles.sectionTitle}>Secrets</span>
-      </div>
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
         </div>
       )}
 
-      {error && (
-        <p className={styles.error}>
-          Failed to load secrets: {(error as Error).message}
-        </p>
-      )}
+      {error && <p className={styles.error}>Failed to load secrets: {(error as Error).message}</p>}
 
       {data && (
-        <Panel>
+        <Panel header={<span className={styles.sectionTitle}>Secrets</span>}>
           <div className={styles.secretList}>
             {KNOWN_SECRETS.map((secret) => (
               <SecretRow
