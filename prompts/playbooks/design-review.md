@@ -12,7 +12,7 @@ Use this playbook whenever an issue requires a design document before implementa
 
 ## Prerequisites
 
-- The agent has an assigned issue (available as `$METIS_ISSUE_ID`).
+- The agent has an assigned issue (available as `$HYDRA_ISSUE_ID`).
 - The issue description specifies the work that needs a design document.
 
 ## Workflow
@@ -28,14 +28,14 @@ Use this playbook whenever an issue requires a design document before implementa
    - **Risks and open questions:** What might go wrong or still needs clarification?
 3. Publish the design document to the document store under `/designs/`:
 
-   **Preferred method:** Write the design document directly to `$METIS_DOCUMENTS_DIR/designs/<feature-slug>.md`. Changes are
+   **Preferred method:** Write the design document directly to `$HYDRA_DOCUMENTS_DIR/designs/<feature-slug>.md`. Changes are
    automatically pushed back to the document store when the job completes. Use a descriptive slug for the filename
    (e.g., `user-auth-redesign.md`).
 
    **Alternative (CLI):** If filesystem access is unavailable, use the CLI:
 
    ```bash
-   metis documents create \
+   hydra documents create \
      --title "<Feature name> design" \
      --path "/designs/<feature-slug>.md" \
      --body-file design.md
@@ -46,23 +46,23 @@ Use this playbook whenever an issue requires a design document before implementa
 4. Create a review issue assigned to the design's creator (the person who filed the original issue). The review issue should be a child of the current issue:
 
    ```bash
-   metis issues create \
+   hydra issues create \
      "Review design document: <Feature name>
 
    Please review the design document at /designs/<feature-slug>.md
 
    ## How to respond
    - If the design is **approved**, close this issue:
-     metis issues update <this-review-issue-id> --status closed
+     hydra issues update <this-review-issue-id> --status closed
    - If the design is **rejected**, mark this issue as failed and record your feedback in progress notes:
-     metis issues update <this-review-issue-id> --status failed --progress 'Feedback: ...'
+     hydra issues update <this-review-issue-id> --status failed --progress 'Feedback: ...'
 
    ## Design document link
    Path: /designs/<feature-slug>.md
-   Read it from the filesystem: cat \$METIS_DOCUMENTS_DIR/designs/<feature-slug>.md
-   Or via CLI: metis documents get --path /designs/<feature-slug>.md" \
+   Read it from the filesystem: cat \$HYDRA_DOCUMENTS_DIR/designs/<feature-slug>.md
+   Or via CLI: hydra documents get --path /designs/<feature-slug>.md" \
      --assignee <creator-username> \
-     --deps child-of:$METIS_ISSUE_ID
+     --deps child-of:$HYDRA_ISSUE_ID
    ```
 
 5. End the session. The agent must wait for the reviewer to act on the review issue before proceeding.
@@ -70,8 +70,8 @@ Use this playbook whenever an issue requires a design document before implementa
 ### Phase 3: Handle the review outcome
 
 6. When the agent is re-invoked on the parent issue, inspect the review issue's status:
-   - Check child issues: `metis issues describe $METIS_ISSUE_ID` and look at children.
-   - Read the review issue: `metis issues describe <review-issue-id>`.
+   - Check child issues: `hydra issues describe $HYDRA_ISSUE_ID` and look at children.
+   - Read the review issue: `hydra issues describe <review-issue-id>`.
 
 7. **If the review issue status is `closed` (approved):**
    - The design is approved. Proceed to Phase 4 (implementation planning).
@@ -81,13 +81,13 @@ Use this playbook whenever an issue requires a design document before implementa
    - Revise the design document to address the feedback.
    - Publish the updated document under `/designs/`:
 
-     **Preferred method:** Edit the file directly at `$METIS_DOCUMENTS_DIR/designs/<feature-slug>.md`. Changes are
+     **Preferred method:** Edit the file directly at `$HYDRA_DOCUMENTS_DIR/designs/<feature-slug>.md`. Changes are
      automatically pushed back to the document store when the job completes.
 
      **Alternative (CLI):** If filesystem access is unavailable:
 
      ```bash
-     metis documents update <document-id> --body-file revised-design.md
+     hydra documents update <document-id> --body-file revised-design.md
      ```
 
    - Create a new review issue following step 4 above, assigned to the same reviewer.

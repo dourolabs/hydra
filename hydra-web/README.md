@@ -1,12 +1,12 @@
 # hydra-web
 
-Web interface for Metis. This is a pnpm monorepo containing three packages:
+Web interface for Hydra. This is a pnpm monorepo containing three packages:
 
-- **`@hydra/api`** — Typed API client with auto-generated TypeScript types from metis-server Rust structs
+- **`@hydra/api`** — Typed API client with auto-generated TypeScript types from hydra-server Rust structs
 - **`@hydra/ui`** — React component library with a dark terminal-inspired theme (JetBrains Mono font, `#0a0a0a` background, `#00cc66` green accent)
 - **`@hydra/web`** — React 19 SPA frontend + Hono BFF (Backend-for-Frontend) server
 
-The BFF server proxies authenticated API requests to metis-server and serves the React SPA's static assets.
+The BFF server proxies authenticated API requests to hydra-server and serves the React SPA's static assets.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ Run three processes for full local development:
 | Command | Description |
 |---|---|
 | `pnpm dev` | React dev server on port 3000 (Vite, proxies `/api` and `/auth` to `localhost:4000`) |
-| `pnpm dev:server` | BFF server on port 4000 (requires `METIS_SERVER_URL` to point to a running metis-server) |
+| `pnpm dev:server` | BFF server on port 4000 (requires `HYDRA_SERVER_URL` to point to a running hydra-server) |
 | `pnpm -r dev:demo` | Component library demo on port 3001 |
 
 ## Building
@@ -42,16 +42,16 @@ pnpm typecheck   # TypeScript type checking across all packages
 
 ## Regenerating TypeScript types
 
-The `@hydra/api` package contains TypeScript type definitions auto-generated from Rust structs in `metis-common` using [ts-rs](https://github.com/Aleph-Alpha/ts-rs). These generated files are committed to the repository so that `@hydra/api` can be built without a Rust toolchain.
+The `@hydra/api` package contains TypeScript type definitions auto-generated from Rust structs in `hydra-common` using [ts-rs](https://github.com/Aleph-Alpha/ts-rs). These generated files are committed to the repository so that `@hydra/api` can be built without a Rust toolchain.
 
-When Rust API types change in `metis-common`, regenerate the TypeScript types:
+When Rust API types change in `hydra-common`, regenerate the TypeScript types:
 
 ```bash
 cd hydra-web
 pnpm generate-types
 ```
 
-This runs `cargo test -p metis-common --features ts export_bindings` to export TypeScript definitions to `packages/api/src/generated/`, then formats them with Prettier.
+This runs `cargo test -p hydra-common --features ts export_bindings` to export TypeScript definitions to `packages/api/src/generated/`, then formats them with Prettier.
 
 CI verifies that generated types are up-to-date by regenerating them and checking for uncommitted diffs.
 
@@ -59,13 +59,13 @@ CI verifies that generated types are up-to-date by regenerating them and checkin
 
 | Variable | Default | Description |
 |---|---|---|
-| `METIS_SERVER_URL` | `http://server.metis.svc.cluster.local` | URL of the metis-server API |
+| `HYDRA_SERVER_URL` | `http://server.hydra.svc.cluster.local` | URL of the hydra-server API |
 | `PORT` | `4000` | Port the BFF server listens on |
 | `NODE_ENV` | (unset in dev) | Set to `production` in Docker for secure cookies |
 
 ## Authentication
 
-Users provide a Metis API token via `POST /auth/login`. The BFF validates the token against metis-server's `/v1/whoami` endpoint and, on success, stores it in an HttpOnly secure cookie. All subsequent `/api/*` requests are proxied to metis-server with the token attached as a `Bearer` authorization header. Users can log out via `POST /auth/logout`, which clears the cookie.
+Users provide a Hydra API token via `POST /auth/login`. The BFF validates the token against hydra-server's `/v1/whoami` endpoint and, on success, stores it in an HttpOnly secure cookie. All subsequent `/api/*` requests are proxied to hydra-server with the token attached as a `Bearer` authorization header. Users can log out via `POST /auth/logout`, which clears the cookie.
 
 ## Project structure
 
@@ -75,7 +75,7 @@ hydra-web/
 │   ├── api/
 │   │   └── src/
 │   │       ├── generated/     # Auto-generated TypeScript types from Rust (ts-rs)
-│   │       ├── client.ts      # MetisApiClient — typed fetch client for metis-server
+│   │       ├── client.ts      # HydraApiClient — typed fetch client for hydra-server
 │   │       ├── errors.ts      # ApiError class
 │   │       ├── sse.ts         # SSE event stream helper
 │   │       └── types.ts       # Re-exports from generated types
