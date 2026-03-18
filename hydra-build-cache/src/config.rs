@@ -275,7 +275,7 @@ mod tests {
     fn s3_config_accepts_empty_credentials() {
         let config = S3StorageConfig {
             endpoint_url: "https://s3.example.com".to_string(),
-            bucket: "hydra-cache".to_string(),
+            bucket: "metis-cache".to_string(),
             region: "us-east-1".to_string(),
             access_key_id: None,
             secret_access_key: None,
@@ -289,7 +289,7 @@ mod tests {
     fn s3_config_rejects_missing_required_fields() {
         let config = S3StorageConfig {
             endpoint_url: "".to_string(),
-            bucket: "hydra-cache".to_string(),
+            bucket: "metis-cache".to_string(),
             region: "us-east-1".to_string(),
             access_key_id: None,
             secret_access_key: None,
@@ -309,7 +309,7 @@ mod tests {
     fn s3_config_requires_full_credentials() {
         let config = S3StorageConfig {
             endpoint_url: "https://s3.example.com".to_string(),
-            bucket: "hydra-cache".to_string(),
+            bucket: "metis-cache".to_string(),
             region: "us-east-1".to_string(),
             access_key_id: Some("access".to_string()),
             secret_access_key: None,
@@ -329,7 +329,7 @@ mod tests {
     fn s3_config_rejects_empty_optional_values() {
         let config = S3StorageConfig {
             endpoint_url: "https://s3.example.com".to_string(),
-            bucket: "hydra-cache".to_string(),
+            bucket: "metis-cache".to_string(),
             region: "us-east-1".to_string(),
             access_key_id: Some("".to_string()),
             secret_access_key: Some("secret".to_string()),
@@ -349,7 +349,7 @@ mod tests {
     fn s3_config_rejects_session_token_without_credentials() {
         let config = S3StorageConfig {
             endpoint_url: "https://s3.example.com".to_string(),
-            bucket: "hydra-cache".to_string(),
+            bucket: "metis-cache".to_string(),
             region: "us-east-1".to_string(),
             access_key_id: None,
             secret_access_key: None,

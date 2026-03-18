@@ -1025,7 +1025,7 @@ hydra:
   allowed_orgs: []
 
 job:
-  default_image: "hydra-worker:latest"
+  default_image: "metis-worker:latest"
 
 database:
   url: "postgres://localhost/test"
@@ -1123,7 +1123,7 @@ hydra:
   HYDRA_SECRET_ENCRYPTION_KEY: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
 
 job:
-  default_image: "hydra-worker:latest"
+  default_image: "metis-worker:latest"
 
 database:
   url: "postgres://localhost/test"

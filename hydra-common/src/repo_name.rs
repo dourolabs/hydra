@@ -162,7 +162,7 @@ mod tests {
     fn parses_repo_name() {
         let repo_name: RepoName = "dourolabs/metis".parse().unwrap();
         assert_eq!(repo_name.organization, "dourolabs");
-        assert_eq!(repo_name.repo, "hydra");
+        assert_eq!(repo_name.repo, "metis");
         assert_eq!(repo_name.as_str(), "dourolabs/metis");
         assert_eq!(repo_name.to_string(), "dourolabs/metis");
     }

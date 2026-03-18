@@ -87,7 +87,7 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
     let result = harness
         .run_worker(
             &job_id,
-            vec![&format!("hydra patches merge {patch_id_str}")],
+            vec![&format!("metis patches merge {patch_id_str}")],
         )
         .await?;
 
@@ -228,7 +228,7 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
         .run_worker(
             &job_id,
             vec![
-                &format!("hydra patches merge {patch_id_str}"),
+                &format!("metis patches merge {patch_id_str}"),
                 "git rev-parse --abbrev-ref HEAD",
             ],
         )
@@ -256,7 +256,7 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
     // working directory should be back on that branch.
     let current_branch = branch_output.stdout.trim();
     let issue_id_str = parent_issue_id.as_ref();
-    let expected_branch = format!("hydra/{issue_id_str}/head");
+    let expected_branch = format!("metis/{issue_id_str}/head");
     assert_eq!(
         current_branch, expected_branch,
         "after merge, expected to be on '{expected_branch}' but was on '{current_branch}'"
@@ -382,8 +382,8 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
     }
 
     // ── 5. Run both workers concurrently ────────────────────────
-    let cmd_1 = format!("hydra patches merge {}", patch_id_1.as_ref());
-    let cmd_2 = format!("hydra patches merge {}", patch_id_2.as_ref());
+    let cmd_1 = format!("metis patches merge {}", patch_id_1.as_ref());
+    let cmd_2 = format!("metis patches merge {}", patch_id_2.as_ref());
 
     let (result_1, result_2) = tokio::join!(
         harness.run_worker(&job_id_1, vec![cmd_1.as_str()]),

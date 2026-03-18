@@ -844,7 +844,7 @@ async fn merge_patch(
     const MAX_MERGE_ATTEMPTS: u32 = 3;
     let onto_ref = format!("origin/{base_branch}");
     let source_ref = format!("origin/{branch_name}");
-    let merge_branch = format!("hydra-squash-merge/{}", patch_id.as_ref());
+    let merge_branch = format!("metis-squash-merge/{}", patch_id.as_ref());
     let commit_message = format!("{} ({})\n\n{}", patch.title, patch_id, patch.description);
     let mut push_succeeded = false;
 

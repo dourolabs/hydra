@@ -50,7 +50,7 @@ impl LocalDockerJobEngine {
     }
 
     async fn recover_containers(&self) -> Result<(), JobEngineError> {
-        let filters = HashMap::from([("label".to_string(), vec!["hydra-id".to_string()])]);
+        let filters = HashMap::from([("label".to_string(), vec!["metis-id".to_string()])]);
         let options = ListContainersOptions {
             all: true,
             filters,
@@ -70,7 +70,7 @@ impl LocalDockerJobEngine {
             let task_id = container
                 .labels
                 .as_ref()
-                .and_then(|labels| labels.get("hydra-id"))
+                .and_then(|labels| labels.get("metis-id"))
                 .and_then(|id| SessionId::from_str(id).ok());
 
             let task_id = match task_id {
@@ -133,7 +133,7 @@ impl LocalDockerJobEngine {
     }
 
     fn container_name(hydra_id: &SessionId) -> String {
-        format!("hydra-worker-{hydra_id}")
+        format!("metis-worker-{hydra_id}")
     }
 
     async fn inspect_to_hydra_job(&self, hydra_id: &SessionId) -> Result<HydraJob, JobEngineError> {
@@ -271,7 +271,7 @@ impl JobEngine for LocalDockerJobEngine {
         let config = Config {
             image: Some(image.to_string()),
             env: Some(env),
-            entrypoint: Some(vec!["hydra".to_string()]),
+            entrypoint: Some(vec!["metis".to_string()]),
             cmd: Some(vec![
                 "sessions".to_string(),
                 "worker-run".to_string(),
@@ -281,7 +281,7 @@ impl JobEngine for LocalDockerJobEngine {
             ]),
             host_config: Some(host_config),
             labels: Some(HashMap::from([(
-                "hydra-id".to_string(),
+                "metis-id".to_string(),
                 hydra_id.to_string(),
             )])),
             ..Default::default()
@@ -508,9 +508,9 @@ impl JobEngine for LocalDockerJobEngine {
     }
 }
 
-/// Extracts a SessionId from Docker container names (e.g., ["/hydra-worker-t-abcdef"]).
+/// Extracts a SessionId from Docker container names (e.g., ["/metis-worker-t-abcdef"]).
 fn extract_session_id_from_names(names: Option<&[String]>) -> Option<SessionId> {
-    const PREFIX: &str = "hydra-worker-";
+    const PREFIX: &str = "metis-worker-";
     names?.iter().find_map(|name| {
         // Docker prefixes names with '/'.
         let stripped = name.strip_prefix('/').unwrap_or(name);
@@ -589,13 +589,13 @@ mod tests {
         let id: SessionId = "s-abcd".parse().unwrap();
         assert_eq!(
             LocalDockerJobEngine::container_name(&id),
-            "hydra-worker-s-abcd"
+            "metis-worker-s-abcd"
         );
     }
 
     #[test]
     fn extract_session_id_from_names_with_slash_prefix() {
-        let names = vec!["/hydra-worker-s-abcdef".to_string()];
+        let names = vec!["/metis-worker-s-abcdef".to_string()];
         let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_string(), "s-abcdef");
@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn extract_session_id_from_names_without_slash() {
-        let names = vec!["hydra-worker-s-xyzabc".to_string()];
+        let names = vec!["metis-worker-s-xyzabc".to_string()];
         let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_string(), "s-xyzabc");

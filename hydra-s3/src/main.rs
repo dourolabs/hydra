@@ -19,15 +19,15 @@ async fn run() -> Result<()> {
     info!(
         bind_addr = %bind_addr,
         storage_root = %storage_root.display(),
-        "hydra-s3 configuration loaded"
+        "metis-s3 configuration loaded"
     );
 
     let app = build_router(storage_root.clone());
     let listener = TcpListener::bind(&bind_addr).await?;
     let addr = listener.local_addr()?;
 
-    info!("hydra-s3 listening on http://{}", addr);
-    println!("hydra-s3 listening on http://{addr}");
+    info!("metis-s3 listening on http://{}", addr);
+    println!("metis-s3 listening on http://{addr}");
 
     axum::serve(listener, app).await?;
 

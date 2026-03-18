@@ -5692,7 +5692,7 @@ mod tests {
             BundleSpec::None,
             None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
+            Some("metis-worker:latest".to_string()),
             None,
             HashMap::new(),
             None,

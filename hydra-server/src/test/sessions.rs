@@ -384,7 +384,7 @@ async fn session_context_includes_build_cache_settings() -> anyhow::Result<()> {
     let mut config = test_app_config();
     config.build_cache = BuildCacheSection {
         storage: Some(BuildCacheStorageConfig::FileSystem {
-            root_dir: "/tmp/hydra-build-cache".to_string(),
+            root_dir: "/tmp/metis-build-cache".to_string(),
         }),
         include: Vec::new(),
         exclude: Vec::new(),
@@ -428,7 +428,7 @@ async fn session_context_includes_build_cache_settings() -> anyhow::Result<()> {
     assert_eq!(
         build_cache.storage,
         BuildCacheStorageConfig::FileSystem {
-            root_dir: "/tmp/hydra-build-cache".to_string(),
+            root_dir: "/tmp/metis-build-cache".to_string(),
         }
     );
     assert_eq!(build_cache.settings.max_entries_per_repo, Some(5));
@@ -1285,7 +1285,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
         Some("keep-me-safe")
     );
     assert_eq!(
-        body.variables.get("HYDRA_ID").map(String::as_str),
+        body.variables.get("METIS_ID").map(String::as_str),
         Some(job_id.as_ref())
     );
     Ok(())

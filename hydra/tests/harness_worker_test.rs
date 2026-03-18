@@ -27,7 +27,7 @@ async fn run_worker_creates_patch() -> Result<()> {
                 "echo 'worker content' >> README.md",
                 "git add README.md",
                 "git commit -m 'worker changes'",
-                "hydra patches create --title 'harness worker patch' --description 'created by harness worker'",
+                "metis patches create --title 'harness worker patch' --description 'created by harness worker'",
             ],
         )
         .await?;

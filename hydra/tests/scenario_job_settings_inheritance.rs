@@ -13,7 +13,7 @@ use std::str::FromStr;
 /// Tests that job settings (repo_name, image, model, cpu_limit, memory_limit)
 /// configured on an issue are correctly inherited by spawned tasks. Verifies
 /// that the spawned task has the correct BundleSpec, resource limits, and
-/// HYDRA_ISSUE_ID env var.
+/// METIS_ISSUE_ID env var.
 #[tokio::test]
 async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
     let harness = TestHarness::builder()
@@ -92,8 +92,8 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
         }
     }
 
-    // Verify HYDRA_ISSUE_ID env var is set.
-    job.assert_env_var("HYDRA_ISSUE_ID", issue_id.as_ref());
+    // Verify METIS_ISSUE_ID env var is set.
+    job.assert_env_var("METIS_ISSUE_ID", issue_id.as_ref());
 
     Ok(())
 }
@@ -128,9 +128,9 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     assert_eq!(pm_tasks.len(), 1);
 
     let create_cmd = format!(
-        "hydra issues create 'Implement child feature' --assignee swe --deps child-of:{parent_id} --repo-name acme/child-test"
+        "metis issues create 'Implement child feature' --assignee swe --deps child-of:{parent_id} --repo-name acme/child-test"
     );
-    let set_status_cmd = format!("hydra issues update {parent_id} --status in-progress");
+    let set_status_cmd = format!("metis issues update {parent_id} --status in-progress");
     let _pm_result = harness
         .run_worker(&pm_tasks[0], vec![&create_cmd, &set_status_cmd])
         .await?;
@@ -170,8 +170,8 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
         }
     }
 
-    // Verify HYDRA_ISSUE_ID is set to the child issue ID.
-    child_job.assert_env_var("HYDRA_ISSUE_ID", child_summary.issue_id.as_ref());
+    // Verify METIS_ISSUE_ID is set to the child issue ID.
+    child_job.assert_env_var("METIS_ISSUE_ID", child_summary.issue_id.as_ref());
 
     Ok(())
 }

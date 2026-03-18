@@ -48,17 +48,17 @@ async fn multi_repo_workflow() -> Result<()> {
     // then sets the parent issue to in-progress.
     // We extract child 1's issue ID from the JSONL output so child 2 can reference it.
     let create_child1_cmd = format!(
-        "hydra --output-format jsonl issues create 'Add agent queue to service.sh' \
+        "metis --output-format jsonl issues create 'Add agent queue to service.sh' \
          --assignee swe --deps child-of:{parent_id} --repo-name org/app \
          | python3 -c \"import json,sys; print(json.load(sys.stdin)['issue_id'])\" \
          > child1_id.txt"
     );
     let create_child2_cmd = format!(
-        "hydra issues create 'Add agent queue to configmap' \
+        "metis issues create 'Add agent queue to configmap' \
          --assignee swe --deps child-of:{parent_id} \
          --deps blocked-on:$(cat child1_id.txt) --repo-name org/cluster"
     );
-    let set_status_cmd = format!("hydra issues update {parent_id} --status in-progress");
+    let set_status_cmd = format!("metis issues update {parent_id} --status in-progress");
     let pm_result = harness
         .run_worker(
             &pm_tasks[0],
@@ -111,7 +111,7 @@ async fn multi_repo_workflow() -> Result<()> {
                 "echo 'agent_queue: new-queue' >> service.sh",
                 "git add service.sh",
                 "git commit -m 'Add agent queue to service.sh'",
-                "hydra patches create --title 'Add agent queue to service.sh' --description 'Adds new agent queue config'",
+                "metis patches create --title 'Add agent queue to service.sh' --description 'Adds new agent queue config'",
             ],
         )
         .await?;
@@ -157,7 +157,7 @@ async fn multi_repo_workflow() -> Result<()> {
                 "echo 'configmap: new-queue' >> configmap.yaml",
                 "git add configmap.yaml",
                 "git commit -m 'Add agent queue to configmap'",
-                "hydra patches create --title 'Add agent queue to configmap' --description 'Adds configmap for new agent queue'",
+                "metis patches create --title 'Add agent queue to configmap' --description 'Adds configmap for new agent queue'",
             ],
         )
         .await?;

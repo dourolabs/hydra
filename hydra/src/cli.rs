@@ -18,7 +18,7 @@ use crate::{
 use hydra_common::constants::{ENV_BROWSER, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN};
 
 #[derive(Parser)]
-#[command(name = "hydra", version)]
+#[command(name = "metis", version)]
 pub struct Cli {
     /// Path to the CLI configuration file.
     #[arg(long, value_name = "FILE", global = true)]
@@ -330,7 +330,7 @@ mod tests {
             "expected helpful error, got: {msg}"
         );
         assert!(
-            msg.contains("hydra server init"),
+            msg.contains("metis server init"),
             "expected init hint, got: {msg}"
         );
     }
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn parse_without_subcommand_has_no_command() {
-        let cli = Cli::try_parse_from(["hydra"]).expect("parse");
+        let cli = Cli::try_parse_from(["metis"]).expect("parse");
         assert!(cli.command.is_none());
     }
 

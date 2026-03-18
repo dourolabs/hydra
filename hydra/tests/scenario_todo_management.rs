@@ -35,9 +35,9 @@ async fn todo_management_through_worker() -> Result<()> {
         .run_worker(
             &phase1_job,
             vec![
-                &format!("hydra issues todo {target_id} --add \"Research codebase\""),
-                &format!("hydra issues todo {target_id} --add \"Write design doc\""),
-                &format!("hydra issues todo {target_id} --add \"Create review issue\""),
+                &format!("metis issues todo {target_id} --add \"Research codebase\""),
+                &format!("metis issues todo {target_id} --add \"Write design doc\""),
+                &format!("metis issues todo {target_id} --add \"Create review issue\""),
             ],
         )
         .await?;
@@ -62,7 +62,7 @@ async fn todo_management_through_worker() -> Result<()> {
     harness
         .run_worker(
             &phase2_job,
-            vec![&format!("hydra issues todo {target_id} --done 1")],
+            vec![&format!("metis issues todo {target_id} --done 1")],
         )
         .await?;
 
@@ -86,7 +86,7 @@ async fn todo_management_through_worker() -> Result<()> {
         .run_worker(
             &phase3_job,
             vec![&format!(
-                "hydra issues todo {target_id} --replace \"[x] Investigate bug\" \"Fix root cause\" \"Add regression test\""
+                "metis issues todo {target_id} --replace \"[x] Investigate bug\" \"Fix root cause\" \"Add regression test\""
             )],
         )
         .await?;
@@ -120,9 +120,9 @@ async fn todo_management_through_worker() -> Result<()> {
         .run_worker(
             &phase4_job,
             vec![
-                &format!("hydra issues todo {target_id} --done 2"),
-                &format!("hydra issues todo {target_id} --done 3"),
-                &format!("hydra issues update {target_id} --status closed"),
+                &format!("metis issues todo {target_id} --done 2"),
+                &format!("metis issues todo {target_id} --done 3"),
+                &format!("metis issues update {target_id} --status closed"),
             ],
         )
         .await?;

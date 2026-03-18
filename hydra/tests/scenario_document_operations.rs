@@ -34,7 +34,7 @@ async fn document_operations_through_worker() -> Result<()> {
         .run_worker(
             &phase1_job,
             vec![
-                "hydra --output-format jsonl documents create --title \"Design for feature X\" --path \"designs/feature-x.md\" --body \"# Feature X\\n\\nInitial design draft.\" | tee doc_output.txt",
+                "metis --output-format jsonl documents create --title \"Design for feature X\" --path \"designs/feature-x.md\" --body \"# Feature X\\n\\nInitial design draft.\" | tee doc_output.txt",
             ],
         )
         .await?;
@@ -80,7 +80,7 @@ async fn document_operations_through_worker() -> Result<()> {
         .run_worker(
             &phase2_job,
             vec![&format!(
-                "hydra documents update {doc_id} --body \"# Feature X\\n\\nRevised design with implementation details.\\n\\n## Architecture\\n\\nComponent-based approach.\""
+                "metis documents update {doc_id} --body \"# Feature X\\n\\nRevised design with implementation details.\\n\\n## Architecture\\n\\nComponent-based approach.\""
             )],
         )
         .await?;
@@ -111,7 +111,7 @@ async fn document_operations_through_worker() -> Result<()> {
         .run_worker(
             &phase3_job,
             vec![&format!(
-                "hydra issues create --deps child-of:{parent_id} \"Review design document at designs/feature-x.md\""
+                "metis issues create --deps child-of:{parent_id} \"Review design document at designs/feature-x.md\""
             )],
         )
         .await?;

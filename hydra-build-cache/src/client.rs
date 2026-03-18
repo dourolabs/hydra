@@ -735,7 +735,7 @@ mod tests {
     }
 
     fn commit_file(repo: &Repository, path: &Path) {
-        let signature = git2::Signature::now("hydra", "hydra@example.com").expect("signature");
+        let signature = git2::Signature::now("metis", "metis@example.com").expect("signature");
         let workdir = repo.workdir().expect("workdir");
         let canonical_workdir =
             std::fs::canonicalize(workdir).expect("canonicalized repository workdir");

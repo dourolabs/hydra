@@ -67,7 +67,7 @@ mod tests {
         let repo = Repository::init(path).expect("init repo");
         let signature = repo
             .signature()
-            .or_else(|_| git2::Signature::now("hydra", "hydra@example.com"))
+            .or_else(|_| git2::Signature::now("metis", "metis@example.com"))
             .expect("signature");
         fs::write(path.join("README.md"), "hello").expect("write file");
         let mut index = repo.index().expect("index");

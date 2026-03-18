@@ -145,13 +145,13 @@ async fn login_allows_user_in_allowed_orgs() -> anyhow::Result<()> {
         when.method(GET).path("/user/orgs");
         then.status(200)
             .header("content-type", "application/json")
-            .json_body(serde_json::json!([{ "login": "hydra" }]));
+            .json_body(serde_json::json!([{ "login": "metis" }]));
     });
 
     let handles = test_state_with_github_urls_and_allowed_orgs(
         github_server.base_url(),
         github_server.base_url(),
-        vec!["hydra".to_string()],
+        vec!["metis".to_string()],
     );
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -186,7 +186,7 @@ async fn login_rejects_user_not_in_allowed_orgs() -> anyhow::Result<()> {
     let handles = test_state_with_github_urls_and_allowed_orgs(
         github_server.base_url(),
         github_server.base_url(),
-        vec!["hydra".to_string()],
+        vec!["metis".to_string()],
     );
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();

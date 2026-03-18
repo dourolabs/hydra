@@ -374,7 +374,7 @@ impl UserHandle {
     ///
     /// Like [`create_session`](Self::create_session) but links the session to the given
     /// issue, which sets the `spawned_from` field on the task. This ensures
-    /// that `HYDRA_ISSUE_ID` is available for subprocess commands.
+    /// that `METIS_ISSUE_ID` is available for subprocess commands.
     pub async fn create_session_for_issue(
         &self,
         repo: &RepoName,
@@ -411,7 +411,7 @@ impl UserHandle {
         let output = self.run_cli(args).await?;
         if !output.status.success() {
             anyhow::bail!(
-                "hydra CLI failed with status {}.\nstdout: {}\nstderr: {}",
+                "metis CLI failed with status {}.\nstdout: {}\nstderr: {}",
                 output.status,
                 output.stdout,
                 output.stderr,
@@ -440,8 +440,8 @@ impl UserHandle {
         let hydra_bin = env!("CARGO_BIN_EXE_hydra");
         let output = Command::new(hydra_bin)
             .args(args)
-            .env("HYDRA_SERVER_URL", &self.server_url)
-            .env("HYDRA_TOKEN", &self.token)
+            .env("METIS_SERVER_URL", &self.server_url)
+            .env("METIS_TOKEN", &self.token)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

@@ -69,12 +69,12 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
             pm_task_id,
             vec![
                 &format!(
-                    "hydra issues create 'Add theme toggle component' \
+                    "metis issues create 'Add theme toggle component' \
                      --type task --assignee swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
-                &format!("hydra issues update {parent_id} --status in-progress"),
+                &format!("metis issues update {parent_id} --status in-progress"),
             ],
         )
         .await?;
@@ -152,7 +152,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
                 "echo 'toggle component code' >> README.md",
                 "git add README.md",
                 "git commit -m 'Add theme toggle component'",
-                "hydra patches create --title 'Add theme toggle' --description 'Implements toggle'",
+                "metis patches create --title 'Add theme toggle' --description 'Implements toggle'",
             ],
         )
         .await?;
@@ -247,7 +247,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     harness
         .run_worker(
             &swe1_close_tasks[0],
-            vec![&format!("hydra issues update {child1_id} --status closed")],
+            vec![&format!("metis issues update {child1_id} --status closed")],
         )
         .await?;
 
@@ -271,7 +271,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
                 "echo 'css variables code' >> README.md",
                 "git add README.md",
                 "git commit -m 'Update CSS variables for dark theme'",
-                "hydra patches create --title 'Update CSS variables' --description 'Dark theme CSS'",
+                "metis patches create --title 'Update CSS variables' --description 'Dark theme CSS'",
             ],
         )
         .await?;
@@ -331,7 +331,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     harness
         .run_worker(
             &swe2_close_tasks[0],
-            vec![&format!("hydra issues update {child2_id} --status closed")],
+            vec![&format!("metis issues update {child2_id} --status closed")],
         )
         .await?;
 
@@ -350,7 +350,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     harness
         .run_worker(
             &pm_close_tasks[0],
-            vec![&format!("hydra issues update {parent_id} --status closed")],
+            vec![&format!("metis issues update {parent_id} --status closed")],
         )
         .await?;
 
@@ -414,12 +414,12 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
             &pm_tasks[0],
             vec![
                 &format!(
-                    "hydra issues create 'Add Redis cache integration' \
+                    "metis issues create 'Add Redis cache integration' \
                      --type task --assignee swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
-                &format!("hydra issues update {parent_id} --status in-progress"),
+                &format!("metis issues update {parent_id} --status in-progress"),
             ],
         )
         .await?;
@@ -465,7 +465,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     let swe_result = harness
         .run_worker(
             swe_task_id,
-            vec![&format!("hydra issues update {child1_id} --status failed")],
+            vec![&format!("metis issues update {child1_id} --status failed")],
         )
         .await?;
     assert_eq!(swe_result.final_status, Status::Complete);
@@ -496,9 +496,9 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
         .run_worker(
             &pm_tasks_round2[0],
             vec![
-                &format!("hydra issues update {child2_id} --status dropped"),
+                &format!("metis issues update {child2_id} --status dropped"),
                 &format!(
-                    "hydra issues create 'Add Memcached cache integration (retry)' \
+                    "metis issues create 'Add Memcached cache integration (retry)' \
                      --type task --assignee swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
@@ -540,7 +540,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
                 "echo 'cache implementation' >> README.md",
                 "git add README.md",
                 "git commit -m 'Add Memcached cache integration'",
-                &format!("hydra issues update {child3_id} --status closed"),
+                &format!("metis issues update {child3_id} --status closed"),
             ],
         )
         .await?;
@@ -562,7 +562,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     harness
         .run_worker(
             &pm_close_tasks[0],
-            vec![&format!("hydra issues update {parent_id} --status closed")],
+            vec![&format!("metis issues update {parent_id} --status closed")],
         )
         .await?;
 
@@ -645,12 +645,12 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
             &pm_tasks[0],
             vec![
                 &format!(
-                    "hydra issues create 'Build full-text search with Elasticsearch' \
+                    "metis issues create 'Build full-text search with Elasticsearch' \
                      --type task --assignee swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
-                &format!("hydra issues update {parent_id} --status in-progress"),
+                &format!("metis issues update {parent_id} --status in-progress"),
             ],
         )
         .await?;
@@ -728,9 +728,9 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .run_worker(
             &pm_tasks_round2[0],
             vec![
-                &format!("hydra issues update {child2_id} --status dropped"),
+                &format!("metis issues update {child2_id} --status dropped"),
                 &format!(
-                    "hydra issues create 'Build search with SQLite FTS5' \
+                    "metis issues create 'Build search with SQLite FTS5' \
                      --type task --assignee swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
@@ -772,7 +772,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
                 "echo 'search implementation' >> README.md",
                 "git add README.md",
                 "git commit -m 'Build search with SQLite FTS5'",
-                &format!("hydra issues update {child3_id} --status closed"),
+                &format!("metis issues update {child3_id} --status closed"),
             ],
         )
         .await?;
@@ -791,7 +791,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     harness
         .run_worker(
             &pm_close_tasks[0],
-            vec![&format!("hydra issues update {parent_id} --status closed")],
+            vec![&format!("metis issues update {parent_id} --status closed")],
         )
         .await?;
 

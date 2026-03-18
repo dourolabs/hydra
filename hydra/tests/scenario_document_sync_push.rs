@@ -32,7 +32,7 @@ async fn document_sync_push_through_worker() -> Result<()> {
         .run_worker(
             &phase1_job,
             vec![
-                "hydra documents create --title \"Sync Test Doc\" --path \"notes/sync-test.md\" --body \"original content\"",
+                "metis documents create --title \"Sync Test Doc\" --path \"notes/sync-test.md\" --body \"original content\"",
             ],
         )
         .await?;
@@ -57,13 +57,13 @@ async fn document_sync_push_through_worker() -> Result<()> {
             &phase2_job,
             vec![
                 // Sync documents (no directory arg — uses HYDRA_DOCUMENTS_DIR).
-                "hydra documents sync",
+                "metis documents sync",
                 // Verify the file was synced locally.
                 "test -f $HYDRA_DOCUMENTS_DIR/notes/sync-test.md",
                 // Edit the file in-place with new content.
                 "echo 'updated content from worker' > $HYDRA_DOCUMENTS_DIR/notes/sync-test.md",
                 // Push documents back (no directory arg — uses HYDRA_DOCUMENTS_DIR).
-                "hydra documents push",
+                "metis documents push",
             ],
         )
         .await?;
@@ -81,7 +81,7 @@ async fn document_sync_push_through_worker() -> Result<()> {
 
     // ── Verify: documents are NOT in the auto-committed git repo ────
     let remote = harness.remote("acme/doc-sync");
-    let issue_head = format!("hydra/{phase2_issue}/head");
+    let issue_head = format!("metis/{phase2_issue}/head");
     assert!(
         remote.branch_exists(&issue_head),
         "expected branch '{issue_head}' to exist in the remote"

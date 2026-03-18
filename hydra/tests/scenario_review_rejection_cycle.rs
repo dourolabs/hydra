@@ -77,7 +77,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
                 "echo 'fn main() { /* v1 */ }' > feature.rs",
                 "git add feature.rs",
                 "git commit -m 'implement feature v1'",
-                "hydra patches create --title 'Implement feature' --description 'First attempt'",
+                "metis patches create --title 'Implement feature' --description 'First attempt'",
             ],
         )
         .await?;
@@ -241,7 +241,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
                     "echo 'fn main() { /* v2 - fixed */ }' > feature.rs",
                     "git add feature.rs",
                     "git commit -m 'address review feedback'",
-                    &format!("hydra patches update {patch_id_str} --status Open"),
+                    &format!("metis patches update {patch_id_str} --status Open"),
                 ],
             )
             .await?;

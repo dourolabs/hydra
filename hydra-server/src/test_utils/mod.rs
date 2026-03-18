@@ -68,7 +68,7 @@ pub fn test_app_config() -> AppConfig {
     AppConfig {
         hydra: HydraSection::default(),
         job: JobSection {
-            default_image: "hydra-worker:latest".to_string(),
+            default_image: "metis-worker:latest".to_string(),
             default_model: None,
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),

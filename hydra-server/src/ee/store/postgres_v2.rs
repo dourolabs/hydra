@@ -95,20 +95,20 @@ pub async fn run_migrations(pool: &PgStorePool) -> Result<()> {
         .context("failed to apply Postgres migrations")
 }
 
-const TABLE_ISSUES_V2: &str = "hydra.issues_v2";
-const TABLE_PATCHES_V2: &str = "hydra.patches_v2";
-const TABLE_TASKS_V2: &str = "hydra.tasks_v2";
-const TABLE_USERS_V2: &str = "hydra.users_v2";
-const TABLE_REPOSITORIES_V2: &str = "hydra.repositories_v2";
-const TABLE_ACTORS_V2: &str = "hydra.actors_v2";
-const TABLE_DOCUMENTS_V2: &str = "hydra.documents_v2";
-const TABLE_MESSAGES_V2: &str = "hydra.messages_v2";
-const TABLE_NOTIFICATIONS: &str = "hydra.notifications";
-const TABLE_AGENTS: &str = "hydra.agents";
-const TABLE_LABELS: &str = "hydra.labels";
-const TABLE_LABEL_ASSOCIATIONS: &str = "hydra.label_associations";
-const TABLE_USER_SECRETS: &str = "hydra.user_secrets";
-const TABLE_OBJECT_RELATIONSHIPS: &str = "hydra.object_relationships";
+const TABLE_ISSUES_V2: &str = "metis.issues_v2";
+const TABLE_PATCHES_V2: &str = "metis.patches_v2";
+const TABLE_TASKS_V2: &str = "metis.tasks_v2";
+const TABLE_USERS_V2: &str = "metis.users_v2";
+const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
+const TABLE_ACTORS_V2: &str = "metis.actors_v2";
+const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
+const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
+const TABLE_NOTIFICATIONS: &str = "metis.notifications";
+const TABLE_AGENTS: &str = "metis.agents";
+const TABLE_LABELS: &str = "metis.labels";
+const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
+const TABLE_USER_SECRETS: &str = "metis.user_secrets";
+const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -4612,7 +4612,7 @@ mod tests {
             BundleSpec::None,
             None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
+            Some("metis-worker:latest".to_string()),
             None,
             Default::default(),
             None,
@@ -4631,7 +4631,7 @@ mod tests {
             BundleSpec::None,
             None,
             Username::from("alice"),
-            Some("hydra-worker:latest".to_string()),
+            Some("metis-worker:latest".to_string()),
             Some("model-v1".to_string()),
             Default::default(),
             None,

@@ -29,7 +29,7 @@ async fn has_document_relation_auto_linking() -> Result<()> {
         .run_worker(
             &job1,
             vec![
-                "hydra documents create --title \"Linked Doc\" --path \"docs/linked.md\" --body \"hello\"",
+                "metis documents create --title \"Linked Doc\" --path \"docs/linked.md\" --body \"hello\"",
             ],
         )
         .await?;
@@ -68,7 +68,7 @@ async fn has_document_relation_auto_linking() -> Result<()> {
         .run_worker(
             &issue2_job,
             vec![&format!(
-                "hydra documents update {doc_id} --title \"Linked Doc v2\" --body \"updated\""
+                "metis documents update {doc_id} --title \"Linked Doc v2\" --body \"updated\""
             )],
         )
         .await?;
@@ -98,11 +98,11 @@ async fn has_document_relation_auto_linking() -> Result<()> {
             &job3,
             vec![
                 // Sync documents (sets up HYDRA_DOCUMENTS_DIR).
-                "hydra documents sync",
+                "metis documents sync",
                 // Create a new file locally.
                 "mkdir -p $HYDRA_DOCUMENTS_DIR/docs && echo 'push content' > $HYDRA_DOCUMENTS_DIR/docs/pushed.md",
                 // Push documents back.
-                "hydra documents push",
+                "metis documents push",
             ],
         )
         .await?;

@@ -71,7 +71,7 @@ pub async fn run(
         Bundle::GitRepository { url, rev } => {
             clone_repo(&url, &rev, &repo_path, github_token.as_deref())
                 .context("failed to clone repository")?;
-            configure_repo(&repo_path, "Hydra Worker", "hydra-worker@example.com")
+            configure_repo(&repo_path, "Metis Worker", "metis-worker@example.com")
                 .context("failed to configure git repository")?;
             fetch_remote(&repo_path, github_token.as_deref())
                 .context("failed to fetch all remote branches")?;
@@ -440,11 +440,11 @@ fn initialize_tracking_branches(
 
     let remote_name = "origin";
     let mut task_branch_target = head_commit.id();
-    let task_head_branch = format!("hydra/{task_id}/head");
+    let task_head_branch = format!("metis/{task_id}/head");
 
     if let Some(issue_id) = issue_id {
-        let issue_base_branch = format!("hydra/{issue_id}/base");
-        let issue_head_branch = format!("hydra/{issue_id}/head");
+        let issue_base_branch = format!("metis/{issue_id}/base");
+        let issue_head_branch = format!("metis/{issue_id}/head");
         let issue_head_exists = remote_branch_exists(&repo, remote_name, &issue_head_branch)
             || repo
                 .find_branch(&issue_head_branch, BranchType::Local)
@@ -500,7 +500,7 @@ fn initialize_tracking_branches(
         }
     }
 
-    let task_base_branch = format!("hydra/{task_id}/base");
+    let task_base_branch = format!("metis/{task_id}/base");
     set_branch_to_commit(&repo, &task_base_branch, task_branch_target)
         .with_context(|| format!("failed to update task base branch '{task_base_branch}'"))?;
     push_branch(repo_root, &task_base_branch, github_token, true).with_context(|| {
@@ -514,7 +514,7 @@ fn initialize_tracking_branches(
     })?;
 
     let working_branch = if let Some(issue_id) = issue_id {
-        format!("hydra/{issue_id}/head")
+        format!("metis/{issue_id}/head")
     } else {
         task_head_branch.clone()
     };
@@ -550,7 +550,7 @@ fn finalize_task_run(
     let repo = Repository::open(repo_root)
         .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
 
-    let task_head_branch = format!("hydra/{task_id}/head");
+    let task_head_branch = format!("metis/{task_id}/head");
     update_branch_to_head(&repo, &task_head_branch).with_context(|| {
         format!("failed to update task head branch '{task_head_branch}' to latest commit")
     })?;
@@ -766,14 +766,14 @@ mod tests {
         git_stage_all_changes(repo_path)?;
         git_commit_changes(repo_path, "init")?;
 
-        git_configure_repo(repo_path, "Hydra Worker", "hydra-worker@example.com")?;
+        git_configure_repo(repo_path, "Metis Worker", "metis-worker@example.com")?;
 
         let repo = Repository::open(repo_path).context("failed to reopen repo for assertions")?;
         let config = repo
             .config()
             .context("failed to read git config for assertions")?;
-        assert_eq!(config.get_string("user.name")?, "Hydra Worker");
-        assert_eq!(config.get_string("user.email")?, "hydra-worker@example.com");
+        assert_eq!(config.get_string("user.name")?, "Metis Worker");
+        assert_eq!(config.get_string("user.email")?, "metis-worker@example.com");
 
         Ok(())
     }
@@ -815,10 +815,10 @@ mod tests {
         let job_id = task_id("t-worker-123");
         initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
-        let base_branch = format!("hydra/{issue_id}/base");
-        let head_branch = format!("hydra/{issue_id}/head");
-        let task_base_branch = format!("hydra/{job_id}/base");
-        let task_head_branch = format!("hydra/{job_id}/head");
+        let base_branch = format!("metis/{issue_id}/base");
+        let head_branch = format!("metis/{issue_id}/head");
+        let task_base_branch = format!("metis/{job_id}/base");
+        let task_head_branch = format!("metis/{job_id}/head");
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for assertions")?;
         assert_eq!(
@@ -872,8 +872,8 @@ mod tests {
 
         let remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repo for initial base ref")?;
-        let base_branch = format!("hydra/{issue_id}/base");
-        let head_branch = format!("hydra/{issue_id}/head");
+        let base_branch = format!("metis/{issue_id}/base");
+        let head_branch = format!("metis/{issue_id}/head");
         let base_ref_name = format!("refs/heads/{base_branch}");
         let head_ref_name = format!("refs/heads/{head_branch}");
         let initial_base_target = reference_target(&remote_repo, &base_ref_name)?;
@@ -941,7 +941,7 @@ mod tests {
         let job_id = task_id("t-worker-789");
         let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
-        configure_repo(clone_dir.path(), "Hydra Worker", "hydra-worker@example.com")
+        configure_repo(clone_dir.path(), "Metis Worker", "metis-worker@example.com")
             .context("failed to configure git repository")?;
         initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
@@ -970,7 +970,7 @@ mod tests {
             working_diff.trim().is_empty(),
             "auto-commit should leave a clean working tree"
         );
-        let task_head_branch = format!("hydra/{job_id}/head");
+        let task_head_branch = format!("metis/{job_id}/head");
         assert!(
             repo.find_branch(&task_head_branch, BranchType::Local)
                 .is_ok(),

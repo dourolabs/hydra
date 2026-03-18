@@ -184,7 +184,7 @@ async fn bad_request_for_hydra_prefix() -> anyhow::Result<()> {
 
     let response = client
         .put(format!(
-            "{}/v1/users/{TEST_USERNAME}/secrets/HYDRA_TOKEN",
+            "{}/v1/users/{TEST_USERNAME}/secrets/METIS_TOKEN",
             server.base_url()
         ))
         .json(&json!({ "value": "something" }))
@@ -1025,9 +1025,9 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
         "config fallback should be used when no user secret exists"
     );
 
-    // HYDRA_ID should also be set
+    // METIS_ID should also be set
     assert_eq!(
-        body.variables.get("HYDRA_ID").map(String::as_str),
+        body.variables.get("METIS_ID").map(String::as_str),
         Some(job_id.as_ref())
     );
 

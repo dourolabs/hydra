@@ -258,12 +258,12 @@ fn parse_github_owner_repo(remote_url: &str) -> Option<(String, String)> {
     None
 }
 
-/// Parse a Git ref string like "refs/heads/hydra/i-abcdef/head" into a HydraBranch.
+/// Parse a Git ref string like "refs/heads/metis/i-abcdef/head" into a HydraBranch.
 fn parse_hydra_branch(ref_name: &str) -> Option<HydraBranch> {
     let branch_path = ref_name.strip_prefix("refs/heads/")?;
 
-    // Expected pattern: hydra/<id>/<suffix>
-    let rest = branch_path.strip_prefix("hydra/")?;
+    // Expected pattern: metis/<id>/<suffix>
+    let rest = branch_path.strip_prefix("metis/")?;
 
     let slash_pos = rest.find('/')?;
     let id_str = &rest[..slash_pos];
@@ -323,13 +323,13 @@ async fn get_installation_client(state: &AppState, owner: &str, repo: &str) -> O
     }
 }
 
-/// List all Git references matching the hydra/ prefix for a repository.
+/// List all Git references matching the metis/ prefix for a repository.
 async fn list_hydra_refs(
     client: &Octocrab,
     owner: &str,
     repo: &str,
 ) -> anyhow::Result<Vec<GitRef>> {
-    let url = format!("/repos/{owner}/{repo}/git/matching-refs/heads/hydra/");
+    let url = format!("/repos/{owner}/{repo}/git/matching-refs/heads/metis/");
     let refs: Vec<GitRef> = client.get(url, None::<&()>).await?;
     Ok(refs)
 }
@@ -360,19 +360,19 @@ mod tests {
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
         let result = parse_github_owner_repo("https://github.com/dourolabs/metis.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
     fn parse_github_owner_repo_https_without_git_suffix() {
         let result = parse_github_owner_repo("https://github.com/dourolabs/metis");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
     fn parse_github_owner_repo_ssh() {
         let result = parse_github_owner_repo("git@github.com:dourolabs/metis.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
+        assert_eq!(result, Some(("dourolabs".to_string(), "metis".to_string())));
     }
 
     #[test]
@@ -394,17 +394,17 @@ mod tests {
 
     #[test]
     fn parse_hydra_branch_issue_head() {
-        let branch = parse_hydra_branch("refs/heads/hydra/i-abcdef/head");
+        let branch = parse_hydra_branch("refs/heads/metis/i-abcdef/head");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "head");
         assert!(matches!(branch.id_kind, HydraIdKind::Issue(_)));
-        assert_eq!(branch.full_ref, "refs/heads/hydra/i-abcdef/head");
+        assert_eq!(branch.full_ref, "refs/heads/metis/i-abcdef/head");
     }
 
     #[test]
     fn parse_hydra_branch_issue_base() {
-        let branch = parse_hydra_branch("refs/heads/hydra/i-abcdef/base");
+        let branch = parse_hydra_branch("refs/heads/metis/i-abcdef/base");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "base");
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn parse_hydra_branch_task_head() {
-        let branch = parse_hydra_branch("refs/heads/hydra/s-xyzabc/head");
+        let branch = parse_hydra_branch("refs/heads/metis/s-xyzabc/head");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "head");
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn parse_hydra_branch_task_base() {
-        let branch = parse_hydra_branch("refs/heads/hydra/s-xyzabc/base");
+        let branch = parse_hydra_branch("refs/heads/metis/s-xyzabc/base");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "base");
@@ -437,20 +437,20 @@ mod tests {
 
     #[test]
     fn parse_hydra_branch_invalid_id_prefix() {
-        assert!(parse_hydra_branch("refs/heads/hydra/p-abcdef/head").is_none());
-        assert!(parse_hydra_branch("refs/heads/hydra/d-abcdef/head").is_none());
+        assert!(parse_hydra_branch("refs/heads/metis/p-abcdef/head").is_none());
+        assert!(parse_hydra_branch("refs/heads/metis/d-abcdef/head").is_none());
     }
 
     #[test]
     fn parse_hydra_branch_missing_suffix() {
-        assert!(parse_hydra_branch("refs/heads/hydra/i-abcdef").is_none());
+        assert!(parse_hydra_branch("refs/heads/metis/i-abcdef").is_none());
     }
 
     #[test]
     fn parse_hydra_branch_invalid_id_format() {
         // IDs must have 4-12 lowercase alpha chars after prefix
-        assert!(parse_hydra_branch("refs/heads/hydra/i-ab/head").is_none());
-        assert!(parse_hydra_branch("refs/heads/hydra/i-123456/head").is_none());
+        assert!(parse_hydra_branch("refs/heads/metis/i-ab/head").is_none());
+        assert!(parse_hydra_branch("refs/heads/metis/i-123456/head").is_none());
     }
 
     #[tokio::test]
@@ -502,7 +502,7 @@ mod tests {
         let worker = CleanupBranchesWorker::new(state);
 
         let branch = HydraBranch {
-            full_ref: "refs/heads/hydra/i-nonexist/head".to_string(),
+            full_ref: "refs/heads/metis/i-nonexist/head".to_string(),
             id_kind: HydraIdKind::Issue(IssueId::new()),
             suffix: "head".to_string(),
         };
@@ -516,7 +516,7 @@ mod tests {
         let worker = CleanupBranchesWorker::new(state);
 
         let branch = HydraBranch {
-            full_ref: "refs/heads/hydra/t-nonexist/head".to_string(),
+            full_ref: "refs/heads/metis/t-nonexist/head".to_string(),
             id_kind: HydraIdKind::Session(SessionId::new()),
             suffix: "head".to_string(),
         };
@@ -548,7 +548,7 @@ mod tests {
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = HydraBranch {
-            full_ref: format!("refs/heads/hydra/{issue_id}/head"),
+            full_ref: format!("refs/heads/metis/{issue_id}/head"),
             id_kind: HydraIdKind::Issue(issue_id),
             suffix: "head".to_string(),
         };
@@ -582,7 +582,7 @@ mod tests {
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = HydraBranch {
-            full_ref: format!("refs/heads/hydra/{task_id}/head"),
+            full_ref: format!("refs/heads/metis/{task_id}/head"),
             id_kind: HydraIdKind::Session(task_id),
             suffix: "head".to_string(),
         };
@@ -619,7 +619,7 @@ mod tests {
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = HydraBranch {
-            full_ref: format!("refs/heads/hydra/{issue_id}/head"),
+            full_ref: format!("refs/heads/metis/{issue_id}/head"),
             id_kind: HydraIdKind::Issue(issue_id),
             suffix: "head".to_string(),
         };
@@ -658,7 +658,7 @@ mod tests {
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = HydraBranch {
-            full_ref: format!("refs/heads/hydra/{task_id}/head"),
+            full_ref: format!("refs/heads/metis/{task_id}/head"),
             id_kind: HydraIdKind::Session(task_id),
             suffix: "head".to_string(),
         };
@@ -705,23 +705,23 @@ mod tests {
         let server = MockServer::start();
         let refs_json: Vec<serde_json::Value> = issue_ids
             .iter()
-            .map(|id| json!({"ref": format!("refs/heads/hydra/{id}/head")}))
+            .map(|id| json!({"ref": format!("refs/heads/metis/{id}/head")}))
             .collect();
         server.mock(|when, then| {
             when.method(GET)
-                .path("/repos/testowner/testrepo/git/matching-refs/heads/hydra/");
+                .path("/repos/testowner/testrepo/git/matching-refs/heads/metis/");
             then.status(200).json_body(json!(refs_json));
         });
 
         // Branch 0: delete succeeds
-        let ref_path_0 = format!("heads/hydra/{}/head", issue_ids[0]);
+        let ref_path_0 = format!("heads/metis/{}/head", issue_ids[0]);
         server.mock(|when, then| {
             when.method(DELETE)
                 .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_0}"));
             then.status(200).json_body(json!({}));
         });
         // Branch 1: delete fails (422)
-        let ref_path_1 = format!("heads/hydra/{}/head", issue_ids[1]);
+        let ref_path_1 = format!("heads/metis/{}/head", issue_ids[1]);
         server.mock(|when, then| {
             when.method(DELETE)
                 .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_1}"));
@@ -729,7 +729,7 @@ mod tests {
                 .json_body(json!({"message": "Reference does not exist"}));
         });
         // Branch 2: delete succeeds
-        let ref_path_2 = format!("heads/hydra/{}/head", issue_ids[2]);
+        let ref_path_2 = format!("heads/metis/{}/head", issue_ids[2]);
         server.mock(|when, then| {
             when.method(DELETE)
                 .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_2}"));
@@ -789,17 +789,17 @@ mod tests {
         // Mock the list-refs endpoint on the same mock server.
         let refs_json: Vec<serde_json::Value> = issue_ids
             .iter()
-            .map(|id| json!({"ref": format!("refs/heads/hydra/{id}/head")}))
+            .map(|id| json!({"ref": format!("refs/heads/metis/{id}/head")}))
             .collect();
         server.mock(|when, then| {
             when.method(GET)
-                .path("/repos/testowner/testrepo/git/matching-refs/heads/hydra/");
+                .path("/repos/testowner/testrepo/git/matching-refs/heads/metis/");
             then.status(200).json_body(json!(refs_json));
         });
 
         // Mock delete-ref calls: even-indexed succeed, odd-indexed fail.
         for (i, id) in issue_ids.iter().enumerate() {
-            let ref_path = format!("heads/hydra/{id}/head");
+            let ref_path = format!("heads/metis/{id}/head");
             if i % 2 == 0 {
                 server.mock(|when, then| {
                     when.method(DELETE)

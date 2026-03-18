@@ -56,7 +56,7 @@ async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
                 "echo 'real fix' >> README.md",
                 "git add README.md",
                 "git commit -m 'real fix'",
-                "hydra patches create --title 'Real fix' --description 'Normal patch'",
+                "metis patches create --title 'Real fix' --description 'Normal patch'",
             ],
         )
         .await?;
@@ -148,7 +148,7 @@ async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
                 "echo 'changes' >> README.md",
                 "git add README.md",
                 "git commit -m 'changes'",
-                "hydra patches create --title 'Abandoned patch' --description 'Will be closed'",
+                "metis patches create --title 'Abandoned patch' --description 'Will be closed'",
             ],
         )
         .await?;

@@ -43,13 +43,13 @@ async fn full_end_to_end_pipeline() -> Result<()> {
             &pm_tasks[0],
             vec![
                 &format!(
-                    "hydra issues create 'Implement settings UI' --assignee swe \
+                    "metis issues create 'Implement settings UI' --assignee swe \
                      --repo-name acme/app --image worker:latest --branch main \
                      --deps child-of:{}",
                     parent_issue_id.as_ref()
                 ),
                 &format!(
-                    "hydra issues update {} --status in-progress",
+                    "metis issues update {} --status in-progress",
                     parent_issue_id.as_ref()
                 ),
             ],
@@ -84,7 +84,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
                 "echo 'settings page implementation' >> settings.rs",
                 "git add settings.rs",
                 "git commit -m 'implement user settings page'",
-                "hydra patches create --title 'Implement user settings page' --description 'Adds settings UI'",
+                "metis patches create --title 'Implement user settings page' --description 'Adds settings UI'",
             ],
         )
         .await?;
@@ -246,7 +246,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
         .run_worker(
             &swe_close_tasks[0],
             vec![&format!(
-                "hydra issues update {} --status closed",
+                "metis issues update {} --status closed",
                 swe_issue_id.as_ref()
             )],
         )
@@ -264,7 +264,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
         .run_worker(
             &pm_close_tasks[0],
             vec![&format!(
-                "hydra issues update {} --status closed",
+                "metis issues update {} --status closed",
                 parent_issue_id.as_ref()
             )],
         )

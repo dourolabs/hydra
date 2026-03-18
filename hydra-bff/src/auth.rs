@@ -13,7 +13,7 @@ use tracing::info;
 use crate::state::BffState;
 use crate::upstream::Upstream;
 
-pub const COOKIE_NAME: &str = "hydra_token";
+pub const COOKIE_NAME: &str = "metis_token";
 
 /// Build the `/auth` sub-router.
 pub fn router<U: Upstream>() -> Router<BffState<U>> {

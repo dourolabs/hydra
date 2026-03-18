@@ -488,7 +488,7 @@ mod tests {
     fn make_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:8080".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             None,
         )
     }
@@ -538,7 +538,7 @@ mod tests {
     fn build_env_vars_omits_empty_server_url() {
         let engine = LocalJobEngine::new(
             "".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             None,
         );
         let hydra_id = SessionId::new();
@@ -794,7 +794,7 @@ mod tests {
     fn make_failing_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/false"), vec![])),
         )
     }
@@ -802,7 +802,7 @@ mod tests {
     fn make_succeeding_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/true"), vec![])),
         )
     }
@@ -810,7 +810,7 @@ mod tests {
     fn make_echo_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((
                 std::path::PathBuf::from("/bin/sh"),
                 vec![
@@ -1244,7 +1244,7 @@ mod tests {
     async fn integration_create_job_passes_env_vars() {
         let engine = LocalJobEngine::new(
             "http://test-server:8080".to_string(),
-            std::env::temp_dir().join("hydra-local-jobs-test"),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/true"), vec![])),
         );
         let hydra_id = SessionId::new();
