@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKER_IMAGE="${WORKER_IMAGE:-metis-worker:latest}"
-SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
-S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
+WORKER_IMAGE="${WORKER_IMAGE:-hydra-worker:latest}"
+SERVER_IMAGE="${SERVER_IMAGE:-hydra-server:latest}"
+S3_IMAGE="${S3_IMAGE:-hydra-s3:latest}"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-local-dev}"
 
 require_cmd() {
@@ -27,9 +27,9 @@ if ! kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
   exit 1
 fi
 
-docker build -t "${WORKER_IMAGE}" -f ./images/metis-worker.Dockerfile .
-docker build -t "${SERVER_IMAGE}" -f ./images/metis-server.Dockerfile .
-docker build -t "${S3_IMAGE}" -f ./images/metis-s3.Dockerfile .
+docker build -t "${WORKER_IMAGE}" -f ./images/hydra-worker.Dockerfile .
+docker build -t "${SERVER_IMAGE}" -f ./images/hydra-server.Dockerfile .
+docker build -t "${S3_IMAGE}" -f ./images/hydra-s3.Dockerfile .
 
 kind load docker-image "${WORKER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 kind load docker-image "${SERVER_IMAGE}" --name "${KIND_CLUSTER_NAME}"

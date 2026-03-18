@@ -20,10 +20,10 @@ COPY metis-web/packages/ui/ ./packages/ui/
 COPY metis-web/packages/web/ ./packages/web/
 
 # Build packages in dependency order: api → ui → web
-RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
+RUN pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web build
 
 # Compile BFF server TypeScript to JavaScript
-RUN pnpm --filter @metis/web exec tsc --project tsconfig.server.json
+RUN pnpm --filter @hydra/web exec tsc --project tsconfig.server.json
 
 # ── Stage 2: runtime ───────────────────────────────────────────
 FROM node:22-slim AS runtime
@@ -46,14 +46,14 @@ COPY --from=build /app/metis-web/packages/web/dist ./packages/web/dist
 # Copy compiled BFF server
 COPY --from=build /app/metis-web/packages/web/server-dist ./packages/web/server-dist
 
-# Copy built @metis/api dist (needed as workspace dependency)
+# Copy built @hydra/api dist (needed as workspace dependency)
 COPY --from=build /app/metis-web/packages/api/dist ./packages/api/dist
 
-# Copy built @metis/ui dist (needed as workspace dependency)
+# Copy built @hydra/ui dist (needed as workspace dependency)
 COPY --from=build /app/metis-web/packages/ui/dist ./packages/ui/dist
 
 ENV PORT=4000
-ENV METIS_SERVER_URL=http://server.metis.svc.cluster.local
+ENV HYDRA_SERVER_URL=http://server.hydra.svc.cluster.local
 ENV NODE_ENV=production
 
 EXPOSE 4000

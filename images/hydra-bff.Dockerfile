@@ -20,7 +20,7 @@ COPY metis-web/packages/ui/ ./packages/ui/
 COPY metis-web/packages/web/ ./packages/web/
 
 # Build packages in dependency order: api → ui → web
-RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
+RUN pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web build
 
 # ── Stage 2: Cargo chef planner ──────────────────────────────────
 FROM rust:1.88.0 AS planner
@@ -57,7 +57,7 @@ ENV RUST_LOG=info
 ENV PORT=4000
 ENV COOKIE_SECURE=true
 ENV FRONTEND_ASSETS_DIR=/app/dist
-ENV UPSTREAM_URL=http://server.metis.svc.cluster.local
+ENV UPSTREAM_URL=http://server.hydra.svc.cluster.local
 
 EXPOSE 4000
 
