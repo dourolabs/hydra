@@ -624,6 +624,9 @@ fn write_agent_details(agent: &AgentRecord, writer: &mut impl Write) -> Result<(
         "  is_assignment_agent: {}",
         agent.is_assignment_agent
     )?;
+    if !agent.secrets.is_empty() {
+        writeln!(writer, "  secrets: {}", agent.secrets.join(", "))?;
+    }
     Ok(())
 }
 

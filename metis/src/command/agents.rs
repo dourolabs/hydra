@@ -54,6 +54,10 @@ pub struct CreateAgentArgs {
     /// Mark this agent as the assignment agent (at most one allowed).
     #[arg(long = "is-assignment-agent")]
     pub is_assignment_agent: bool,
+
+    /// Comma-separated list of secret names available to this agent.
+    #[arg(long = "secrets", value_name = "SECRETS")]
+    pub secrets: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -84,6 +88,10 @@ pub struct UpdateAgentArgs {
         conflicts_with = "is_assignment_agent"
     )]
     pub no_is_assignment_agent: bool,
+
+    /// Comma-separated list of secret names available to this agent.
+    #[arg(long = "secrets", value_name = "SECRETS")]
+    pub secrets: Option<String>,
 }
 
 pub async fn run(
@@ -135,6 +143,18 @@ async fn get_agent(client: &dyn MetisClientInterface, name: &str) -> Result<Agen
     Ok(response.agent)
 }
 
+fn parse_secrets(input: Option<&str>) -> Vec<String> {
+    match input {
+        None => Vec::new(),
+        Some(s) if s.trim().is_empty() => Vec::new(),
+        Some(s) => s
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    }
+}
+
 fn read_prompt_file(path: &str) -> Result<String> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read prompt file: {path}"))?;
@@ -154,6 +174,7 @@ async fn create_agent(
 
     let mut request = UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous);
     request.is_assignment_agent = args.is_assignment_agent;
+    request.secrets = parse_secrets(args.secrets.as_deref());
 
     let response = client
         .create_agent(&request)
@@ -189,6 +210,9 @@ async fn update_agent(
         request.is_assignment_agent = true;
     } else if args.no_is_assignment_agent {
         request.is_assignment_agent = false;
+    }
+    if let Some(ref secrets_str) = args.secrets {
+        request.secrets = parse_secrets(Some(secrets_str));
     }
 
     let response = client
@@ -336,6 +360,7 @@ mod tests {
             max_tries: 2,
             max_simultaneous: 4,
             is_assignment_agent: false,
+            secrets: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "writer",
@@ -383,6 +408,7 @@ mod tests {
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: true,
+            secrets: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "pm",
@@ -465,6 +491,7 @@ mod tests {
             max_simultaneous: Some(10),
             is_assignment_agent: false,
             no_is_assignment_agent: false,
+            secrets: None,
         };
 
         let response = update_agent(&client, args).await?;
@@ -525,6 +552,7 @@ mod tests {
             max_simultaneous: None,
             is_assignment_agent: true,
             no_is_assignment_agent: false,
+            secrets: None,
         };
 
         let response = update_agent(&client, args).await?;
@@ -583,6 +611,7 @@ mod tests {
             max_simultaneous: None,
             is_assignment_agent: false,
             no_is_assignment_agent: true,
+            secrets: None,
         };
 
         let response = update_agent(&client, args).await?;
@@ -641,6 +670,7 @@ mod tests {
             max_simultaneous: None,
             is_assignment_agent: false,
             no_is_assignment_agent: false,
+            secrets: None,
         };
 
         let response = update_agent(&client, args).await?;
@@ -692,6 +722,201 @@ mod tests {
         assert_eq!(response.name, "writer");
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_agent_with_secrets() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let prompt_file = write_prompt_file("do stuff");
+
+        let args = CreateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
+            max_tries: 3,
+            max_simultaneous: i32::MAX,
+            is_assignment_agent: false,
+            secrets: Some("OPENAI_API_KEY,GH_TOKEN".to_string()),
+        };
+        let response = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            3,
+            i32::MAX,
+            false,
+            vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
+        ));
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/agents").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": ["OPENAI_API_KEY", "GH_TOKEN"]
+            }));
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = create_agent(&client, args).await?;
+        mock.assert();
+
+        assert_eq!(agent.name, "worker");
+        assert_eq!(agent.secrets, vec!["OPENAI_API_KEY", "GH_TOKEN"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_with_secrets() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            3,
+            i32::MAX,
+            false,
+            vec!["ANTHROPIC_API_KEY".to_string()],
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/worker");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/worker").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": ["ANTHROPIC_API_KEY"]
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: Some("ANTHROPIC_API_KEY".to_string()),
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(response.secrets, vec!["ANTHROPIC_API_KEY"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_preserves_secrets_when_flag_omitted() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            3,
+            i32::MAX,
+            false,
+            vec!["EXISTING_SECRET".to_string()],
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            3,
+            i32::MAX,
+            false,
+            vec!["EXISTING_SECRET".to_string()],
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/worker");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/worker").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": ["EXISTING_SECRET"]
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(response.secrets, vec!["EXISTING_SECRET"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pretty_output_shows_secrets() -> Result<()> {
+        let agents = vec![AgentRecord::new(
+            "worker",
+            "prompt",
+            "",
+            3,
+            i32::MAX,
+            false,
+            vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
+        )];
+        let mut output = Vec::new();
+
+        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
+        let output = String::from_utf8(output)?;
+
+        assert!(output.contains("secrets: OPENAI_API_KEY, GH_TOKEN"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_secrets_handles_various_inputs() {
+        assert!(parse_secrets(None).is_empty());
+        assert!(parse_secrets(Some("")).is_empty());
+        assert!(parse_secrets(Some("  ")).is_empty());
+        assert_eq!(parse_secrets(Some("A,B,C")), vec!["A", "B", "C"]);
+        assert_eq!(parse_secrets(Some(" A , B ")), vec!["A", "B"]);
     }
 
     #[tokio::test]
