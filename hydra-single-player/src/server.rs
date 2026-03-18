@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{self, BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     thread,
     time::Duration,
@@ -30,7 +30,13 @@ const LOCAL_SERVER_URL: &str = "http://127.0.0.1:8080";
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
     /// Initialize the local hydra server (create config, start server, configure CLI).
-    Init,
+    Init {
+        /// Path to a pre-written YAML config file. When provided, all interactive
+        /// prompts are skipped and the server is initialized using the config file.
+        /// Environment variables in the config are substituted (e.g., $CLAUDE_CODE_OAUTH_TOKEN).
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Start the local hydra server as a background daemon.
     Start,
     /// Stop the local hydra server.
@@ -52,7 +58,7 @@ pub enum ServerCommand {
 
 pub fn run(command: ServerCommand) -> Result<()> {
     match command {
-        ServerCommand::Init => cmd_init(),
+        ServerCommand::Init { config } => cmd_init(config),
         ServerCommand::Start => cmd_start(),
         ServerCommand::Stop => cmd_stop(),
         ServerCommand::Status => cmd_status(),
@@ -65,7 +71,7 @@ pub fn run(command: ServerCommand) -> Result<()> {
 // init
 // ---------------------------------------------------------------------------
 
-fn cmd_init() -> Result<()> {
+fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
     let server_dir = expand_path(SERVER_DIR);
     let config_path = expand_path(SERVER_CONFIG_PATH);
 
@@ -77,57 +83,13 @@ fn cmd_init() -> Result<()> {
         );
     }
 
-    // Prompt for username.
-    let username = prompt_username()?;
-
-    // Prompt for job engine choice.
-    let job_engine = prompt_job_engine()?;
-
-    // Prompt for model choice (Codex vs Claude).
-    let (provider, default_model) = prompt_model_choice()?;
-
-    // Prompt for the appropriate API key(s).
-    let api_keys = prompt_api_key(provider)?;
-
-    // Prompt for GitHub PAT.
-    let github_pat = prompt_github_pat()?;
-
-    // Generate a random 32-byte encryption key (base64-encoded).
-    let encryption_key = generate_encryption_key();
-
-    // Create directory structure.
-    let log_dir = expand_path(LOG_DIR);
-    let job_log_dir = expand_path(JOB_LOG_DIR);
-    fs::create_dir_all(&server_dir)
-        .with_context(|| format!("failed to create {}", server_dir.display()))?;
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("failed to create {}", log_dir.display()))?;
-    fs::create_dir_all(&job_log_dir)
-        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
-
-    // Write server config.
-    let db_path = expand_path(SERVER_DB_PATH);
-    let auth_token_path_expanded = expand_path(AUTH_TOKEN_PATH);
-    let job_log_dir_str = if job_engine == "local" {
-        Some(job_log_dir.display().to_string())
+    let job_engine = if let Some(ref source_config) = config_file {
+        // Non-interactive mode: read config file, substitute env vars, validate, and copy.
+        cmd_init_from_config(source_config, &server_dir, &config_path)?
     } else {
-        None
+        // Interactive mode: prompt for all values.
+        cmd_init_interactive(&server_dir, &config_path)?
     };
-    let config_content = render_server_config(
-        &encryption_key,
-        &github_pat,
-        &db_path,
-        &auth_token_path_expanded,
-        &job_engine,
-        Some(&default_model),
-        &api_keys,
-        username.as_deref(),
-        job_log_dir_str.as_deref(),
-    );
-    fs::write(&config_path, &config_content)
-        .with_context(|| format!("failed to write config to {}", config_path.display()))?;
-
-    println!("Server config written to {}", config_path.display());
 
     // If the user chose Docker, build the worker image before starting the server
     // so all interactive prompts and long-running builds complete first.
@@ -182,6 +144,129 @@ fn cmd_init() -> Result<()> {
     println!("  hydra server stop               # stop the server");
 
     Ok(())
+}
+
+/// Non-interactive init: read a pre-written config file, substitute environment
+/// variables, validate it, copy it to the server config path, and create the
+/// required directory structure. Returns the job engine name (e.g. "local", "docker").
+fn cmd_init_from_config(
+    source_config: &Path,
+    server_dir: &Path,
+    config_path: &Path,
+) -> Result<String> {
+    ensure!(
+        source_config.exists(),
+        "Config file not found: {}",
+        source_config.display()
+    );
+
+    // Read the source config and substitute environment variables.
+    let raw_content = fs::read_to_string(source_config)
+        .with_context(|| format!("failed to read config file {}", source_config.display()))?;
+    let config_content = shellexpand::env(&raw_content)
+        .with_context(|| {
+            format!(
+                "failed to substitute environment variables in {}",
+                source_config.display()
+            )
+        })?
+        .to_string();
+
+    // Validate the config by deserializing it.
+    let app_config: hydra_server::config::AppConfig = serde_yaml_ng::from_str(&config_content)
+        .with_context(|| {
+            format!(
+                "invalid config file {}. The config must match the format \
+                 generated by `hydra server init`. See config.yaml.sample for reference.",
+                source_config.display()
+            )
+        })?;
+
+    let job_engine = match &app_config.job_engine {
+        hydra_server::config::JobEngineConfig::Local { .. } => "local",
+        hydra_server::config::JobEngineConfig::Docker => "docker",
+        hydra_server::config::JobEngineConfig::Kubernetes { .. } => "kubernetes",
+    };
+
+    // Create directory structure.
+    let log_dir = expand_path(LOG_DIR);
+    let job_log_dir = expand_path(JOB_LOG_DIR);
+    fs::create_dir_all(server_dir)
+        .with_context(|| format!("failed to create {}", server_dir.display()))?;
+    fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
+    fs::create_dir_all(&job_log_dir)
+        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
+
+    // Write the config (with env vars substituted) to the server config path.
+    fs::write(config_path, &config_content)
+        .with_context(|| format!("failed to write config to {}", config_path.display()))?;
+
+    println!(
+        "Server config written to {} (from {})",
+        config_path.display(),
+        source_config.display()
+    );
+
+    Ok(job_engine.to_string())
+}
+
+/// Interactive init: prompt the user for all configuration values, generate the
+/// config, and write it. Returns the job engine name.
+fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String> {
+    // Prompt for username.
+    let username = prompt_username()?;
+
+    // Prompt for job engine choice.
+    let job_engine = prompt_job_engine()?;
+
+    // Prompt for model choice (Codex vs Claude).
+    let (provider, default_model) = prompt_model_choice()?;
+
+    // Prompt for the appropriate API key(s).
+    let api_keys = prompt_api_key(provider)?;
+
+    // Prompt for GitHub PAT.
+    let github_pat = prompt_github_pat()?;
+
+    // Generate a random 32-byte encryption key (base64-encoded).
+    let encryption_key = generate_encryption_key();
+
+    // Create directory structure.
+    let log_dir = expand_path(LOG_DIR);
+    let job_log_dir = expand_path(JOB_LOG_DIR);
+    fs::create_dir_all(server_dir)
+        .with_context(|| format!("failed to create {}", server_dir.display()))?;
+    fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
+    fs::create_dir_all(&job_log_dir)
+        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
+
+    // Write server config.
+    let db_path = expand_path(SERVER_DB_PATH);
+    let auth_token_path_expanded = expand_path(AUTH_TOKEN_PATH);
+    let job_log_dir_str = if job_engine == "local" {
+        Some(job_log_dir.display().to_string())
+    } else {
+        None
+    };
+    let config_content = render_server_config(
+        &encryption_key,
+        &github_pat,
+        &db_path,
+        &auth_token_path_expanded,
+        &job_engine,
+        Some(&default_model),
+        &api_keys,
+        username.as_deref(),
+        job_log_dir_str.as_deref(),
+    );
+    fs::write(config_path, &config_content)
+        .with_context(|| format!("failed to write config to {}", config_path.display()))?;
+
+    println!("Server config written to {}", config_path.display());
+
+    Ok(job_engine)
 }
 
 // Embedded agent prompts (compiled into the binary).
@@ -1308,5 +1393,141 @@ mod tests {
         if !expand_path(SERVER_CONFIG_PATH).exists() {
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn cmd_init_from_config_copies_and_validates() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        // Generate a valid config using the existing render function.
+        let keys = ApiKeys {
+            claude_code_oauth_token: Some("test-oauth-token".to_string()),
+            ..Default::default()
+        };
+        let config_content = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "local",
+            Some("opus"),
+            &keys,
+            None,
+            Some("/tmp/job-logs"),
+        );
+
+        // Write the config to a temp file.
+        let dir = std::env::temp_dir().join(format!("hydra-config-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let source = dir.join("source-config.yaml");
+        fs::write(&source, &config_content).expect("write source config");
+
+        let server_dir = dir.join("server");
+        let dest_config = dir.join("server/config.yaml");
+
+        let result = cmd_init_from_config(&source, &server_dir, &dest_config);
+        assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
+        assert_eq!(result.unwrap(), "local");
+
+        // Verify the config was copied.
+        assert!(dest_config.exists(), "config should be written to dest");
+        let written = fs::read_to_string(&dest_config).expect("read dest config");
+        assert_eq!(written, config_content);
+
+        // Clean up.
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cmd_init_from_config_fails_on_missing_file() {
+        let dir = std::env::temp_dir().join(format!("hydra-missing-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let missing = dir.join("nonexistent.yaml");
+
+        let result = cmd_init_from_config(&missing, &dir.join("server"), &dir.join("config.yaml"));
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Config file not found"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cmd_init_from_config_fails_on_invalid_yaml() {
+        let dir = std::env::temp_dir().join(format!("hydra-invalid-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let source = dir.join("bad-config.yaml");
+        fs::write(&source, "this: is not a valid hydra config").expect("write");
+
+        let result = cmd_init_from_config(&source, &dir.join("server"), &dir.join("config.yaml"));
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid config file"),
+            "error should mention invalid config"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cmd_init_from_config_substitutes_env_vars() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        // Create a config with an env var placeholder.
+        let keys = ApiKeys {
+            claude_code_oauth_token: Some("$HYDRA_TEST_TOKEN_PLACEHOLDER".to_string()),
+            ..Default::default()
+        };
+        let config_content = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "local",
+            Some("opus"),
+            &keys,
+            None,
+            Some("/tmp/job-logs"),
+        );
+
+        let dir = std::env::temp_dir().join(format!("hydra-envvar-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let source = dir.join("env-config.yaml");
+        fs::write(&source, &config_content).expect("write source config");
+
+        // Set the env var so substitution works.
+        // Safety: test runs single-threaded.
+        unsafe {
+            std::env::set_var("HYDRA_TEST_TOKEN_PLACEHOLDER", "resolved-token-value");
+        }
+
+        let server_dir = dir.join("server");
+        let dest_config = dir.join("server/config.yaml");
+
+        let result = cmd_init_from_config(&source, &server_dir, &dest_config);
+        assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
+
+        let written = fs::read_to_string(&dest_config).expect("read dest config");
+        assert!(
+            written.contains("resolved-token-value"),
+            "env var should be substituted in written config"
+        );
+        assert!(
+            !written.contains("$HYDRA_TEST_TOKEN_PLACEHOLDER"),
+            "env var placeholder should not remain in written config"
+        );
+
+        // Clean up.
+        unsafe {
+            std::env::remove_var("HYDRA_TEST_TOKEN_PLACEHOLDER");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 }
