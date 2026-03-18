@@ -9,6 +9,7 @@ use crate::background::{AgentQueue, agent_task_state};
 use crate::domain::actors::ActorRef;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
+use hydra_common::api::v1::issues::{IssueStatus, SearchIssuesQuery};
 
 const AUTOMATION_NAME: &str = "spawn_sessions";
 
@@ -98,9 +99,17 @@ impl Automation for SpawnSessionsAutomation {
             }
             _ => {
                 // For session events (and any other), capacity may have changed
-                // so we need to scan all issues.
+                // so we need to scan all issues. Only fetch spawn-eligible
+                // statuses to avoid unnecessary processing of terminal issues.
+                let query = SearchIssuesQuery::new(
+                    None,
+                    vec![IssueStatus::Open, IssueStatus::InProgress],
+                    None,
+                    None,
+                    None,
+                );
                 ctx.app_state
-                    .list_issues()
+                    .list_issues_with_query(&query)
                     .await
                     .map_err(|e| {
                         AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}"))
@@ -608,6 +617,77 @@ mod tests {
 
         let sessions = handles.state.list_sessions().await?;
         assert_eq!(sessions.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_event_does_not_spawn_for_terminal_issues() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let agent_name = "agent-terminal";
+
+        register_agent(&handles, agent_name).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+
+        // Create an open issue and spawn a session for it.
+        let issue = make_issue(agent_name, &repo_name);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let event = issue_created_event(issue_id.clone(), issue.clone());
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(sessions.len(), 1);
+
+        // Complete the session
+        let session_id = &sessions[0];
+        let mut session = handles.state.get_session(session_id).await?;
+        session.status = Status::Complete;
+        handles
+            .store
+            .update_session(session_id, session.clone(), &ActorRef::test())
+            .await?;
+
+        // Close the issue (terminal status)
+        let closed_issue = make_issue_with_status(agent_name, &repo_name, IssueStatus::Closed);
+        handles
+            .store
+            .update_issue(&issue_id, closed_issue, &ActorRef::test())
+            .await?;
+
+        // Fire a SessionUpdated event — closed issue should NOT be spawned for
+        let session_event = session_updated_event(
+            session_id.clone(),
+            {
+                let mut s = session.clone();
+                s.status = Status::Running;
+                s
+            },
+            session,
+        );
+        let ctx2 = AutomationContext {
+            event: &session_event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx2).await?;
+
+        let sessions_after = handles.state.list_sessions().await?;
+        assert_eq!(
+            sessions_after.len(),
+            1,
+            "should not spawn for closed/terminal issues on session events"
+        );
 
         Ok(())
     }
