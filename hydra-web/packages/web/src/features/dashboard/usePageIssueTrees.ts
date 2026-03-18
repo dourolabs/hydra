@@ -67,12 +67,12 @@ function useArtifactRelations(
   allIssueIds: string[],
   relType: "has-patch" | "has-document",
 ) {
-  const targetIds = allIssueIds.join(",");
+  const sourceIds = allIssueIds.join(",");
   return useQuery({
-    queryKey: ["relations", relType, targetIds],
+    queryKey: ["relations", relType, sourceIds],
     queryFn: () =>
       apiClient.listRelations({
-        target_ids: targetIds,
+        source_ids: sourceIds,
         rel_type: relType,
       }),
     enabled: allIssueIds.length > 0,
@@ -191,16 +191,16 @@ function buildIssueTrees(set: CollectedSet): {
     // Patches linked to this issue's subtree
     const patchIds: string[] = [];
     for (const rel of set.patchRelations) {
-      if (descendants.has(rel.target_id)) {
-        patchIds.push(rel.source_id);
+      if (descendants.has(rel.source_id)) {
+        patchIds.push(rel.target_id);
       }
     }
 
     // Documents linked to this issue's subtree
     const documentIds: string[] = [];
     for (const rel of set.documentRelations) {
-      if (descendants.has(rel.target_id)) {
-        documentIds.push(rel.source_id);
+      if (descendants.has(rel.source_id)) {
+        documentIds.push(rel.target_id);
       }
     }
 
