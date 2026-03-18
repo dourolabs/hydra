@@ -1,7 +1,7 @@
 use super::users::Username;
 use hydra_common::api::v1 as api;
 use hydra_common::{IssueId, PatchId, RepoName};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
