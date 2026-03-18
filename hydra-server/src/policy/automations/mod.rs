@@ -1,3 +1,4 @@
+pub(crate) mod agent_queue;
 pub mod cascade_issue_status;
 pub mod close_merge_request_issues;
 pub mod inbox_label;

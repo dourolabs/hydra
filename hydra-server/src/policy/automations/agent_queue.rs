@@ -13,7 +13,6 @@ use crate::{
     store::{Session, Status, StoreError},
 };
 use anyhow::Context;
-use async_trait::async_trait;
 #[cfg(test)]
 use hydra_common::RepoName;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
@@ -29,12 +28,6 @@ pub type SharedSpawnAttempts = Arc<RwLock<HashMap<IssueId, SpawnAttempt>>>;
 
 pub const ISSUE_ID_ENV_VAR: &str = "HYDRA_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "HYDRA_AGENT_NAME";
-
-#[async_trait]
-pub trait Spawner: Send + Sync {
-    fn name(&self) -> &str;
-    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Session>>;
-}
 
 #[derive(Clone, Debug)]
 pub struct SpawnAttempt {
@@ -189,7 +182,7 @@ impl AgentQueue {
 
     /// Check whether a single issue is eligible for spawning and, if so,
     /// build and return the session. This is the per-issue counterpart of the
-    /// bulk `spawn()` method and is intended for event-driven automations that
+    /// bulk polling method and is intended for event-driven automations that
     /// already know which issue to evaluate.
     pub(crate) async fn spawn_for_issue(
         &self,
@@ -288,131 +281,6 @@ impl AgentQueue {
         }
 
         Ok(Some(task))
-    }
-}
-
-#[async_trait]
-impl Spawner for AgentQueue {
-    fn name(&self) -> &str {
-        &self.agent.name
-    }
-
-    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Session>> {
-        let task_state = agent_task_state(state, &self.agent.name)
-            .await
-            .context("failed to list tasks for agent queue")?;
-
-        let max_simultaneous = self.agent.max_simultaneous as usize;
-        if max_simultaneous == 0 {
-            return Ok(Vec::new());
-        }
-
-        let active_tasks = task_state.running_tasks + task_state.pending_tasks;
-        if active_tasks >= max_simultaneous {
-            return Ok(Vec::new());
-        }
-
-        let mut remaining_capacity = max_simultaneous - active_tasks;
-
-        let is_assignment_agent = self.agent.is_assignment_agent;
-
-        let issues = state
-            .list_issues()
-            .await
-            .context("failed to list issues for agent queue")?;
-
-        let mut cached_prompt: Option<String> = None;
-
-        let mut tasks = Vec::new();
-        for (issue_id, issue) in issues {
-            let issue = issue.item;
-            if is_assignment_agent {
-                if let Some(name) = &issue.assignee
-                    && name != &self.agent.name
-                {
-                    continue;
-                }
-            } else if issue.assignee.as_deref() != Some(self.agent.name.as_str()) {
-                continue;
-            }
-
-            // Do not spawn tasks for terminal issues.
-            if matches!(
-                issue.status,
-                IssueStatus::Closed
-                    | IssueStatus::Dropped
-                    | IssueStatus::Rejected
-                    | IssueStatus::Failed
-            ) {
-                continue;
-            }
-
-            let is_ready = state
-                .is_issue_ready(&issue_id)
-                .await
-                .context("failed to determine if issue is ready")?;
-            if !is_ready {
-                continue;
-            }
-
-            if remaining_capacity == 0 {
-                break;
-            }
-
-            if task_state.existing_issue_ids.contains(&issue_id) {
-                continue;
-            }
-
-            if parent_has_running_task(state, &issue).await? {
-                continue;
-            }
-
-            if cached_prompt.is_none() {
-                cached_prompt = Some(
-                    state
-                        .resolve_agent_prompt(&self.agent.prompt_path)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "failed to fetch prompt for agent '{}' at path '{}'",
-                                self.agent.name, self.agent.prompt_path
-                            )
-                        })?,
-                );
-            }
-            let prompt = cached_prompt.as_deref().unwrap();
-
-            let maybe_task = self.build_task(state, &issue_id, &issue, prompt).await?;
-            let Some(task) = maybe_task else {
-                continue;
-            };
-
-            let max_tries = self.max_tries_for_issue(&issue);
-            let children_snapshot = {
-                let child_ids = state
-                    .get_issue_children(&issue_id)
-                    .await
-                    .unwrap_or_default();
-                let mut snapshot = HashMap::new();
-                for child_id in child_ids {
-                    if let Ok(child) = state.get_issue(&child_id, false).await {
-                        snapshot.insert(child_id, child.version);
-                    }
-                }
-                snapshot
-            };
-            if !self
-                .register_spawn_attempt(&issue_id, issue.status, children_snapshot, max_tries)
-                .await
-            {
-                continue;
-            }
-
-            tasks.push(task);
-            remaining_capacity -= 1;
-        }
-
-        Ok(tasks)
     }
 }
 
@@ -741,7 +609,25 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issues = handles.state.list_issues().await?;
+
+        let mut tasks = Vec::new();
+        let mut cached_prompt: Option<String> = None;
+        for (issue_id, versioned_issue) in &issues {
+            if let Ok(Some(session)) = queue
+                .spawn_for_issue(
+                    &handles.state,
+                    issue_id,
+                    &versioned_issue.item,
+                    &task_state,
+                    &mut cached_prompt,
+                )
+                .await
+            {
+                tasks.push(session);
+            }
+        }
         assert_eq!(tasks.len(), 2);
 
         let mut issue_ids = HashSet::new();
@@ -820,8 +706,20 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -845,7 +743,7 @@ mod tests {
             None,
         );
         let (patch_id, _) = handles.store.add_patch(patch, &ActorRef::test()).await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -866,9 +764,21 @@ mod tests {
             )
             .await?;
 
-        let mut tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
         let updated_patch = handles.store.get_patch(&patch_id, false).await?;
         let mut updated_patch = updated_patch.item;
@@ -885,8 +795,19 @@ mod tests {
             .update_patch(&patch_id, updated_patch, &ActorRef::test())
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
         Ok(())
     }
@@ -894,7 +815,7 @@ mod tests {
     #[tokio::test]
     async fn task_assignee_mismatch_skips_for_non_assignee() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue_with_type(
@@ -909,8 +830,20 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-b").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-b");
+        let task_state = agent_task_state(&handles.state, "agent-b").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -941,11 +874,23 @@ mod tests {
                 shared_attempts(),
             )
         };
-        let tasks = q.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].context, BundleSpec::None);
+        let task_state = agent_task_state(&handles.state, "assignment").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = q
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        let session = result.unwrap();
+        assert_eq!(session.context, BundleSpec::None);
         assert_eq!(
-            tasks[0]
+            session
                 .env_vars
                 .get(ISSUE_ID_ENV_VAR)
                 .map(|value| value.as_str()),
@@ -958,7 +903,7 @@ mod tests {
     #[tokio::test]
     async fn non_assignment_agent_skips_unassigned_issue() -> anyhow::Result<()> {
         let handles = test_state_handles();
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue_without_repo("Needs assignment", IssueStatus::Open, None),
@@ -967,8 +912,19 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -984,7 +940,7 @@ mod tests {
             )
             .await?;
 
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1001,8 +957,20 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1046,7 +1014,7 @@ mod tests {
             .transition_task_to_pending(&task_id, ActorRef::test())
             .await?;
 
-        handles
+        let (child_issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1064,8 +1032,19 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&child_issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &child_issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1073,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn spawns_when_repo_missing_and_allows_missing_image() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id1, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -1104,7 +1083,7 @@ mod tests {
             )
             .await?;
 
-        handles
+        let (issue_id2, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -1135,18 +1114,41 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2);
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
 
-        let has_repo_task = tasks.iter().any(|t| {
-            matches!(
-                t.context,
-                BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
+        let issue1 = handles.store.get_issue(&issue_id1, false).await?.item;
+        let result1 = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id1,
+                &issue1,
+                &task_state,
+                &mut cached_prompt,
             )
-        });
+            .await?;
+        assert!(result1.is_some());
+
+        let issue2 = handles.store.get_issue(&issue_id2, false).await?.item;
+        let result2 = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id2,
+                &issue2,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result2.is_some());
+
+        let has_repo_task = matches!(
+            result2.as_ref().unwrap().context,
+            BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
+        );
         assert!(has_repo_task, "expected a task with ServiceRepository");
 
-        let has_no_repo_task = tasks.iter().any(|t| matches!(t.context, BundleSpec::None));
+        let has_no_repo_task = matches!(result1.as_ref().unwrap().context, BundleSpec::None);
         assert!(
             has_no_repo_task,
             "expected a task with BundleSpec::None for the repo-less issue"
@@ -1161,7 +1163,7 @@ mod tests {
         queue.agent.max_tries = 3;
 
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -1192,12 +1194,34 @@ mod tests {
             )
             .await?;
 
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1263,8 +1287,19 @@ mod tests {
             .transition_task_to_pending(&task_id, ActorRef::test())
             .await?;
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1346,10 +1381,25 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&second_issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &second_issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
         assert_eq!(
-            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            result
+                .unwrap()
+                .env_vars
+                .get(ISSUE_ID_ENV_VAR)
+                .map(String::as_str),
             Some(second_issue_id.as_ref())
         );
 
@@ -1362,7 +1412,7 @@ mod tests {
         queue.agent.max_tries = 2;
 
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1376,16 +1426,49 @@ mod tests {
             )
             .await?;
 
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1410,20 +1493,55 @@ mod tests {
             )
             .await?;
 
-        let first_run = queue.spawn(&handles.state).await?;
-        assert_eq!(first_run.len(), 1);
-        assert!(queue.spawn(&handles.state).await?.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let first_run = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(first_run.is_some());
 
-        let issue = handles.store.get_issue(&issue_id, false).await?;
-        let mut issue = issue.item;
-        issue.status = IssueStatus::InProgress;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let blocked = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(blocked.is_none());
+
+        let issue_ver = handles.store.get_issue(&issue_id, false).await?;
+        let mut issue_item = issue_ver.item;
+        issue_item.status = IssueStatus::InProgress;
         handles
             .store
-            .update_issue(&issue_id, issue, &ActorRef::test())
+            .update_issue(&issue_id, issue_item, &ActorRef::test())
             .await?;
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
         Ok(())
     }
@@ -1449,12 +1567,35 @@ mod tests {
             .await?;
 
         // First spawn attempt succeeds (attempt 1 of 1).
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
         // Second attempt should be blocked (max_tries=1 reached).
-        assert!(queue.spawn(&handles.state).await?.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let blocked = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(blocked.is_none());
 
         // Create a child issue — this counts as progress on the parent.
         // Assign to a different agent so it doesn't spawn here.
@@ -1476,10 +1617,25 @@ mod tests {
             .await?;
 
         // Now the counter should have reset, so spawning succeeds again.
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
         assert_eq!(
-            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            result
+                .unwrap()
+                .env_vars
+                .get(ISSUE_ID_ENV_VAR)
+                .map(String::as_str),
             Some(parent_id.as_ref())
         );
 
@@ -1524,15 +1680,50 @@ mod tests {
             )
             .await?;
 
-        // First spawn attempt succeeds.
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2); // parent + child both eligible
-        for t in tasks.drain(..) {
-            record_completed_task(&handles, t).await?;
-        }
+        // First spawn attempt succeeds for both parent and child.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
+
+        let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
+        let parent_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &parent_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(parent_result.is_some());
+        record_completed_task(&handles, parent_result.unwrap()).await?;
+
+        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
+        let child_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &child_id,
+                &child_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(child_result.is_some());
+        record_completed_task(&handles, child_result.unwrap()).await?;
 
         // Further attempts should be blocked for both.
-        assert!(queue.spawn(&handles.state).await?.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
+        let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
+        let blocked = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &parent_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(blocked.is_none());
 
         // Update the child issue — this counts as progress on the parent.
         let child = handles.store.get_issue(&child_id, false).await?;
@@ -1545,8 +1736,32 @@ mod tests {
 
         // Parent's counter should have reset (child version changed).
         // Child's counter should also reset (its status changed).
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
+
+        let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
+        let parent_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &parent_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(parent_result.is_some());
+
+        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
+        let child_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &child_id,
+                &child_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(child_result.is_some());
 
         Ok(())
     }
@@ -1572,7 +1787,7 @@ mod tests {
             .await?;
 
         // Create a child before the first spawn.
-        handles
+        let (child_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1590,15 +1805,49 @@ mod tests {
             .await?;
 
         // First spawn consumes both parent and child.
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2);
-        for t in tasks.drain(..) {
-            record_completed_task(&handles, t).await?;
-        }
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
+
+        let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
+        let parent_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &parent_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(parent_result.is_some());
+        record_completed_task(&handles, parent_result.unwrap()).await?;
+
+        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
+        let child_result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &child_id,
+                &child_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(child_result.is_some());
+        record_completed_task(&handles, child_result.unwrap()).await?;
 
         // No changes to children — counter should NOT reset, so no tasks spawn.
-        let tasks = queue.spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let mut cached_prompt: Option<String> = None;
+        let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &parent_id,
+                &parent_issue,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1628,7 +1877,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_for_rejected_issues() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1642,8 +1891,20 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1651,7 +1912,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_for_failed_issues() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -1665,8 +1926,20 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1712,13 +1985,24 @@ mod tests {
             )
             .await?;
         let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        let session = result.unwrap();
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        let resolved = handles.state.resolve_task(&tasks[0]).await?;
+        let resolved = handles.state.resolve_task(&session).await?;
         assert_eq!(
-            tasks[0].context,
+            session.context,
             BundleSpec::ServiceRepository {
                 name: repo_name.clone(),
                 rev: Some(default_branch.clone())
@@ -1749,7 +2033,7 @@ mod tests {
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
         seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -1780,12 +2064,22 @@ mod tests {
             )
             .await?;
         let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        let task = &tasks[0];
-        assert_eq!(task.secrets, Some(secrets));
+        let session = result.unwrap();
+        assert_eq!(session.secrets, Some(secrets));
 
         Ok(())
     }
@@ -1795,7 +2089,7 @@ mod tests {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
         seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 Issue {
@@ -1826,12 +2120,22 @@ mod tests {
             )
             .await?;
         let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        let task = &tasks[0];
-        assert!(task.secrets.is_none());
+        let session = result.unwrap();
+        assert!(session.secrets.is_none());
 
         Ok(())
     }
@@ -1867,8 +2171,20 @@ mod tests {
             .await?;
 
         // Without unread messages, should not spawn.
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty(), "should not spawn without unread messages");
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none(), "should not spawn without unread messages");
 
         // Add an unread message for the issue.
         let recipient = ActorId::Issue(issue_id.clone());
@@ -1876,9 +2192,20 @@ mod tests {
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
         // Should still not spawn — unread messages no longer bypass readiness checks.
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
         assert!(
-            tasks.is_empty(),
+            result.is_none(),
             "should not spawn for not-ready issue even with unread messages"
         );
 
@@ -1916,14 +2243,26 @@ mod tests {
             .await?;
 
         // Add a message that is already read.
-        let recipient = ActorId::Issue(issue_id);
+        let recipient = ActorId::Issue(issue_id.clone());
         let mut msg = Message::new(None, recipient, "already read".to_string());
         msg.is_read = true;
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
-        // Should not spawn because the only message is read.
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        // Should not spawn because the issue is blocked.
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -1969,13 +2308,25 @@ mod tests {
             .await?;
 
         // Add an unread message.
-        let recipient = ActorId::Issue(issue_id);
+        let recipient = ActorId::Issue(issue_id.clone());
         let msg = Message::new(None, recipient, "new message".to_string());
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
         // Should not spawn a duplicate task even with unread messages.
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_none());
 
         Ok(())
     }
@@ -2001,12 +2352,35 @@ mod tests {
             .await?;
 
         // First spawn attempt succeeds (attempt 1 of 1).
-        let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
         // Second attempt should be blocked (max_tries=1 reached).
-        assert!(queue.spawn(&handles.state).await?.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let blocked = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(blocked.is_none());
 
         // Send an unread message — this should NOT reset the retry counter.
         let recipient = ActorId::Issue(issue_id.clone());
@@ -2014,7 +2388,19 @@ mod tests {
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
         // Spawning should still be blocked after max_tries even with new messages.
-        assert!(queue.spawn(&handles.state).await?.is_empty());
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let still_blocked = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(still_blocked.is_none());
 
         Ok(())
     }
@@ -2022,7 +2408,7 @@ mod tests {
     #[tokio::test]
     async fn shared_spawn_attempts_persist_across_queue_instances() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -2044,27 +2430,60 @@ mod tests {
         queue1.agent.max_tries = 2;
 
         // First iteration: spawns one task (attempt 1 of 2).
-        let mut tasks = queue1.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue1
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
         // Second iteration: new AgentQueue with same shared state.
         let mut queue2 = queue_with_attempts("agent-a", attempts.clone());
         queue2.agent.max_tries = 2;
 
         // Should still spawn (attempt 2 of 2).
-        let mut tasks = queue2.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        record_completed_task(&handles, tasks.remove(0)).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue2
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
+        record_completed_task(&handles, result.unwrap()).await?;
 
         // Third iteration: new AgentQueue, same shared state.
         let mut queue3 = queue_with_attempts("agent-a", attempts);
         queue3.agent.max_tries = 2;
 
         // Should be blocked (max_tries=2 reached across iterations).
-        let tasks = queue3.spawn(&handles.state).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue3
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
         assert!(
-            tasks.is_empty(),
+            result.is_none(),
             "expected no tasks after max_tries reached across queue instances"
         );
 
@@ -2085,7 +2504,7 @@ mod tests {
         );
         issue_with_secrets.session_settings.secrets =
             Some(vec!["GH_TOKEN".to_string(), "OPENAI_API_KEY".to_string()]);
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(issue_with_secrets, &ActorRef::test())
             .await?;
@@ -2095,10 +2514,21 @@ mod tests {
             "agent-a",
             vec!["OPENAI_API_KEY".to_string(), "CUSTOM_KEY".to_string()],
         );
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
-        let session = &tasks[0];
+        let session = result.unwrap();
         // Agent secrets come first, then issue secrets, deduplicated.
         assert_eq!(
             session.secrets,
@@ -2117,7 +2547,7 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
 
         // Issue without secrets.
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -2132,10 +2562,24 @@ mod tests {
             .await?;
 
         let queue = queue_with_secrets("agent-a", vec!["AGENT_SECRET".to_string()]);
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
-        assert_eq!(tasks[0].secrets, Some(vec!["AGENT_SECRET".to_string()]));
+        assert_eq!(
+            result.unwrap().secrets,
+            Some(vec!["AGENT_SECRET".to_string()])
+        );
 
         Ok(())
     }
@@ -2144,7 +2588,7 @@ mod tests {
     async fn no_secrets_when_agent_and_issue_have_none() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
 
-        handles
+        let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
@@ -2159,10 +2603,21 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+            )
+            .await?;
+        assert!(result.is_some());
 
-        assert_eq!(tasks[0].secrets, None);
+        assert_eq!(result.unwrap().secrets, None);
 
         Ok(())
     }
