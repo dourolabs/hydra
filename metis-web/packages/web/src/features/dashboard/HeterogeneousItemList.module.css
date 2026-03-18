@@ -137,4 +137,8 @@
   .toolbar {
     padding: var(--space-2);
   }
+
+  .listScroll {
+    padding-bottom: calc(var(--mobile-nav-height) + var(--space-3) + 48px);
+  }
 }
