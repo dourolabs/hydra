@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { IssueSummaryRecord, LabelRecord, SearchIssuesQuery } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -23,12 +24,11 @@ export function useLabelIssues(labels: LabelRecord[] | undefined) {
     })),
   });
 
-  const issuesByLabel = new Map<string, IssueSummaryRecord[]>();
-  for (let i = 0; i < labelList.length; i++) {
-    const label = labelList[i];
-    const result = queries[i];
-    issuesByLabel.set(label.label_id, result.data ?? []);
-  }
-
-  return issuesByLabel;
+  return useMemo(() => {
+    const map = new Map<string, IssueSummaryRecord[]>();
+    for (let i = 0; i < labelList.length; i++) {
+      map.set(labelList[i].label_id, queries[i].data ?? []);
+    }
+    return map;
+  }, [labelList, queries]);
 }
