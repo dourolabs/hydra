@@ -295,6 +295,18 @@ impl ServerEvent {
         }
     }
 
+    /// Returns a short summary of the event for logging.
+    pub fn summary(&self) -> String {
+        match self {
+            ServerEvent::IssueCreated { issue_id, .. } => format!("IssueCreated({issue_id})"),
+            ServerEvent::IssueUpdated { issue_id, .. } => format!("IssueUpdated({issue_id})"),
+            ServerEvent::SessionUpdated { session_id, .. } => {
+                format!("SessionUpdated({session_id})")
+            }
+            other => format!("{:?}", other.event_type()),
+        }
+    }
+
     /// Returns the data-free [`EventType`] corresponding to this event variant.
     pub fn event_type(&self) -> EventType {
         match self {
