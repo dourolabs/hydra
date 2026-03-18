@@ -8,9 +8,9 @@ Three-package monorepo managed with pnpm workspaces:
 
 | Package | Name | Purpose |
 |---------|------|---------|
-| `packages/api` | `@metis/api` | Typed API client and auto-generated types |
-| `packages/ui` | `@metis/ui` | Reusable component library |
-| `packages/web` | `@metis/web` | React SPA + Hono BFF |
+| `packages/api` | `@hydra/api` | Typed API client and auto-generated types |
+| `packages/ui` | `@hydra/ui` | Reusable component library |
+| `packages/web` | `@hydra/web` | React SPA + Hono BFF |
 
 **Dependency order:** `api` → `ui` → `web`. Changes to `api` or `ui` require rebuilding downstream packages.
 
@@ -47,7 +47,7 @@ useQuery({
 
 Before creating a new hook, check existing hooks in the relevant feature module.
 
-## UI Component Library (`@metis/ui`)
+## UI Component Library (`@hydra/ui`)
 
 14 reusable components exported from `packages/ui/src/index.ts`:
 
@@ -57,7 +57,7 @@ Before creating a new hook, check existing hooks in the relevant feature module.
 
 Theme tokens are defined in `packages/ui/src/theme/tokens.css`.
 
-## API Client (`@metis/api`)
+## API Client (`@hydra/api`)
 
 - **Auto-generated types** from Rust via ts-rs in `packages/api/src/generated/`.
 - **Client class**: `MetisApiClient` in `packages/api/src/client.ts`.
@@ -95,7 +95,7 @@ Before submitting a patch, verify your changes using the dev testing stack.
 ### Quick start
 
 1. Install dependencies: `cd hydra-web && pnpm install`
-2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @metis/web exec playwright install chromium`
+2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @hydra/web exec playwright install chromium`
 3. Run E2E tests: `pnpm e2e`
    - Playwright automatically starts the mock server, BFF, and frontend via its `webServer` config
    - Servers are automatically stopped when tests complete
@@ -128,14 +128,14 @@ Add the `X-Mock-Error: <status-code>` header to any request to make the mock ser
 
 ```bash
 pnpm e2e                                           # all E2E tests
-pnpm --filter @metis/web exec playwright test login # specific test file
-pnpm --filter @metis/web exec playwright test --headed  # visible browser
+pnpm --filter @hydra/web exec playwright test login # specific test file
+pnpm --filter @hydra/web exec playwright test --headed  # visible browser
 ```
 
 ### Debugging test failures
 
 - Screenshots are saved to `packages/web/test-results/` on failure.
-- Traces are recorded on first retry (CI only by default). View with `pnpm --filter @metis/web exec playwright show-trace <trace-file>`.
+- Traces are recorded on first retry (CI only by default). View with `pnpm --filter @hydra/web exec playwright show-trace <trace-file>`.
 - Run with `--headed` to watch the browser during test execution.
 - Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts all three servers (mock server, BFF, frontend) when running `pnpm e2e`.
 
@@ -166,4 +166,4 @@ Login, dashboard, issue detail, patch detail, documents list, document detail, s
 
 ### Contract tests
 
-The `@metis/mock-server` package includes contract tests that validate the mock server's responses against the `@metis/api` client types. These run as part of `pnpm test` in CI and catch drift between the mock and real server.
+The `@hydra/mock-server` package includes contract tests that validate the mock server's responses against the `@hydra/api` client types. These run as part of `pnpm test` in CI and catch drift between the mock and real server.
