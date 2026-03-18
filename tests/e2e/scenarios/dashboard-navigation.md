@@ -32,7 +32,7 @@ Verify that all key dashboard pages load correctly without errors. This scenario
 
 ## Expected Results
 
-- All six key pages load without errors: landing, issues list, issue detail, patches list, repositories list, documents list, agents list
+- All seven key pages load without errors: landing, issues list, issue detail, patches list, repositories list, documents list, agents list
 - Each page displays its primary content area (tables, lists, or empty-state messages)
 - Navigation between pages works correctly (links and routing function properly)
 - No JavaScript errors, broken layouts, or missing UI components on any page

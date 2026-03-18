@@ -3,12 +3,12 @@
 **ID:** agent-handoff
 **Category:** agent-coordination
 **Priority:** P1
-**Prerequisites:** Server running (server-init scenario passed), at least one repository added (add-github-repo scenario passed)
+**Prerequisites:** Server running (server-init scenario passed), at least one repository added (add-github-repo scenario passed), P0 scenarios and pm-agent-breakdown completed, reviewer agent configured as active on the repository
 **Estimated duration:** 20 minutes
 
 ## Description
 
-Test the full agent coordination flow through the dashboard: create a high-level issue, verify the PM agent breaks it down into child tasks, the SWE agent implements changes and creates patches, and the reviewer agent reviews the patches. This validates the complete multi-agent handoff workflow.
+Test the full agent coordination flow through the dashboard: create a high-level issue, verify the PM agent breaks it down into child tasks, the SWE agent implements changes and creates patches, and the reviewer agent reviews the patches. This validates the complete multi-agent handoff workflow. Note: The reviewer agent must be configured to be active on the repository before Phase 3 (Reviewer Review) can work.
 
 ## Steps (via dashboard)
 

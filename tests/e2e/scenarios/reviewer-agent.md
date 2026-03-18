@@ -3,12 +3,12 @@
 **ID:** reviewer-agent
 **Category:** agent-coordination
 **Priority:** P1
-**Prerequisites:** Server running (server-init scenario passed), at least one repository added (add-github-repo scenario passed)
+**Prerequisites:** Server running (server-init scenario passed), at least one repository added (add-github-repo scenario passed), P0 scenarios and pm-agent-breakdown completed, reviewer agent configured as active on the repository
 **Estimated duration:** 15 minutes
 
 ## Description
 
-Verify that after an SWE agent creates a patch for an issue, the reviewer agent picks it up and reviews it. This tests the automated code review workflow through the dashboard.
+Verify that after an SWE agent creates a patch for an issue, the reviewer agent picks it up and reviews it. This tests the automated code review workflow through the dashboard. The reviewer agent must be configured to be active on the repository before running this scenario.
 
 ## Steps (via dashboard)
 
