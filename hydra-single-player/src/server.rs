@@ -189,14 +189,7 @@ fn cmd_init_from_config(
     };
 
     // Create directory structure.
-    let log_dir = expand_path(LOG_DIR);
-    let job_log_dir = expand_path(JOB_LOG_DIR);
-    fs::create_dir_all(server_dir)
-        .with_context(|| format!("failed to create {}", server_dir.display()))?;
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("failed to create {}", log_dir.display()))?;
-    fs::create_dir_all(&job_log_dir)
-        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
+    let (_log_dir, _job_log_dir) = create_server_dirs(server_dir)?;
 
     // Write the config (with env vars substituted) to the server config path.
     fs::write(config_path, &config_content)
@@ -209,6 +202,20 @@ fn cmd_init_from_config(
     );
 
     Ok(job_engine.to_string())
+}
+
+/// Create the server directory structure (server_dir, log_dir, job_log_dir).
+/// Returns (log_dir, job_log_dir) for callers that need the paths.
+fn create_server_dirs(server_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+    let log_dir = expand_path(LOG_DIR);
+    let job_log_dir = expand_path(JOB_LOG_DIR);
+    fs::create_dir_all(server_dir)
+        .with_context(|| format!("failed to create {}", server_dir.display()))?;
+    fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
+    fs::create_dir_all(&job_log_dir)
+        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
+    Ok((log_dir, job_log_dir))
 }
 
 /// Interactive init: prompt the user for all configuration values, generate the
@@ -233,14 +240,7 @@ fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String>
     let encryption_key = generate_encryption_key();
 
     // Create directory structure.
-    let log_dir = expand_path(LOG_DIR);
-    let job_log_dir = expand_path(JOB_LOG_DIR);
-    fs::create_dir_all(server_dir)
-        .with_context(|| format!("failed to create {}", server_dir.display()))?;
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("failed to create {}", log_dir.display()))?;
-    fs::create_dir_all(&job_log_dir)
-        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
+    let (_log_dir, job_log_dir) = create_server_dirs(server_dir)?;
 
     // Write server config.
     let db_path = expand_path(SERVER_DB_PATH);
