@@ -155,7 +155,7 @@ impl Automation for SpawnSessionsAutomation {
                                     automation = AUTOMATION_NAME,
                                     agent = queue.agent.name,
                                     session_id = %session_id,
-                                    event = ?event_summary(ctx.event),
+                                    event = ?ctx.event.summary(),
                                     "spawned session"
                                 );
                             }
@@ -187,17 +187,6 @@ impl Automation for SpawnSessionsAutomation {
     }
 }
 
-/// Returns a short summary of the triggering event for logging.
-fn event_summary(event: &ServerEvent) -> String {
-    match event {
-        ServerEvent::IssueCreated { issue_id, .. } => format!("IssueCreated({issue_id})"),
-        ServerEvent::IssueUpdated { issue_id, .. } => format!("IssueUpdated({issue_id})"),
-        ServerEvent::SessionUpdated { session_id, .. } => {
-            format!("SessionUpdated({session_id})")
-        }
-        other => format!("{:?}", other.event_type()),
-    }
-}
 
 #[cfg(test)]
 mod tests {
