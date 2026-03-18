@@ -187,7 +187,6 @@ impl Automation for SpawnSessionsAutomation {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
