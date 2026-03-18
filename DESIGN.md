@@ -1,9 +1,9 @@
-# Metis
+# Hydra
 
-Metis is an agent coordination framework for running multiple simultaneous Agentic AI coding agents. 
+Hydra is an agent coordination framework for running multiple simultaneous Agentic AI coding agents. 
 The system is designed to give developers *maximum leverage* -- it maximizes development velocity by leaning on Agentic AI as much as possible.
 
-Metis makes you the manager of an engineering team. Instead of operating on the level of code, you operate on the level of 
+Hydra makes you the manager of an engineering team. Instead of operating on the level of code, you operate on the level of 
 tasks -- what needs to be done? You work with an issue tracker, and you use it to assign work to your team.
 Agents on your team take care of the implementation details. You survey their progress, review their work, and 
 offer course corrections as needed. You use the issue tracker is a memory aid to make sure your team does
@@ -23,12 +23,12 @@ keep context-switching between terminals.
 
 ## Design
 
-Metis coordinates humans and agents using an issue tracker. Issues represent work to be done, and are assigned to
+Hydra coordinates humans and agents using an issue tracker. Issues represent work to be done, and are assigned to
 someone to perform it, who could be either a human or an agent. Issues have a graph structure that allows the
 system to determine what can currently be worked on. The system then spawns AI agents to work on any tasks that are ready.
 
 A fundamental design choice is that agents and humans are equivalent in the system -- they both interact with
-the system using the same tool, the `metis` CLI. This choice means that any work that humans can perform can also be 
+the system using the same tool, the `hydra` CLI. This choice means that any work that humans can perform can also be 
 delegated to agents. For example, a complex issue may need to be broken down into smaller subtasks to ensure success --
 an AI agent can do that. Or a pull request may need to be reviewed by someone before it can be merged -- an AI agent can
 do that too.
@@ -61,7 +61,7 @@ When an issue is marked `Dropped`, `Rejected`, or `Failed`, its children are rec
 6. D completes, C's blocker is updated or resolved, and work continues.
 
 Agents will be spawned for any `Ready` issues that are assigned to an AI agent. 
-The agent works on the task and updates the issue tracker (via the `metis` CLI) as it goes.
+The agent works on the task and updates the issue tracker (via the `hydra` CLI) as it goes.
 When the agent starts, it sets the status to `InProgress`. When it finishes, it sets the status to `Closed`.
 The agent may also end its session while the issue is `InProgress` -- this can happen for multiple reasons,
 including that the agent is waiting for an async action from another party (such as a code review), or the agent 
@@ -83,12 +83,12 @@ results produced by the first agent. See details in the section below.
 
 The system creates tracking branches that are pushed up to the remote to track the work
 done by agents for both issues and tasks. There are 4 branches created by any given task:
-* `metis/<issue-id>/base` tracks where the work for an issue started
-* `metis/<issue-id>/head` tracks the current head of the work for the issue. 
-* `metis/<task-id>/base` tracks where the work for a task started
-* `metis/<task-id>/head` tracks where the work for a task ended.
+* `hydra/<issue-id>/base` tracks where the work for an issue started
+* `hydra/<issue-id>/head` tracks the current head of the work for the issue. 
+* `hydra/<task-id>/base` tracks where the work for a task started
+* `hydra/<task-id>/head` tracks where the work for a task ended.
 
-Workers working on a specific issue try to start from `metis/<issue-id>/head`, which allows
+Workers working on a specific issue try to start from `hydra/<issue-id>/head`, which allows
 them to pick up the work from previous workers on the same issue. This approach is similar to running the agent in a loop on a single machine (though any changes not tracked by git are lost between agent runs).
 
 The branch invariants above are maintained by the `worker_run` command. It creates these tracking branches on startup, and then whenever the worker ends, `worker_run` will commit any uncommitted changes, push them up, and update the branch refs. 

@@ -60,12 +60,12 @@ Theme tokens are defined in `packages/ui/src/theme/tokens.css`.
 ## API Client (`@hydra/api`)
 
 - **Auto-generated types** from Rust via ts-rs in `packages/api/src/generated/`.
-- **Client class**: `MetisApiClient` in `packages/api/src/client.ts`.
+- **Client class**: `HydraApiClient` in `packages/api/src/client.ts`.
 - **Singleton instance**: `apiClient` in `packages/web/src/api/client.ts`.
-- **Never create direct `fetch` calls** — add methods to `MetisApiClient` instead.
+- **Never create direct `fetch` calls** — add methods to `HydraApiClient` instead.
 
 ## Cross-Workspace Build Verification
-When Rust API types in `metis-common` change, TypeScript types must be regenerated. Run `pnpm typecheck` from the `hydra-web/` directory to verify the frontend still compiles against the updated types.
+When Rust API types in `hydra-common` change, TypeScript types must be regenerated. Run `pnpm typecheck` from the `hydra-web/` directory to verify the frontend still compiles against the updated types.
 
 ## Build / Dev Commands
 
@@ -112,7 +112,7 @@ Use `./scripts/dev-test.sh` only for interactive development where you need long
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| Mock server | 8080 | Standalone TypeScript mock of the metis API |
+| Mock server | 8080 | Standalone TypeScript mock of the hydra API |
 | BFF | 4000 | Hono backend-for-frontend (proxies to mock server) |
 | Frontend | 3000 | Vite React dev server |
 

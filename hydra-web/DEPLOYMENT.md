@@ -1,18 +1,18 @@
 # Deploying hydra-web to Kubernetes
 
-This document describes the Kubernetes manifests needed to deploy hydra-web to the `dourolabs/metis-cluster` repository.
+This document describes the Kubernetes manifests needed to deploy hydra-web to the `dourolabs/hydra-cluster` repository.
 
 ## Overview
 
 hydra-web runs as a single container that serves both:
 - The React SPA (static assets)
-- The BFF (Backend-for-Frontend) API proxy that forwards authenticated requests to metis-server
+- The BFF (Backend-for-Frontend) API proxy that forwards authenticated requests to hydra-server
 
-The container listens on port **4000** and expects a `METIS_SERVER_URL` environment variable pointing to the metis-server instance.
+The container listens on port **4000** and expects a `HYDRA_SERVER_URL` environment variable pointing to the hydra-server instance.
 
 ## Required Manifests
 
-Add the following files to the `dourolabs/metis-cluster` repository and include them in `kustomization.yaml`.
+Add the following files to the `dourolabs/hydra-cluster` repository and include them in `kustomization.yaml`.
 
 ### web-deployment.yaml
 
@@ -20,29 +20,29 @@ Add the following files to the `dourolabs/metis-cluster` repository and include 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: metis-web
-  namespace: metis
+  name: hydra-web
+  namespace: hydra
   labels:
-    app: metis-web
+    app: hydra-web
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: metis-web
+      app: hydra-web
   template:
     metadata:
       labels:
-        app: metis-web
+        app: hydra-web
     spec:
       containers:
-        - name: metis-web
-          image: ghcr.io/dourolabs/metis-web:latest
+        - name: hydra-web
+          image: ghcr.io/dourolabs/hydra-web:latest
           ports:
             - containerPort: 4000
               protocol: TCP
           env:
-            - name: METIS_SERVER_URL
-              value: "http://server.metis.svc.cluster.local"
+            - name: HYDRA_SERVER_URL
+              value: "http://server.hydra.svc.cluster.local"
             - name: PORT
               value: "4000"
           resources:
@@ -74,17 +74,17 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: metis-web
-  namespace: metis
+  name: hydra-web
+  namespace: hydra
   labels:
-    app: metis-web
+    app: hydra-web
   annotations:
     tailscale.com/expose: "true"
-    tailscale.com/hostname: metis-web
+    tailscale.com/hostname: hydra-web
 spec:
   type: LoadBalancer
   selector:
-    app: metis-web
+    app: hydra-web
   ports:
     - port: 80
       targetPort: 4000
@@ -106,19 +106,19 @@ resources:
 
 | Variable | Default | Description |
 |---|---|---|
-| `METIS_SERVER_URL` | `http://server.metis.svc.cluster.local` | URL of the metis-server API |
+| `HYDRA_SERVER_URL` | `http://server.hydra.svc.cluster.local` | URL of the hydra-server API |
 | `PORT` | `4000` | Port the BFF server listens on |
 | `NODE_ENV` | `production` | Node.js environment (set in Dockerfile) |
 
 ## Container Details
 
-- **Image**: `ghcr.io/dourolabs/metis-web`
+- **Image**: `ghcr.io/dourolabs/hydra-web`
 - **Port**: 4000
 - **Health check**: `GET /health` returns `{"status":"ok"}`
 - **Base image**: `node:22-slim`
 
 ## Notes
 
-- The `ghcr-credentials` imagePullSecret must already exist in the `metis` namespace (same as used by metis-server).
-- The Tailscale annotations expose the service on the tailnet with hostname `metis-web`.
-- `METIS_SERVER_URL` defaults to the in-cluster DNS name for metis-server. Adjust if the server runs in a different namespace or has a different service name.
+- The `ghcr-credentials` imagePullSecret must already exist in the `hydra` namespace (same as used by hydra-server).
+- The Tailscale annotations expose the service on the tailnet with hostname `hydra-web`.
+- `HYDRA_SERVER_URL` defaults to the in-cluster DNS name for hydra-server. Adjust if the server runs in a different namespace or has a different service name.

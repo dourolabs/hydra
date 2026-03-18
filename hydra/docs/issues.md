@@ -1,17 +1,17 @@
-# `metis issues`
+# `hydra issues`
 
-The `metis issues` command drives the complete lifecycle of Metis tasks: listing backlogs, creating and updating work items, inspecting dependencies, and managing per-issue todo lists. Use it any time you need to coordinate with agents or automate project tracking.
+The `hydra issues` command drives the complete lifecycle of Hydra tasks: listing backlogs, creating and updating work items, inspecting dependencies, and managing per-issue todo lists. Use it any time you need to coordinate with agents or automate project tracking.
 
 ## Authentication & output
 
-All subcommands inherit the global `metis` flags such as `--server-url`, `--token`, and `--output-format` (defaults to pretty). Switch to `--output-format jsonl` when you need structured machine-readable output or want to pipe results into other tooling. Pretty output shows truncated descriptions and progress notes, while JSONL preserves the full payload.
+All subcommands inherit the global `hydra` flags such as `--server-url`, `--token`, and `--output-format` (defaults to pretty). Switch to `--output-format jsonl` when you need structured machine-readable output or want to pipe results into other tooling. Pretty output shows truncated descriptions and progress notes, while JSONL preserves the full payload.
 
 ## Subcommands
 
 ### List
 
 ```bash
-metis issues list \
+hydra issues list \
   [--id ISSUE_ID] [--type <TYPE>] [--status <STATUS>] [--assignee <USERNAME>] \
   [--query <TEXT>] [--graph <FILTER>[,<FILTER>...]]
 ```
@@ -28,7 +28,7 @@ metis issues list \
 ### Describe
 
 ```bash
-metis issues describe <ISSUE_ID> [--verbose]
+hydra issues describe <ISSUE_ID> [--verbose]
 ```
 
 Summarizes an issue along with its immediate parents, transitive children, todo list, linked patches, and the complete activity log. Use `--verbose` to emit the full JSONL payload (including expanded parent/child records and raw activity entries) for automation or auditing.
@@ -36,7 +36,7 @@ Summarizes an issue along with its immediate parents, transitive children, todo 
 ### Create
 
 ```bash
-metis issues create \
+hydra issues create \
   [--type <bug|feature|task|chore|merge-request>] \
   [--status <open|in-progress|closed>] \
   [--assignee <USERNAME>] [--progress "text"] \
@@ -52,7 +52,7 @@ Descriptions are required; progress defaults to an empty string but may be set i
 ### Update
 
 ```bash
-metis issues update <ISSUE_ID> \
+hydra issues update <ISSUE_ID> \
   [--type <TYPE>] [--status <STATUS>] \
   [--assignee <USERNAME> | --clear-assignee] \
   [--description "text"] \
@@ -63,12 +63,12 @@ metis issues update <ISSUE_ID> \
    | --model MODEL | --branch BRANCH | --max-retries N | --clear-job-settings]
 ```
 
-Use `metis issues update` to change status, hand off work, refresh descriptions, or rewrite the dependency graph. Each field has a corresponding `--clear-*` flag so you can remove values explicitly (e.g., `--clear-progress` when you wrap up a note). Job settings behave like `create`: provide any subset of overrides or call `--clear-job-settings` to drop inherited execution context.
+Use `hydra issues update` to change status, hand off work, refresh descriptions, or rewrite the dependency graph. Each field has a corresponding `--clear-*` flag so you can remove values explicitly (e.g., `--clear-progress` when you wrap up a note). Job settings behave like `create`: provide any subset of overrides or call `--clear-job-settings` to drop inherited execution context.
 
 ### Todo
 
 ```bash
-metis issues todo <ISSUE_ID> [--add "text" | --done N | --undone N | --replace ITEM[,ITEM...]]
+hydra issues todo <ISSUE_ID> [--add "text" | --done N | --undone N | --replace ITEM[,ITEM...]]
 ```
 
 Append todos with `--add`; prefix the text with `[x]` to mark the entry complete immediately. Use `--done` / `--undone` with 1-based indexes to toggle status, or `--replace` to rewrite the entire ordered list (commas separate items). Pretty output mirrors the dashboard checklist, while `--output-format jsonl` returns `{ issue_id, todo_list }` for scripts.
@@ -77,27 +77,27 @@ Append todos with `--add`; prefix the text with `[x]` to mark the entry complete
 
 ```bash
 # File a bug that inherits the current job's repo/image
-metis issues create \
+hydra issues create \
   --current-issue-id i-root \
   --type bug --assignee swe --repo-name dourolabs/metis \
   --deps child-of:i-root --progress "Triaging logs" \
   "API times out when payload > 5MB"
 
 # Check everything blocked by a flaky test epic and emit JSON
-metis --output-format jsonl issues list --graph "**:blocked-on:i-flaky"
+hydra --output-format jsonl issues list --graph "**:blocked-on:i-flaky"
 
 # Move work in progress forward and capture notes
-metis issues update i-1234 --status closed --progress "Tests green, patch merged"
+hydra issues update i-1234 --status closed --progress "Tests green, patch merged"
 
 # Add a follow-up dependency and a todo item
-metis issues update i-1234 \
+hydra issues update i-1234 \
   --deps child-of:i-parent \
   --deps blocked-on:i-migration
-metis issues todo i-1234 --add "[x] Document migration steps"
+hydra issues todo i-1234 --add "[x] Document migration steps"
 
 # Replace todos after a grooming session
-metis issues todo i-1234 --replace "Cut RC branch","Invite QA","Prep launch blog"
+hydra issues todo i-1234 --replace "Cut RC branch","Invite QA","Prep launch blog"
 
 # Inspect an issue’s relationships and activity log verbosely
-metis issues describe i-1234 --verbose
+hydra issues describe i-1234 --verbose
 ```
