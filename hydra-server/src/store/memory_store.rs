@@ -6538,7 +6538,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
@@ -6692,7 +6691,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         query.limit = Some(2);

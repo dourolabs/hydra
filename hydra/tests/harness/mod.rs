@@ -21,16 +21,20 @@ use hydra_common::{
     IssueId, PatchId, RepoName, SessionId,
 };
 use hydra_server::{
-    app::{AppState, ServiceState},
+    app::{
+        AppState, ServiceState,
+        event_bus::{MutationPayload, ServerEvent},
+    },
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
-        spawner::SharedSpawnAttempts,
-        AgentQueue, Spawner,
     },
     domain::actors::{Actor, ActorRef},
     policy::{
+        Automation,
+        automations::spawn_sessions::SpawnSessionsAutomation,
         config::{PolicyConfig, PolicyEntry, PolicyList},
+        context::AutomationContext,
         integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
     },
@@ -178,9 +182,10 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
-    /// In-memory spawn attempt tracking shared across `step_spawner` calls,
-    /// matching the behavior of the old `RunSpawnersWorker`.
-    spawn_attempts: Arc<tokio::sync::RwLock<HashMap<String, SharedSpawnAttempts>>>,
+    /// Shared `SpawnSessionsAutomation` instance that maintains spawn attempt
+    /// tracking across `step_spawner` calls, exercising the same code path
+    /// used in production by the event-driven automation.
+    spawn_sessions: SpawnSessionsAutomation,
 }
 
 impl TestHarness {
@@ -330,14 +335,13 @@ impl TestHarness {
 
     // ── Background worker stepping ──────────────────────────────────
 
-    /// Run one iteration of the spawner logic.
+    /// Run one iteration of the spawner logic via the `SpawnSessionsAutomation`.
     ///
     /// Finds ready issues, creates tasks for them, and returns the IDs of
     /// newly created tasks. Returns an empty vec when no issues are ready.
     ///
-    /// Uses `AgentQueue::spawn()` directly (the same logic underlying the
-    /// `spawn_sessions` automation) so that tests can trigger spawning
-    /// synchronously without needing the event-driven automation.
+    /// Delegates to the same `SpawnSessionsAutomation` used in production,
+    /// ensuring tests exercise the real event-driven spawning code path.
     pub async fn step_spawner(&self) -> Result<Vec<SessionId>> {
         let before: HashSet<SessionId> = self
             .state
@@ -347,46 +351,44 @@ impl TestHarness {
             .into_iter()
             .collect();
 
-        let agents = self
-            .state
-            .list_agents()
+        // Build a synthetic SessionUpdated event to trigger a full scan of
+        // all issues (the automation does a full scan for non-issue events).
+        let dummy_session = hydra_server::domain::sessions::Session::new(
+            String::new(),
+            hydra_server::domain::sessions::BundleSpec::None,
+            None,
+            hydra_server::domain::users::Username::from("step_spawner"),
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            hydra_server::domain::task_status::Status::Complete,
+            None,
+            None,
+        );
+        let event = ServerEvent::SessionUpdated {
+            seq: 0,
+            session_id: SessionId::new(),
+            version: 1,
+            timestamp: chrono::Utc::now(),
+            payload: Arc::new(MutationPayload::Session {
+                old: Some(dummy_session.clone()),
+                new: dummy_session,
+                actor: ActorRef::test(),
+            }),
+        };
+
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &self.state,
+            store: self.state.store(),
+        };
+        self.spawn_sessions
+            .execute(&ctx)
             .await
-            .context("failed to list agents in step_spawner")?;
-
-        let mut queues = Vec::with_capacity(agents.len());
-        {
-            let mut attempts_map = self.spawn_attempts.write().await;
-            for agent in agents {
-                let shared = attempts_map
-                    .entry(agent.name.clone())
-                    .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(HashMap::new())))
-                    .clone();
-                queues.push(AgentQueue::new(agent, shared));
-            }
-        }
-
-        for queue in &queues {
-            match queue.spawn(&self.state).await {
-                Ok(tasks) => {
-                    for task in tasks {
-                        self.state
-                            .add_session(
-                                task,
-                                chrono::Utc::now(),
-                                ActorRef::System {
-                                    worker_name: "step_spawner".into(),
-                                    on_behalf_of: None,
-                                },
-                            )
-                            .await
-                            .context("failed to add session in step_spawner")?;
-                    }
-                }
-                Err(err) => {
-                    anyhow::bail!("step_spawner failed: {err}");
-                }
-            }
-        }
+            .map_err(|e| anyhow::anyhow!("step_spawner automation failed: {e}"))?;
 
         let after = self
             .state
@@ -753,7 +755,8 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
-            spawn_attempts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            spawn_sessions: SpawnSessionsAutomation::new(None)
+                .expect("SpawnSessionsAutomation::new should not fail"),
         })
     }
 }

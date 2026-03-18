@@ -22,6 +22,8 @@ use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_M
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+#[cfg(test)]
+use std::collections::HashSet;
 use hydra_common::{
     DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
@@ -7230,7 +7232,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
@@ -7365,7 +7366,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         query.limit = Some(2);
