@@ -222,7 +222,6 @@ export function DashboardPage() {
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
-          allIssues={issues}
           activeFilter={filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
