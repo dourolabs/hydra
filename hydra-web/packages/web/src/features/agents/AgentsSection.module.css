@@ -160,6 +160,25 @@
   accent-color: var(--color-accent);
 }
 
+/* Secrets selector */
+.secretsField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.secretsFieldLabel {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.secretsCheckboxList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 /* Field-level error */
 .fieldError {
   color: var(--color-danger);

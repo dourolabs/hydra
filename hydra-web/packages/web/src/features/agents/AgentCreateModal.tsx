@@ -4,6 +4,7 @@ import { Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
+import { SecretsSelector } from "./SecretsSelector";
 import styles from "./AgentsSection.module.css";
 
 interface AgentCreateModalProps {
@@ -21,6 +22,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [maxTries, setMaxTries] = useState("3");
   const [maxSimultaneous, setMaxSimultaneous] = useState("1");
   const [isAssignmentAgent, setIsAssignmentAgent] = useState(false);
+  const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
 
   const resetForm = useCallback(() => {
     setName("");
@@ -28,6 +30,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setMaxTries("3");
     setMaxSimultaneous("1");
     setIsAssignmentAgent(false);
+    setSelectedSecrets([]);
   }, []);
 
   const mutation = useMutation({
@@ -65,9 +68,9 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
-      secrets: [],
+      secrets: selectedSecrets,
     });
-  }, [name, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isValid, mutation]);
+  }, [name, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -132,6 +135,10 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
             agent. Only one agent can be the assignment agent at a time.
           </p>
         )}
+        <SecretsSelector
+          selected={selectedSecrets}
+          onChange={setSelectedSecrets}
+        />
         <div className={styles.formActions}>
           <Button
             variant="secondary"

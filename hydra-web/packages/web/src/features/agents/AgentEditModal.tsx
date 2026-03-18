@@ -4,6 +4,7 @@ import { Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
+import { SecretsSelector } from "./SecretsSelector";
 import styles from "./AgentsSection.module.css";
 
 interface AgentEditModalProps {
@@ -29,6 +30,9 @@ export function AgentEditModal({
   );
   const [isAssignmentAgent, setIsAssignmentAgent] = useState(
     agent.is_assignment_agent,
+  );
+  const [selectedSecrets, setSelectedSecrets] = useState<string[]>(
+    agent.secrets ?? [],
   );
 
   const mutation = useMutation({
@@ -64,9 +68,9 @@ export function AgentEditModal({
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
-      secrets: agent.secrets,
+      secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -123,6 +127,10 @@ export function AgentEditModal({
             agent. Only one agent can be the assignment agent at a time.
           </p>
         )}
+        <SecretsSelector
+          selected={selectedSecrets}
+          onChange={setSelectedSecrets}
+        />
         <div className={styles.formActions}>
           <Button
             variant="secondary"

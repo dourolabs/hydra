@@ -74,6 +74,16 @@ export function AgentRow({ agent, onEdit, onDelete }: AgentRowProps) {
               {agent.is_assignment_agent ? "Yes" : "No"}
             </span>
           </div>
+          <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>Secrets</span>
+            <span className={styles.detailValue}>
+              {agent.secrets && agent.secrets.length > 0 ? (
+                agent.secrets.join(", ")
+              ) : (
+                <span className={styles.dimText}>None</span>
+              )}
+            </span>
+          </div>
         </div>
       )}
     </div>
