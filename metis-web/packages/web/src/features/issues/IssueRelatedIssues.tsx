@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Spinner } from "@metis/ui";
-import type { IssueSummaryRecord } from "@metis/api";
+import { Spinner } from "@hydra/ui";
+import type { IssueSummaryRecord } from "@hydra/api";
 import { ItemRow } from "../dashboard/ItemRow";
 import type { WorkItem } from "../dashboard/workItemTypes";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";

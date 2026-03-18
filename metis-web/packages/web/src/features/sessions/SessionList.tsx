@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Badge, Spinner } from "@metis/ui";
+import { Badge, Spinner } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
 import { useSessionsByIssue } from "./useSessionsByIssue";

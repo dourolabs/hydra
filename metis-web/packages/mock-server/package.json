@@ -1,5 +1,5 @@
 {
-  "name": "@metis/mock-server",
+  "name": "@hydra/mock-server",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
   "dependencies": {
     "hono": "^4.11.0",
     "@hono/node-server": "^1.19.0",
-    "@metis/api": "workspace:*"
+    "@hydra/api": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

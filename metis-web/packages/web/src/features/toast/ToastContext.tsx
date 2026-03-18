@@ -1,6 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { Toast } from "@metis/ui";
-import type { ToastVariant } from "@metis/ui";
+import { Toast } from "@hydra/ui";
+import type { ToastVariant } from "@hydra/ui";
 import { ToastContext } from "./toast-state";
 import styles from "./ToastContainer.module.css";
 

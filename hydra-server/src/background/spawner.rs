@@ -12,11 +12,11 @@ use crate::{
     },
     store::{Session, Status, StoreError},
 };
-use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
 use hydra_common::RepoName;
+use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -432,7 +432,11 @@ pub(crate) async fn agent_task_state(
         pending_tasks: 0,
     };
     let mut query = SearchSessionsQuery::default();
-    query.status = vec![Status::Created.into(), Status::Pending.into(), Status::Running.into()];
+    query.status = vec![
+        Status::Created.into(),
+        Status::Pending.into(),
+        Status::Running.into(),
+    ];
     let sessions = state.list_sessions_with_query(&query).await?;
 
     for (_session_id, versioned_session) in sessions {

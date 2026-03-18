@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { PatchSummaryRecord } from "@metis/api";
+import type { PatchSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 export function usePatchesByIssue(patchIds: string[]) {

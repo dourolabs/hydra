@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, Input } from "@metis/ui";
+import { Button, Input } from "@hydra/ui";
 import styles from "./RepositoriesSection.module.css";
 
 interface PatchWorkflowSectionProps {

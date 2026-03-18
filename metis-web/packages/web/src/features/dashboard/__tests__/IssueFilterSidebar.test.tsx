@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
-import type { IssueSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "../computeIssueProgress";
 
 // --- Mocks ---
 
-vi.mock("@metis/ui", () => ({
+vi.mock("@hydra/ui", () => ({
   useKeyboardClick: (handler: () => void) => ({
     tabIndex: 0,
     role: "button",

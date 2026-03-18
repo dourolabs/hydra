@@ -15,7 +15,7 @@ import type {
   SetTodoItemStatusRequest,
   TodoListResponse,
   TodoItem,
-} from "@metis/api";
+} from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 
 const COLLECTION = "issues";

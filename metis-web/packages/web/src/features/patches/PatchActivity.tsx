@@ -1,5 +1,5 @@
-import { Badge } from "@metis/ui";
-import type { PatchVersionRecord } from "@metis/api";
+import { Badge } from "@hydra/ui";
+import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatchVersions } from "./usePatchVersions";
 import { ActivityTimeline } from "../activity/ActivityTimeline";

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, Button, Spinner, Tabs } from "@metis/ui";
+import { Badge, Button, Spinner, Tabs } from "@hydra/ui";
 import { normalizeSessionStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
 import { useSession } from "../features/sessions/useSession";

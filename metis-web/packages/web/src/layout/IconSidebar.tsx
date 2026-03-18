@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { Avatar, Tooltip } from "@metis/ui";
+import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import type { SSEConnectionState } from "../hooks/useSSE";

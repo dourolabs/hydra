@@ -8,7 +8,7 @@ import type {
   UpsertRepositoryResponse,
   ListRepositoriesResponse,
   DeleteRepositoryResponse,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "repositories";
 

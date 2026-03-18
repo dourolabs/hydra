@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { IssueSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@hydra/api";
 import { computeBlockedStatus } from "./blockedStatus";
 
 function makeRecord(

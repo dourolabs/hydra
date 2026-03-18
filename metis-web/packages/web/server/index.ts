@@ -26,10 +26,10 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 // Auth routes
 app.route("/auth", auth);
 
-// SSE relay: /api/v1/events -> metis-server /v1/events (before generic proxy)
+// SSE relay: /api/v1/events -> hydra-server /v1/events (before generic proxy)
 app.route("/api/v1", sse);
 
-// API proxy: /api/v1/* -> metis-server /v1/*
+// API proxy: /api/v1/* -> hydra-server /v1/*
 app.route("/api/v1", proxy);
 
 // Serve static assets from the Vite build output in production

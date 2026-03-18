@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { ToastVariant } from "@metis/ui";
+import type { ToastVariant } from "@hydra/ui";
 
 export interface ToastContextValue {
   addToast: (message: string, variant?: ToastVariant, duration?: number) => void;

@@ -1,6 +1,6 @@
 {
-  "name": "Metis",
-  "short_name": "Metis",
+  "name": "Hydra",
+  "short_name": "Hydra",
   "description": "AI-powered software engineering task management",
   "start_url": "/",
   "display": "standalone",

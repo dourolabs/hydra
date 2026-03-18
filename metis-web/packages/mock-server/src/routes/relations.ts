@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Store } from "../store.js";
-import type { Issue } from "@metis/api";
+import type { Issue } from "@hydra/api";
 
 interface RelationResponse {
   source_id: string;

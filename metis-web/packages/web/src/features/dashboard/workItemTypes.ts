@@ -2,7 +2,7 @@ import type {
   IssueSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
-} from "@metis/api";
+} from "@hydra/api";
 
 export type WorkItem =
   | {

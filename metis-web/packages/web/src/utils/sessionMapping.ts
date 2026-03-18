@@ -1,5 +1,5 @@
-import type { SessionSummary } from "@metis/ui";
-import type { SessionSummaryRecord } from "@metis/api";
+import type { SessionSummary } from "@hydra/ui";
+import type { SessionSummaryRecord } from "@hydra/api";
 
 export function toSessionSummary(record: SessionSummaryRecord): SessionSummary {
   const status = record.session.status === "unknown" ? "created" : record.session.status;

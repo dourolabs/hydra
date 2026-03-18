@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Button, Input } from "@metis/ui";
+import { Button, Input } from "@hydra/ui";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
 
@@ -28,11 +28,11 @@ export function LoginForm() {
     <form className={styles.form} onSubmit={handleSubmit}>
       <Input
         data-testid="token-input"
-        label="Metis Token"
+        label="Hydra Token"
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
-        placeholder="Enter your metis token"
+        placeholder="Enter your hydra token"
         error={error ?? undefined}
         autoFocus
       />

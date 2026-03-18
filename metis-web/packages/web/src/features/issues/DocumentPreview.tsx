@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { MarkdownViewer, Spinner } from "@metis/ui";
+import { MarkdownViewer, Spinner } from "@hydra/ui";
 import { useDocumentByPath } from "../documents/useDocumentByPath";
 import styles from "./DocumentPreview.module.css";
 

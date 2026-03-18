@@ -1,4 +1,4 @@
-import type { ActorRef } from "@metis/api";
+import type { ActorRef } from "@hydra/api";
 
 /** Extract a human-readable display name from an ActorRef. */
 export function actorDisplayName(actor: ActorRef): string {

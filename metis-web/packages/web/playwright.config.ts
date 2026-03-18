@@ -30,21 +30,21 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "pnpm --filter @metis/mock-server dev",
+      command: "pnpm --filter @hydra/mock-server dev",
       port: 8080,
       reuseExistingServer: true,
       cwd: "../..",
     },
     {
       command:
-        "METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @metis/web dev:server",
+        "HYDRA_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server",
       port: 4000,
       reuseExistingServer: true,
       cwd: "../..",
     },
     {
       command:
-        "pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web dev",
+        "pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web dev",
       port: 3000,
       reuseExistingServer: true,
       cwd: "../..",

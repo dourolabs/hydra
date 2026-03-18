@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input } from "@metis/ui";
+import { Button, Input } from "@hydra/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./SecretsSection.module.css";
@@ -11,8 +11,8 @@ function validateSecretName(name: string): string | null {
   if (!SECRET_NAME_PATTERN.test(name)) {
     return "Must be 1-128 chars, start with uppercase letter, only uppercase letters/digits/underscores";
   }
-  if (name.startsWith("METIS_")) {
-    return "Names starting with METIS_ are reserved";
+  if (name.startsWith("HYDRA_")) {
+    return "Names starting with HYDRA_ are reserved";
   }
   return null;
 }

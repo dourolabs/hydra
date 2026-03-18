@@ -7,7 +7,7 @@ import { logger } from "./logger.js";
 export const sse = new Hono();
 
 /**
- * SSE relay: GET /events -> metis-server GET /v1/events
+ * SSE relay: GET /events -> hydra-server GET /v1/events
  *
  * Dedicated handler for long-lived SSE connections that:
  * - Sets correct SSE headers (Content-Type, Cache-Control, Connection)
@@ -22,7 +22,7 @@ sse.get("/events", async (c) => {
   }
 
   const url = new URL(c.req.url);
-  const targetUrl = `${config.metisServerUrl}/v1/events${url.search}`;
+  const targetUrl = `${config.hydraServerUrl}/v1/events${url.search}`;
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,

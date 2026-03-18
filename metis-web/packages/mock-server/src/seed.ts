@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
-import type { Issue, Session, Patch, Document, Repository, AgentRecord } from "@metis/api";
+import type { Issue, Session, Patch, Document, Repository, AgentRecord } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 
 interface LabelData {

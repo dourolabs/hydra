@@ -1,4 +1,4 @@
-import type { SseEventType } from "@metis/api";
+import type { SseEventType } from "@hydra/api";
 
 /** Extracts the entity prefix P from SSE event type strings of the form `P_Suffix`. */
 type SsePrefix<E extends string, Suffix extends string> = E extends `${infer P}_${Suffix}`

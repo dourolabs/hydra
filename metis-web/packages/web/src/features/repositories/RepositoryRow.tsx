@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Button } from "@metis/ui";
-import type { RepositoryRecord } from "@metis/api";
+import { Button } from "@hydra/ui";
+import type { RepositoryRecord } from "@hydra/api";
 import styles from "./RepositoriesSection.module.css";
 
 interface RepositoryRowProps {

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { SessionSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./workItemTypes";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";

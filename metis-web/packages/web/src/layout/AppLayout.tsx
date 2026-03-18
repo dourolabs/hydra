@@ -1,5 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { Spinner } from "@metis/ui";
+import { Spinner } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
 import { IconSidebar } from "./IconSidebar";
