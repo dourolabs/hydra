@@ -196,6 +196,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
         task_state: &AgentTaskState,
+        cached_prompt: &mut Option<String>,
     ) -> anyhow::Result<Option<Session>> {
         // Assignment check.
         if self.agent.is_assignment_agent {
@@ -245,18 +246,23 @@ impl AgentQueue {
             return Ok(None);
         }
 
-        // Resolve prompt.
-        let prompt = state
-            .resolve_agent_prompt(&self.agent.prompt_path)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to fetch prompt for agent '{}' at path '{}'",
-                    self.agent.name, self.agent.prompt_path
-                )
-            })?;
+        // Resolve prompt (lazily cached across calls).
+        if cached_prompt.is_none() {
+            *cached_prompt = Some(
+                state
+                    .resolve_agent_prompt(&self.agent.prompt_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to fetch prompt for agent '{}' at path '{}'",
+                            self.agent.name, self.agent.prompt_path
+                        )
+                    })?,
+            );
+        }
+        let prompt = cached_prompt.as_deref().unwrap();
 
-        let maybe_task = self.build_task(state, issue_id, issue, &prompt).await?;
+        let maybe_task = self.build_task(state, issue_id, issue, prompt).await?;
         let Some(task) = maybe_task else {
             return Ok(None);
         };
