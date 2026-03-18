@@ -655,8 +655,6 @@ impl Default for GithubPollerConfig {
 pub struct SchedulerSection {
     #[serde(default = "default_monitor_running_scheduler")]
     pub monitor_running_sessions: WorkerSchedulerConfig,
-    #[serde(default = "default_run_spawners_scheduler")]
-    pub run_spawners: WorkerSchedulerConfig,
     #[serde(default = "default_github_poller_scheduler")]
     pub github_poller: WorkerSchedulerConfig,
     #[serde(default = "default_cleanup_branches_scheduler")]
@@ -667,7 +665,6 @@ impl Default for SchedulerSection {
     fn default() -> Self {
         Self {
             monitor_running_sessions: default_monitor_running_scheduler(),
-            run_spawners: default_run_spawners_scheduler(),
             github_poller: default_github_poller_scheduler(),
             cleanup_branches: default_cleanup_branches_scheduler(),
         }
@@ -771,13 +768,6 @@ fn default_monitor_running_scheduler() -> WorkerSchedulerConfig {
     }
 }
 
-fn default_run_spawners_scheduler() -> WorkerSchedulerConfig {
-    WorkerSchedulerConfig {
-        interval_secs: 3,
-        ..Default::default()
-    }
-}
-
 fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
     WorkerSchedulerConfig {
         interval_secs: default_github_poll_interval_secs(),
@@ -828,7 +818,6 @@ mod tests {
         let scheduler = background.scheduler;
 
         assert_eq!(scheduler.monitor_running_sessions.interval_secs, 5);
-        assert_eq!(scheduler.run_spawners.interval_secs, 3);
         assert_eq!(
             scheduler.github_poller.interval_secs,
             default_github_poll_interval_secs()
@@ -837,8 +826,6 @@ mod tests {
 
         assert_eq!(scheduler.monitor_running_sessions.initial_backoff_secs, 1);
         assert_eq!(scheduler.monitor_running_sessions.max_backoff_secs, 30);
-        assert_eq!(scheduler.run_spawners.initial_backoff_secs, 1);
-        assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
         assert_eq!(scheduler.cleanup_branches.initial_backoff_secs, 1);
