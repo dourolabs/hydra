@@ -1,14 +1,14 @@
 #!/bin/sh
-# Metis installer script
+# Hydra installer script
 #
-# Downloads the correct pre-built metis binary for the current OS and
-# architecture, verifies its SHA256 checksum, and installs it to ~/.metis/bin/.
+# Downloads the correct pre-built hydra binary for the current OS and
+# architecture, verifies its SHA256 checksum, and installs it to ~/.hydra/bin/.
 
 set -eu
 
 GITHUB_REPO="dourolabs/metis-releases"
-INSTALL_DIR="${HOME}/.metis/bin"
-BINARY_NAME="metis"
+INSTALL_DIR="${HOME}/.hydra/bin"
+BINARY_NAME="hydra"
 
 main() {
     parse_args "$@"
@@ -18,13 +18,13 @@ main() {
     local version
     version="${VERSION:-latest}"
 
-    printf "Installing metis (%s) for %s...\n" "${version}" "${TARGET}"
+    printf "Installing hydra (%s) for %s...\n" "${version}" "${TARGET}"
 
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "${tmp_dir}"' EXIT
 
-    local artifact_name="metis-single-player-${TARGET}"
+    local artifact_name="hydra-single-player-${TARGET}"
     local binary_url checksums_url
 
     if [ "${version}" = "latest" ]; then
@@ -51,9 +51,9 @@ main() {
 
     add_to_path
 
-    printf "\nmetis has been installed to %s/%s\n" "${INSTALL_DIR}" "${BINARY_NAME}"
+    printf "\nhydra has been installed to %s/%s\n" "${INSTALL_DIR}" "${BINARY_NAME}"
     printf "\nTo get started, run:\n"
-    printf "  metis server init\n"
+    printf "  hydra server init\n"
     printf "\nIf '%s' is not in your PATH, restart your shell or run:\n" "${INSTALL_DIR}"
     printf "  export PATH=\"%s:\$PATH\"\n" "${INSTALL_DIR}"
 }
@@ -195,7 +195,7 @@ add_to_path() {
             return
         fi
 
-        printf "\n# Added by metis installer\n%s\n" "${path_line}" >> "${shell_profile}"
+        printf "\n# Added by hydra installer\n%s\n" "${path_line}" >> "${shell_profile}"
         printf "Added %s to PATH in %s\n" "${INSTALL_DIR}" "${shell_profile}"
     fi
 }

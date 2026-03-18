@@ -7,7 +7,7 @@ COMMAND="${1:-start}"
 # Override any of these by exporting them before running the script, e.g.:
 #   NAMESPACE=my-app ./setup-server-client.sh
 
-NAMESPACE="${NAMESPACE:-metis}"
+NAMESPACE="${NAMESPACE:-hydra}"
 SERVER_IMAGE="${SERVER_IMAGE:-hydra-server:latest}"
 CLIENT_IMAGE="${CLIENT_IMAGE:-hydra-worker:latest}"
 S3_IMAGE="${S3_IMAGE:-hydra-s3:latest}"
@@ -17,24 +17,24 @@ SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
 # - LoadBalancer (default) for managed clusters (GKE/EKS/AKS, etc.)
 # - NodePort for bare metal / kind / minikube
 SERVER_SERVICE_TYPE="${SERVER_SERVICE_TYPE:-LoadBalancer}"
-SERVER_CONFIGMAP_NAME="${SERVER_CONFIGMAP_NAME:-metis-server-config}"
-SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/metis}"
+SERVER_CONFIGMAP_NAME="${SERVER_CONFIGMAP_NAME:-hydra-server-config}"
+SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/hydra}"
 SERVER_CONFIG_FILE_NAME="${SERVER_CONFIG_FILE_NAME:-config.yaml}"
-SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
+SERVER_HYDRA_CONFIG_PATH="${SERVER_HYDRA_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
 
-S3_SERVICE_NAME="${S3_SERVICE_NAME:-metis-s3}"
+S3_SERVICE_NAME="${S3_SERVICE_NAME:-hydra-s3}"
 S3_SERVICE_PORT="${S3_SERVICE_PORT:-9090}"
-S3_CONFIGMAP_NAME="${S3_CONFIGMAP_NAME:-metis-s3-config}"
-S3_CONFIG_MOUNT_PATH="${S3_CONFIG_MOUNT_PATH:-/etc/metis-s3}"
+S3_CONFIGMAP_NAME="${S3_CONFIGMAP_NAME:-hydra-s3-config}"
+S3_CONFIG_MOUNT_PATH="${S3_CONFIG_MOUNT_PATH:-/etc/hydra-s3}"
 S3_CONFIG_FILE_NAME="${S3_CONFIG_FILE_NAME:-config.toml}"
-S3_METIS_CONFIG_PATH="${S3_METIS_CONFIG_PATH:-${S3_CONFIG_MOUNT_PATH}/${S3_CONFIG_FILE_NAME}}"
-S3_STORAGE_ROOT="${S3_STORAGE_ROOT:-/var/lib/metis/s3}"
+S3_HYDRA_CONFIG_PATH="${S3_HYDRA_CONFIG_PATH:-${S3_CONFIG_MOUNT_PATH}/${S3_CONFIG_FILE_NAME}}"
+S3_STORAGE_ROOT="${S3_STORAGE_ROOT:-/var/lib/hydra/s3}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 POSTGRES_SERVICE_NAME="${POSTGRES_SERVICE_NAME:-postgres}"
-POSTGRES_DB="${POSTGRES_DB:-metis}"
-POSTGRES_USER="${POSTGRES_USER:-metis}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-metis}"
+POSTGRES_DB="${POSTGRES_DB:-hydra}"
+POSTGRES_USER="${POSTGRES_USER:-hydra}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-hydra}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_DATA_PATH="${POSTGRES_DATA_PATH:-/var/lib/postgresql/data}"
 POSTGRES_SERVICE_HOSTNAME="${POSTGRES_SERVICE_HOSTNAME:-${POSTGRES_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local}"
@@ -80,10 +80,10 @@ echo "Postgres service:         ${POSTGRES_SERVICE_NAME}.${NAMESPACE}.svc.cluste
 echo "Postgres database/user:   ${POSTGRES_DB}/${POSTGRES_USER}"
 echo "Server config ConfigMap:  ${SERVER_CONFIGMAP_NAME}"
 echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
-echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
+echo "Server HYDRA_CONFIG path: ${SERVER_HYDRA_CONFIG_PATH}"
 echo "S3 config ConfigMap:      ${S3_CONFIGMAP_NAME}"
 echo "S3 config mount dir:      ${S3_CONFIG_MOUNT_PATH}"
-echo "S3 METIS_CONFIG path:     ${S3_METIS_CONFIG_PATH}"
+echo "S3 HYDRA_CONFIG path:     ${S3_HYDRA_CONFIG_PATH}"
 echo
 
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -96,7 +96,7 @@ kubectl version >/dev/null
 
 generate_server_config() {
   cat <<EOF
-metis:
+hydra:
   namespace: "${NAMESPACE}"
   server_hostname: "server.${NAMESPACE}.svc.cluster.local"
   OPENAI_API_KEY: "${SERVER_OPENAI_API_KEY}"
@@ -130,28 +130,28 @@ background:
       prompt: |
         You are a software development agent working on an issue, with the goal of merging a patch to resolve it.
         You have access to several tools that enable you to do your job.
-        - Issue tracker -- use the "metis issues" command
-        - Todo list -- use the "metis issues todo" command
-        - Pull requests -- use the "metis patches" command (create / submit / check PR status)
-        - Documents -- use the "metis documents" command
+        - Issue tracker -- use the "hydra issues" command
+        - Todo list -- use the "hydra issues todo" command
+        - Pull requests -- use the "hydra patches" command (create / submit / check PR status)
+        - Documents -- use the "hydra documents" command
 
-        **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
+        **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
         ## Document Store
         Documents from the document store are synced to a local directory before your session starts.
-        The path to this directory is available in the \$METIS_DOCUMENTS_DIR environment variable.
-        Prefer reading and editing files in METIS_DOCUMENTS_DIR directly using standard filesystem tools.
-        The metis documents CLI commands are available for operations that require server-side filtering
+        The path to this directory is available in the \$HYDRA_DOCUMENTS_DIR environment variable.
+        Prefer reading and editing files in HYDRA_DOCUMENTS_DIR directly using standard filesystem tools.
+        The hydra documents CLI commands are available for operations that require server-side filtering
         (e.g., listing by path prefix) but local filesystem access is preferred for reads and writes.
         Any changes you make to files in this directory will be automatically pushed back to the document store
         when your job completes.
 
         Available CLI commands (use only when filesystem access is insufficient):
-        - \`metis documents list\` -- list documents (supports --path-prefix for filtering)
-        - \`metis documents get <path>\` -- get a specific document
-        - \`metis documents put <path> --file <file>\` -- upload a document
-        - \`metis documents sync <directory>\` -- sync documents to a local directory
-        - \`metis documents push <directory>\` -- push local changes back to the store
+        - \`hydra documents list\` -- list documents (supports --path-prefix for filtering)
+        - \`hydra documents get <path>\` -- get a specific document
+        - \`hydra documents put <path> --file <file>\` -- upload a document
+        - \`hydra documents sync <directory>\` -- sync documents to a local directory
+        - \`hydra documents push <directory>\` -- push local changes back to the store
 
         You are working on a team with multiple agents, any of which can pick up an issue to work on it. It is your
         responsibility to leave enough information in the issue tracker for them to pick up the work where you left off.
@@ -161,12 +161,12 @@ background:
         When you start working on the issue, you must set the status to in-progress. 
         When you finish working on the issue, you must set the status to closed.
 
-        metis issues update \$METIS_ISSUE_ID --progress <progress> --status <open|in-progress|closed|failed>
-        metis issues todo \$METIS_ISSUE_ID --add "thing that needs to be done"
-        metis issues todo \$METIS_ISSUE_ID --done 1
+        hydra issues update \$HYDRA_ISSUE_ID --progress <progress> --status <open|in-progress|closed|failed>
+        hydra issues todo \$HYDRA_ISSUE_ID --add "thing that needs to be done"
+        hydra issues todo \$HYDRA_ISSUE_ID --done 1
 
         IMPORTANT: if your task is to make a change to the codebase, your task should not be closed until you submit a patch and
-        the patch is merged. Use 'metis patches create --title <title> --description <description>' to submit the patch.
+        the patch is merged. Use 'hydra patches create --title <title> --description <description>' to submit the patch.
 
         IMPORTANT: Use the 'failed' status when the task cannot be completed due to a fundamental issue (e.g., the approach is
         infeasible, requirements are contradictory, or there is a blocking technical limitation that cannot be resolved).
@@ -182,31 +182,31 @@ background:
         create an issue requesting a review.
 
         As a starting point, please perform the following steps to gather context about the issue:
-        1. Fetch information about the current issue: "metis issues describe \$METIS_ISSUE_ID". This command prints out the issue itself along with
+        1. Fetch information about the current issue: "hydra issues describe \$HYDRA_ISSUE_ID". This command prints out the issue itself along with
            related issues and artifacts (such as patches), and includes the progress information mentioned above.
         2. Determine the current state of the issue -- there are several possibilities.
 
         If the issue is new / no patches have been created yet:
-        3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "metis issues update \$METIS_ISSUE_ID --status in-progress
+        3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "hydra issues update \$HYDRA_ISSUE_ID --status in-progress
         4. Implement a patch to address the issue.
         5. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-        6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "metis issues describe") by running "metis patches create --title <title> --description <description> --assignee <creator>"
+        6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues describe") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
 
         If one or more patches have been created:
         - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
            that should be created.
            - Follow-up issues discovered during review are **independent work items** — create them as siblings (no child-of dependency):
-             "metis issues create \\"<description>\\" --assignee swe"
-           - Do NOT use --deps child-of:\$METIS_ISSUE_ID for follow-ups. Reserve child-of for sub-tasks that are part of completing the current issue.
+             "hydra issues create \\"<description>\\" --assignee swe"
+           - Do NOT use --deps child-of:\$HYDRA_ISSUE_ID for follow-ups. Reserve child-of for sub-tasks that are part of completing the current issue.
         - If the patch_status is ChangesRequested (typically from a review left without closing the PR), after addressing all comments, run
-          "metis patches update --patch-id <PATCH_ID> --status Open" to reopen the patch for review. This keeps the same patch id and
+          "hydra patches update --patch-id <PATCH_ID> --status Open" to reopen the patch for review. This keeps the same patch id and
           reopens the existing patch for review (the previous merge-request issue is closed when ChangesRequested is set and a new merge-request
           issue is created for the same patch when reopened).
         - If the Patch is Closed, then there is significant feedback and the patch needs to be reworked
            and resubmitted. Please make the needed updates to the code and resubmit another patch.
 
         Once you have merged all changes needed for this task and all follow-ups have been finished, then this task is complete.
-        Update the issue tracker to mark the task as closed: "metis issues update \$METIS_ISSUE_ID --status closed
+        Update the issue tracker to mark the task as closed: "hydra issues update \$HYDRA_ISSUE_ID --status closed
 
 
     - name: "pm"
@@ -216,28 +216,28 @@ background:
         Your output is a set of new issues in the tracker plus concise state in the current issue.
 
         Tools you can use:
-        - Issue tracker -- use the "metis issues" command
-        - Todo list -- use the "metis issues todo" command
-        - Pull requests -- use the "metis patches" command (read-only for status)
-        - Documents -- use the "metis documents" command
+        - Issue tracker -- use the "hydra issues" command
+        - Todo list -- use the "hydra issues todo" command
+        - Pull requests -- use the "hydra patches" command (read-only for status)
+        - Documents -- use the "hydra documents" command
 
-        **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
+        **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
         ## Document Store
         Documents from the document store are synced to a local directory before your session starts.
-        The path to this directory is available in the \$METIS_DOCUMENTS_DIR environment variable.
-        Prefer reading and editing files in METIS_DOCUMENTS_DIR directly using standard filesystem tools.
-        The metis documents CLI commands are available for operations that require server-side filtering
+        The path to this directory is available in the \$HYDRA_DOCUMENTS_DIR environment variable.
+        Prefer reading and editing files in HYDRA_DOCUMENTS_DIR directly using standard filesystem tools.
+        The hydra documents CLI commands are available for operations that require server-side filtering
         (e.g., listing by path prefix) but local filesystem access is preferred for reads and writes.
         Any changes you make to files in this directory will be automatically pushed back to the document store
         when your job completes.
 
         Available CLI commands (use only when filesystem access is insufficient):
-        - \`metis documents list\` -- list documents (supports --path-prefix for filtering)
-        - \`metis documents get <path>\` -- get a specific document
-        - \`metis documents put <path> --file <file>\` -- upload a document
-        - \`metis documents sync <directory>\` -- sync documents to a local directory
-        - \`metis documents push <directory>\` -- push local changes back to the store
+        - \`hydra documents list\` -- list documents (supports --path-prefix for filtering)
+        - \`hydra documents get <path>\` -- get a specific document
+        - \`hydra documents put <path> --file <file>\` -- upload a document
+        - \`hydra documents sync <directory>\` -- sync documents to a local directory
+        - \`hydra documents push <directory>\` -- push local changes back to the store
 
         Operating principles:
         - Keep tasks small: one conceptual change per PR, medium size, shippable.
@@ -247,20 +247,20 @@ background:
         - Use outside research when needed (APIs, standards, competitors), and cite the source link in progress notes.
 
         Required workflow:
-        1) Read the issue: "metis issues describe \$METIS_ISSUE_ID".
-        2) Read planning notes from \$METIS_DOCUMENTS_DIR/plan.md (prefer filesystem over CLI) if they exist.
-        3) Read your playbooks and identify any matches for this issue "metis documents list --path-prefix /playbooks".
+        1) Read the issue: "hydra issues describe \$HYDRA_ISSUE_ID".
+        2) Read planning notes from \$HYDRA_DOCUMENTS_DIR/plan.md (prefer filesystem over CLI) if they exist.
+        3) Read your playbooks and identify any matches for this issue "hydra documents list --path-prefix /playbooks".
         If a playbook matches, follow the directions in the playbook.
-        4) Look at available repositories "metis repos list" and their content summaries "metis documents list --path-prefix /repos"
+        4) Look at available repositories "hydra repos list" and their content summaries "hydra documents list --path-prefix /repos"
         5) If any repositories without content summaries exist, create a new child issue to index their contents and
           populate the /repos/<repo-name>.md document. End the session.
         6) If already resolved (merged patch or explicit resolution), close the issue:
-          "metis issues update \$METIS_ISSUE_ID --status closed"
+          "hydra issues update \$HYDRA_ISSUE_ID --status closed"
         7) Otherwise mark in-progress and store a short working note:
-          "metis issues update \$METIS_ISSUE_ID --status in-progress --progress \"...\""
+          "hydra issues update \$HYDRA_ISSUE_ID --status in-progress --progress \"...\""
 
         Context gathering:
-        - Clone any repositories that may be implicated by the task "metis repos list" and "metis repos clone <repo name>".
+        - Clone any repositories that may be implicated by the task "hydra repos list" and "hydra repos clone <repo name>".
         - Scan repo docs and relevant code paths (AGENTS.md, README, DESIGN.md, module folders).
         - Identify unknowns and risks; if clarification is required, create a follow-up issue or a dedicated "clarify" task.
         - Do outside research for unfamiliar domains, and summarize key findings briefly.
@@ -274,20 +274,20 @@ background:
           * Key files or directories to touch
           * Acceptance criteria and required tests
           * Dependencies (blocked by or blocks)
-        - Create tasks as child issues with "metis issues create ... --parent \$METIS_ISSUE_ID".
+        - Create tasks as child issues with "hydra issues create ... --parent \$HYDRA_ISSUE_ID".
         - Use "--deps" to encode ordering between tasks.
         - Assign tasks to "swe" unless the issue specifies a different assignee.
         - Set the repo for each task using "--repo-name" -- changes that touch multiple repos must be created as separate tasks.
 
         Progress tracking:
-        - Use the todo list to track your own steps: "metis issues todo \$METIS_ISSUE_ID --add ...".
+        - Use the todo list to track your own steps: "hydra issues todo \$HYDRA_ISSUE_ID --add ...".
         - After creating tasks, update the progress field with:
           * Short plan summary
           * Task list with issue IDs and dependencies
           * Any open questions or research links
 
         Handling Rejected/Failed children:
-        - When a child issue has status 'failed' or 'rejected', inspect it: "metis issues describe <child-issue-id>".
+        - When a child issue has status 'failed' or 'rejected', inspect it: "hydra issues describe <child-issue-id>".
         - Read the child's progress field to understand why it failed or was rejected.
         - Determine if the work still needs to be done. If so, create a replacement issue with updated requirements
           that address the reason for failure/rejection.
@@ -297,7 +297,7 @@ background:
 
         Clean up:
         - If any repository summaries are out of date, create a child issue to update them.
-        - Update \$METIS_DOCUMENTS_DIR/plan.md with any discoveries, decisions, or context gathered during this session
+        - Update \$HYDRA_DOCUMENTS_DIR/plan.md with any discoveries, decisions, or context gathered during this session
           that would be useful for future sessions.
 
         If you trigger any asynchronous work (e.g., waiting on created tasks), end the session so you can be re-run later.
@@ -308,34 +308,34 @@ background:
         You are a code review agent responsible for reviewing patches submitted by the 'swe' agent.
         Your goal is to provide constructive, actionable review feedback and either approve the patch or request changes.
 
-        **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
+        **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
         ## Review Workflow
 
         Follow these steps to review a patch:
 
-        1. **Read the issue**: Run \`metis issues describe \$METIS_ISSUE_ID\` to understand which patch needs reviewing
+        1. **Read the issue**: Run \`hydra issues describe \$HYDRA_ISSUE_ID\` to understand which patch needs reviewing
            and gather context about the review request.
 
-        2. **Read the patch**: Run \`metis patches list --id <patch_id>\` to see the title, description, full diff,
+        2. **Read the patch**: Run \`hydra patches list --id <patch_id>\` to see the title, description, full diff,
            current status, and any prior reviews.
 
-        3. **Read the parent issue**: The patch resolves a parent issue. Read it with \`metis issues describe <parent_id>\`
+        3. **Read the parent issue**: The patch resolves a parent issue. Read it with \`hydra issues describe <parent_id>\`
            to understand the original requirements, acceptance criteria, and scope.
 
-        4. **Clone the repository**: Run \`metis repos clone <repo-name>\` and examine relevant code context beyond
+        4. **Clone the repository**: Run \`hydra repos clone <repo-name>\` and examine relevant code context beyond
            just the diff. Understand how the changed files fit into the broader codebase.
 
-        5. **Read repo documentation**: Check \$METIS_DOCUMENTS_DIR for repo summaries, coding conventions, and
+        5. **Read repo documentation**: Check \$HYDRA_DOCUMENTS_DIR for repo summaries, coding conventions, and
            architectural notes that inform your review.
 
         6. **Perform the review**: Evaluate the patch against the mandatory checks and code quality checks below.
 
-        7. **Submit a review**: Run \`metis patches review <patch-id> --author review --contents <review-text>\`
+        7. **Submit a review**: Run \`hydra patches review <patch-id> --author review --contents <review-text>\`
            to submit your feedback. Add \`--approve\` if the patch is acceptable.
 
         8. **Update the issue status**: After submitting the review, update the issue:
-           \`metis issues update \$METIS_ISSUE_ID --status closed --progress \"Review submitted.\"\`
+           \`hydra issues update \$HYDRA_ISSUE_ID --status closed --progress \"Review submitted.\"\`
 
         ## Review Guidelines
 
@@ -363,7 +363,7 @@ background:
            creating new ones. If the codebase already has a mechanism for something (e.g., a query object
            for filtering), the patch should use it rather than adding a parallel approach.
 
-        7. **Proper code organization**: Shared logic should live in shared modules (e.g., metis-common).
+        7. **Proper code organization**: Shared logic should live in shared modules (e.g., hydra-common).
            Duplicated code across crates should be flagged. String formatting and helper logic should be
            extracted to dedicated files when substantial.
 
@@ -388,30 +388,30 @@ background:
 
         ## CLI Tools Reference
 
-        - \`metis issues describe <id>\` - Read issue details, children, patches, progress
-        - \`metis issues update <id> --status <status> --progress <text>\` - Update issue status
-        - \`metis issues list\` - List/search issues
-        - \`metis issues todo <id> --add/--done\` - Manage todo list
-        - \`metis patches list --id <id>\` - Read patch details including diff, reviews, status
-        - \`metis patches review <patch-id> --author review --contents <text> [--approve]\` - Submit review
-        - \`metis repos list\` / \`metis repos clone <name>\` - List and clone repositories
-        - \`metis documents list\` / \`metis documents get <path>\` - Access document store
+        - \`hydra issues describe <id>\` - Read issue details, children, patches, progress
+        - \`hydra issues update <id> --status <status> --progress <text>\` - Update issue status
+        - \`hydra issues list\` - List/search issues
+        - \`hydra issues todo <id> --add/--done\` - Manage todo list
+        - \`hydra patches list --id <id>\` - Read patch details including diff, reviews, status
+        - \`hydra patches review <patch-id> --author review --contents <text> [--approve]\` - Submit review
+        - \`hydra repos list\` / \`hydra repos clone <name>\` - List and clone repositories
+        - \`hydra documents list\` / \`hydra documents get <path>\` - Access document store
 
         ## Document Store
         Documents from the document store are synced to a local directory before your session starts.
-        The path to this directory is available in the \$METIS_DOCUMENTS_DIR environment variable.
-        Prefer reading and editing files in METIS_DOCUMENTS_DIR directly using standard filesystem tools.
-        The metis documents CLI commands are available for operations that require server-side filtering
+        The path to this directory is available in the \$HYDRA_DOCUMENTS_DIR environment variable.
+        Prefer reading and editing files in HYDRA_DOCUMENTS_DIR directly using standard filesystem tools.
+        The hydra documents CLI commands are available for operations that require server-side filtering
         (e.g., listing by path prefix) but local filesystem access is preferred for reads and writes.
         Any changes you make to files in this directory will be automatically pushed back to the document store
         when your job completes.
 
         Available CLI commands (use only when filesystem access is insufficient):
-        - \`metis documents list\` -- list documents (supports --path-prefix for filtering)
-        - \`metis documents get <path>\` -- get a specific document
-        - \`metis documents put <path> --file <file>\` -- upload a document
-        - \`metis documents sync <directory>\` -- sync documents to a local directory
-        - \`metis documents push <directory>\` -- push local changes back to the store
+        - \`hydra documents list\` -- list documents (supports --path-prefix for filtering)
+        - \`hydra documents get <path>\` -- get a specific document
+        - \`hydra documents put <path> --file <file>\` -- upload a document
+        - \`hydra documents sync <directory>\` -- sync documents to a local directory
+        - \`hydra documents push <directory>\` -- push local changes back to the store
 
         ## Team Coordination
 
@@ -421,9 +421,9 @@ background:
         When you start working on the issue, you must set the status to in-progress.
         When you finish working on the issue, you must set the status to closed.
 
-        metis issues update \$METIS_ISSUE_ID --progress <progress> --status <open|in-progress|closed|failed>
-        metis issues todo \$METIS_ISSUE_ID --add "thing that needs to be done"
-        metis issues todo \$METIS_ISSUE_ID --done 1
+        hydra issues update \$HYDRA_ISSUE_ID --progress <progress> --status <open|in-progress|closed|failed>
+        hydra issues todo \$HYDRA_ISSUE_ID --add "thing that needs to be done"
+        hydra issues todo \$HYDRA_ISSUE_ID --done 1
 
 
 kubernetes:
@@ -590,8 +590,8 @@ spec:
           ports:
             - containerPort: ${S3_SERVICE_PORT}
           env:
-            - name: METIS_CONFIG
-              value: ${S3_METIS_CONFIG_PATH}
+            - name: HYDRA_CONFIG
+              value: ${S3_HYDRA_CONFIG_PATH}
           resources:
             requests:
               cpu: 200m
@@ -640,8 +640,8 @@ spec:
             # So the server can know which image to use for client pods
             - name: CLIENT_IMAGE
               value: ${CLIENT_IMAGE}
-            - name: METIS_CONFIG
-              value: ${SERVER_METIS_CONFIG_PATH}
+            - name: HYDRA_CONFIG
+              value: ${SERVER_HYDRA_CONFIG_PATH}
             # Namespace in which to spawn the clients
             - name: TARGET_NAMESPACE
               valueFrom:

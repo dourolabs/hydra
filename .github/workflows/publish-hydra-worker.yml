@@ -1,4 +1,4 @@
-name: Release metis-worker image
+name: Release hydra-worker image
 
 on:
   push:
@@ -53,10 +53,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: images/metis-worker.Dockerfile
+          file: images/hydra-worker.Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
-          cache-from: type=gha,scope=metis-worker
-          cache-to: type=gha,mode=max,scope=metis-worker
+          cache-from: type=gha,scope=hydra-worker
+          cache-to: type=gha,mode=max,scope=hydra-worker

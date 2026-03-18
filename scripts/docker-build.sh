@@ -27,9 +27,9 @@ if ! kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
   exit 1
 fi
 
-docker build -t "${WORKER_IMAGE}" -f ./images/metis-worker.Dockerfile .
-docker build -t "${SERVER_IMAGE}" -f ./images/metis-server.Dockerfile .
-docker build -t "${S3_IMAGE}" -f ./images/metis-s3.Dockerfile .
+docker build -t "${WORKER_IMAGE}" -f ./images/hydra-worker.Dockerfile .
+docker build -t "${SERVER_IMAGE}" -f ./images/hydra-server.Dockerfile .
+docker build -t "${S3_IMAGE}" -f ./images/hydra-s3.Dockerfile .
 
 kind load docker-image "${WORKER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 kind load docker-image "${SERVER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
