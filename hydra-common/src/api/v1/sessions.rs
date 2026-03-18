@@ -274,6 +274,7 @@ impl WorkerContext {
         model: Option<String>,
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
+        mcp_config: Option<String>,
     ) -> Self {
         Self {
             request_context,
@@ -281,14 +282,8 @@ impl WorkerContext {
             model,
             variables,
             build_cache,
-            mcp_config: None,
+            mcp_config,
         }
-    }
-
-    /// Set the MCP configuration JSON for this worker context.
-    pub fn with_mcp_config(mut self, mcp_config: Option<String>) -> Self {
-        self.mcp_config = mcp_config;
-        self
     }
 }
 

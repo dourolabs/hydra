@@ -215,7 +215,7 @@ impl ClaudeCommands {
         }
 
         // Write MCP config to a temporary file if provided.
-        let _mcp_config_dir = if mcp_config.is_some() {
+        let mcp_config_dir = if mcp_config.is_some() {
             Some(
                 tempfile::Builder::new()
                     .prefix("mcp-config")
@@ -226,7 +226,7 @@ impl ClaudeCommands {
             None
         };
         let mcp_config_path =
-            if let (Some(config_json), Some(dir)) = (mcp_config, _mcp_config_dir.as_ref()) {
+            if let (Some(config_json), Some(dir)) = (mcp_config, mcp_config_dir.as_ref()) {
                 let path = dir.path().join("mcp-config.json");
                 fs::write(&path, config_json.as_bytes())
                     .await
