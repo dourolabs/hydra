@@ -107,6 +107,27 @@ impl AgentQueue {
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
 
+        // Merge agent-level secrets with issue-level secrets, deduplicating.
+        let merged_secrets = {
+            let mut seen = HashSet::new();
+            let mut secrets = Vec::new();
+            for s in self
+                .agent
+                .secrets
+                .iter()
+                .chain(session_settings.secrets.iter().flatten())
+            {
+                if seen.insert(s.clone()) {
+                    secrets.push(s.clone());
+                }
+            }
+            if secrets.is_empty() {
+                None
+            } else {
+                Some(secrets)
+            }
+        };
+
         Ok(Some(Session::new(
             prompt.to_string(),
             bundle,
@@ -117,7 +138,7 @@ impl AgentQueue {
             env_vars,
             session_settings.cpu_limit.clone(),
             session_settings.memory_limit.clone(),
-            session_settings.secrets.clone(),
+            merged_secrets,
             Status::Created,
             None,
             None,
@@ -396,6 +417,21 @@ mod tests {
                 Vec::new(),
             ),
             attempts,
+        )
+    }
+
+    fn queue_with_secrets(agent_name: &str, secrets: Vec<String>) -> AgentQueue {
+        use crate::domain::agents::Agent;
+        AgentQueue::new(
+            Agent::new(
+                agent_name.to_string(),
+                format!("/agents/{agent_name}/prompt.md"),
+                DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                false,
+                secrets,
+            ),
+            shared_attempts(),
         )
     }
 
@@ -1921,6 +1957,102 @@ mod tests {
             tasks.is_empty(),
             "expected no tasks after max_tries reached across queue instances"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merges_agent_secrets_with_issue_secrets() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create an issue with issue-level secrets.
+        let mut issue_with_secrets = issue(
+            "Issue with secrets",
+            IssueStatus::Open,
+            Some("agent-a"),
+            vec![],
+            &repo_name,
+        );
+        issue_with_secrets.session_settings.secrets =
+            Some(vec!["GH_TOKEN".to_string(), "OPENAI_API_KEY".to_string()]);
+        handles
+            .store
+            .add_issue(issue_with_secrets, &ActorRef::test())
+            .await?;
+
+        // Agent has its own secrets, one overlapping with the issue.
+        let queue = queue_with_secrets(
+            "agent-a",
+            vec!["OPENAI_API_KEY".to_string(), "CUSTOM_KEY".to_string()],
+        );
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        let session = &tasks[0];
+        // Agent secrets come first, then issue secrets, deduplicated.
+        assert_eq!(
+            session.secrets,
+            Some(vec![
+                "OPENAI_API_KEY".to_string(),
+                "CUSTOM_KEY".to_string(),
+                "GH_TOKEN".to_string(),
+            ])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_secrets_only_when_issue_has_none() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Issue without secrets.
+        handles
+            .store
+            .add_issue(
+                issue(
+                    "No issue secrets",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue_with_secrets("agent-a", vec!["AGENT_SECRET".to_string()]);
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        assert_eq!(tasks[0].secrets, Some(vec!["AGENT_SECRET".to_string()]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn no_secrets_when_agent_and_issue_have_none() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        handles
+            .store
+            .add_issue(
+                issue(
+                    "No secrets anywhere",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        assert_eq!(tasks[0].secrets, None);
 
         Ok(())
     }
