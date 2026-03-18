@@ -1,9 +1,10 @@
 import { useCallback, useMemo } from "react";
-import type { IssueSummaryRecord, LabelRecord } from "@hydra/api";
+import type { IssueSummaryRecord } from "@hydra/api";
 import { useKeyboardClick } from "@hydra/ui";
 import { useLabels } from "../labels/useLabels";
 import type { ChildStatus } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";
+import { useLabelIssues } from "./useLabelIssues";
 import styles from "./IssueFilterSidebar.module.css";
 
 /** Label filter prefix used in activeFilter to distinguish label filters from issue filters. */
@@ -18,43 +19,32 @@ interface LabelProgress {
   children: ChildStatus[];
 }
 
-function computeLabelProgress(
-  labels: LabelRecord[],
-  allIssues: IssueSummaryRecord[],
+function buildLabelProgress(
+  labelId: string,
+  name: string,
+  color: string,
+  labelIssues: IssueSummaryRecord[],
   isActiveMap: Map<string, boolean>,
   username: string,
-): LabelProgress[] {
-  return labels.map((label) => {
-    const labelIssues = allIssues.filter((issue) =>
-      issue.issue.labels?.some((l: { label_id: string }) => l.label_id === label.label_id),
-    );
+): LabelProgress {
+  let closed = 0;
+  const children: ChildStatus[] = [];
 
-    let closed = 0;
-    const children: ChildStatus[] = [];
+  for (const issue of labelIssues) {
+    const status = issue.issue.status;
+    if (status === "closed") closed++;
 
-    for (const issue of labelIssues) {
-      const status = issue.issue.status;
-      if (status === "closed") closed++;
+    const assignedToUser = !!(username && issue.issue.assignee === username);
 
-      const assignedToUser = !!(username && issue.issue.assignee === username);
+    children.push({
+      id: issue.issue_id,
+      status,
+      hasActiveTask: isActiveMap.get(issue.issue_id) ?? false,
+      assignedToUser,
+    });
+  }
 
-      children.push({
-        id: issue.issue_id,
-        status,
-        hasActiveTask: isActiveMap.get(issue.issue_id) ?? false,
-        assignedToUser,
-      });
-    }
-
-    return {
-      labelId: label.label_id,
-      name: label.name,
-      color: label.color,
-      closed,
-      total: labelIssues.length,
-      children,
-    };
-  });
+  return { labelId, name, color, closed, total: labelIssues.length, children };
 }
 
 interface FilterItemProps {
@@ -114,7 +104,6 @@ function LabelFilterItem({ lp, isActive, onSelect }: LabelFilterItemProps) {
 }
 
 interface IssueFilterSidebarProps {
-  allIssues: IssueSummaryRecord[];
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
@@ -127,7 +116,6 @@ interface IssueFilterSidebarProps {
 }
 
 export function IssueFilterSidebar({
-  allIssues,
   activeFilter,
   onFilterChange,
   collapsed,
@@ -161,11 +149,15 @@ export function IssueFilterSidebar({
   );
 
   const { data: labels } = useLabels();
+  const issuesByLabel = useLabelIssues(labels);
 
   const labelProgressList = useMemo(() => {
     if (!labels || labels.length === 0) return [];
-    return computeLabelProgress(labels, allIssues, isActiveMap, username);
-  }, [labels, allIssues, isActiveMap, username]);
+    return labels.map((label) => {
+      const labelIssues = issuesByLabel.get(label.label_id) ?? [];
+      return buildLabelProgress(label.label_id, label.name, label.color, labelIssues, isActiveMap, username);
+    });
+  }, [labels, issuesByLabel, isActiveMap, username]);
 
   const renderIssueList = (hideWhenCollapsed: boolean) => (
     <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
