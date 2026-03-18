@@ -45,7 +45,13 @@ function groupDocumentsByPrefix(documents: DocumentSummaryRecord[]): DocumentGro
   });
 
   for (const key of keys) {
-    sorted.push({ prefix: key, documents: groups.get(key)! });
+    const docs = groups.get(key)!;
+    docs.sort((a, b) => {
+      const pathA = a.document.path ?? "";
+      const pathB = b.document.path ?? "";
+      return pathA.localeCompare(pathB);
+    });
+    sorted.push({ prefix: key, documents: docs });
   }
 
   return sorted;
