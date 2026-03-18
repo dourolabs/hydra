@@ -1,13 +1,17 @@
-.center { composes: center from '../../pages/page.module.css'; }
-.error { composes: error from '../../pages/page.module.css'; }
-.empty { composes: empty from '../../pages/page.module.css'; }
+.center {
+  composes: center from "../../pages/page.module.css";
+}
+.error {
+  composes: error from "../../pages/page.module.css";
+}
+.empty {
+  composes: empty from "../../pages/page.module.css";
+}
 
-.headerRow {
+.panelHeaderRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: var(--space-6);
-  margin-bottom: var(--space-4);
 }
 
 .sectionTitle {

@@ -12,18 +12,10 @@ export function RepositoriesSection() {
   const { data: repositories, isLoading, error } = useRepositories();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RepositoryRecord | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<RepositoryRecord | null>(
-    null,
-  );
+  const [deleteTarget, setDeleteTarget] = useState<RepositoryRecord | null>(null);
 
   return (
     <>
-      <div className={styles.headerRow}>
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          Add Repository
-        </Button>
-      </div>
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
@@ -31,21 +23,23 @@ export function RepositoriesSection() {
       )}
 
       {error && (
-        <p className={styles.error}>
-          Failed to load repositories: {(error as Error).message}
-        </p>
+        <p className={styles.error}>Failed to load repositories: {(error as Error).message}</p>
       )}
 
-      {repositories && repositories.length === 0 && (
-        <p className={styles.empty}>No repositories configured.</p>
-      )}
-
-      {repositories && repositories.length > 0 && (
-        <Panel
-          header={
+      <Panel
+        header={
+          <div className={styles.panelHeaderRow}>
             <span className={styles.sectionTitle}>Repositories</span>
-          }
-        >
+            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+              Add Repository
+            </Button>
+          </div>
+        }
+      >
+        {repositories && repositories.length === 0 && (
+          <p className={styles.empty}>No repositories configured.</p>
+        )}
+        {repositories && repositories.length > 0 && (
           <div className={styles.repoList}>
             {repositories.map((repo) => (
               <RepositoryRow
@@ -56,13 +50,10 @@ export function RepositoriesSection() {
               />
             ))}
           </div>
-        </Panel>
-      )}
+        )}
+      </Panel>
 
-      <RepositoryCreateModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-      />
+      <RepositoryCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
 
       {editTarget && (
         <RepositoryEditModal
