@@ -5,4 +5,5 @@ pub mod scheduler;
 pub mod spawner;
 
 pub use scheduler::start_background_scheduler;
+pub(crate) use spawner::agent_task_state;
 pub use spawner::{AgentQueue, Spawner};
