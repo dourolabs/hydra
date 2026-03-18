@@ -2,7 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
     documents::Document,
-    issues::{Issue, IssueGraphFilter},
+    issues::Issue,
     labels::Label,
     messages::Message,
     notifications::Notification,
@@ -27,7 +27,7 @@ use metis_common::{
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
@@ -1300,15 +1300,6 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
         self.inner.count_issues(query).await
     }
-
-    async fn search_issue_graph(
-        &self,
-        filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
-        self.inner.search_issue_graph(filters).await
-    }
-
-    // ---- Issue graph queries (read-only) ----
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issue_children(issue_id).await

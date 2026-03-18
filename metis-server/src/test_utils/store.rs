@@ -3,7 +3,7 @@ use crate::{
         actors::{Actor, ActorId, ActorRef},
         agents::Agent,
         documents::Document,
-        issues::{Issue, IssueGraphFilter},
+        issues::Issue,
         labels::Label,
         messages::Message,
         notifications::Notification,
@@ -28,7 +28,7 @@ use metis_common::{
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
 #[derive(Default)]
@@ -75,13 +75,6 @@ impl ReadOnlyStore for FailingStore {
     }
 
     async fn count_issues(&self, _query: &SearchIssuesQuery) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn search_issue_graph(
-        &self,
-        _filters: &[IssueGraphFilter],
-    ) -> Result<HashSet<IssueId>, StoreError> {
         fail()
     }
 

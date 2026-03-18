@@ -24,8 +24,8 @@ use metis_common::{
     api::v1::relations::ListRelationsRequest,
     constants::ENV_METIS_ISSUE_ID,
     issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueId,
-        IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord, ReplaceTodoListRequest,
+        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus,
+        IssueSummaryRecord, IssueType, IssueVersionRecord, ReplaceTodoListRequest,
         SearchIssuesQuery, SessionSettings, SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
     patches::{PatchVersionRecord, Review},
@@ -65,15 +65,6 @@ pub enum IssueCommands {
         /// Search by query string.
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
-
-        /// Filter by dependency graph relationships (e.g. '*:child-of:i-abc' or '**:blocked-on:i-def').
-        #[arg(
-            long = "graph",
-            value_name = "FILTER",
-            value_parser = parse_issue_graph_filter,
-            conflicts_with = "id"
-        )]
-        graph_filters: Vec<IssueGraphFilter>,
 
         /// Filter by label names (comma-separated).
         #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
@@ -381,7 +372,6 @@ pub async fn run(
             status,
             assignee,
             query,
-            graph_filters,
             labels,
             include_deleted,
         } => {
@@ -393,7 +383,6 @@ pub async fn run(
                 status,
                 assignee,
                 query,
-                graph_filters,
                 label_ids,
                 include_deleted,
             )
@@ -745,7 +734,7 @@ async fn fetch_child_issues(
         return Ok(Vec::new());
     }
 
-    let mut query = SearchIssuesQuery::new(None, vec![], None, None, vec![], None);
+    let mut query = SearchIssuesQuery::new(None, vec![], None, None, None);
     query.ids = child_ids;
 
     let response = client
@@ -1031,7 +1020,6 @@ async fn fetch_issues(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     query: Option<String>,
-    graph_filters: Vec<IssueGraphFilter>,
     label_ids: Vec<LabelId>,
     include_deleted: bool,
 ) -> Result<Vec<IssueSummaryRecord>> {
@@ -1090,7 +1078,6 @@ async fn fetch_issues(
         status.into_iter().collect(),
         trimmed_assignee.clone(),
         trimmed_query,
-        graph_filters,
         include_deleted_opt,
     );
     search_query.label_ids = label_ids;
@@ -1829,10 +1816,6 @@ async fn apply_label_changes(
     Ok(())
 }
 
-fn parse_issue_graph_filter(raw: &str) -> Result<IssueGraphFilter, String> {
-    raw.parse()
-}
-
 fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     let (dependency_type, issue_id) = raw
         .split_once(':')
@@ -2197,9 +2180,9 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueSummaryRecord,
-        IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
-        SessionSettings, SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        AddTodoItemRequest, Issue, IssueSummaryRecord, IssueVersionRecord,
+        ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest, SessionSettings,
+        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
         UpsertIssueResponse,
     };
     use metis_common::{
@@ -2341,7 +2324,6 @@ mod tests {
             None,
             Some("bug".into()),
             Vec::new(),
-            Vec::new(),
             false,
         )
         .await
@@ -2400,7 +2382,6 @@ mod tests {
             None,
             None,
             Vec::new(),
-            Vec::new(),
             false,
         )
         .await
@@ -2454,7 +2435,6 @@ mod tests {
             Some("OWNER-A".into()),
             None,
             Vec::new(),
-            Vec::new(),
             false,
         )
         .await
@@ -2464,45 +2444,6 @@ mod tests {
         assert_eq!(list_mock.hits(), 1);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].issue_id, issue_id("i-7"));
-    }
-
-    #[tokio::test]
-    async fn list_issues_includes_graph_filters_in_query() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let filters = vec![
-            parse_issue_graph_filter("*:child-of:i-abcd").unwrap(),
-            parse_issue_graph_filter("i-efgh:blocked-on:**").unwrap(),
-        ];
-        let graph_query = filters
-            .iter()
-            .map(|filter| filter.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let list_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path("/v1/issues")
-                .query_param("graph", graph_query.as_str());
-            then.status(200)
-                .json_body_obj(&ListIssuesResponse::new(vec![]));
-        });
-
-        let _ = fetch_issues(
-            &client,
-            None,
-            None,
-            None,
-            None,
-            None,
-            filters.clone(),
-            Vec::new(),
-            false,
-        )
-        .await
-        .unwrap();
-
-        list_mock.assert();
-        assert_eq!(list_mock.hits(), 1);
     }
 
     #[tokio::test]
@@ -3347,21 +3288,6 @@ mod tests {
         let dependency = parse_issue_dependency("child-of:i-abcd").unwrap();
         assert_eq!(dependency.dependency_type, IssueDependencyType::ChildOf);
         assert_eq!(dependency.issue_id, issue_id("i-abcd"));
-    }
-
-    #[test]
-    fn parse_issue_graph_filter_parses_format() {
-        let filter = parse_issue_graph_filter("*:child-of:i-abcd").unwrap();
-        assert!(matches!(
-            filter.lhs,
-            IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate)
-        ));
-        assert_eq!(filter.literal_issue_id(), &issue_id("i-abcd"));
-    }
-
-    #[test]
-    fn parse_issue_graph_filter_rejects_invalid_shapes() {
-        assert!(parse_issue_graph_filter("i-abcd:child-of:i-efgh").is_err());
     }
 
     #[tokio::test]
@@ -4954,7 +4880,6 @@ mod tests {
             None,
             None,
             None,
-            Vec::new(),
             vec![lid.clone()],
             false,
         )

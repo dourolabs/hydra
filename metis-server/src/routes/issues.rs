@@ -255,13 +255,6 @@ pub async fn list_issues(
     State(state): State<AppState>,
     Query(query): Query<api_issues::SearchIssuesQuery>,
 ) -> Result<Json<api_issues::ListIssuesResponse>, ApiError> {
-    let graph_filters: Vec<_> = query
-        .graph_filters
-        .iter()
-        .cloned()
-        .map(Into::into)
-        .collect();
-
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -269,39 +262,15 @@ pub async fn list_issues(
         creator = ?query.creator,
         query = ?query.q,
         ids_count = query.ids.len(),
-        graph_filters = ?graph_filters,
         include_deleted = ?query.include_deleted,
         label_ids = ?query.label_ids,
         "list_issues invoked"
     );
 
-    // Pass the query to the store for filtering (except graph filters)
     let issues = state
         .list_issues_with_query(&query)
         .await
         .map_err(|err| map_issue_error(err, None))?;
-
-    // Graph filtering stays in routes layer as it requires graph traversal
-    let graph_matches = if graph_filters.is_empty() {
-        None
-    } else {
-        Some(
-            state
-                .search_issue_graph(&graph_filters)
-                .await
-                .map_err(map_graph_filter_error)?,
-        )
-    };
-
-    // Apply graph filter first to reduce the set before batch label lookup
-    let issues: Vec<_> = if let Some(ref allowed) = graph_matches {
-        issues
-            .into_iter()
-            .filter(|(id, _)| allowed.contains(id))
-            .collect()
-    } else {
-        issues
-    };
 
     // Batch-fetch labels for issues
     let object_ids: Vec<MetisId> = issues
@@ -347,29 +316,11 @@ pub async fn list_issues(
 
     // Compute total_count when count=true
     let total_count = if query.count == Some(true) {
-        if graph_matches.is_some() {
-            // When graph filters are active, we need to fetch all matching issues
-            // (without pagination) and apply the graph filter to get the correct count.
-            let mut count_query = query.clone();
-            count_query.limit = None;
-            count_query.cursor = None;
-            let all_issues = state
-                .list_issues_with_query(&count_query)
-                .await
-                .map_err(|err| map_issue_error(err, None))?;
-            let graph_allowed = graph_matches.as_ref().unwrap();
-            let count = all_issues
-                .iter()
-                .filter(|(id, _)| graph_allowed.contains(id))
-                .count() as u64;
-            Some(count)
-        } else {
-            let count = state
-                .count_issues(&query)
-                .await
-                .map_err(|err| map_issue_error(err, None))?;
-            Some(count)
-        }
+        let count = state
+            .count_issues(&query)
+            .await
+            .map_err(|err| map_issue_error(err, None))?;
+        Some(count)
     } else {
         None
     };
@@ -479,15 +430,6 @@ pub async fn set_todo_item_status(
         todo_list.into_iter().map(Into::into).collect(),
     );
     Ok(Json(response))
-}
-
-fn map_graph_filter_error(err: StoreError) -> ApiError {
-    match err {
-        StoreError::IssueNotFound(id) => ApiError::bad_request(format!(
-            "issue '{id}' referenced in graph filter does not exist"
-        )),
-        other => map_issue_error(other, None),
-    }
 }
 
 fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
