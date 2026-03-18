@@ -1442,6 +1442,19 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if let Some(issue_type) = query.issue_type.as_ref() {
         predicates.push(format!("issue_type = ${}", bindings.len() + 1));
         bindings.push(issue_type.as_str().to_string());
@@ -1468,6 +1481,16 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
     {
         predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
         bindings.push(assignee.to_lowercase());
+    }
+
+    if let Some(creator) = query
+        .creator
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        predicates.push(format!("LOWER(creator) = ${}", bindings.len() + 1));
+        bindings.push(creator.to_lowercase());
     }
 
     if let Some(term) = query
