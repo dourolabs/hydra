@@ -4,9 +4,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::app::event_bus::{EventType, ServerEvent};
-use crate::background::spawner::SharedSpawnAttempts;
-use crate::background::{AgentQueue, agent_task_state};
 use crate::domain::actors::ActorRef;
+use crate::policy::automations::agent_queue::{AgentQueue, SharedSpawnAttempts, agent_task_state};
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::api::v1::issues::{IssueStatus, SearchIssuesQuery};
