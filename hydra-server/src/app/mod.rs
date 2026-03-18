@@ -27,7 +27,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
 pub use agents::AgentError;
-pub use app_state::AppState;
+pub use app_state::{AppState, default_policy_config};
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use hydra_common::repositories::{Repository, RepositoryRecord};

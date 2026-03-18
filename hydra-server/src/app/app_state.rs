@@ -12,6 +12,38 @@ use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 
 use super::ServiceState;
 
+/// Returns the production-default policy configuration.
+///
+/// This is the canonical source of truth for which restrictions and automations
+/// are active when no explicit `[policies]` section is present in the config.
+pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
+    use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
+
+    PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![
+                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                PolicyEntry::Name("task_state_machine".to_string()),
+                PolicyEntry::Name("duplicate_branch_name".to_string()),
+                PolicyEntry::Name("running_job_validation".to_string()),
+                PolicyEntry::Name("require_creator".to_string()),
+            ],
+            automations: vec![
+                PolicyEntry::Name("cascade_issue_status".to_string()),
+                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                PolicyEntry::Name("close_merge_request_issues".to_string()),
+                PolicyEntry::Name("sync_review_request_issues".to_string()),
+                PolicyEntry::Name("patch_workflow".to_string()),
+                PolicyEntry::Name("github_pr_sync".to_string()),
+                PolicyEntry::Name("notification_generation".to_string()),
+                PolicyEntry::Name("inbox_label".to_string()),
+                PolicyEntry::Name("spawn_sessions".to_string()),
+                PolicyEntry::Name("start_created_sessions".to_string()),
+            ],
+        },
+    }
+}
+
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
 pub struct AppState {
@@ -51,34 +83,10 @@ impl AppState {
     pub(crate) fn build_policy_engine(
         policy_config: Option<&crate::policy::config::PolicyConfig>,
     ) -> crate::policy::PolicyEngine {
-        use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
         use crate::policy::registry::build_default_registry;
 
-        let default_config = PolicyConfig {
-            global: PolicyList {
-                restrictions: vec![
-                    PolicyEntry::Name("issue_lifecycle_validation".to_string()),
-                    PolicyEntry::Name("task_state_machine".to_string()),
-                    PolicyEntry::Name("duplicate_branch_name".to_string()),
-                    PolicyEntry::Name("running_job_validation".to_string()),
-                    PolicyEntry::Name("require_creator".to_string()),
-                ],
-                automations: vec![
-                    PolicyEntry::Name("cascade_issue_status".to_string()),
-                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                    PolicyEntry::Name("close_merge_request_issues".to_string()),
-                    PolicyEntry::Name("sync_review_request_issues".to_string()),
-                    PolicyEntry::Name("patch_workflow".to_string()),
-                    PolicyEntry::Name("github_pr_sync".to_string()),
-                    PolicyEntry::Name("notification_generation".to_string()),
-                    PolicyEntry::Name("inbox_label".to_string()),
-                    PolicyEntry::Name("spawn_sessions".to_string()),
-                    PolicyEntry::Name("start_created_sessions".to_string()),
-                ],
-            },
-        };
-
-        let config = policy_config.unwrap_or(&default_config);
+        let fallback = default_policy_config();
+        let config = policy_config.unwrap_or(&fallback);
         let registry = build_default_registry();
         registry
             .build(config)

@@ -4,6 +4,7 @@ use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, TestHarness};
 use hydra_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
+    sessions::SearchSessionsQuery,
     task_status::Status,
 };
 use std::str::FromStr;
@@ -85,6 +86,7 @@ async fn multi_repo_workflow() -> Result<()> {
         .iter()
         .find(|i| i.issue.description.contains("Add agent queue to configmap"))
         .expect("PM should have created child 2");
+    let child2_id = child2.issue_id.clone();
 
     // Verify child 2 is blocked-on child 1.
     assert!(
@@ -94,19 +96,32 @@ async fn multi_repo_workflow() -> Result<()> {
         "child 2 should be blocked-on child 1"
     );
 
-    // step_schedule: child 1 is ready, child 2 is blocked.
+    // step_schedule: child 1 is ready (child 2 is blocked). With automatic
+    // spawning, additional sessions (e.g. PM re-spawns) may also appear.
     let task_ids = harness.step_schedule().await?;
+    assert!(!task_ids.is_empty(), "at least child 1 should be scheduled");
+
+    // Find child 1's session specifically.
+    let client = harness.client()?;
+    let child1_sessions = client
+        .list_sessions(&SearchSessionsQuery::new(
+            None,
+            Some(child1_id.clone()),
+            None,
+            vec![],
+        ))
+        .await?;
     assert_eq!(
-        task_ids.len(),
+        child1_sessions.sessions.len(),
         1,
-        "only child 1 should be scheduled (child 2 is blocked)"
+        "child 1 should have exactly one session"
     );
-    let job1_id = &task_ids[0];
+    let job1_id = child1_sessions.sessions[0].session_id.clone();
 
     // SWE worker on child 1 creates patch in org/app repo.
     let result1 = harness
         .run_worker(
-            job1_id,
+            &job1_id,
             vec![
                 "echo 'agent_queue: new-queue' >> service.sh",
                 "git add service.sh",
@@ -140,19 +155,38 @@ async fn multi_repo_workflow() -> Result<()> {
     user.update_issue_status(&child1_id, IssueStatus::Closed)
         .await?;
 
+    // Mark child 2 as in-progress so the automation evaluates it now that
+    // its blocker (child 1) is resolved.
+    user.update_issue_status(&child2_id, IssueStatus::InProgress)
+        .await?;
+
     // step_schedule: child 2 is now ready (blocker resolved).
     let task_ids2 = harness.step_schedule().await?;
-    assert_eq!(
-        task_ids2.len(),
-        1,
+    assert!(
+        !task_ids2.is_empty(),
         "child 2 should now be scheduled (blocker resolved)"
     );
-    let job2_id = &task_ids2[0];
+
+    // Find child 2's session specifically.
+    let child2_sessions = client
+        .list_sessions(&SearchSessionsQuery::new(
+            None,
+            Some(child2_id.clone()),
+            None,
+            vec![],
+        ))
+        .await?;
+    assert_eq!(
+        child2_sessions.sessions.len(),
+        1,
+        "child 2 should have exactly one session"
+    );
+    let job2_id = child2_sessions.sessions[0].session_id.clone();
 
     // SWE worker on child 2 creates patch in org/cluster repo.
     let result2 = harness
         .run_worker(
-            job2_id,
+            &job2_id,
             vec![
                 "echo 'configmap: new-queue' >> configmap.yaml",
                 "git add configmap.yaml",
