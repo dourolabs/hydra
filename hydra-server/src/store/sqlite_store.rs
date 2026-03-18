@@ -32,8 +32,6 @@ use hydra_common::{
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::str::FromStr;
 
 use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskError, TaskStatusLog};
