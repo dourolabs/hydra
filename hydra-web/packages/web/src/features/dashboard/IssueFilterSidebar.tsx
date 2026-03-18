@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { IssueSummaryRecord, LabelRecord } from "@hydra/api";
 import { useKeyboardClick } from "@hydra/ui";
 import { useLabels } from "../labels/useLabels";
+import { useIssueCount } from "../issues/usePaginatedIssues";
 import type { ChildStatus } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";
 import styles from "./IssueFilterSidebar.module.css";
@@ -13,8 +14,6 @@ interface LabelProgress {
   labelId: string;
   name: string;
   color: string;
-  closed: number;
-  total: number;
   children: ChildStatus[];
 }
 
@@ -29,18 +28,14 @@ function computeLabelProgress(
       issue.issue.labels?.some((l: { label_id: string }) => l.label_id === label.label_id),
     );
 
-    let closed = 0;
     const children: ChildStatus[] = [];
 
     for (const issue of labelIssues) {
-      const status = issue.issue.status;
-      if (status === "closed") closed++;
-
       const assignedToUser = !!(username && issue.issue.assignee === username);
 
       children.push({
         id: issue.issue_id,
-        status,
+        status: issue.issue.status,
         hasActiveTask: isActiveMap.get(issue.issue_id) ?? false,
         assignedToUser,
       });
@@ -50,8 +45,6 @@ function computeLabelProgress(
       labelId: label.label_id,
       name: label.name,
       color: label.color,
-      closed,
-      total: labelIssues.length,
       children,
     };
   });
@@ -90,6 +83,13 @@ function LabelFilterItem({ lp, isActive, onSelect }: LabelFilterItemProps) {
     [onSelect, isActive, filterId],
   );
   const keyboardClickProps = useKeyboardClick(handleClick);
+
+  const { data: totalCount } = useIssueCount({ labels: lp.labelId });
+  const { data: closedCount } = useIssueCount({ labels: lp.labelId, status: "closed" });
+
+  const closed = closedCount ?? 0;
+  const total = totalCount ?? 0;
+
   return (
     <li
       className={`${styles.item} ${isActive ? styles.active : ""}`}
@@ -98,15 +98,12 @@ function LabelFilterItem({ lp, isActive, onSelect }: LabelFilterItemProps) {
     >
       <span className={styles.itemLeft}>
         <span className={styles.itemLabel}>
-          <span
-            className={styles.labelDot}
-            style={{ background: lp.color }}
-          />
+          <span className={styles.labelDot} style={{ background: lp.color }} />
           {lp.name}
         </span>
         <span className={styles.itemStats}>
           <StatusBoxes children={lp.children} />
-          {lp.closed}/{lp.total}
+          {closed}/{total}
         </span>
       </span>
     </li>
@@ -147,18 +144,12 @@ export function IssueFilterSidebar({
     [onFilterChange, onDrawerClose],
   );
 
-  const handleInboxClick = useCallback(
-    () => handleFilterChange("inbox"),
-    [handleFilterChange],
-  );
+  const handleInboxClick = useCallback(() => handleFilterChange("inbox"), [handleFilterChange]);
   const handleMyIssuesClick = useCallback(
     () => handleFilterChange("my-issues"),
     [handleFilterChange],
   );
-  const handleEverythingClick = useCallback(
-    () => handleFilterChange(null),
-    [handleFilterChange],
-  );
+  const handleEverythingClick = useCallback(() => handleFilterChange(null), [handleFilterChange]);
 
   const { data: labels } = useLabels();
 
@@ -175,9 +166,7 @@ export function IssueFilterSidebar({
         className={styles.item}
       >
         <span className={styles.itemLabel}>Inbox</span>
-        {inboxCount > 0 && (
-          <span className={styles.inboxCount}>{inboxCount}</span>
-        )}
+        {inboxCount > 0 && <span className={styles.inboxCount}>{inboxCount}</span>}
       </FilterItem>
       <FilterItem
         isActive={activeFilter === "my-issues"}
@@ -185,9 +174,7 @@ export function IssueFilterSidebar({
         className={styles.item}
       >
         <span className={styles.itemLabel}>My Issues</span>
-        {myIssuesCount > 0 && (
-          <span className={styles.inboxCount}>{myIssuesCount}</span>
-        )}
+        {myIssuesCount > 0 && <span className={styles.inboxCount}>{myIssuesCount}</span>}
       </FilterItem>
       <FilterItem
         isActive={activeFilter === null}
@@ -225,12 +212,7 @@ export function IssueFilterSidebar({
       </div>
 
       {/* Mobile slide-out drawer (hamburger button lives in HeterogeneousItemList toolbar) */}
-      {drawerOpen && (
-        <div
-          className={styles.backdrop}
-          onClick={onDrawerClose}
-        />
-      )}
+      {drawerOpen && <div className={styles.backdrop} onClick={onDrawerClose} />}
       <div className={`${styles.drawer} ${drawerOpen ? styles.drawerOpen : ""}`}>
         <div className={styles.drawerHeader}>
           <span className={styles.title}>Issues</span>
