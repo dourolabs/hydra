@@ -4380,6 +4380,7 @@ mod tests {
     use crate::domain::sessions::BundleSpec;
     use chrono::Duration;
     use hydra_common::SessionId;
+    use std::collections::HashSet;
 
     async fn create_test_store() -> SqliteStore {
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
@@ -7230,7 +7231,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
@@ -7365,7 +7365,6 @@ mod tests {
             vec![],
             None,
             None,
-            Vec::new(),
             None,
         );
         query.limit = Some(2);
