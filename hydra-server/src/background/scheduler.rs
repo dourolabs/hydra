@@ -4,7 +4,7 @@ use crate::{
     app::AppState,
     background::{
         cleanup_branches::CleanupBranchesWorker,
-        monitor_running_sessions::MonitorRunningSessionsWorker, run_spawners::RunSpawnersWorker,
+        monitor_running_sessions::MonitorRunningSessionsWorker,
     },
     config::WorkerSchedulerConfig,
     policy::integrations::github_pr_poller::GithubPollerWorker,
@@ -98,7 +98,6 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         .monitor_running_sessions
         .interval_secs
         .max(1);
-    let spawner_interval_secs = scheduler_config.run_spawners.interval_secs.max(1);
     let github_interval_secs = scheduler_config
         .github_poller
         .interval_secs
@@ -109,11 +108,6 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         "monitor_running_sessions",
         monitor_interval_secs,
         &scheduler_config.monitor_running_sessions,
-    );
-    log_worker_config(
-        "run_spawners",
-        spawner_interval_secs,
-        &scheduler_config.run_spawners,
     );
     log_worker_config(
         "github_poller",
@@ -134,14 +128,6 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
                 &scheduler_config.monitor_running_sessions,
             ),
             Arc::new(MonitorRunningSessionsWorker::new(state.clone())),
-        ),
-        WorkerHandle::new(
-            worker_settings_from_config(
-                "run_spawners",
-                spawner_interval_secs,
-                &scheduler_config.run_spawners,
-            ),
-            Arc::new(RunSpawnersWorker::new(state.clone())),
         ),
         WorkerHandle::new(
             worker_settings_from_config(
