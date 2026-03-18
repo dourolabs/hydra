@@ -179,6 +179,8 @@ background:
 #     - "github_pr_sync"              # Sync GitHub PR state with patch status
 #     - "notification_generation"      # Generate notifications for relevant events
 #     - "inbox_label"                  # Apply inbox label to new issues for inbox functionality
+#     - "spawn_sessions"               # Spawn agent sessions when issues are created/assigned
+#     - "start_created_sessions"       # Start sessions that have been created
 #
 #   ## Parameterized automation examples:
 #   # automations:
