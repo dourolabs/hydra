@@ -22,8 +22,6 @@ use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_M
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
-#[cfg(test)]
-use std::collections::HashSet;
 use hydra_common::{
     DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
@@ -34,6 +32,8 @@ use hydra_common::{
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskError, TaskStatusLog};

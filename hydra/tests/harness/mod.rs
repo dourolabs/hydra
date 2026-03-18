@@ -22,8 +22,8 @@ use hydra_common::{
 };
 use hydra_server::{
     app::{
-        AppState, ServiceState,
         event_bus::{MutationPayload, ServerEvent},
+        AppState, ServiceState,
     },
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
@@ -31,12 +31,12 @@ use hydra_server::{
     },
     domain::actors::{Actor, ActorRef},
     policy::{
-        Automation,
         automations::spawn_sessions::SpawnSessionsAutomation,
         config::{PolicyConfig, PolicyEntry, PolicyList},
         context::AutomationContext,
         integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
+        Automation,
     },
     store::{MemoryStore, Store},
     test_utils::{
