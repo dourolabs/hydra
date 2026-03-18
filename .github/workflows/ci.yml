@@ -44,14 +44,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/metis
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/hydra
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: metis
+          POSTGRES_DB: hydra
         ports:
           - 5432:5432
         options: >-
@@ -94,7 +94,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Regenerate TypeScript types from Rust structs
-        run: TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings
+        run: TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p hydra-common --features ts export_bindings
 
       - name: Check generated types are up-to-date
         run: git diff --exit-code metis-web/packages/api/src/generated/
@@ -195,7 +195,7 @@ jobs:
 
       - name: Get Playwright version
         id: playwright-version
-        run: echo "VERSION=$(pnpm --filter @metis/web exec playwright --version | awk '{print $2}')" >> $GITHUB_OUTPUT
+        run: echo "VERSION=$(pnpm --filter @hydra/web exec playwright --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -206,13 +206,13 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter @metis/web exec playwright install chromium
+        run: pnpm --filter @hydra/web exec playwright install chromium
 
       - name: Install Playwright system dependencies
-        run: pnpm --filter @metis/web exec playwright install-deps chromium
+        run: pnpm --filter @hydra/web exec playwright install-deps chromium
 
       - name: Check scenario coverage
-        run: pnpm --filter @metis/web run check-scenarios
+        run: pnpm --filter @hydra/web run check-scenarios
 
       - name: Run E2E tests
         run: pnpm e2e

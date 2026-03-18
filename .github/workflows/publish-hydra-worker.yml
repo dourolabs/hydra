@@ -1,4 +1,4 @@
-name: Release metis-web image
+name: Release hydra-worker image
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         id: image
         run: |
           owner="${{ github.repository_owner }}"
-          echo "name=${owner,,}/metis-web" >> "$GITHUB_OUTPUT"
+          echo "name=${owner,,}/hydra-worker" >> "$GITHUB_OUTPUT"
 
       - name: Set image tag to version of the git tag
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -49,14 +49,14 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push metis-web image
+      - name: Build and push hydra-worker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: images/metis-web.Dockerfile
+          file: images/hydra-worker.Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
-          cache-from: type=gha,scope=metis-web
-          cache-to: type=gha,mode=max,scope=metis-web
+          cache-from: type=gha,scope=hydra-worker
+          cache-to: type=gha,mode=max,scope=hydra-worker

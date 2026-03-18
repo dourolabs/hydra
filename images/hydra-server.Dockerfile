@@ -17,20 +17,20 @@ COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this layer is cached as long as `recipe.json`
 # doesn't change.
-RUN cargo chef cook --recipe-path recipe.json
+RUN cargo chef cook --release --features enterprise --recipe-path recipe.json
 
 # Build the whole project
 COPY . .
 
-RUN cargo build --bin metis-s3 --release
+RUN cargo build --bin hydra-server --features enterprise --release
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/metis-s3 /usr/local/bin/metis-s3
+COPY --from=builder /app/target/release/hydra-server /usr/local/bin/hydra-server
 
 ENV RUST_LOG=info
-ENTRYPOINT ["metis-s3"]
+ENTRYPOINT ["hydra-server"]
 
 # Default to an interactive shell so users can run Codex CLI commands.
 # CMD ["bash"]

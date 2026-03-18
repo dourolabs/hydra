@@ -1,4 +1,4 @@
-name: Release metis
+name: Release hydra
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - v*
   pull_request:
     paths:
-      - .github/workflows/release-metis-cli.yml
+      - .github/workflows/release-hydra-cli.yml
 
 permissions:
   contents: write
@@ -51,28 +51,28 @@ jobs:
           echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LIBRARY_PATH=${OPENSSL_PREFIX}/lib" >> "$GITHUB_ENV"
 
-      - name: Build metis CLI (Linux)
+      - name: Build hydra CLI (Linux)
         if: runner.os != 'macOS'
-        run: cargo build -p metis --features vendored-openssl --release --target ${{ matrix.target }}
+        run: cargo build -p hydra --features vendored-openssl --release --target ${{ matrix.target }}
 
-      - name: Build metis CLI (macOS universal)
+      - name: Build hydra CLI (macOS universal)
         if: runner.os == 'macOS'
         run: |
           for target in x86_64-apple-darwin aarch64-apple-darwin; do
-            cargo build -p metis --features vendored-openssl --release --target "${target}"
+            cargo build -p hydra --features vendored-openssl --release --target "${target}"
           done
           mkdir -p target/universal-apple-darwin/release
           lipo -create \
-            -output target/universal-apple-darwin/release/metis \
-            target/x86_64-apple-darwin/release/metis \
-            target/aarch64-apple-darwin/release/metis
-          lipo -info target/universal-apple-darwin/release/metis
+            -output target/universal-apple-darwin/release/hydra \
+            target/x86_64-apple-darwin/release/hydra \
+            target/aarch64-apple-darwin/release/hydra
+          lipo -info target/universal-apple-darwin/release/hydra
 
       - name: Prepare artifact
         id: package
         run: |
-          BIN_PATH="target/${{ matrix.target }}/release/metis"
-          ARTIFACT_NAME="metis-${{ matrix.target }}"
+          BIN_PATH="target/${{ matrix.target }}/release/hydra"
+          ARTIFACT_NAME="hydra-${{ matrix.target }}"
           mkdir -p artifacts
           cp "${BIN_PATH}" "artifacts/${ARTIFACT_NAME}"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
@@ -183,15 +183,15 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
-      - name: Build metis binary
-        run: cargo build -p metis --features vendored-openssl --release --target ${{ matrix.target }}
+      - name: Build hydra binary
+        run: cargo build -p hydra --features vendored-openssl --release --target ${{ matrix.target }}
 
       - name: Prepare artifact
         id: package
         run: |
-          ARTIFACT_NAME="metis-single-player-${{ matrix.target }}"
+          ARTIFACT_NAME="hydra-single-player-${{ matrix.target }}"
           mkdir -p artifacts
-          cp "target/${{ matrix.target }}/release/metis" "artifacts/${ARTIFACT_NAME}"
+          cp "target/${{ matrix.target }}/release/hydra" "artifacts/${ARTIFACT_NAME}"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload binary
@@ -211,7 +211,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: metis-*
+          pattern: hydra-*
           merge-multiple: true
 
       - name: Generate checksums
@@ -219,7 +219,7 @@ jobs:
 
       - name: Publish tagged release to public repo
         env:
-          GH_TOKEN: ${{ secrets.METIS_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.HYDRA_RELEASES_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release view "$TAG" -R dourolabs/metis-releases >/dev/null 2>&1 || \
@@ -230,7 +230,7 @@ jobs:
 
       - name: Publish latest release to public repo
         env:
-          GH_TOKEN: ${{ secrets.METIS_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.HYDRA_RELEASES_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release delete latest -R dourolabs/metis-releases --yes --cleanup-tag 2>/dev/null || true

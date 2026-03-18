@@ -20,7 +20,7 @@ COPY metis-web/packages/ui/ ./packages/ui/
 COPY metis-web/packages/web/ ./packages/web/
 
 # Build packages in dependency order: api → ui → web
-RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
+RUN pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web build
 
 # ── Stage 2: Cargo chef planner ──────────────────────────────────
 FROM rust:1.88.0 AS planner
@@ -42,7 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the full project
 COPY . .
-RUN cargo build --bin metis-bff-server --release
+RUN cargo build --bin hydra-bff-server --release
 
 # ── Stage 4: Runtime ─────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -50,18 +50,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/metis-bff-server /usr/local/bin/metis-bff-server
+COPY --from=builder /app/target/release/hydra-bff-server /usr/local/bin/hydra-bff-server
 COPY --from=spa-build /app/metis-web/packages/web/dist /app/dist
 
 ENV RUST_LOG=info
 ENV PORT=4000
 ENV COOKIE_SECURE=true
 ENV FRONTEND_ASSETS_DIR=/app/dist
-ENV UPSTREAM_URL=http://server.metis.svc.cluster.local
+ENV UPSTREAM_URL=http://server.hydra.svc.cluster.local
 
 EXPOSE 4000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-ENTRYPOINT ["metis-bff-server"]
+ENTRYPOINT ["hydra-bff-server"]

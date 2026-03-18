@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Initialize a metis server with the default set of agents.
+# Initialize a hydra server with the default set of agents.
 # Creates agents in the database and uploads their prompts to the document store
 # via CLI commands. Idempotent: creates on first run, updates on subsequent runs.
 #
 # Usage:
 #   ./scripts/init-agents.sh
 #
-# The script uses the METIS_SERVER_URL environment variable if set,
-# which is passed through to the metis CLI automatically.
+# The script uses the HYDRA_SERVER_URL environment variable if set,
+# which is passed through to the hydra CLI automatically.
 
 set -euo pipefail
 
@@ -36,12 +36,12 @@ for agent in "${AGENTS[@]}"; do
   create_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
   (( ${#EXTRA_FLAGS[@]} > 0 )) && create_args+=("${EXTRA_FLAGS[@]}")
 
-  if metis agents create "${create_args[@]}" 2>/dev/null; then
+  if hydra agents create "${create_args[@]}" 2>/dev/null; then
     echo "Created agent: ${agent}"
   else
     update_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
     (( ${#EXTRA_FLAGS[@]} > 0 )) && update_args+=("${EXTRA_FLAGS[@]}")
-    metis agents update "${update_args[@]}"
+    hydra agents update "${update_args[@]}"
     echo "Updated agent: ${agent}"
   fi
 done
