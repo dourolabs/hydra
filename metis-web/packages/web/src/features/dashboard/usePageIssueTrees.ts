@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type {
   IssueSummaryRecord,
@@ -54,6 +54,7 @@ function useExpandedChildRelations(pageIssueIds: string[]) {
       }),
     enabled: pageIssueIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 }
@@ -76,6 +77,7 @@ function useArtifactRelations(
       }),
     enabled: allIssueIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 }
@@ -92,6 +94,7 @@ function useSessions(allIssueIds: string[]) {
       apiClient.listSessions({ spawned_from_ids }),
     enabled: allIssueIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.sessions,
   });
 }
@@ -107,6 +110,7 @@ function useIssueSummaries(descendantIds: string[]) {
     queryFn: () => apiClient.listIssues({ ids }),
     enabled: descendantIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.issues,
   });
 }
@@ -257,8 +261,7 @@ export function usePageIssueTrees(
   );
 
   // Step 2: Expand — collect all transitive descendants
-  const { data: childRelations, isLoading: relationsLoading } =
-    useExpandedChildRelations(pageIssueIds);
+  const { data: childRelations } = useExpandedChildRelations(pageIssueIds);
 
   // Derive the full expanded issue set (page issues + all descendants)
   const allDescendantIds = useMemo(() => {
@@ -276,18 +279,14 @@ export function usePageIssueTrees(
   );
 
   // Step 3: Artifacts — collect patches and documents for expanded set
-  const { data: patchRelations, isLoading: patchLoading } =
-    useArtifactRelations(allIssueIds, "has-patch");
-  const { data: documentRelations, isLoading: docLoading } =
-    useArtifactRelations(allIssueIds, "has-document");
+  const { data: patchRelations } = useArtifactRelations(allIssueIds, "has-patch");
+  const { data: documentRelations } = useArtifactRelations(allIssueIds, "has-document");
 
   // Step 4: Sessions — collect sessions for expanded set
-  const { data: sessions, isLoading: sessionsLoading } =
-    useSessions(allIssueIds);
+  const { data: sessions } = useSessions(allIssueIds);
 
   // Step 5: Summary records — fetch issue summaries for descendants
-  const { data: descendantIssues, isLoading: issuesLoading } =
-    useIssueSummaries(allDescendantIds);
+  const { data: descendantIssues } = useIssueSummaries(allDescendantIds);
 
   // Build lookup maps
   const issueMap = useMemo(() => {
@@ -331,8 +330,16 @@ export function usePageIssueTrees(
     ],
   );
 
+  // Only show loading state on the very first fetch when no data (real or
+  // placeholder) is available. With keepPreviousData, subsequent refetches
+  // caused by changed query keys will still have placeholder data, so we
+  // avoid flashing the shimmer animation.
   const isLoading =
-    relationsLoading || patchLoading || docLoading || sessionsLoading || issuesLoading;
+    (pageIssueIds.length > 0 && childRelations === undefined) ||
+    (allIssueIds.length > 0 && patchRelations === undefined) ||
+    (allIssueIds.length > 0 && documentRelations === undefined) ||
+    (allIssueIds.length > 0 && sessions === undefined) ||
+    (allDescendantIds.length > 0 && descendantIssues === undefined);
 
   return {
     treeDataMap,
