@@ -108,7 +108,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
 #[tokio::test]
 async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Result<()> {
-    let name = RepoName::from_str("dourolabs/metis")?;
+    let name = RepoName::from_str("dourolabs/hydra")?;
     let original_remote = create_remote_repository()?;
     let updated_remote = create_remote_repository()?;
 

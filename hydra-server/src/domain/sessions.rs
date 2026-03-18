@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn bundle_spec_converts_between_domain_and_api() {
-        let repo = RepoName::from_str("dourolabs/metis").unwrap();
+        let repo = RepoName::from_str("dourolabs/hydra").unwrap();
         let domain = BundleSpec::ServiceRepository {
             name: repo.clone(),
             rev: Some("main".to_string()),

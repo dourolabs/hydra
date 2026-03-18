@@ -444,7 +444,7 @@ mod tests {
 
     fn sample_create_args() -> CreateRepositoryArgs {
         CreateRepositoryArgs {
-            name: RepoName::from_str("dourolabs/metis").unwrap(),
+            name: RepoName::from_str("dourolabs/hydra").unwrap(),
             remote_url: "https://example.com/hydra.git".to_string(),
             default_branch: Some("main".to_string()),
             clear_default_branch: false,
@@ -457,7 +457,7 @@ mod tests {
 
     fn sample_update_args() -> UpdateRepositoryArgs {
         UpdateRepositoryArgs {
-            name: RepoName::from_str("dourolabs/metis").unwrap(),
+            name: RepoName::from_str("dourolabs/hydra").unwrap(),
             remote_url: Some("https://example.com/hydra.git".to_string()),
             default_branch: Some("main".to_string()),
             clear_default_branch: false,
@@ -488,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_repositories_prints_all_fields() {
-        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
         let repositories = ListRepositoriesResponse::new(vec![
             sample_repository_info(&repo_name),
             RepositoryRecord::new(
@@ -514,7 +514,7 @@ mod tests {
             .unwrap();
         let output = String::from_utf8(output).unwrap();
 
-        assert!(output.contains("dourolabs/metis"));
+        assert!(output.contains("dourolabs/hydra"));
         assert!(output.contains("remote_url: https://example.com/hydra.git"));
         assert!(output.contains("default_branch: main"));
         assert!(output.contains("default_image: ghcr.io/dourolabs/hydra:latest"));
@@ -548,7 +548,7 @@ mod tests {
         let repository = sample_repository_info(&args.name);
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/repositories").json_body(json!({
-                "name": "dourolabs/metis",
+                "name": "dourolabs/hydra",
                 "remote_url": "https://example.com/hydra.git",
                 "default_branch": "main",
                 "default_image": "ghcr.io/dourolabs/hydra:latest"
@@ -564,7 +564,7 @@ mod tests {
         render_repository_records(ResolvedOutputFormat::Pretty, &[repository], &mut output)
             .unwrap();
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("dourolabs/metis"));
+        assert!(output.contains("dourolabs/hydra"));
 
         create_mock.assert();
     }
@@ -599,7 +599,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": null,
@@ -646,7 +646,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -692,7 +692,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -729,7 +729,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -784,7 +784,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": null,
@@ -832,7 +832,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -864,7 +864,7 @@ mod tests {
 
     fn sample_clone_args() -> CloneRepositoryArgs {
         CloneRepositoryArgs {
-            name: RepoName::from_str("dourolabs/metis").unwrap(),
+            name: RepoName::from_str("dourolabs/hydra").unwrap(),
             directory: None,
             revision: None,
         }
@@ -898,7 +898,7 @@ mod tests {
             .directory
             .clone()
             .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
-        assert_eq!(destination, PathBuf::from("dourolabs/metis"));
+        assert_eq!(destination, PathBuf::from("dourolabs/hydra"));
     }
 
     #[test]
@@ -931,7 +931,7 @@ mod tests {
         let server = MockServer::start();
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/repositories").json_body(json!({
-                "name": "dourolabs/metis",
+                "name": "dourolabs/hydra",
                 "remote_url": "https://example.com/hydra.git",
                 "default_branch": "main",
                 "default_image": "ghcr.io/dourolabs/hydra:latest",
@@ -965,7 +965,7 @@ mod tests {
         let server = MockServer::start();
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/repositories").json_body(json!({
-                "name": "dourolabs/metis",
+                "name": "dourolabs/hydra",
                 "remote_url": "https://example.com/hydra.git",
                 "default_branch": "main",
                 "default_image": "ghcr.io/dourolabs/hydra:latest"
@@ -1004,7 +1004,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -1048,7 +1048,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -1088,7 +1088,7 @@ mod tests {
         });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis")
+                .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
@@ -1120,7 +1120,7 @@ mod tests {
 
     #[test]
     fn list_repositories_shows_patch_workflow_in_pretty_output() {
-        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
         let mut repo_info = sample_repository_info(&repo_name);
         repo_info.repository.patch_workflow = Some(sample_workflow_config());
 
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn list_repositories_omits_patch_workflow_when_none() {
-        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
         let repo_info = sample_repository_info(&repo_name);
 
         let mut output = Vec::new();

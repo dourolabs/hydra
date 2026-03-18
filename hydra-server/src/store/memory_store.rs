@@ -2227,7 +2227,7 @@ mod tests {
     #[tokio::test]
     async fn repository_crud_round_trip() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let config = sample_repository_config();
 
         store
@@ -2263,7 +2263,7 @@ mod tests {
     #[tokio::test]
     async fn repository_versions_increment_and_latest_returned() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
 
         let config = sample_repository_config();
         store
@@ -2289,7 +2289,7 @@ mod tests {
     #[tokio::test]
     async fn add_repository_rejects_duplicates() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
 
         store
             .add_repository(name.clone(), sample_repository_config(), &ActorRef::test())
@@ -2324,7 +2324,7 @@ mod tests {
     #[tokio::test]
     async fn delete_repository_soft_deletes() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let config = sample_repository_config();
 
         store
@@ -2364,7 +2364,7 @@ mod tests {
     #[tokio::test]
     async fn add_repository_recreates_over_soft_deleted_repo() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let config = sample_repository_config();
 
         // Create and delete
@@ -2404,7 +2404,7 @@ mod tests {
     #[tokio::test]
     async fn add_repository_respects_caller_deleted_field() {
         let store = MemoryStore::new();
-        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let config = sample_repository_config();
 
         // Create and delete

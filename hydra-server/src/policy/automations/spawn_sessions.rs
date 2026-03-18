@@ -355,7 +355,7 @@ mod tests {
     #[tokio::test]
     async fn spawns_session_on_issue_created() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let agent_name = "agent-a";
 
         register_agent(&handles, agent_name).await?;
@@ -390,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn no_spawn_when_at_capacity() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let agent_name = "agent-cap";
 
         register_agent_with_capacity(&handles, agent_name, 1, DEFAULT_AGENT_MAX_TRIES).await?;
@@ -443,7 +443,7 @@ mod tests {
     #[tokio::test]
     async fn no_spawn_when_attempts_exhausted() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let agent_name = "agent-retry";
 
         // max_tries=1, so only one attempt is allowed
@@ -510,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_attempt_resets_on_status_change() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let agent_name = "agent-reset";
 
         // max_tries=1
@@ -624,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn session_event_does_not_spawn_for_terminal_issues() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
         let agent_name = "agent-terminal";
 
         register_agent(&handles, agent_name).await?;
