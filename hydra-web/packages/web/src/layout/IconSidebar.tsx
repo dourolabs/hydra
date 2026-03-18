@@ -57,7 +57,54 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
       <div className={styles.top}>
         <Tooltip content="Dashboard" position="right">
           <Link to="/" className={styles.logo}>
-            M
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 100 100"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              {/* Ouroboros coiled snake */}
+              <circle
+                cx="50"
+                cy="50"
+                r="36"
+                stroke="#00CC66"
+                strokeWidth="8"
+                strokeLinecap="round"
+                strokeDasharray="12 6"
+                fill="none"
+              />
+              {/* Snake head */}
+              <path
+                d="M86 50 C86 50 82 42 76 44 C70 46 74 54 80 54 C86 54 88 48 86 50Z"
+                fill="#00CC66"
+              />
+              {/* Eye */}
+              <circle cx="79" cy="48" r="2" fill="#0a0a0a" />
+              {/* Tongue */}
+              <path
+                d="M86 50 L92 47 M86 50 L92 53"
+                stroke="#00CC66"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+              {/* Scale details on body */}
+              <path
+                d="M14 50 C14 30 30 14 50 14"
+                stroke="#00CC66"
+                strokeWidth="2"
+                strokeOpacity="0.3"
+                fill="none"
+              />
+              <path
+                d="M50 86 C30 86 14 70 14 50"
+                stroke="#00CC66"
+                strokeWidth="2"
+                strokeOpacity="0.3"
+                fill="none"
+              />
+            </svg>
           </Link>
         </Tooltip>
 
