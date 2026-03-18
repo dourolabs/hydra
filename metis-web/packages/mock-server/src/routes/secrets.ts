@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ListSecretsResponse, SetSecretRequest } from "@metis/api";
+import type { ListSecretsResponse, SetSecretRequest } from "@hydra/api";
 
 const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
 
@@ -7,8 +7,8 @@ function validateSecretName(name: string): string | null {
   if (!SECRET_NAME_PATTERN.test(name)) {
     return "secret name must be 1-128 chars, start with uppercase letter, and contain only uppercase letters, digits, and underscores";
   }
-  if (name.startsWith("METIS_")) {
-    return "secret name must not start with METIS_ (reserved prefix)";
+  if (name.startsWith("HYDRA_")) {
+    return "secret name must not start with HYDRA_ (reserved prefix)";
   }
   return null;
 }

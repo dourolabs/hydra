@@ -7,7 +7,7 @@ export const auth = new Hono();
 
 /**
  * POST /auth/login
- * Accepts { token: string }, validates against metis-server /v1/whoami,
+ * Accepts { token: string }, validates against hydra-server /v1/whoami,
  * and sets an HttpOnly cookie on success.
  */
 auth.post("/login", async (c) => {
@@ -19,8 +19,8 @@ auth.post("/login", async (c) => {
     return c.json({ error: "token is required" }, 400);
   }
 
-  // Validate the token against metis-server
-  const resp = await fetch(`${config.metisServerUrl}/v1/whoami`, {
+  // Validate the token against hydra-server
+  const resp = await fetch(`${config.hydraServerUrl}/v1/whoami`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -53,7 +53,7 @@ auth.post("/logout", (c) => {
 
 /**
  * GET /auth/me
- * Proxies to metis-server /v1/whoami using the token from the cookie.
+ * Proxies to hydra-server /v1/whoami using the token from the cookie.
  */
 auth.get("/me", async (c) => {
   const token = getCookie(c, config.cookieName);
@@ -63,7 +63,7 @@ auth.get("/me", async (c) => {
     return c.json({ error: "not authenticated" }, 401);
   }
 
-  const resp = await fetch(`${config.metisServerUrl}/v1/whoami`, {
+  const resp = await fetch(`${config.hydraServerUrl}/v1/whoami`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 

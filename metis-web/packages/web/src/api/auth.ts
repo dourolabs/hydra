@@ -1,4 +1,4 @@
-import type { ActorIdentity, WhoAmIResponse } from "@metis/api";
+import type { ActorIdentity, WhoAmIResponse } from "@hydra/api";
 import { apiFetch } from "./client";
 
 /** Extract a display name from any actor identity. */

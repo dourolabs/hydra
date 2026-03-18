@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
+import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";

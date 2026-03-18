@@ -9,7 +9,7 @@ import { createIssueRoutes } from "./issues.js";
 import { createPatchRoutes } from "./patches.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createDocumentRoutes } from "./documents.js";
-import type { Issue, Patch, Session, Document, Status } from "@metis/api";
+import type { Issue, Patch, Session, Document, Status } from "@hydra/api";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {

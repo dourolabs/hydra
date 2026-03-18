@@ -52,7 +52,7 @@ vi.mock("../../../api/client", () => ({
   },
 }));
 
-vi.mock("@metis/ui", () => ({
+vi.mock("@hydra/ui", () => ({
   Panel: ({ children }: { children: React.ReactNode }) => <div data-testid="panel">{children}</div>,
   Spinner: () => <div data-testid="spinner" />,
   Button: ({ children, onClick, disabled, ...rest }: {
@@ -251,14 +251,14 @@ describe("SecretsSection", () => {
     expect(screen.getByText("Must be 1-128 chars, start with uppercase letter, only uppercase letters/digits/underscores")).toBeDefined();
   });
 
-  it("validates METIS_ prefix is reserved", () => {
+  it("validates HYDRA_ prefix is reserved", () => {
     render(<SecretsSection />);
     fireEvent.click(screen.getByText("+ Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
-    fireEvent.change(nameInput, { target: { value: "METIS_FOO" } });
+    fireEvent.change(nameInput, { target: { value: "HYDRA_FOO" } });
 
-    expect(screen.getByText("Names starting with METIS_ are reserved")).toBeDefined();
+    expect(screen.getByText("Names starting with HYDRA_ are reserved")).toBeDefined();
   });
 
   it("validates duplicate name on save", () => {

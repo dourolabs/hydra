@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import { Avatar, Badge, SessionStatusIndicator } from "@metis/ui";
-import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@metis/api";
+import { Avatar, Badge, SessionStatusIndicator } from "@hydra/ui";
+import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@hydra/api";
 import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";

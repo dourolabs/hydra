@@ -1,8 +1,8 @@
 import { useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
-import { Panel, Spinner, Button, Modal, Input, Textarea } from "@metis/ui";
-import type { DocumentSummaryRecord, ListDocumentsResponse } from "@metis/api";
+import { Panel, Spinner, Button, Modal, Input, Textarea } from "@hydra/ui";
+import type { DocumentSummaryRecord, ListDocumentsResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";

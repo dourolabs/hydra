@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, Button, Textarea, Select } from "@metis/ui";
-import type { SelectOption } from "@metis/ui";
-import type { Issue, IssueStatus, IssueVersionRecord } from "@metis/api";
+import { Modal, Button, Textarea, Select } from "@hydra/ui";
+import type { SelectOption } from "@hydra/ui";
+import type { Issue, IssueStatus, IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./IssueUpdateModal.module.css";

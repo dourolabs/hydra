@@ -7,7 +7,7 @@ import type {
   ListLabelsResponse,
   LabelSummary,
   Issue,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "labels";
 

@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import { Badge } from "@hydra/ui";
+import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { apiClient } from "../../api/client";
 import { ActivityTimeline } from "../activity/ActivityTimeline";

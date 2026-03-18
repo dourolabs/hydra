@@ -1,7 +1,7 @@
 import type { ApiErrorBody } from "./generated/ApiErrorBody";
 
 /**
- * Error thrown when a metis-server API request returns a non-2xx status.
+ * Error thrown when a hydra-server API request returns a non-2xx status.
  */
 export class ApiError extends Error {
   constructor(

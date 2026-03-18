@@ -1,4 +1,4 @@
-import type { IssueSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@hydra/api";
 import type { WorkItem } from "../dashboard/workItemTypes";
 
 /**

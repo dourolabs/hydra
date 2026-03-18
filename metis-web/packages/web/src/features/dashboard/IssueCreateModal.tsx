@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, Button, Input, Textarea, Select } from "@metis/ui";
-import type { SelectOption } from "@metis/ui";
-import type { IssueType, RepositoryRecord } from "@metis/api";
+import { Modal, Button, Input, Textarea, Select } from "@hydra/ui";
+import type { SelectOption } from "@hydra/ui";
+import type { IssueType, RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -48,12 +48,12 @@ export function IssueCreateModal({
   const { data: repos } = useRepositories();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const [title, setTitle, clearTitleDraft] = useFormDraft("metis:draft:issue-create-modal:title", "");
-  const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-create-modal:description", "");
-  const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("metis:draft:issue-create-modal:issueType", "task");
-  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-create-modal:assignee", "");
-  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-create-modal:repoName", "");
-  const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>("metis:draft:issue-create-modal:labelNames", []);
+  const [title, setTitle, clearTitleDraft] = useFormDraft("hydra:draft:issue-create-modal:title", "");
+  const [description, setDescription, clearDescriptionDraft] = useFormDraft("hydra:draft:issue-create-modal:description", "");
+  const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("hydra:draft:issue-create-modal:issueType", "task");
+  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("hydra:draft:issue-create-modal:assignee", "");
+  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("hydra:draft:issue-create-modal:repoName", "");
+  const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>("hydra:draft:issue-create-modal:labelNames", []);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
 
   const resetForm = useCallback(() => {

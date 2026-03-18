@@ -105,24 +105,24 @@ const sessionsPending: SessionSummary[] = [
 ];
 
 const sampleLogs = [
-  "Cloning repository dourolabs/metis...",
-  "Cloned to /tmp/metis-work-abc123",
+  "Cloning repository dourolabs/hydra...",
+  "Cloned to /tmp/hydra-work-abc123",
   "\x1b[32m[ok]\x1b[0m Repository cloned successfully",
   "Running cargo check --workspace",
-  "\x1b[33m   Compiling\x1b[0m metis-common v0.1.0",
-  "\x1b[33m   Compiling\x1b[0m metis-server v0.1.0",
-  "\x1b[33m   Compiling\x1b[0m metis v0.1.0",
+  "\x1b[33m   Compiling\x1b[0m hydra-common v0.1.0",
+  "\x1b[33m   Compiling\x1b[0m hydra-server v0.1.0",
+  "\x1b[33m   Compiling\x1b[0m hydra v0.1.0",
   "\x1b[32m    Finished\x1b[0m dev [unoptimized + debuginfo] target(s)",
   "Running cargo test --workspace",
   "running 42 tests",
-  "test metis_common::tests::test_issue_id ... \x1b[32mok\x1b[0m",
-  "test metis_common::tests::test_job_status ... \x1b[32mok\x1b[0m",
-  "test metis_server::routes::test_create_issue ... \x1b[32mok\x1b[0m",
-  "test metis_server::routes::test_list_issues ... \x1b[32mok\x1b[0m",
-  "\x1b[31mtest metis_server::routes::test_delete_issue ... FAILED\x1b[0m",
+  "test hydra_common::tests::test_issue_id ... \x1b[32mok\x1b[0m",
+  "test hydra_common::tests::test_job_status ... \x1b[32mok\x1b[0m",
+  "test hydra_server::routes::test_create_issue ... \x1b[32mok\x1b[0m",
+  "test hydra_server::routes::test_list_issues ... \x1b[32mok\x1b[0m",
+  "\x1b[31mtest hydra_server::routes::test_delete_issue ... FAILED\x1b[0m",
   "",
   "failures:",
-  "    metis_server::routes::test_delete_issue",
+  "    hydra_server::routes::test_delete_issue",
   "\x1b[31m\x1b[1mtest result: FAILED.\x1b[0m 41 passed; 1 failed; 0 ignored",
 ];
 
@@ -150,7 +150,7 @@ export function DemoApp() {
   return (
     <div className={styles.app}>
       <header className={styles.header}>
-        <h1 className={styles.title}>@metis/ui</h1>
+        <h1 className={styles.title}>@hydra/ui</h1>
         <span className={styles.subtitle}>Component Library Demo</span>
       </header>
 
@@ -466,7 +466,7 @@ export function DemoApp() {
       </main>
 
       <footer className={styles.footer}>
-        <span className={styles.footerText}>@metis/ui v0.0.1 &middot; Dark Terminal Theme</span>
+        <span className={styles.footerText}>@hydra/ui v0.0.1 &middot; Dark Terminal Theme</span>
       </footer>
     </div>
   );

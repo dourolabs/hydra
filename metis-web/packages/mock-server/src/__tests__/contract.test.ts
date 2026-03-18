@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MetisApiClient, ApiError } from "@metis/api";
+import { HydraApiClient, ApiError } from "@hydra/api";
 import type {
   UpsertIssueRequest,
   CreateSessionRequest,
@@ -8,20 +8,20 @@ import type {
   UpsertAgentRequest,
   CreateRepositoryRequest,
   UpdateRepositoryRequest,
-} from "@metis/api";
+} from "@hydra/api";
 import { startMockServer, type MockServerHandle } from "../index.js";
 
 let server: MockServerHandle;
-let client: MetisApiClient;
+let client: HydraApiClient;
 let baseUrl: string;
 const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
   server = await startMockServer({ port: 0 });
   baseUrl = `http://localhost:${server.port}`;
-  client = new MetisApiClient({ baseUrl });
+  client = new HydraApiClient({ baseUrl });
 
-  // Inject Authorization header into all requests since MetisApiClient
+  // Inject Authorization header into all requests since HydraApiClient
   // relies on a BFF proxy for auth in production.
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);

@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { SessionVersionRecord } from "@metis/api";
-import { Modal, Button } from "@metis/ui";
+import type { SessionVersionRecord } from "@hydra/api";
+import { Modal, Button } from "@hydra/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./KillSessionModal.module.css";

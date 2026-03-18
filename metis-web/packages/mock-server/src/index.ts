@@ -110,9 +110,9 @@ export function startMockServer(options?: { port?: number }): Promise<MockServer
 // Auto-start when running as a standalone server (not during tests)
 if (!process.env.VITEST) {
   const port = Number(process.env.PORT ?? 8080);
-  console.log(`@metis/mock-server starting on port ${port}`);
+  console.log(`@hydra/mock-server starting on port ${port}`);
   startMockServer({ port }).then(({ port: resolvedPort }) => {
-    console.log(`@metis/mock-server listening on http://localhost:${resolvedPort}`);
+    console.log(`@hydra/mock-server listening on http://localhost:${resolvedPort}`);
   });
 }
 

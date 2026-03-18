@@ -1,16 +1,16 @@
 {
-  "name": "metis-web-root",
+  "name": "hydra-web-root",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm -r --filter @metis/api build && pnpm -r --filter @metis/ui build && pnpm -r --filter @metis/web build",
-    "dev": "pnpm -r --filter @metis/web dev",
-    "dev:mock-server": "pnpm -r --filter @metis/mock-server dev",
-    "dev:server": "pnpm -r --filter @metis/web dev:server",
+    "build": "pnpm -r --filter @hydra/api build && pnpm -r --filter @hydra/ui build && pnpm -r --filter @hydra/web build",
+    "dev": "pnpm -r --filter @hydra/web dev",
+    "dev:mock-server": "pnpm -r --filter @hydra/mock-server dev",
+    "dev:server": "pnpm -r --filter @hydra/web dev:server",
     "dev:test": "./scripts/dev-test.sh",
-    "e2e": "pnpm --filter @metis/web exec playwright test",
-    "generate-types": "cd .. && TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings && cd metis-web && prettier --write packages/api/src/generated/",
+    "e2e": "pnpm --filter @hydra/web exec playwright test",
+    "generate-types": "cd .. && TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated cargo test -p hydra-common --features ts export_bindings && cd metis-web && prettier --write packages/api/src/generated/",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck"

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { LogViewer, Spinner } from "@metis/ui";
+import { LogViewer, Spinner } from "@hydra/ui";
 import { useSessionLogs } from "./useSessionLogs";
 import styles from "./SessionLogViewer.module.css";
 

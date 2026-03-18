@@ -1,4 +1,4 @@
-const STORAGE_KEY = "metis:filterSidebar:collapsed";
+const STORAGE_KEY = "hydra:filterSidebar:collapsed";
 
 export function readCollapsed(): boolean {
   try {

@@ -4,7 +4,7 @@ import type {
   IssueSummaryRecord,
   RelationResponse,
   SessionSummaryRecord,
-} from "@metis/api";
+} from "@hydra/api";
 import { apiClient } from "../../api/client";
 import type { ChildStatus } from "./computeIssueProgress";
 

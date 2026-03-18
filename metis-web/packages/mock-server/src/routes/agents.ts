@@ -6,7 +6,7 @@ import type {
   UpsertAgentRequest,
   ListAgentsResponse,
   DeleteAgentResponse,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "agents";
 

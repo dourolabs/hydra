@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { IssueSummaryRecord, PatchSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, PatchSummaryRecord } from "@hydra/api";
 import type { WorkItem } from "../dashboard/workItemTypes";
 import { topologicalSort, topologicalSortWorkItems } from "./topologicalSort";
 

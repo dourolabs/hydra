@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { VersionResponse } from "@metis/api";
+import type { VersionResponse } from "@hydra/api";
 import { RepositoriesSection } from "../features/repositories/RepositoriesSection";
 import { AgentsSection } from "../features/agents/AgentsSection";
 import { SecretsSection } from "../features/secrets/SecretsSection";

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Input, Select } from "@metis/ui";
-import type { SelectOption } from "@metis/ui";
+import { Input, Select } from "@hydra/ui";
+import type { SelectOption } from "@hydra/ui";
 import type { IssueFilterValues as IssueFilterState } from "./useIssueFilters";
 import styles from "./IssueFilters.module.css";
 

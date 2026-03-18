@@ -75,7 +75,7 @@ export type { LogsQuery } from "./generated/LogsQuery";
 export type { MarkReadResponse } from "./generated/MarkReadResponse";
 export type { MergeQueue } from "./generated/MergeQueue";
 export type { MergeRequestConfig } from "./generated/MergeRequestConfig";
-export type { MetisId } from "./generated/MetisId";
+export type { HydraId } from "./generated/HydraId";
 export type { Notification } from "./generated/Notification";
 export type { NotificationId } from "./generated/NotificationId";
 export type { NotificationResponse } from "./generated/NotificationResponse";

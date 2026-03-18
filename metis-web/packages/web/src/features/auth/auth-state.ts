@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { WhoAmIResponse } from "@metis/api";
+import type { WhoAmIResponse } from "@hydra/api";
 
 export interface AuthState {
   user: WhoAmIResponse | null;

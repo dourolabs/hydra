@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, CopyButton, DiffViewer, MarkdownViewer, Panel, Tabs } from "@metis/ui";
-import type { PatchVersionRecord } from "@metis/api";
+import { Avatar, Badge, CopyButton, DiffViewer, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
+import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useToast } from "../toast/useToast";

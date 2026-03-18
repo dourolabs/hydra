@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Button } from "@metis/ui";
-import type { AgentRecord } from "@metis/api";
+import { Button } from "@hydra/ui";
+import type { AgentRecord } from "@hydra/api";
 import styles from "./AgentsSection.module.css";
 
 interface AgentRowProps {

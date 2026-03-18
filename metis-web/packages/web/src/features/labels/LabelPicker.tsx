@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { LabelRecord } from "@metis/api";
+import type { LabelRecord } from "@hydra/api";
 import { useLabels } from "./useLabels";
 import { LabelChip } from "./LabelChip";
 import styles from "./LabelPicker.module.css";

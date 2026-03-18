@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { PatchVersionRecord } from "@metis/api";
+import type { PatchVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 /**

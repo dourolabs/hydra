@@ -1,5 +1,5 @@
-export { MetisApiClient } from "./client";
-export type { MetisApiClientOptions } from "./client";
+export { HydraApiClient } from "./client";
+export type { HydraApiClientOptions } from "./client";
 export type {
   RelationResponse,
   ListRelationsRequest,
@@ -9,13 +9,13 @@ export type {
 export { ApiError } from "./errors";
 
 export {
-  MetisEventSource,
+  HydraEventSource,
   buildEventsUrl,
 } from "./sse";
 export type {
-  MetisEvent,
-  MetisEventHandler,
-  MetisEventErrorHandler,
+  HydraEvent,
+  HydraEventHandler,
+  HydraEventErrorHandler,
   EventSubscriptionOptions,
 } from "./sse";
 

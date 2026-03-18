@@ -1,5 +1,5 @@
 import { useParams, useSearchParams } from "react-router-dom";
-import { Spinner } from "@metis/ui";
+import { Spinner } from "@hydra/ui";
 import { usePatch } from "../features/patches/usePatch";
 import { PatchDetail } from "../features/patches/PatchDetail";
 import { ApiError } from "../api/client";

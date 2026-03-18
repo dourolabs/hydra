@@ -10,7 +10,7 @@ import type {
   ListDocumentVersionsResponse,
   DocumentSummaryRecord,
   DocumentSummary,
-} from "@metis/api";
+} from "@hydra/api";
 
 const COLLECTION = "documents";
 const SSE_PREFIX = "document";
