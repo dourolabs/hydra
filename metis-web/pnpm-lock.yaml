@@ -53,7 +53,7 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.0
         version: 1.19.9(hono@4.11.10)
-      '@metis/api':
+      '@hydra/api':
         specifier: workspace:*
         version: link:../api
       hono:
@@ -115,10 +115,10 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.9(hono@4.11.10)
-      '@metis/api':
+      '@hydra/api':
         specifier: workspace:*
         version: link:../api
-      '@metis/ui':
+      '@hydra/ui':
         specifier: workspace:*
         version: link:../ui
       '@tanstack/react-query':

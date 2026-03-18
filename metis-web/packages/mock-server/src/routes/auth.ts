@@ -8,7 +8,7 @@ import type {
   LoginResponse,
 } from "@hydra/api";
 
-const COOKIE_NAME = "hydra_token";
+const COOKIE_NAME = "metis_token";
 
 /**
  * API-level auth routes under /v1 (token-based, no cookies).
