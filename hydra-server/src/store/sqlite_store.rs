@@ -7226,13 +7226,8 @@ mod tests {
         store.add_issue(closed, &actor).await.unwrap();
 
         // Count all issues
-        let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let query =
+            hydra_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
 
         // Count only bugs
@@ -7360,13 +7355,8 @@ mod tests {
         }
 
         // Count should return 5 even when limit is set
-        let mut query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let mut query =
+            hydra_common::api::v1::issues::SearchIssuesQuery::new(None, vec![], None, None, None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
