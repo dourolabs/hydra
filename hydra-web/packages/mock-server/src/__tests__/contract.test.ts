@@ -793,6 +793,165 @@ describe("SSE Events", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BFF proxy rewrite: /api/v1/* -> /v1/*
+// ---------------------------------------------------------------------------
+describe("BFF proxy rewrite", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
+  it("GET /api/v1/issues returns issues when cookie auth is provided", async () => {
+    const resp = await originalFetch(`${baseUrl}/api/v1/issues`, {
+      method: "GET",
+      headers: {
+        Cookie: "hydra_token=dev-token-12345",
+      },
+    });
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.issues).toBeDefined();
+    expect(body.issues.length).toBeGreaterThan(0);
+  });
+
+  it("GET /api/v1/issues returns 401 without cookie", async () => {
+    const resp = await originalFetch(`${baseUrl}/api/v1/issues`, {
+      method: "GET",
+    });
+    expect(resp.status).toBe(401);
+    const body = await resp.json();
+    expect(body.error).toContain("not authenticated");
+  });
+
+  it("POST /api/v1/issues creates an issue via cookie auth", async () => {
+    const resp = await originalFetch(`${baseUrl}/api/v1/issues`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "hydra_token=dev-token-12345",
+      },
+      body: JSON.stringify({
+        issue: {
+          type: "task",
+          title: "",
+          description: "Created via BFF proxy",
+          creator: "dev-user",
+          progress: "",
+          status: "open",
+          dependencies: [],
+          patches: [],
+        },
+        session_id: null,
+      }),
+    });
+    expect(resp.status).toBe(201);
+    const body = await resp.json();
+    expect(body.issue_id).toBeTruthy();
+  });
+
+  it("GET /api/v1/issues/:id retrieves a specific issue", async () => {
+    // Create an issue first via direct API
+    const createResp = await originalFetch(`${baseUrl}/v1/issues`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer dev-token-12345",
+      },
+      body: JSON.stringify({
+        issue: {
+          type: "task",
+          title: "",
+          description: "BFF proxy get test",
+          creator: "dev-user",
+          progress: "",
+          status: "open",
+          dependencies: [],
+          patches: [],
+        },
+        session_id: null,
+      }),
+    });
+    const created = await createResp.json();
+
+    // Fetch via BFF proxy
+    const resp = await originalFetch(
+      `${baseUrl}/api/v1/issues/${created.issue_id}`,
+      {
+        method: "GET",
+        headers: {
+          Cookie: "hydra_token=dev-token-12345",
+        },
+      },
+    );
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.issue_id).toBe(created.issue_id);
+    expect(body.issue.description).toBe("BFF proxy get test");
+  });
+
+  it("preserves query parameters in rewritten URL", async () => {
+    const resp = await originalFetch(
+      `${baseUrl}/api/v1/issues?status=open`,
+      {
+        method: "GET",
+        headers: {
+          Cookie: "hydra_token=dev-token-12345",
+        },
+      },
+    );
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    for (const issue of body.issues) {
+      expect(issue.issue.status).toBe("open");
+    }
+  });
+
+  it("SSE /api/v1/events works through BFF proxy", async () => {
+    const controller = new AbortController();
+    const resp = await originalFetch(`${baseUrl}/api/v1/events`, {
+      method: "GET",
+      headers: {
+        Cookie: "hydra_token=dev-token-12345",
+      },
+      signal: controller.signal,
+    });
+    expect(resp.status).toBe(200);
+
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    // Read until we get the connected event
+    let bytesRead = 0;
+    const events: Array<{ event: string; data: string }> = [];
+    while (bytesRead < 65536) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      bytesRead += value.length;
+
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let event = "";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data = line.slice(5).trim();
+        }
+        if (event || data) events.push({ event, data });
+      }
+
+      if (events.some((e) => e.event === "connected")) break;
+    }
+
+    expect(events.some((e) => e.event === "connected")).toBe(true);
+    controller.abort();
+    reader.releaseLock();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Seed data sanity checks
 // ---------------------------------------------------------------------------
 describe("Seed data", () => {
