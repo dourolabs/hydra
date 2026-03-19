@@ -4,9 +4,9 @@ Web interface for Hydra. This is a pnpm monorepo containing three packages:
 
 - **`@hydra/api`** — Typed API client with auto-generated TypeScript types from hydra-server Rust structs
 - **`@hydra/ui`** — React component library with a dark terminal-inspired theme (JetBrains Mono font, `#0a0a0a` background, `#00cc66` green accent)
-- **`@hydra/web`** — React 19 SPA frontend + Hono BFF (Backend-for-Frontend) server
+- **`@hydra/web`** — React 19 SPA frontend
 
-The BFF server proxies authenticated API requests to hydra-server and serves the React SPA's static assets.
+In production, the Rust `hydra-bff` crate serves as the backend-for-frontend, proxying authenticated API requests to hydra-server and serving static assets. For testing, `@hydra/mock-server` provides a standalone mock of the hydra API.
 
 ## Prerequisites
 
@@ -23,12 +23,9 @@ pnpm install
 
 ## Development
 
-Run three processes for full local development:
-
 | Command | Description |
 |---|---|
-| `pnpm dev` | React dev server on port 3000 (Vite, proxies `/api` and `/auth` to `localhost:4000`) |
-| `pnpm dev:server` | BFF server on port 4000 (requires `HYDRA_SERVER_URL` to point to a running hydra-server) |
+| `pnpm dev` | React dev server on port 3000 (Vite) |
 | `pnpm -r dev:demo` | Component library demo on port 3001 |
 
 ## Building
@@ -55,18 +52,6 @@ This runs `cargo test -p hydra-common --features ts export_bindings` to export T
 
 CI verifies that generated types are up-to-date by regenerating them and checking for uncommitted diffs.
 
-## Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `HYDRA_SERVER_URL` | `http://server.hydra.svc.cluster.local` | URL of the hydra-server API |
-| `PORT` | `4000` | Port the BFF server listens on |
-| `NODE_ENV` | (unset in dev) | Set to `production` in Docker for secure cookies |
-
-## Authentication
-
-Users provide a Hydra API token via `POST /auth/login`. The BFF validates the token against hydra-server's `/v1/whoami` endpoint and, on success, stores it in an HttpOnly secure cookie. All subsequent `/api/*` requests are proxied to hydra-server with the token attached as a `Bearer` authorization header. Users can log out via `POST /auth/logout`, which clears the cookie.
-
 ## Project structure
 
 ```
@@ -85,8 +70,7 @@ hydra-web/
 │   │       ├── theme/         # Global CSS and theme tokens
 │   │       └── demo/          # Standalone demo app for the component library
 │   └── web/
-│       ├── src/               # React SPA source
-│       └── server/            # Hono BFF server (auth, API proxy, static serving)
+│       └── src/               # React SPA source
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json

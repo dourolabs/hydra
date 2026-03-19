@@ -113,4 +113,4 @@ This allows sequential agents working on the same issue to pick up where the pre
 | `hydra-common` | Shared models and types used across all crates. |
 | `hydra-bff` | Backend-for-frontend layer: auth routes, API proxy, and embedded frontend serving. |
 | `hydra-single-player` | All-in-one binary bundling CLI + server + BFF for local single-player use. |
-| `hydra-web` | React 19 frontend with a dark terminal-inspired UI. A pnpm monorepo containing a typed API client (`@hydra/api`), component library (`@hydra/ui`), and the SPA + Hono BFF server (`@hydra/web`). |
+| `hydra-web` | React 19 frontend with a dark terminal-inspired UI. A pnpm monorepo containing a typed API client (`@hydra/api`), component library (`@hydra/ui`), and the SPA (`@hydra/web`). |

@@ -10,7 +10,7 @@ Three-package monorepo managed with pnpm workspaces:
 |---------|------|---------|
 | `packages/api` | `@hydra/api` | Typed API client and auto-generated types |
 | `packages/ui` | `@hydra/ui` | Reusable component library |
-| `packages/web` | `@hydra/web` | React SPA + Hono BFF |
+| `packages/web` | `@hydra/web` | React SPA frontend |
 
 **Dependency order:** `api` → `ui` → `web`. Changes to `api` or `ui` require rebuilding downstream packages.
 
@@ -97,7 +97,7 @@ Before submitting a patch, verify your changes using the dev testing stack.
 1. Install dependencies: `cd hydra-web && pnpm install`
 2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @hydra/web exec playwright install chromium`
 3. Run E2E tests: `pnpm e2e`
-   - Playwright automatically starts the mock server, BFF, and frontend via its `webServer` config
+   - Playwright automatically starts the mock server and frontend via its `webServer` config
    - Servers are automatically stopped when tests complete
 4. If tests fail, check screenshots in `packages/web/test-results/`
 5. If tests pass, create your patch
@@ -112,8 +112,7 @@ Use `./scripts/dev-test.sh` only for interactive development where you need long
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| Mock server | 8080 | Standalone TypeScript mock of the hydra API |
-| BFF | 4000 | Hono backend-for-frontend (proxies to mock server) |
+| Mock server | 8080 | Standalone TypeScript mock of the hydra API (includes BFF proxy routes) |
 | Frontend | 3000 | Vite React dev server |
 
 ### Reset mock server state
@@ -137,7 +136,7 @@ pnpm --filter @hydra/web exec playwright test --headed  # visible browser
 - Screenshots are saved to `packages/web/test-results/` on failure.
 - Traces are recorded on first retry (CI only by default). View with `pnpm --filter @hydra/web exec playwright show-trace <trace-file>`.
 - Run with `--headed` to watch the browser during test execution.
-- Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts all three servers (mock server, BFF, frontend) when running `pnpm e2e`.
+- Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts the mock server and frontend when running `pnpm e2e`.
 
 ### Visual Audit & Screenshot Capture
 
