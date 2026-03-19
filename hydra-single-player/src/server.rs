@@ -296,6 +296,9 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     for &(name, prompt, is_assignment_agent) in agents {
         let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX);
         request.is_assignment_agent = is_assignment_agent;
+        if name == "pm" {
+            request.secrets = vec!["GH_TOKEN".to_string()];
+        }
 
         rt.block_on(client.create_agent(&request))
             .with_context(|| format!("failed to create agent '{name}'"))?;
