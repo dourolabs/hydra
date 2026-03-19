@@ -37,13 +37,6 @@ export default defineConfig({
     },
     {
       command:
-        "HYDRA_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server",
-      port: 4000,
-      reuseExistingServer: true,
-      cwd: "../..",
-    },
-    {
-      command:
         "pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web dev",
       port: 3000,
       reuseExistingServer: true,

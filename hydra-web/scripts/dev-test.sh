@@ -1,6 +1,6 @@
 #!/bin/bash
 # hydra-web/scripts/dev-test.sh
-# Start mock server + BFF + Vite dev server, then optionally run E2E tests.
+# Start mock server + Vite dev server, then optionally run E2E tests.
 #
 # Usage:
 #   ./scripts/dev-test.sh          # Start dev stack and keep running
@@ -60,11 +60,6 @@ echo "Starting mock server..."
 pnpm --filter @hydra/mock-server dev &
 wait_for_url "http://localhost:8080/health" "Mock server" 30
 
-# Start BFF (port 4000), pointing at mock server
-echo "Starting BFF server..."
-HYDRA_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @hydra/web dev:server &
-wait_for_url "http://localhost:4000/health" "BFF server" 30
-
 # Build API and UI packages, then start Vite dev server (port 3000)
 echo "Building API and UI packages..."
 pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build
@@ -77,7 +72,6 @@ echo "========================================="
 echo "  Dev stack ready!"
 echo "========================================="
 echo "  Mock server: http://localhost:8080"
-echo "  BFF:         http://localhost:4000"
 echo "  Frontend:    http://localhost:3000"
 echo "========================================="
 echo ""
