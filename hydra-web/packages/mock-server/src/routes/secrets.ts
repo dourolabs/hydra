@@ -36,7 +36,12 @@ export function createSecretRoutes(): Hono {
   app.get("/v1/users/:username/secrets", (c) => {
     const username = c.req.param("username");
     const secrets = getSecrets(username);
-    const resp: ListSecretsResponse = { secrets: Array.from(secrets) };
+    const names = Array.from(secrets);
+    // Always include GH_TOKEN (auto-injected from GitHub OAuth at runtime)
+    if (!names.includes("GH_TOKEN")) {
+      names.push("GH_TOKEN");
+    }
+    const resp: ListSecretsResponse = { secrets: names };
     return c.json(resp);
   });
 
