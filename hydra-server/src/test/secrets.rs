@@ -49,7 +49,8 @@ async fn list_secrets_empty() -> anyhow::Result<()> {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body: ListSecretsResponse = response.json().await?;
-    assert!(body.secrets.is_empty());
+    // GH_TOKEN is always included even when no user secrets are stored
+    assert_eq!(body.secrets, vec!["GH_TOKEN"]);
 
     Ok(())
 }
@@ -81,7 +82,9 @@ async fn set_and_list_secrets() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let body: ListSecretsResponse = response.json().await?;
-    assert_eq!(body.secrets, vec!["OPENAI_API_KEY"]);
+    assert!(body.secrets.contains(&"OPENAI_API_KEY".to_string()));
+    assert!(body.secrets.contains(&"GH_TOKEN".to_string()));
+    assert_eq!(body.secrets.len(), 2);
 
     Ok(())
 }
@@ -111,7 +114,7 @@ async fn delete_secret() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify deleted
+    // Verify deleted — only GH_TOKEN remains
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -120,7 +123,7 @@ async fn delete_secret() -> anyhow::Result<()> {
         .send()
         .await?;
     let body: ListSecretsResponse = response.json().await?;
-    assert!(body.secrets.is_empty());
+    assert_eq!(body.secrets, vec!["GH_TOKEN"]);
 
     Ok(())
 }
@@ -222,6 +225,7 @@ async fn set_custom_secret_name() -> anyhow::Result<()> {
         .await?;
     let body: ListSecretsResponse = response.json().await?;
     assert!(body.secrets.contains(&"MY_CUSTOM_SECRET".to_string()));
+    assert!(body.secrets.contains(&"GH_TOKEN".to_string()));
 
     Ok(())
 }
@@ -270,7 +274,7 @@ async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Should still only appear once in list
+    // Should still only appear once in list (plus GH_TOKEN)
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -279,7 +283,9 @@ async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
         .send()
         .await?;
     let body: ListSecretsResponse = response.json().await?;
-    assert_eq!(body.secrets.len(), 1);
+    assert_eq!(body.secrets.len(), 2);
+    assert!(body.secrets.contains(&"OPENAI_API_KEY".to_string()));
+    assert!(body.secrets.contains(&"GH_TOKEN".to_string()));
 
     Ok(())
 }
@@ -349,8 +355,10 @@ async fn list_secrets_excludes_internal_secrets() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
     let body: ListSecretsResponse = response.json().await?;
 
-    // Only the non-internal secret should appear
-    assert_eq!(body.secrets, vec!["OPENAI_API_KEY"]);
+    // Only the non-internal secret and always-present GH_TOKEN should appear
+    assert!(body.secrets.contains(&"OPENAI_API_KEY".to_string()));
+    assert!(body.secrets.contains(&"GH_TOKEN".to_string()));
+    assert_eq!(body.secrets.len(), 2);
     assert!(!body.secrets.contains(&"GITHUB_TOKEN".to_string()));
     assert!(!body.secrets.contains(&"GITHUB_REFRESH_TOKEN".to_string()));
 
@@ -448,7 +456,7 @@ async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // List — should only show user secret, not internal
+    // List — should show user secret and GH_TOKEN, not internal
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -458,7 +466,9 @@ async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let body: ListSecretsResponse = response.json().await?;
-    assert_eq!(body.secrets, vec!["MY_SECRET"]);
+    assert!(body.secrets.contains(&"MY_SECRET".to_string()));
+    assert!(body.secrets.contains(&"GH_TOKEN".to_string()));
+    assert_eq!(body.secrets.len(), 2);
 
     // Delete user secret — should succeed
     let response = client
@@ -470,7 +480,7 @@ async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify deleted
+    // Verify deleted — only GH_TOKEN remains
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -479,7 +489,7 @@ async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow
         .send()
         .await?;
     let body: ListSecretsResponse = response.json().await?;
-    assert!(body.secrets.is_empty());
+    assert_eq!(body.secrets, vec!["GH_TOKEN"]);
 
     Ok(())
 }

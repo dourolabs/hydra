@@ -1,6 +1,10 @@
 use crate::{
     app::AppState,
-    domain::{actors::Actor, secrets::validate_secret_name, users::Username},
+    domain::{
+        actors::Actor,
+        secrets::{SECRET_GH_TOKEN, validate_secret_name},
+        users::Username,
+    },
     store::ReadOnlyStore,
 };
 use axum::{
@@ -49,11 +53,19 @@ pub async fn list_secrets(
             ApiError::internal(format!("failed to list secrets: {err}"))
         })?;
 
-    let names: Vec<String> = refs
+    let mut names: Vec<String> = refs
         .into_iter()
         .filter(|r| !r.internal)
         .map(|r| r.name)
         .collect();
+
+    // Always include GH_TOKEN so it appears in the frontend secrets picker,
+    // even though it is auto-injected from the user's GitHub OAuth token at
+    // session runtime and is never stored as a user secret.
+    if !names.iter().any(|n| n == SECRET_GH_TOKEN) {
+        names.push(SECRET_GH_TOKEN.to_string());
+    }
+
     info!(username = %username, count = names.len(), "list_secrets completed");
     Ok(Json(ListSecretsResponse { secrets: names }))
 }
