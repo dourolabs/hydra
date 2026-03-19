@@ -3,9 +3,9 @@
 -- a safe migration path from v1 to v2 storage.
 
 --------------------------------------------------------------------------------
--- metis.issues_v2
+-- hydra.issues_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.issues_v2 (
+CREATE TABLE IF NOT EXISTS hydra.issues_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     issue_type TEXT NOT NULL,
@@ -25,21 +25,21 @@ CREATE TABLE IF NOT EXISTS metis.issues_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS issues_v2_status_idx
-    ON metis.issues_v2 (status);
+    ON hydra.issues_v2 (status);
 
 CREATE INDEX IF NOT EXISTS issues_v2_latest_idx
-    ON metis.issues_v2 (id, version_number DESC);
+    ON hydra.issues_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_issues_v2 ON metis.issues_v2;
+DROP TRIGGER IF EXISTS set_timestamp_issues_v2 ON hydra.issues_v2;
 CREATE TRIGGER set_timestamp_issues_v2
-BEFORE UPDATE ON metis.issues_v2
+BEFORE UPDATE ON hydra.issues_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.patches_v2
+-- hydra.patches_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.patches_v2 (
+CREATE TABLE IF NOT EXISTS hydra.patches_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
@@ -58,21 +58,21 @@ CREATE TABLE IF NOT EXISTS metis.patches_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS patches_v2_status_idx
-    ON metis.patches_v2 (status);
+    ON hydra.patches_v2 (status);
 
 CREATE INDEX IF NOT EXISTS patches_v2_latest_idx
-    ON metis.patches_v2 (id, version_number DESC);
+    ON hydra.patches_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_patches_v2 ON metis.patches_v2;
+DROP TRIGGER IF EXISTS set_timestamp_patches_v2 ON hydra.patches_v2;
 CREATE TRIGGER set_timestamp_patches_v2
-BEFORE UPDATE ON metis.patches_v2
+BEFORE UPDATE ON hydra.patches_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.tasks_v2
+-- hydra.tasks_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.tasks_v2 (
+CREATE TABLE IF NOT EXISTS hydra.tasks_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     prompt TEXT NOT NULL,
@@ -93,24 +93,24 @@ CREATE TABLE IF NOT EXISTS metis.tasks_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS tasks_v2_spawned_from_idx
-    ON metis.tasks_v2 (spawned_from);
+    ON hydra.tasks_v2 (spawned_from);
 
 CREATE INDEX IF NOT EXISTS tasks_v2_status_idx
-    ON metis.tasks_v2 (status);
+    ON hydra.tasks_v2 (status);
 
 CREATE INDEX IF NOT EXISTS tasks_v2_latest_idx
-    ON metis.tasks_v2 (id, version_number DESC);
+    ON hydra.tasks_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_tasks_v2 ON metis.tasks_v2;
+DROP TRIGGER IF EXISTS set_timestamp_tasks_v2 ON hydra.tasks_v2;
 CREATE TRIGGER set_timestamp_tasks_v2
-BEFORE UPDATE ON metis.tasks_v2
+BEFORE UPDATE ON hydra.tasks_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.users_v2
+-- hydra.users_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.users_v2 (
+CREATE TABLE IF NOT EXISTS hydra.users_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     username TEXT NOT NULL,
@@ -123,18 +123,18 @@ CREATE TABLE IF NOT EXISTS metis.users_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS users_v2_latest_idx
-    ON metis.users_v2 (id, version_number DESC);
+    ON hydra.users_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_users_v2 ON metis.users_v2;
+DROP TRIGGER IF EXISTS set_timestamp_users_v2 ON hydra.users_v2;
 CREATE TRIGGER set_timestamp_users_v2
-BEFORE UPDATE ON metis.users_v2
+BEFORE UPDATE ON hydra.users_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.actors_v2
+-- hydra.actors_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.actors_v2 (
+CREATE TABLE IF NOT EXISTS hydra.actors_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     auth_token_hash TEXT NOT NULL,
@@ -146,18 +146,18 @@ CREATE TABLE IF NOT EXISTS metis.actors_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS actors_v2_latest_idx
-    ON metis.actors_v2 (id, version_number DESC);
+    ON hydra.actors_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_actors_v2 ON metis.actors_v2;
+DROP TRIGGER IF EXISTS set_timestamp_actors_v2 ON hydra.actors_v2;
 CREATE TRIGGER set_timestamp_actors_v2
-BEFORE UPDATE ON metis.actors_v2
+BEFORE UPDATE ON hydra.actors_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.repositories_v2
+-- hydra.repositories_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.repositories_v2 (
+CREATE TABLE IF NOT EXISTS hydra.repositories_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     remote_url TEXT NOT NULL,
@@ -169,18 +169,18 @@ CREATE TABLE IF NOT EXISTS metis.repositories_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS repositories_v2_latest_idx
-    ON metis.repositories_v2 (id, version_number DESC);
+    ON hydra.repositories_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_repositories_v2 ON metis.repositories_v2;
+DROP TRIGGER IF EXISTS set_timestamp_repositories_v2 ON hydra.repositories_v2;
 CREATE TRIGGER set_timestamp_repositories_v2
-BEFORE UPDATE ON metis.repositories_v2
+BEFORE UPDATE ON hydra.repositories_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
 
 --------------------------------------------------------------------------------
--- metis.documents_v2
+-- hydra.documents_v2
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS metis.documents_v2 (
+CREATE TABLE IF NOT EXISTS hydra.documents_v2 (
     id TEXT NOT NULL,
     version_number BIGINT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
@@ -194,16 +194,16 @@ CREATE TABLE IF NOT EXISTS metis.documents_v2 (
 );
 
 CREATE INDEX IF NOT EXISTS documents_v2_path_idx
-    ON metis.documents_v2 (path);
+    ON hydra.documents_v2 (path);
 
 CREATE INDEX IF NOT EXISTS documents_v2_path_prefix_idx
-    ON metis.documents_v2 USING btree (path text_pattern_ops);
+    ON hydra.documents_v2 USING btree (path text_pattern_ops);
 
 CREATE INDEX IF NOT EXISTS documents_v2_latest_idx
-    ON metis.documents_v2 (id, version_number DESC);
+    ON hydra.documents_v2 (id, version_number DESC);
 
-DROP TRIGGER IF EXISTS set_timestamp_documents_v2 ON metis.documents_v2;
+DROP TRIGGER IF EXISTS set_timestamp_documents_v2 ON hydra.documents_v2;
 CREATE TRIGGER set_timestamp_documents_v2
-BEFORE UPDATE ON metis.documents_v2
+BEFORE UPDATE ON hydra.documents_v2
 FOR EACH ROW
-EXECUTE FUNCTION metis.touch_updated_at();
+EXECUTE FUNCTION hydra.touch_updated_at();
