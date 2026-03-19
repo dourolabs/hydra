@@ -179,10 +179,13 @@ Initial Phase:
    Debian version for other reasons, use a multi-stage build where the final stage uses `debian:trixie` (or newer).
    Use a specific dated tag for reproducibility (e.g., `debian:trixie-20250203`).
 
-5. Create a **separate** issue (assigned to the **issue's creator**, not to swe) to wait for the Docker image build
-   to complete. This must be a distinct issue from step 4 because agents do not currently have the GitHub secrets
-   required to trigger or monitor `workflow_dispatch` actions. The creator should manually trigger the GitHub Action
-   and confirm the image builds successfully before closing this issue.
+5. Create a **separate** issue (assigned to **swe**) with the **GH_TOKEN** secret to wait for the Dockerfile PR
+   to be merged and then trigger and monitor the Docker image build. The issue description should instruct the
+   SWE agent to:
+
+   1. Poll the Dockerfile PR (from step 4) until it is merged, using `gh pr view <pr-url> --json state` or similar.
+   2. Once merged, trigger the Docker image building GitHub Action workflow using `gh workflow run`.
+   3. Monitor the workflow run using `gh run list` / `gh run watch` and confirm it completes successfully.
 
    This issue should be **blocked on** the step 4 issue (Dockerfile PR) so it only becomes actionable after the PR
    is merged.
