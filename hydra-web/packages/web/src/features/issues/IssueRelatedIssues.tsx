@@ -105,9 +105,7 @@ export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
     ? topologicalSort(relatedIssues.filter((r) => childIdSet.has(r.issue_id)))
     : [];
 
-  const allRelated = [...parents, ...children];
-
-  if (allRelated.length === 0) {
+  if (parents.length === 0 && children.length === 0) {
     return (
       <div className={styles.empty}>
         <p className={styles.emptyText}>No related issues.</p>
@@ -116,10 +114,27 @@ export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
   }
 
   return (
-    <ul className={styles.list}>
-      {allRelated.map((record) => (
-        <ItemRow key={record.issue_id} item={toWorkItem(record)} sessions={sessionsByIssue?.get(record.issue_id)} />
-      ))}
-    </ul>
+    <div>
+      {parents.length > 0 && (
+        <section>
+          <h3 className={styles.sectionHeading}>Parent</h3>
+          <ul className={styles.list}>
+            {parents.map((record) => (
+              <ItemRow key={record.issue_id} item={toWorkItem(record)} sessions={sessionsByIssue?.get(record.issue_id)} />
+            ))}
+          </ul>
+        </section>
+      )}
+      {children.length > 0 && (
+        <section>
+          <h3 className={styles.sectionHeading}>Children</h3>
+          <ul className={styles.list}>
+            {children.map((record) => (
+              <ItemRow key={record.issue_id} item={toWorkItem(record)} sessions={sessionsByIssue?.get(record.issue_id)} />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
   );
 }

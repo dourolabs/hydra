@@ -7,5 +7,17 @@
   gap: var(--space-1);
 }
 
+.sectionHeading {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-1) 0;
+  padding: 0;
+}
+
+.sectionHeading + .list {
+  margin-bottom: var(--space-3);
+}
+
 .empty { composes: empty from '../detail.module.css'; }
 .emptyText { composes: emptyText from '../detail.module.css'; }
