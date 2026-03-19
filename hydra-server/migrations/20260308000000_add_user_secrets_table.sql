@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS hydra.user_secrets (
+CREATE TABLE IF NOT EXISTS metis.user_secrets (
     username TEXT NOT NULL,
     secret_name TEXT NOT NULL,
     encrypted_value BYTEA NOT NULL,

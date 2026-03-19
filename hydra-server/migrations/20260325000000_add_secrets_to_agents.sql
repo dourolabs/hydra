@@ -1,1 +1,1 @@
-ALTER TABLE hydra.agents ADD COLUMN secrets JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE metis.agents ADD COLUMN secrets JSONB NOT NULL DEFAULT '[]';

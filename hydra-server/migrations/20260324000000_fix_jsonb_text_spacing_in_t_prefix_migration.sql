@@ -9,7 +9,7 @@
 -- ============================================================
 -- 1. actors_v2.actor_id (JSONB)
 -- ============================================================
-UPDATE hydra.actors_v2
+UPDATE metis.actors_v2
   SET actor_id = REPLACE(REPLACE(REPLACE(actor_id::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -19,7 +19,7 @@ UPDATE hydra.actors_v2
 -- ============================================================
 -- 2. actors_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.actors_v2
+UPDATE metis.actors_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -29,7 +29,7 @@ UPDATE hydra.actors_v2
 -- ============================================================
 -- 3. repositories_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.repositories_v2
+UPDATE metis.repositories_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -39,7 +39,7 @@ UPDATE hydra.repositories_v2
 -- ============================================================
 -- 4. users_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.users_v2
+UPDATE metis.users_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -49,7 +49,7 @@ UPDATE hydra.users_v2
 -- ============================================================
 -- 5. issues_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.issues_v2
+UPDATE metis.issues_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -59,7 +59,7 @@ UPDATE hydra.issues_v2
 -- ============================================================
 -- 6. patches_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.patches_v2
+UPDATE metis.patches_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -69,7 +69,7 @@ UPDATE hydra.patches_v2
 -- ============================================================
 -- 7. tasks_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.tasks_v2
+UPDATE metis.tasks_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -79,7 +79,7 @@ UPDATE hydra.tasks_v2
 -- ============================================================
 -- 8. documents_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.documents_v2
+UPDATE metis.documents_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),
@@ -89,7 +89,7 @@ UPDATE hydra.documents_v2
 -- ============================================================
 -- 9. messages_v2.actor (JSONB)
 -- ============================================================
-UPDATE hydra.messages_v2
+UPDATE metis.messages_v2
   SET actor = REPLACE(REPLACE(REPLACE(actor::TEXT,
     '"Task": "t-', '"Session": "s-'),
     '"Session": "t-', '"Session": "s-'),

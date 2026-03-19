@@ -4,14 +4,14 @@
 -- This migration is idempotent: REPLACE on values without "Task" is a no-op.
 
 -- JSON-serialized ActorId in actors_v2.actor_id:
-UPDATE hydra.actors_v2 SET actor_id = REPLACE(actor_id::TEXT, '"Task":', '"Session":')::JSONB WHERE actor_id::TEXT LIKE '%"Task"%';
+UPDATE metis.actors_v2 SET actor_id = REPLACE(actor_id::TEXT, '"Task":', '"Session":')::JSONB WHERE actor_id::TEXT LIKE '%"Task"%';
 
 -- Actor columns across all versioned tables (ActorRef JSON with nested ActorId):
-UPDATE hydra.repositories_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.actors_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.users_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.issues_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.patches_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.tasks_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.documents_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
-UPDATE hydra.messages_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.repositories_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.actors_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.users_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.issues_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.patches_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.tasks_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.documents_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
+UPDATE metis.messages_v2 SET actor = REPLACE(actor::TEXT, '"Task":', '"Session":')::JSONB WHERE actor::TEXT LIKE '%"Task"%';
