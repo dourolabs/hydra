@@ -2,7 +2,7 @@ use crate::{
     app::AppState,
     domain::{
         actors::Actor,
-        secrets::{validate_secret_name, SECRET_GH_TOKEN},
+        secrets::{SECRET_GH_TOKEN, validate_secret_name},
         users::Username,
     },
     store::ReadOnlyStore,
