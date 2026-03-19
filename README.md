@@ -37,14 +37,18 @@ When Docker is selected as the job engine, the init command automatically builds
 When it finishes, the server is running and the CLI is configured to talk to it.
 You can use the `hydra server` command to start/stop/check the status of the server.
 
-⚠ **Warning:** Hydra runs with agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine. Don't blame me if you choose local and Claude `rm -rf`s your machine.
+⚠️ **Warning:** Hydra runs agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine.
+Don't blame me if you choose local and Claude `rm -rf`s your machine.
 
 ### 3. Add a git repository
 
 Open the frontend at http://localhost:8080/ and click "Create Issue".
 Tell the agent "add the git repo (git url)  ".
 The agent will register the repo in the system and additionally work on a Dockerfile with the dependencies your repo needs.
-You can register as many git repositories as you'd like.
+The agent will also set up a github action to publish the image, configure your git repo to use the image, and then validate that the image has everything you need.
+
+You can repeat this step anytime to register additional git repositories.
+You can see what repositories are currently configured on the Settings page.
 
 ### 4. Start Working
 
@@ -59,12 +63,22 @@ All of the functionality described below is available to your agents.
 
 ### Issues
 
-All work in Hydra is represented by issues. Issues are the fundamental unit of work, assigned to either agents or users. 
-Issues have a status, which is typically: `Open`, `InProgress`, `Closed` or `Failed`.
-They form a graph with two types of relationships: `blocked-on` (issue X cannot start until Y is closed) and `child-of` (issue X is a subtask of Y).
-The system uses this graph to determine which issues are ready to work on, and automatically spawns agents for ready issues.
+All work in Hydra is represented by issues. Issues can be assigned to either agents or users. 
+Issues have a status, which is one of:
 
-When an agent starts working on an issue, it sets the status to `InProgress`. When done, it sets it to `Closed`. If the agent's session ends while the issue is still `InProgress` (e.g., waiting for a code review), another agent can pick it up later with the full git state preserved.
+- `Open` -- work has not started
+- `InProgress` -- work has started
+- `Closed` -- work has completed successfully. This status also means "yes/accept" for any approvals escalated to you.
+- `Failed` -- work has completed unsuccessfully. This status also means "no/reject" for any approvals escalated to you.
+- `Dropped` -- work is no longer required. Use this status to flag issues that do not need to be completed.
+- `Rejected` -- work is still required, but the approach is wrong. Use this status to trigger replanning.
+
+Issues also have a progress field which agents automatically update with the current status of the work.
+If you manually update the status of an issue, you should also update the progress with commentary.
+For example, if you set the status to Rejected, explain in the progress field what the agent should do differently.
+
+Issues have child-of / blocked-on relationships between them. Hydra uses these to automatically spawn agents for issues
+that are ready for work.
 
 ### Agents
 
