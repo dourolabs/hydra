@@ -1,1 +1,1 @@
-ALTER TABLE hydra.actors_v2 ADD COLUMN IF NOT EXISTS creator TEXT;
+ALTER TABLE metis.actors_v2 ADD COLUMN IF NOT EXISTS creator TEXT;

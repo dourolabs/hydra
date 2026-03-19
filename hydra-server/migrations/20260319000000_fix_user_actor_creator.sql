@@ -4,7 +4,7 @@
 -- (matching the invariant enforced by Actor::new_for_user).
 -- This migration is idempotent: it only updates rows where creator is still 'unknown'.
 
-UPDATE hydra.actors_v2
+UPDATE metis.actors_v2
 SET creator = actor_id ->> 'Username'
 WHERE actor_id ? 'Username'
   AND creator = 'unknown';

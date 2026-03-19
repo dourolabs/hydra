@@ -1,1 +1,1 @@
-ALTER TABLE hydra.issues_v2 ADD COLUMN title TEXT NOT NULL DEFAULT '';
+ALTER TABLE metis.issues_v2 ADD COLUMN title TEXT NOT NULL DEFAULT '';
