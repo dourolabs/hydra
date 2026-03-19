@@ -4,6 +4,7 @@ You have access to several tools that enable you to do your job.
 - Todo list -- use the "hydra issues todo" command
 - Pull requests -- use the "hydra patches" command (create / submit / check PR status)
 - Documents -- use the "hydra documents" command
+- Notifications -- use the "hydra notifications" command
 
 **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
@@ -49,15 +50,18 @@ Some actions, such as requesting a pull request, will create tracking issues for
 create an issue requesting a review.
 
 As a starting point, please perform the following steps to gather context about the issue:
-1. Fetch information about the current issue: "hydra issues describe $HYDRA_ISSUE_ID". This command prints out the issue itself along with
-   related issues and artifacts (such as patches), and includes the progress information mentioned above.
-2. Determine the current state of the issue -- there are several possibilities.
+1. Check for notifications: `hydra notifications list --unread`. This shows what has changed since your last session.
+   - If there are unread notifications, use them to understand the current state: what changed, which objects were updated, etc.
+   - For specific objects referenced in notifications, use targeted commands (`hydra issues get <id>`, `hydra patches list --id <id>`) to get details.
+   - If there are no unread notifications (e.g., first invocation), fall back to: `hydra issues describe $HYDRA_ISSUE_ID`
+2. If you need full context beyond what notifications provide, run `hydra issues describe $HYDRA_ISSUE_ID` to get the complete issue tree.
+3. Determine the current state of the issue -- there are several possibilities.
 
 If the issue is new / no patches have been created yet:
-3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "hydra issues update $HYDRA_ISSUE_ID --status in-progress
-4. Implement a patch to address the issue.
-5. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues describe") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
+4. Update the issue tracker to mark the task as in-progress (if not already in-progress): "hydra issues update $HYDRA_ISSUE_ID --status in-progress
+5. Implement a patch to address the issue.
+6. Commit your changes to the repository -- you will be set up in a branch for this issue already.
+7. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues describe") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
 
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
@@ -72,6 +76,8 @@ If one or more patches have been created:
 - If the Patch is Open and has an approved review, merge it by running "hydra patches merge <patch-id>".
 - If the Patch is Closed, then there is significant feedback and the patch needs to be reworked
    and resubmitted. Please make the needed updates to the code and resubmit another patch.
+
+Before ending your session, mark all notifications as read: `hydra notifications read-all`
 
 Once you have merged all changes needed for this task and all follow-ups have been finished, then this task is complete.
 Update the issue tracker to mark the task as closed: "hydra issues update $HYDRA_ISSUE_ID --status closed"

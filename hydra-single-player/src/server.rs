@@ -273,6 +273,7 @@ fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String>
 const SWE_PROMPT: &str = include_str!("../../prompts/agents/swe.md");
 const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
+const MERGER_PROMPT: &str = include_str!("../../prompts/agents/merger.md");
 
 // Embedded playbook content (compiled into the binary).
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
@@ -287,6 +288,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         ("swe", SWE_PROMPT, false),
         ("pm", PM_PROMPT, true),
         ("reviewer", REVIEWER_PROMPT, false),
+        ("merger", MERGER_PROMPT, false),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
