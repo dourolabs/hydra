@@ -17,6 +17,9 @@ use hydra_common::{
 };
 use tracing::{error, info};
 
+/// Maximum number of IDs allowed in a single batch query parameter.
+const MAX_BATCH_IDS: usize = 10_000;
+
 /// Convert a store `ObjectRelationship` to the wire `RelationResponse`.
 fn to_response(rel: &ObjectRelationship) -> RelationResponse {
     RelationResponse {
@@ -129,6 +132,13 @@ pub async fn list_relations(
         // Batch mode (with or without transitive)
         let source_ids = query.source_ids.as_deref().map(parse_id_list).transpose()?;
         let target_ids = query.target_ids.as_deref().map(parse_id_list).transpose()?;
+
+        if let Some(ref ids) = source_ids {
+            validate_batch_size(ids)?;
+        }
+        if let Some(ref ids) = target_ids {
+            validate_batch_size(ids)?;
+        }
 
         if transitive {
             let (ids, direction) = if let Some(ref ids) = source_ids {
@@ -259,5 +269,59 @@ fn map_store_error(err: StoreError) -> ApiError {
             error!(error = %other, "relation store operation failed");
             ApiError::internal(anyhow!("relation store error: {other}"))
         }
+    }
+}
+
+/// Validate that a parsed ID list does not exceed `MAX_BATCH_IDS`.
+fn validate_batch_size(ids: &[HydraId]) -> Result<(), ApiError> {
+    if ids.len() > MAX_BATCH_IDS {
+        return Err(ApiError::bad_request(format!(
+            "too many IDs in batch query: {} exceeds limit of {MAX_BATCH_IDS}",
+            ids.len()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_id_list_valid() {
+        let ids = parse_id_list("i-aaaaaa,i-bbbbbb").unwrap();
+        assert_eq!(ids.len(), 2);
+    }
+
+    fn make_test_id(i: usize) -> HydraId {
+        // Generate a 6-char alphabetic suffix from the index
+        let mut suffix = String::with_capacity(6);
+        let mut n = i;
+        for _ in 0..6 {
+            suffix.push((b'a' + (n % 26) as u8) as char);
+            n /= 26;
+        }
+        format!("i-{suffix}").parse::<HydraId>().unwrap()
+    }
+
+    #[test]
+    fn validate_batch_size_within_limit() {
+        let ids: Vec<HydraId> = (0..MAX_BATCH_IDS).map(make_test_id).collect();
+        assert!(validate_batch_size(&ids).is_ok());
+    }
+
+    #[test]
+    fn validate_batch_size_exceeds_limit() {
+        let ids: Vec<HydraId> = (0..=MAX_BATCH_IDS).map(make_test_id).collect();
+        let err = validate_batch_size(&ids).unwrap_err();
+        let msg = err.message().to_string();
+        assert!(
+            msg.contains("too many IDs in batch query"),
+            "unexpected error: {msg}"
+        );
+        assert!(
+            msg.contains(&format!("{}", MAX_BATCH_IDS + 1)),
+            "should contain count: {msg}"
+        );
     }
 }
