@@ -17,9 +17,6 @@ use hydra_common::{
 };
 use tracing::{error, info};
 
-/// Maximum number of IDs allowed in a batch query (source_ids or target_ids).
-const MAX_BATCH_IDS: usize = 100;
-
 /// Convert a store `ObjectRelationship` to the wire `RelationResponse`.
 fn to_response(rel: &ObjectRelationship) -> RelationResponse {
     RelationResponse {
@@ -132,21 +129,6 @@ pub async fn list_relations(
         // Batch mode (with or without transitive)
         let source_ids = query.source_ids.as_deref().map(parse_id_list).transpose()?;
         let target_ids = query.target_ids.as_deref().map(parse_id_list).transpose()?;
-
-        if let Some(ref ids) = source_ids {
-            if ids.len() > MAX_BATCH_IDS {
-                return Err(ApiError::bad_request(format!(
-                    "source_ids exceeds maximum of {MAX_BATCH_IDS} IDs"
-                )));
-            }
-        }
-        if let Some(ref ids) = target_ids {
-            if ids.len() > MAX_BATCH_IDS {
-                return Err(ApiError::bad_request(format!(
-                    "target_ids exceeds maximum of {MAX_BATCH_IDS} IDs"
-                )));
-            }
-        }
 
         if transitive {
             let (ids, direction) = if let Some(ref ids) = source_ids {
