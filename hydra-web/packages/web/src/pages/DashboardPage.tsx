@@ -176,12 +176,22 @@ export function DashboardPage() {
     isLoading: pageTreeLoading,
   } = usePageIssueTrees(issues, username);
 
+  // Issue IDs from only the last loaded page (for scoping artifacts)
+  const currentPageIssueIds = useMemo(() => {
+    const pages = paginatedData?.pages;
+    if (!pages || pages.length === 0) return new Set<string>();
+    const lastPage = pages[pages.length - 1];
+    return new Set((lastPage.issues ?? []).map((i) => i.issue_id));
+  }, [paginatedData]);
+
   // Collect unique patch/document IDs and build reverse lookup (artifact -> source issue)
+  // Only include artifacts from issues on the current (last loaded) page.
   const { allPatchIds, allDocumentIds, artifactToIssue } = useMemo(() => {
     const pIds = new Set<string>();
     const dIds = new Set<string>();
     const lookup = new Map<string, string>();
     for (const [issueId, data] of treeDataMap) {
+      if (!currentPageIssueIds.has(issueId)) continue;
       for (const id of data.patchIds) {
         pIds.add(id);
         if (!lookup.has(id)) lookup.set(id, issueId);
@@ -196,7 +206,7 @@ export function DashboardPage() {
       allDocumentIds: Array.from(dIds),
       artifactToIssue: lookup,
     };
-  }, [treeDataMap]);
+  }, [treeDataMap, currentPageIssueIds]);
 
   // Fetch patch and document records
   const { data: patchRecords } = usePatchesByIssue(allPatchIds);
