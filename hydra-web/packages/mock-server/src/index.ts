@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { getCookie } from "hono/cookie";
 import { Store, StoreError } from "./store.js";
 import { authMiddleware } from "./auth.js";
 import { createAuthRoutes, createBffAuthRoutes } from "./routes/auth.js";
@@ -46,6 +47,36 @@ app.route("/auth", createBffAuthRoutes());
 
 // Login endpoint does not require auth
 app.route("", createAuthRoutes());
+
+// BFF proxy rewrite: /api/v1/* -> /v1/* with cookie-to-Bearer conversion
+app.all("/api/v1/*", async (c) => {
+  const token = getCookie(c, "hydra_token");
+  if (!token) {
+    return c.json({ error: "not authenticated" }, 401);
+  }
+
+  const url = new URL(c.req.url);
+  const rewrittenPath = url.pathname.replace(/^\/api\/v1/, "/v1");
+  const rewrittenUrl = new URL(rewrittenPath + url.search, url.origin);
+
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  headers.delete("cookie");
+
+  const newRequest = new Request(rewrittenUrl.toString(), {
+    method: c.req.method,
+    headers,
+    body:
+      c.req.method !== "GET" && c.req.method !== "HEAD"
+        ? c.req.raw.body
+        : undefined,
+    // @ts-expect-error -- Node.js fetch supports duplex for streaming request bodies
+    duplex:
+      c.req.method !== "GET" && c.req.method !== "HEAD" ? "half" : undefined,
+  });
+
+  return app.fetch(newRequest);
+});
 
 // Auth middleware for all /v1/* routes except /v1/login
 app.use("/v1/*", async (c, next) => {
