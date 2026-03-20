@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::app::event_bus::{EventType, ServerEvent};
+use crate::app::event_bus::EventType;
 use crate::domain::actors::ActorRef;
 use crate::policy::automations::agent_queue::{AgentQueue, SharedSpawnAttempts, agent_task_state};
 use crate::policy::context::AutomationContext;
@@ -100,9 +100,7 @@ impl Automation for SpawnSessionsAutomation {
             ctx.app_state
                 .list_issues_with_query(&query)
                 .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}"))
-                })?
+                .map_err(|e| AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}")))?
                 .into_iter()
                 .map(|(id, v)| (id, v.item))
                 .collect()
@@ -188,7 +186,7 @@ impl Automation for SpawnSessionsAutomation {
 mod tests {
     use super::*;
     use crate::app::Repository;
-    use crate::app::event_bus::MutationPayload;
+    use crate::app::event_bus::{MutationPayload, ServerEvent};
     use crate::config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES};
     use crate::domain::agents::Agent;
     use crate::domain::documents::Document;
