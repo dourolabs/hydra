@@ -86,37 +86,26 @@ impl Automation for SpawnSessionsAutomation {
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
-        // Collect the issues to evaluate based on the event type.
-        let target_issues: Vec<_> = match ctx.event {
-            ServerEvent::IssueCreated { issue_id, .. }
-            | ServerEvent::IssueUpdated { issue_id, .. } => {
-                // For issue events, evaluate only the specific issue.
-                match ctx.app_state.get_issue(issue_id, false).await {
-                    Ok(versioned) => vec![(issue_id.clone(), versioned.item)],
-                    Err(_) => vec![],
-                }
-            }
-            _ => {
-                // For session events (and any other), capacity may have changed
-                // so we need to scan all issues. Only fetch spawn-eligible
-                // statuses to avoid unnecessary processing of terminal issues.
-                let query = SearchIssuesQuery::new(
-                    None,
-                    vec![IssueStatus::Open, IssueStatus::InProgress],
-                    None,
-                    None,
-                    None,
-                );
-                ctx.app_state
-                    .list_issues_with_query(&query)
-                    .await
-                    .map_err(|e| {
-                        AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}"))
-                    })?
-                    .into_iter()
-                    .map(|(id, v)| (id, v.item))
-                    .collect()
-            }
+        // Scan all open/in-progress issues for spawn readiness on every event.
+        // This ensures that when a child issue transitions to a terminal state,
+        // the parent issue is also evaluated for readiness.
+        let target_issues: Vec<_> = {
+            let query = SearchIssuesQuery::new(
+                None,
+                vec![IssueStatus::Open, IssueStatus::InProgress],
+                None,
+                None,
+                None,
+            );
+            ctx.app_state
+                .list_issues_with_query(&query)
+                .await
+                .map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!("failed to list issues: {e}"))
+                })?
+                .into_iter()
+                .map(|(id, v)| (id, v.item))
+                .collect()
         };
 
         for queue in &queues {
