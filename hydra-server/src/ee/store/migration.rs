@@ -18,25 +18,25 @@ const STATUS_COMPLETED: &str = "completed";
 const STATUS_FAILED: &str = "failed";
 
 /// Table names for v1 (JSONB) tables.
-const V1_TABLE_ISSUES: &str = "hydra.issues";
-const V1_TABLE_PATCHES: &str = "hydra.patches";
-const V1_TABLE_TASKS: &str = "hydra.tasks";
-const V1_TABLE_USERS: &str = "hydra.users";
-const V1_TABLE_ACTORS: &str = "hydra.actors";
-const V1_TABLE_REPOSITORIES: &str = "hydra.repositories";
-const V1_TABLE_DOCUMENTS: &str = "hydra.documents";
+const V1_TABLE_ISSUES: &str = "metis.issues";
+const V1_TABLE_PATCHES: &str = "metis.patches";
+const V1_TABLE_TASKS: &str = "metis.tasks";
+const V1_TABLE_USERS: &str = "metis.users";
+const V1_TABLE_ACTORS: &str = "metis.actors";
+const V1_TABLE_REPOSITORIES: &str = "metis.repositories";
+const V1_TABLE_DOCUMENTS: &str = "metis.documents";
 
 /// Table names for v2 (column-based) tables.
-const V2_TABLE_ISSUES: &str = "hydra.issues_v2";
-const V2_TABLE_PATCHES: &str = "hydra.patches_v2";
-const V2_TABLE_TASKS: &str = "hydra.tasks_v2";
-const V2_TABLE_USERS: &str = "hydra.users_v2";
-const V2_TABLE_ACTORS: &str = "hydra.actors_v2";
-const V2_TABLE_REPOSITORIES: &str = "hydra.repositories_v2";
-const V2_TABLE_DOCUMENTS: &str = "hydra.documents_v2";
+const V2_TABLE_ISSUES: &str = "metis.issues_v2";
+const V2_TABLE_PATCHES: &str = "metis.patches_v2";
+const V2_TABLE_TASKS: &str = "metis.tasks_v2";
+const V2_TABLE_USERS: &str = "metis.users_v2";
+const V2_TABLE_ACTORS: &str = "metis.actors_v2";
+const V2_TABLE_REPOSITORIES: &str = "metis.repositories_v2";
+const V2_TABLE_DOCUMENTS: &str = "metis.documents_v2";
 
 /// Migration status table.
-const MIGRATION_STATUS_TABLE: &str = "hydra.migration_status";
+const MIGRATION_STATUS_TABLE: &str = "metis.migration_status";
 
 /// Result of a migration operation.
 #[derive(Debug)]
