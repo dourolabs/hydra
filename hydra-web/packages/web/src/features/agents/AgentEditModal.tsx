@@ -71,7 +71,7 @@ export function AgentEditModal({
       is_assignment_agent: isAssignmentAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, agent.mcp_config_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
