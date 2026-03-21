@@ -49,6 +49,7 @@ import type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
 import type { MergeQueue } from "./generated/MergeQueue";
 import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
+import type { IssueVersionRecord as SubmitFormResponse } from "./generated/IssueVersionRecord";
 import type { UpsertLabelRequest } from "./generated/UpsertLabelRequest";
 import type { UpsertLabelResponse } from "./generated/UpsertLabelResponse";
 import type { SearchLabelsQuery } from "./generated/SearchLabelsQuery";
@@ -274,6 +275,18 @@ export class HydraApiClient {
   /** GET /v1/issues/:issueId/versions */
   listIssueVersions(issueId: string): Promise<ListIssueVersionsResponse> {
     return this.get(`/v1/issues/${encodeURIComponent(issueId)}/versions`);
+  }
+
+  /** POST /v1/issues/:issueId/actions */
+  submitForm(
+    issueId: string,
+    actionId: string,
+    values: Record<string, unknown>,
+  ): Promise<SubmitFormResponse> {
+    return this.post(`/v1/issues/${encodeURIComponent(issueId)}/actions`, {
+      action_id: actionId,
+      values,
+    });
   }
 
   /** DELETE /v1/issues/:issueId */
