@@ -22,6 +22,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [maxTries, setMaxTries] = useState("3");
   const [maxSimultaneous, setMaxSimultaneous] = useState("1");
   const [isAssignmentAgent, setIsAssignmentAgent] = useState(false);
+  const [mcpConfigPath, setMcpConfigPath] = useState("");
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
 
   const resetForm = useCallback(() => {
@@ -30,6 +31,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setMaxTries("3");
     setMaxSimultaneous("1");
     setIsAssignmentAgent(false);
+    setMcpConfigPath("");
     setSelectedSecrets([]);
   }, []);
 
@@ -65,13 +67,13 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       name: trimmedName,
       prompt: prompt.trim(),
       prompt_path: `/agents/${trimmedName}/prompt.md`,
-      mcp_config_path: null,
+      mcp_config_path: mcpConfigPath.trim() || null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
       secrets: selectedSecrets,
     });
-  }, [name, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
+  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -107,6 +109,12 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           onChange={(e) => setPrompt(e.target.value)}
           rows={6}
           required
+        />
+        <Input
+          label="MCP Config Path"
+          placeholder="/agents/my-agent/mcp-config.json"
+          value={mcpConfigPath}
+          onChange={(e) => setMcpConfigPath(e.target.value)}
         />
         <Input
           label="Max Tries"

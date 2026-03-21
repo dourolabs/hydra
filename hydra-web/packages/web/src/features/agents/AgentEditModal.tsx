@@ -24,6 +24,7 @@ export function AgentEditModal({
   const queryClient = useQueryClient();
 
   const [prompt, setPrompt] = useState(agent.prompt);
+  const [mcpConfigPath, setMcpConfigPath] = useState(agent.mcp_config_path ?? "");
   const [maxTries, setMaxTries] = useState(String(agent.max_tries));
   const [maxSimultaneous, setMaxSimultaneous] = useState(
     String(agent.max_simultaneous),
@@ -65,13 +66,13 @@ export function AgentEditModal({
       name: agent.name,
       prompt: prompt.trim(),
       prompt_path: agent.prompt_path,
-      mcp_config_path: agent.mcp_config_path ?? null,
+      mcp_config_path: mcpConfigPath.trim() || null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, agent.mcp_config_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -99,6 +100,12 @@ export function AgentEditModal({
           onChange={(e) => setPrompt(e.target.value)}
           rows={6}
           required
+        />
+        <Input
+          label="MCP Config Path"
+          placeholder="/agents/my-agent/mcp-config.json"
+          value={mcpConfigPath}
+          onChange={(e) => setMcpConfigPath(e.target.value)}
         />
         <Input
           label="Max Tries"
