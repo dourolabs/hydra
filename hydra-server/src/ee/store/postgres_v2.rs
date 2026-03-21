@@ -4825,7 +4825,7 @@ mod tests {
             ],
             dependencies,
             patches,
-            None,
+            Some("some feedback text".to_string()),
         );
 
         issue.form = Some(Form {
@@ -5528,7 +5528,7 @@ mod tests {
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(
             fetched.item, issue,
-            "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, patches)"
+            "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, patches, feedback)"
         );
     }
 
