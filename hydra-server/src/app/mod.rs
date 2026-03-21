@@ -31,7 +31,7 @@ pub use app_state::{AppState, default_policy_config};
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use hydra_common::repositories::{Repository, RepositoryRecord};
-pub use issues::{UpdateTodoListError, UpsertIssueError};
+pub use issues::{SubmitFormActionError, UpdateTodoListError, UpsertIssueError};
 pub use labels::{CreateLabelError, UpdateLabelError};
 pub use messages::MessageError;
 pub use notifications::NotificationError;
