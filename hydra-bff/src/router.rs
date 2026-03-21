@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use axum::{body::Body, extract::State, http::Request, response::Response, routing::get, Router};
+use tower_http::trace::TraceLayer;
 
 use crate::proxy;
 use crate::state::BffState;
@@ -35,7 +38,30 @@ pub fn build_bff_router<U: Upstream>(state: BffState<U>) -> Router {
         router = router.fallback_service(frontend_router);
     }
 
-    router.with_state(state)
+    let trace_layer = TraceLayer::new_for_http()
+        .on_request(|request: &Request<Body>, _span: &tracing::Span| {
+            tracing::debug!(
+                method = %request.method(),
+                path = %request.uri().path(),
+                "started processing request"
+            );
+        })
+        .on_response(
+            |response: &Response, latency: Duration, _span: &tracing::Span| {
+                let status = response.status().as_u16();
+                let latency_ms = latency.as_millis();
+
+                if status >= 500 {
+                    tracing::error!(status, latency_ms, "request failed with server error");
+                } else if latency > Duration::from_secs(1) {
+                    tracing::warn!(status, latency_ms, "slow request");
+                } else {
+                    tracing::info!(status, latency_ms, "request completed");
+                }
+            },
+        );
+
+    router.layer(trace_layer).with_state(state)
 }
 
 async fn health_proxy<U: Upstream>(
