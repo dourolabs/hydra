@@ -158,7 +158,7 @@ pub enum IssueCommands {
         #[arg(long = "form-inline", value_name = "YAML")]
         form_inline: Option<String>,
 
-        /// Feedback for the issue. Use empty string to clear.
+        /// Feedback for the issue.
         #[arg(long, value_name = "FEEDBACK")]
         feedback: Option<String>,
     },
