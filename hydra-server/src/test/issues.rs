@@ -2095,6 +2095,10 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         .await?;
     engine.insert_job(&s_failed, JobStatus::Failed).await;
 
+    // Session 5: Created (should be killed)
+    let (s_created, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
+    engine.insert_job(&s_created, JobStatus::Pending).await;
+
     let server = spawn_test_server_with_state(state, store).await?;
     let client = test_client();
 
@@ -2138,6 +2142,13 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         failed_job.status,
         JobStatus::Failed,
         "Already-failed session should NOT have been affected"
+    );
+
+    let created_job = engine.find_job_by_hydra_id(&s_created).await?;
+    assert_eq!(
+        created_job.status,
+        JobStatus::Failed,
+        "Created session should have been killed"
     );
 
     Ok(())
