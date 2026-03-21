@@ -1894,7 +1894,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -1940,7 +1940,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -1987,7 +1987,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
@@ -5025,7 +5025,70 @@ mod tests {
         )
     }
 
+    fn sample_issue_all_fields(
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+    ) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "Test Title".to_string(),
+            "full description".to_string(),
+            Username::from("issue-creator"),
+            "50%".to_string(),
+            IssueStatus::Open,
+            Some("assignee".to_string()),
+            Some(SessionSettings {
+                repo_name: Some(RepoName::from_str("org/proj").unwrap()),
+                remote_url: Some("https://git.example.com/org/proj.git".to_string()),
+                image: Some("img:v1".to_string()),
+                model: Some("claude-3".to_string()),
+                branch: Some("main".to_string()),
+                max_retries: Some(3),
+                cpu_limit: Some("2".to_string()),
+                memory_limit: Some("4Gi".to_string()),
+                secrets: Some(vec!["job-secret".to_string()]),
+            }),
+            vec![
+                TodoItem::new("todo one".to_string(), false),
+                TodoItem::new("todo two".to_string(), true),
+            ],
+            dependencies,
+            patches,
+            None,
+            None,
+            Some("some feedback text".to_string()),
+        )
+    }
+
     // ---- Issue tests ----
+
+    #[tokio::test]
+    async fn issue_serialization_round_trip_all_fields() {
+        let store = create_test_store().await;
+
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let issue = sample_issue_all_fields(
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id,
+            )],
+            Vec::new(),
+        );
+
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, issue,
+            "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, feedback)"
+        );
+    }
 
     #[tokio::test]
     async fn issue_crud_round_trip() {

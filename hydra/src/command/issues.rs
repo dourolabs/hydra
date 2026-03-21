@@ -276,9 +276,13 @@ pub enum IssueCommands {
         )]
         remove_labels: Vec<String>,
 
-        /// Updated feedback. Use empty string to clear.
-        #[arg(long, value_name = "FEEDBACK")]
+        /// Updated feedback.
+        #[arg(long, value_name = "FEEDBACK", conflicts_with = "clear_feedback")]
         feedback: Option<String>,
+
+        /// Remove the current feedback.
+        #[arg(long)]
+        clear_feedback: bool,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -470,6 +474,7 @@ pub async fn run(
             add_labels,
             remove_labels,
             feedback,
+            clear_feedback,
         } => update_issue(
             client,
             id,
@@ -497,6 +502,7 @@ pub async fn run(
             add_labels,
             remove_labels,
             feedback,
+            clear_feedback,
         )
         .await
         .and_then(|issue| write_issue_records(context.output_format, &[issue])),
@@ -1383,6 +1389,7 @@ async fn update_issue(
     add_labels: Vec<String>,
     remove_labels: Vec<String>,
     feedback: Option<String>,
+    clear_feedback: bool,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
@@ -1431,10 +1438,14 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
-    let feedback_update = feedback.map(|f| {
-        let trimmed = f.trim().to_string();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
-    });
+    let feedback_update = if clear_feedback {
+        Some(None)
+    } else {
+        feedback.map(|f| {
+            let trimmed = f.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        })
+    };
 
     let job_settings_requested = clear_job_settings
         || repo_name.is_some()
@@ -3463,6 +3474,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3566,6 +3578,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3673,6 +3686,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3775,6 +3789,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3877,6 +3892,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
         .await
         .unwrap();
