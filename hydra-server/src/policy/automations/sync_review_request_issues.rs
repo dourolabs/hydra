@@ -219,6 +219,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
+            None,
         )
     }
 

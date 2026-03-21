@@ -35,6 +35,8 @@ async fn create_issue(
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,

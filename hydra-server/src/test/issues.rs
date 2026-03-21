@@ -38,6 +38,8 @@ fn issue(
         todo_list,
         dependencies,
         patches,
+        None,
+        None,
     )
 }
 
@@ -77,6 +79,8 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,
@@ -105,6 +109,8 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,
@@ -138,6 +144,8 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,
@@ -166,6 +174,8 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,
@@ -244,6 +254,8 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                None,
+                None,
             )
             .into(),
             None,

@@ -314,6 +314,8 @@ impl Issue {
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
         deleted: bool,
+        form: Option<Form>,
+        form_response: Option<FormResponse>,
     ) -> Self {
         Self {
             issue_type,
@@ -328,8 +330,8 @@ impl Issue {
             dependencies,
             patches,
             deleted,
-            form: None,
-            form_response: None,
+            form,
+            form_response,
         }
     }
 }

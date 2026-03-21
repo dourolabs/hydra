@@ -225,6 +225,8 @@ impl Issue {
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
+        form: Option<Form>,
+        form_response: Option<FormResponse>,
     ) -> Self {
         Self {
             issue_type,
@@ -239,8 +241,8 @@ impl Issue {
             dependencies,
             patches,
             deleted: false,
-            form: None,
-            form_response: None,
+            form,
+            form_response,
         }
     }
 }
@@ -466,7 +468,7 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        let mut issue = api::issues::Issue::new(
+        api::issues::Issue::new(
             value.issue_type.into(),
             value.title,
             value.description,
@@ -479,10 +481,9 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
-        );
-        issue.form = value.form;
-        issue.form_response = value.form_response;
-        issue
+            value.form,
+            value.form_response,
+        )
     }
 }
 

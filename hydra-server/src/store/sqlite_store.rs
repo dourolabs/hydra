@@ -5015,6 +5015,8 @@ mod tests {
             Vec::new(),
             dependencies,
             Vec::new(),
+            None,
+            None,
         )
     }
 
@@ -7241,6 +7243,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7256,6 +7260,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
+            None,
         );
         store.add_issue(closed, &actor).await.unwrap();
 
