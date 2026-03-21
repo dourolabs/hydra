@@ -28,8 +28,8 @@ use hydra_common::{
     github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
         AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, SubmitFormRequest,
+        SubmitFormResponse, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
@@ -263,6 +263,11 @@ pub trait HydraClientInterface: Send + Sync {
         -> Result<AgentResponse>;
     async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse>;
     async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
+    async fn submit_form(
+        &self,
+        issue_id: &IssueId,
+        request: &SubmitFormRequest,
+    ) -> Result<SubmitFormResponse>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
 
@@ -1518,6 +1523,31 @@ impl HydraClient {
             .context("failed to decode delete issue response")
     }
 
+    /// Call `POST /v1/issues/:issue_id/actions` to submit a form response.
+    pub async fn submit_form(
+        &self,
+        issue_id: &IssueId,
+        request: &SubmitFormRequest,
+    ) -> Result<SubmitFormResponse> {
+        let path = format!("/v1/issues/{issue_id}/actions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit form action request")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while submitting form action",
+            )
+            .await?;
+
+        response
+            .json::<SubmitFormResponse>()
+            .await
+            .context("failed to decode submit form response")
+    }
+
     /// Call `DELETE /v1/patches/:patch_id` to soft-delete a patch.
     pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         let path = format!("/v1/patches/{patch_id}");
@@ -2260,6 +2290,14 @@ impl HydraClientInterface for HydraClient {
 
     async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         HydraClient::delete_issue(self, issue_id).await
+    }
+
+    async fn submit_form(
+        &self,
+        issue_id: &IssueId,
+        request: &SubmitFormRequest,
+    ) -> Result<SubmitFormResponse> {
+        HydraClient::submit_form(self, issue_id, request).await
     }
 
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
