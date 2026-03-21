@@ -10,6 +10,17 @@ Tools you can use:
 
 **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
+## Handling user feedback
+
+After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
+1. Read the feedback carefully.
+2. Acknowledge the feedback in the progress field.
+3. Adjust your approach based on the feedback.
+4. Address the feedback in your work.
+5. Clear the feedback field when done:
+   `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
+
 ## Review Workflow
 
 Follow these steps to review a patch:

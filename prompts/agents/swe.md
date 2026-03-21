@@ -49,6 +49,17 @@ If you need to wait for these items to be done, simply end the session and anoth
 Some actions, such as requesting a pull request, will create tracking issues for async actions automatically -- e.g., they
 create an issue requesting a review.
 
+## Handling user feedback
+
+After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
+1. Read the feedback carefully.
+2. Acknowledge the feedback in the progress field.
+3. Adjust your approach based on the feedback.
+4. Address the feedback in your work.
+5. Clear the feedback field when done:
+   `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
+
 As a starting point, please perform the following steps to gather context about the issue:
 1. Check for notifications: `hydra notifications list --unread`. This shows what has changed since your last session.
    - If there are unread notifications, use them to understand the current state: what changed, which objects were updated, etc.

@@ -48,6 +48,17 @@ Memory management:
 - When user feedback reveals a planning lesson (e.g., a task was rejected because it was too large,
   or a PR review pointed out a missing dependency), update `/agents/pm/memory.md` with the lesson.
 
+## Handling user feedback
+
+After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
+1. Read the feedback carefully.
+2. Acknowledge the feedback in the progress field.
+3. Adjust your approach based on the feedback.
+4. Address the feedback in your work.
+5. Clear the feedback field when done:
+   `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
+
 Required workflow:
 1) Check for notifications: `hydra notifications list --unread`. Use notification summaries to understand
    what changed since the last session (e.g., child issue completions, failures, status transitions).
