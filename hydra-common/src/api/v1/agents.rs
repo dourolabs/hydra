@@ -81,12 +81,13 @@ impl UpsertAgentRequest {
         prompt: impl Into<String>,
         max_tries: i32,
         max_simultaneous: i32,
+        mcp_config_path: Option<String>,
     ) -> Self {
         Self {
             name: name.into(),
             prompt: prompt.into(),
             prompt_path: String::new(),
-            mcp_config_path: None,
+            mcp_config_path,
             max_tries,
             max_simultaneous,
             is_assignment_agent: false,
