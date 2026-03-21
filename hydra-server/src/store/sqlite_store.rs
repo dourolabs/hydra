@@ -6153,7 +6153,7 @@ mod tests {
             Some("2".to_string()),
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
-            None,
+            Some(serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}})),
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {
@@ -6411,7 +6411,7 @@ mod tests {
         let agent = Agent::new(
             "swe".to_string(),
             "/agents/swe/prompt.md".to_string(),
-            None,
+            Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,
             false,

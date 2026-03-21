@@ -4758,7 +4758,7 @@ mod tests {
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
-            None,
+            Some(serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}})),
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -6715,7 +6715,7 @@ mod tests {
         Agent::new(
             "test-agent".to_string(),
             "/agents/test-agent/prompt.md".to_string(),
-            None,
+            Some("/agents/test-agent/mcp-config.json".to_string()),
             3,
             5,
             false,
