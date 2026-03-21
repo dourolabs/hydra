@@ -241,6 +241,7 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
                 deleted: false,
                 form: None,
                 form_response: None,
+                feedback: None,
             },
             &ActorRef::test(),
         )
@@ -331,6 +332,7 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
                 deleted: false,
                 form: None,
                 form_response: None,
+                feedback: None,
             },
             &ActorRef::test(),
         )

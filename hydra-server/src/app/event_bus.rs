@@ -1635,6 +1635,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -1719,6 +1720,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
 
         let (issue_id, _) = store
@@ -1762,6 +1764,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -1817,6 +1820,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
 
         let (issue_id, _) = store
@@ -1868,6 +1872,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
 
         store
@@ -1911,6 +1916,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -1967,6 +1973,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -2100,6 +2107,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
 
         store
@@ -2149,6 +2157,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );

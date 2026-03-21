@@ -1025,6 +1025,7 @@ mod tests {
             form: None,
             form_response: None,
             deleted: false,
+            feedback: None,
         };
         let actor = ActorRef::System {
             worker_name: "migration-test".into(),

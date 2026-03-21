@@ -221,6 +221,7 @@ mod tests {
             vec![patch_id.clone()],
             None,
             None,
+            None,
         )
     }
 

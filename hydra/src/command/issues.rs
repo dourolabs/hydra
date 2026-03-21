@@ -157,6 +157,10 @@ pub enum IssueCommands {
         /// Inline YAML string defining a form to attach to the issue.
         #[arg(long = "form-inline", value_name = "YAML")]
         form_inline: Option<String>,
+
+        /// Feedback for the issue. Use empty string to clear.
+        #[arg(long, value_name = "FEEDBACK")]
+        feedback: Option<String>,
     },
     /// Update an existing issue.
     Update {
@@ -297,6 +301,14 @@ pub enum IssueCommands {
         /// Remove the form from the issue.
         #[arg(long = "clear-form")]
         clear_form: bool,
+
+        /// Updated feedback.
+        #[arg(long, value_name = "FEEDBACK", conflicts_with = "clear_feedback")]
+        feedback: Option<String>,
+
+        /// Remove the current feedback.
+        #[arg(long)]
+        clear_feedback: bool,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -450,6 +462,7 @@ pub async fn run(
             labels,
             form,
             form_inline,
+            feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
@@ -474,6 +487,7 @@ pub async fn run(
                 current_issue_id,
                 labels,
                 parsed_form,
+                feedback,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -506,6 +520,8 @@ pub async fn run(
             form,
             form_inline,
             clear_form,
+            feedback,
+            clear_feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             update_issue(
@@ -536,6 +552,8 @@ pub async fn run(
                 remove_labels,
                 parsed_form,
                 clear_form,
+                feedback,
+                clear_feedback,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -823,6 +841,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
             summary.issue.dependencies,
             summary.issue.patches,
             summary.issue.deleted,
+            None,
             None,
             None,
         ),
@@ -1371,6 +1390,7 @@ async fn create_issue(
     current_issue_id: Option<IssueId>,
     labels: Vec<String>,
     form: Option<Form>,
+    feedback: Option<String>,
 ) -> Result<IssueVersionRecord> {
     let description = description.trim();
     if description.is_empty() {
@@ -1424,6 +1444,7 @@ async fn create_issue(
         false,
         form,
         None,
+        feedback.and_then(|f| if f.trim().is_empty() { None } else { Some(f) }),
     );
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
     let label_names: Vec<String> = labels
@@ -1479,6 +1500,8 @@ async fn update_issue(
     remove_labels: Vec<String>,
     form: Option<Form>,
     clear_form: bool,
+    feedback: Option<String>,
+    clear_feedback: bool,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
@@ -1527,6 +1550,19 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
+    let feedback_update = if clear_feedback {
+        Some(None)
+    } else {
+        feedback.map(|f| {
+            let trimmed = f.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+    };
+
     let job_settings_requested = clear_job_settings
         || repo_name.is_some()
         || remote_url.is_some()
@@ -1548,6 +1584,7 @@ async fn update_issue(
         && dependencies_update.is_none()
         && patches_update.is_none()
         && progress_update.is_none()
+        && feedback_update.is_none()
         && !job_settings_requested
         && !labels_requested
         && !form_requested;
@@ -1592,6 +1629,7 @@ async fn update_issue(
         || dependencies_update.is_some()
         || patches_update.is_some()
         || progress_update.is_some()
+        || feedback_update.is_some()
         || job_settings_changed
         || form_update.is_some();
 
@@ -1611,6 +1649,7 @@ async fn update_issue(
             current.issue.deleted,
             form_update.unwrap_or(current.issue.form),
             current.issue.form_response,
+            feedback_update.unwrap_or(current.issue.feedback),
         );
 
         let response = client
@@ -2049,6 +2088,13 @@ fn write_issue_details_pretty(
         }
     }
 
+    if let Some(feedback) = &issue_record.issue.feedback {
+        writeln!(writer, "{indent}Feedback:")?;
+        for line in feedback.lines() {
+            writeln!(writer, "{indent}  {line}")?;
+        }
+    }
+
     if show_todo_list {
         write_todo_list(indent, todo_list, writer)?;
     }
@@ -2458,6 +2504,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -2487,6 +2534,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                     None,
                     None,
                 ),
@@ -2552,6 +2600,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -2604,6 +2653,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                     None,
                     None,
                 ),
@@ -2973,6 +3023,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
         );
@@ -3038,6 +3089,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3110,6 +3162,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3134,6 +3187,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3208,6 +3262,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3238,6 +3293,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3303,6 +3359,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3372,6 +3429,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3396,6 +3454,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3549,6 +3608,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
         );
@@ -3596,6 +3656,8 @@ mod tests {
             Vec::new(),
             None,
             false,
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3633,6 +3695,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3652,6 +3715,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3696,6 +3760,8 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
             None,
             false,
         )
@@ -3736,6 +3802,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3758,6 +3825,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3804,6 +3872,8 @@ mod tests {
             Vec::new(),
             None,
             false,
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3838,6 +3908,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3859,6 +3930,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
                 None,
                 None,
             ),
@@ -3905,6 +3977,8 @@ mod tests {
             Vec::new(),
             None,
             false,
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3941,6 +4015,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -3960,6 +4035,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
                 None,
                 None,
             ),
@@ -4006,6 +4082,8 @@ mod tests {
             Vec::new(),
             None,
             false,
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -4041,6 +4119,7 @@ mod tests {
                     false,
                     None,
                     None,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -4063,6 +4142,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                     None,
                     None,
                 ),
@@ -4120,6 +4200,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                     None,
                     None,
                 ),
@@ -4316,6 +4397,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4341,6 +4423,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                         None,
                         None,
                     ),
@@ -4387,6 +4470,7 @@ mod tests {
             vec![],
             vec![main_patch_id.clone()],
             false,
+            None,
             None,
             None,
         );
@@ -4542,6 +4626,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4569,6 +4654,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4594,6 +4680,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                         None,
                         None,
                     ),
@@ -4643,6 +4730,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4670,6 +4758,7 @@ mod tests {
                         false,
                         None,
                         None,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4695,6 +4784,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                         None,
                         None,
                     ),
@@ -4761,6 +4851,7 @@ mod tests {
                         vec![],
                         vec![main_patch_id.clone()],
                         false,
+                        None,
                         None,
                         None,
                     ),
@@ -5054,6 +5145,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             ),
             None,
             Utc::now(),
@@ -5113,6 +5205,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
                 None,
                 None,
             ),

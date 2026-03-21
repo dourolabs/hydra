@@ -87,6 +87,7 @@ async fn issue_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 Vec::new(),
                 None,
                 None,
+                None,
             )
             .into(),
             None,

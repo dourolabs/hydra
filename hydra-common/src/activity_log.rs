@@ -216,6 +216,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
         let updated_issue = Issue {
             description: "Updated".to_string(),
@@ -321,6 +322,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
 
         let actor = ActorRef::Authenticated {

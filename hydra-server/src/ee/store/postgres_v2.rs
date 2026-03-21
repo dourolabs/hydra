@@ -259,8 +259,8 @@ impl PostgresStoreV2 {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -278,6 +278,7 @@ impl PostgresStoreV2 {
             .bind(actor)
             .bind(&form_json)
             .bind(&form_response_json)
+            .bind(issue.feedback.as_deref())
             .execute(executor)
             .await
             .map_err(map_sqlx_error)?;
@@ -376,6 +377,7 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
             form,
             form_response,
+            feedback: row.feedback.clone(),
         })
     }
 
@@ -1298,6 +1300,8 @@ struct IssueRow {
     form: Option<Value>,
     #[sqlx(default)]
     form_response: Option<Value>,
+    #[sqlx(default)]
+    feedback: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1939,7 +1943,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
             "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
+             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
+             form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -1978,7 +1983,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+             form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2043,7 +2049,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
              i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
-             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time \
+             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
+             i.form, i.form_response, i.feedback \
              FROM {TABLE_ISSUES_V2} i"
         );
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
@@ -4647,6 +4654,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -4933,6 +4941,7 @@ mod tests {
                 ]),
                 submitted_at: truncate_to_micros(Utc::now()),
             }),
+            Some("some feedback text".to_string()),
         )
     }
 
@@ -5671,6 +5680,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
@@ -5687,6 +5697,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
         );
@@ -7253,6 +7264,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7268,6 +7280,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
