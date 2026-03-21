@@ -1269,6 +1269,7 @@ mod tests {
                 Vec::new(),
                 patches,
                 false,
+                None,
             ),
             None,
             Utc::now(),

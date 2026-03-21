@@ -31,6 +31,7 @@ async fn create_spawnable_issue(
         Vec::new(),
         Vec::new(),
         false,
+        None,
     );
     let request = UpsertIssueRequest::new(issue, None);
     let response = harness

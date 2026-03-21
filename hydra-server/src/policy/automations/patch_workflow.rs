@@ -289,6 +289,7 @@ impl PatchWorkflowAutomation {
                     Vec::new(),
                     parent_dependencies.clone(),
                     vec![patch_id.clone()],
+                    None,
                 );
 
                 let (issue_id, _version) = ctx
@@ -351,6 +352,7 @@ impl PatchWorkflowAutomation {
                 Vec::new(),
                 dependencies,
                 vec![patch_id.clone()],
+                None,
             );
 
             let (issue_id, _version) = ctx
@@ -549,6 +551,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -567,6 +570,7 @@ mod tests {
                 parent_id.clone(),
             )],
             vec![patch_id.clone()],
+            None,
         );
         let (_mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
@@ -669,6 +673,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
         );
         let (_parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -1781,6 +1786,7 @@ merge_request:
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
         );
         store
             .add_issue(existing_rr, &ActorRef::test())
@@ -1870,6 +1876,7 @@ merge_request:
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
         );
         store
             .add_issue(existing_rr, &ActorRef::test())
@@ -1889,6 +1896,7 @@ merge_request:
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
         );
         store.add_issue(failed_mr, &ActorRef::test()).await.unwrap();
 
@@ -1974,6 +1982,7 @@ merge_request:
                 Vec::new(),
                 Vec::new(),
                 vec![patch_id.clone()],
+                None,
             );
             store.add_issue(rr, &ActorRef::test()).await.unwrap();
 
@@ -1989,6 +1998,7 @@ merge_request:
                 Vec::new(),
                 Vec::new(),
                 vec![patch_id.clone()],
+                None,
             );
             store.add_issue(mr, &ActorRef::test()).await.unwrap();
         }

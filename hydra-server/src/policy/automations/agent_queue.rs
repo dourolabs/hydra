@@ -502,6 +502,7 @@ mod tests {
             Vec::new(),
             dependencies,
             Vec::new(),
+            None,
         )
     }
 

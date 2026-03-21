@@ -10,7 +10,7 @@ ids?: string, issue_type: IssueType | null, status?: string, assignee: string | 
 /**
  * Filter issues by creator username.
  */
-creator: string | null, q: string | null, include_deleted: boolean | null, 
+creator: string | null, q: string | null, graph: string, include_deleted: boolean | null, 
 /**
  * Filter issues by label IDs (comma-separated in query string).
  */
