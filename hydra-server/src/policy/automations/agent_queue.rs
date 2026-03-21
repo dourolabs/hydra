@@ -204,54 +204,43 @@ impl AgentQueue {
         let has_feedback = issue.feedback.is_some();
 
         // Assignment check.
-        if self.agent.is_assignment_agent {
-            if let Some(name) = &issue.assignee {
-                if name != &self.agent.name {
-                    return Ok(None);
-                }
-            }
-        } else if issue.assignee.as_deref() != Some(self.agent.name.as_str()) {
+        let is_assigned = if self.agent.is_assignment_agent {
+            issue
+                .assignee
+                .as_ref()
+                .is_none_or(|name| name == &self.agent.name)
+        } else {
+            issue.assignee.as_deref() == Some(self.agent.name.as_str())
+        };
+        if !is_assigned {
             return Ok(None);
         }
 
-        // Skip terminal issues (bypassed when feedback is set).
-        if !has_feedback
-            && matches!(
-                issue.status,
-                IssueStatus::Closed
-                    | IssueStatus::Dropped
-                    | IssueStatus::Rejected
-                    | IssueStatus::Failed
-            )
-        {
-            return Ok(None);
-        }
-
-        // Dependency readiness (bypassed when feedback is set).
-        if !has_feedback {
-            let is_ready = state
-                .is_issue_ready(issue_id)
-                .await
-                .context("failed to determine if issue is ready")?;
-            if !is_ready {
-                return Ok(None);
-            }
-        }
-
-        // Capacity check.
+        // Compute guard conditions.
+        let is_terminal = matches!(
+            issue.status,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        );
+        let is_ready = state
+            .is_issue_ready(issue_id)
+            .await
+            .context("failed to determine if issue is ready")?;
         let active_tasks = task_state.running_tasks + task_state.pending_tasks;
         let max_simultaneous = self.agent.max_simultaneous as usize;
-        if max_simultaneous == 0 || active_tasks >= max_simultaneous {
-            return Ok(None);
-        }
+        let at_capacity = max_simultaneous == 0 || active_tasks >= max_simultaneous;
+        let has_active_session = task_state.existing_issue_ids.contains(issue_id);
+        let parent_running = parent_has_running_task(state, issue).await?;
 
-        // Already has an active session (bypassed when feedback is set).
-        if !has_feedback && task_state.existing_issue_ids.contains(issue_id) {
-            return Ok(None);
-        }
-
-        // Parent has a running task (bypassed when feedback is set).
-        if !has_feedback && parent_has_running_task(state, issue).await? {
+        // Determine whether to skip this issue.
+        // Feedback bypasses terminal status, dependency readiness, and parent running checks.
+        // Active session and capacity checks are always enforced.
+        if at_capacity
+            || has_active_session
+            || (!has_feedback && (is_terminal || !is_ready || parent_running))
+        {
             return Ok(None);
         }
 
@@ -3043,6 +3032,27 @@ mod tests {
             )
             .await?;
         assert!(result.is_some(), "should spawn with feedback set");
+
+        // Feedback does NOT bypass the active session guard.
+        // Simulate an active session for this issue by adding it to existing_issue_ids.
+        let mut task_state = agent_task_state(&handles.state, "agent-a").await?;
+        task_state.existing_issue_ids.insert(issue_id.clone());
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(
+            result.is_none(),
+            "feedback should NOT bypass active session guard"
+        );
 
         Ok(())
     }
