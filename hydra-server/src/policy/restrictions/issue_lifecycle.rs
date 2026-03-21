@@ -165,6 +165,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
