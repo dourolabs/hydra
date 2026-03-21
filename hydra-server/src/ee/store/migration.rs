@@ -1023,6 +1023,9 @@ mod tests {
             dependencies: vec![],
             patches: vec![],
             deleted: false,
+            form: None,
+            form_response: None,
+            feedback: None,
         };
         let actor = ActorRef::System {
             worker_name: "migration-test".into(),
