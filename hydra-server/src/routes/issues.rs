@@ -484,13 +484,6 @@ fn map_submit_feedback_error(err: crate::app::SubmitFeedbackError) -> ApiError {
             ApiError::not_found(format!("issue '{issue_id}' not found"))
         }
         SubmitFeedbackError::Store { source, issue_id } => map_issue_error(source, Some(&issue_id)),
-        SubmitFeedbackError::KillSession {
-            issue_id,
-            session_id,
-            source,
-        } => ApiError::internal(anyhow!(
-            "failed to kill session '{session_id}' for issue '{issue_id}': {source}"
-        )),
     }
 }
 

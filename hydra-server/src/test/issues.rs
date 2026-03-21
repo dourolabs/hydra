@@ -12,8 +12,8 @@ use hydra_common::{
         issues::{
             AddTodoItemRequest, FormValidationError, IssueVersionRecord, ListIssueVersionsResponse,
             ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-            SetTodoItemStatusRequest, SubmitFormRequest, SubmitFormResponse, TodoListResponse,
-            UpsertIssueRequest, UpsertIssueResponse,
+            SetTodoItemStatusRequest, SubmitFeedbackRequest, SubmitFormRequest, SubmitFormResponse,
+            TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
         },
     },
 };
@@ -1752,6 +1752,241 @@ async fn submit_form_action_select_invalid_option() -> anyhow::Result<()> {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: FormValidationError = resp.json().await?;
     assert!(body.field_errors.contains_key("env"));
+
+    Ok(())
+}
+
+// ===== Feedback Endpoint Tests =====
+
+#[tokio::test]
+async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create an in-progress issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "test feedback",
+                default_user(),
+                String::new(),
+                IssueStatus::InProgress,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // Submit feedback
+    let resp: IssueVersionRecord = client
+        .post(format!(
+            "{}/v1/issues/{}/feedback",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SubmitFeedbackRequest::new("fix this".to_string()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue_id, created.issue_id);
+    assert_eq!(resp.issue.feedback, Some("fix this".to_string()));
+    // Status should remain InProgress (not terminal)
+    assert_eq!(
+        resp.issue.status,
+        hydra_common::api::v1::issues::IssueStatus::InProgress
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create a closed issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "closed issue",
+                default_user(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // Submit feedback on the closed issue
+    let resp: IssueVersionRecord = client
+        .post(format!(
+            "{}/v1/issues/{}/feedback",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SubmitFeedbackRequest::new("please reopen".to_string()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue.feedback, Some("please reopen".to_string()));
+    assert_eq!(
+        resp.issue.status,
+        hydra_common::api::v1::issues::IssueStatus::InProgress
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create a failed issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "failed issue",
+                default_user(),
+                String::new(),
+                IssueStatus::Failed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // Submit feedback on the failed issue
+    let resp: IssueVersionRecord = client
+        .post(format!(
+            "{}/v1/issues/{}/feedback",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SubmitFeedbackRequest::new("try again".to_string()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue.feedback, Some("try again".to_string()));
+    assert_eq!(
+        resp.issue.status,
+        hydra_common::api::v1::issues::IssueStatus::InProgress
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_feedback_nonexistent_issue_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/i-nonexistent/feedback",
+            server.base_url()
+        ))
+        .json(&SubmitFeedbackRequest::new("feedback".to_string()))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete an issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "to be deleted",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // Delete the issue
+    client
+        .delete(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Try to submit feedback on deleted issue
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/feedback",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SubmitFeedbackRequest::new("feedback".to_string()))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }

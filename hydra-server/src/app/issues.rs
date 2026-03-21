@@ -138,13 +138,6 @@ pub enum SubmitFeedbackError {
         source: StoreError,
         issue_id: IssueId,
     },
-    #[error("failed to kill session '{session_id}' for issue '{issue_id}'")]
-    KillSession {
-        #[source]
-        source: crate::job_engine::JobEngineError,
-        issue_id: IssueId,
-        session_id: SessionId,
-    },
 }
 
 impl AppState {
