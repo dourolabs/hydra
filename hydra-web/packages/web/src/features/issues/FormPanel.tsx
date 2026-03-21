@@ -11,6 +11,7 @@ import type {
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { formatTimestamp } from "../../utils/time";
+import { actorIdDisplayName } from "../../utils/actors";
 import styles from "./FormPanel.module.css";
 
 interface FormPanelProps {
@@ -445,7 +446,7 @@ export function FormPanel({ issueId, form, formResponse }: FormPanelProps) {
       {isReadOnly && formResponse && (
         <div className={styles.responseMeta}>
           {submittedAction && <span>Action: {submittedAction.label}</span>}
-          <span>Submitted by: {formResponse.actor}</span>
+          <span>Submitted by: {actorIdDisplayName(formResponse.actor)}</span>
           <span>{formatTimestamp(formResponse.submitted_at)}</span>
         </div>
       )}

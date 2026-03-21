@@ -1,4 +1,12 @@
-import type { ActorRef } from "@hydra/api";
+import type { ActorId, ActorRef } from "@hydra/api";
+
+/** Extract a human-readable display name from an ActorId. */
+export function actorIdDisplayName(id: ActorId): string {
+  if ("Username" in id) return id.Username;
+  if ("Session" in id) return id.Session;
+  if ("Service" in id) return id.Service;
+  return id.Issue;
+}
 
 /** Extract a human-readable display name from an ActorRef. */
 export function actorDisplayName(actor: ActorRef): string {
