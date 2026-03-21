@@ -35,6 +35,7 @@ pub struct SpawnAttempt {
     status: IssueStatus,
     attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
+    feedback: Option<String>,
 }
 
 pub struct AgentQueue {
@@ -147,6 +148,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         status: IssueStatus,
         children_snapshot: HashMap<IssueId, VersionNumber>,
+        feedback: Option<String>,
         max_tries: i32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
@@ -154,16 +156,19 @@ impl AgentQueue {
             status,
             attempts: 0,
             children_snapshot: HashMap::new(),
+            feedback: None,
         });
 
         let status_changed = entry.status != status;
         let children_changed = entry.children_snapshot != children_snapshot;
+        let feedback_changed = entry.feedback != feedback;
 
-        if status_changed || children_changed {
+        if status_changed || children_changed || feedback_changed {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
                 children_snapshot,
+                feedback,
             };
         }
 
@@ -196,6 +201,8 @@ impl AgentQueue {
         cached_prompt: &mut Option<String>,
         cached_mcp_config: &mut Option<Option<McpConfig>>,
     ) -> anyhow::Result<Option<Session>> {
+        let has_feedback = issue.feedback.is_some();
+
         // Assignment check.
         if self.agent.is_assignment_agent {
             if let Some(name) = &issue.assignee {
@@ -207,24 +214,28 @@ impl AgentQueue {
             return Ok(None);
         }
 
-        // Skip terminal issues.
-        if matches!(
-            issue.status,
-            IssueStatus::Closed
-                | IssueStatus::Dropped
-                | IssueStatus::Rejected
-                | IssueStatus::Failed
-        ) {
+        // Skip terminal issues (bypassed when feedback is set).
+        if !has_feedback
+            && matches!(
+                issue.status,
+                IssueStatus::Closed
+                    | IssueStatus::Dropped
+                    | IssueStatus::Rejected
+                    | IssueStatus::Failed
+            )
+        {
             return Ok(None);
         }
 
-        // Dependency readiness.
-        let is_ready = state
-            .is_issue_ready(issue_id)
-            .await
-            .context("failed to determine if issue is ready")?;
-        if !is_ready {
-            return Ok(None);
+        // Dependency readiness (bypassed when feedback is set).
+        if !has_feedback {
+            let is_ready = state
+                .is_issue_ready(issue_id)
+                .await
+                .context("failed to determine if issue is ready")?;
+            if !is_ready {
+                return Ok(None);
+            }
         }
 
         // Capacity check.
@@ -234,13 +245,13 @@ impl AgentQueue {
             return Ok(None);
         }
 
-        // Already has an active session.
-        if task_state.existing_issue_ids.contains(issue_id) {
+        // Already has an active session (bypassed when feedback is set).
+        if !has_feedback && task_state.existing_issue_ids.contains(issue_id) {
             return Ok(None);
         }
 
-        // Parent has a running task.
-        if parent_has_running_task(state, issue).await? {
+        // Parent has a running task (bypassed when feedback is set).
+        if !has_feedback && parent_has_running_task(state, issue).await? {
             return Ok(None);
         }
 
@@ -299,7 +310,13 @@ impl AgentQueue {
             snapshot
         };
         if !self
-            .register_spawn_attempt(issue_id, issue.status, children_snapshot, max_tries)
+            .register_spawn_attempt(
+                issue_id,
+                issue.status,
+                children_snapshot,
+                issue.feedback.clone(),
+                max_tries,
+            )
             .await
         {
             return Ok(None);
@@ -2903,6 +2920,221 @@ mod tests {
             session.mcp_config.is_none(),
             "mcp_config should be None when document is missing"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feedback_bypasses_guards() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create a blocker issue (open, so the dependent is not ready).
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Create a parent issue with a running session (blocks child spawning).
+        let (parent_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Parent issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (parent_task_id, _) = handles
+            .store
+            .add_session(
+                task(
+                    "Parent task",
+                    BundleSpec::None,
+                    Some(parent_id.clone()),
+                    Some("hydra-worker:latest"),
+                    HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                ),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        handles
+            .state
+            .transition_task_to_pending(&parent_task_id, ActorRef::test())
+            .await?;
+
+        // Create a closed issue with feedback, blocked deps, and a running parent.
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Needs feedback".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: Some("agent-a".to_string()),
+                    session_settings: session_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![
+                        IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
+                        IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
+                    ],
+                    patches: Vec::new(),
+                    deleted: false,
+                    form: None,
+                    form_response: None,
+                    feedback: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+
+        // Without feedback: should NOT spawn (closed + blocked deps + parent running).
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(result.is_none(), "should not spawn without feedback");
+
+        // Set feedback on the issue.
+        let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
+        updated_issue.feedback = Some("Please fix the approach".to_string());
+        handles
+            .store
+            .update_issue(&issue_id, updated_issue, &ActorRef::test())
+            .await?;
+
+        // With feedback: should spawn despite closed status, blocked deps, and parent running.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(result.is_some(), "should spawn with feedback set");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feedback_change_resets_spawn_attempts() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Feedback attempt reset".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    session_settings: SessionSettings::default(),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                    form: None,
+                    form_response: None,
+                    feedback: Some("first feedback".to_string()),
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let mut queue = queue("agent-a");
+        queue.agent.max_tries = 1;
+
+        // First spawn attempt with feedback should succeed.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(result.is_some(), "first attempt should succeed");
+        record_completed_task(&handles, result.unwrap()).await?;
+
+        // Second attempt with same feedback should be blocked (max_tries=1).
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(result.is_none(), "should be blocked by max_tries");
+
+        // Change the feedback text.
+        let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
+        updated_issue.feedback = Some("new feedback".to_string());
+        handles
+            .store
+            .update_issue(&issue_id, updated_issue, &ActorRef::test())
+            .await?;
+
+        // Should spawn again because feedback changed resets attempts.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(result.is_some(), "new feedback should reset attempts");
 
         Ok(())
     }
