@@ -25,11 +25,28 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
 
   const mutation = useMutation({
     mutationFn: (text: string) => apiClient.submitFeedback(issueId, text),
+    onMutate: async (text) => {
+      await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
+      const previous = queryClient.getQueryData<IssueVersionRecord>(["issue", issueId]);
+      if (previous) {
+        queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
+          ...previous,
+          issue: {
+            ...previous.issue,
+            feedback: text,
+          },
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
       addToast("Feedback submitted", "success");
       onClose();
     },
-    onError: (err) => {
+    onError: (err, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["issue", issueId], context.previous);
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to submit feedback",
         "error",
