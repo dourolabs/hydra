@@ -122,6 +122,24 @@ pub enum SubmitFormActionError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum SubmitFeedbackError {
+    #[error("issue '{issue_id}' not found")]
+    IssueNotFound {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
+    #[error("issue '{issue_id}' is deleted")]
+    IssueDeleted { issue_id: IssueId },
+    #[error("issue store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
+}
+
 impl AppState {
     pub async fn get_issue(
         &self,
@@ -572,6 +590,86 @@ impl AppState {
 
         info!(issue_id = %issue_id, action_id, "form action submitted");
         Ok((version, form_response))
+    }
+
+    pub async fn submit_feedback(
+        &self,
+        issue_id: IssueId,
+        feedback: String,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, SubmitFeedbackError> {
+        let store = self.store.as_ref();
+
+        // 1. Validate issue exists and is not deleted
+        let versioned = store.get_issue(&issue_id, true).await.map_err(|source| {
+            SubmitFeedbackError::IssueNotFound {
+                source,
+                issue_id: issue_id.clone(),
+            }
+        })?;
+
+        if versioned.item.deleted {
+            return Err(SubmitFeedbackError::IssueDeleted {
+                issue_id: issue_id.clone(),
+            });
+        }
+
+        let mut issue = versioned.item;
+
+        // 2. Set feedback
+        issue.feedback = Some(feedback);
+
+        // 3. If status is terminal, transition to InProgress
+        if issue.status.is_terminal() {
+            issue.status = IssueStatus::InProgress;
+        }
+
+        // 4. Update the issue
+        let version = self
+            .store
+            .update_issue_with_actor(&issue_id, issue, actor)
+            .await
+            .map_err(|source| SubmitFeedbackError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        // 5. Kill all active sessions for this issue
+        let session_ids = store
+            .get_sessions_for_issue(&issue_id)
+            .await
+            .map_err(|source| SubmitFeedbackError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        for session_id in session_ids {
+            let session = store
+                .get_session(&session_id, false)
+                .await
+                .map_err(|source| SubmitFeedbackError::Store {
+                    source,
+                    issue_id: issue_id.clone(),
+                })?;
+
+            if matches!(
+                session.item.status,
+                Status::Created | Status::Pending | Status::Running
+            ) {
+                if let Err(source) = self.job_engine.kill_job(&session_id).await {
+                    // Log but don't fail the whole operation if a kill fails
+                    tracing::warn!(
+                        issue_id = %issue_id,
+                        session_id = %session_id,
+                        error = %source,
+                        "failed to kill session while submitting feedback"
+                    );
+                }
+            }
+        }
+
+        info!(issue_id = %issue_id, "feedback submitted");
+        Ok(version)
     }
 
     pub async fn set_todo_item_status(
