@@ -24,6 +24,16 @@ pub trait Upstream: Send + Sync + 'static {
         &self,
         request: Request<Body>,
     ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>>;
+
+    /// Forward a request intended for long-lived streaming (e.g. SSE).
+    /// Uses a client without a request timeout so the connection stays open indefinitely.
+    /// The default implementation delegates to `forward()`.
+    fn forward_streaming(
+        &self,
+        request: Request<Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
+        self.forward(request)
+    }
 }
 
 /// In-process upstream that calls the inner Axum router via `oneshot()`.
@@ -59,6 +69,8 @@ impl Upstream for InProcessUpstream {
 #[derive(Clone)]
 pub struct HttpUpstream {
     client: reqwest::Client,
+    /// Client without a request timeout, used for SSE / long-lived streaming connections.
+    streaming_client: reqwest::Client,
     base_url: String,
 }
 
@@ -71,18 +83,27 @@ impl HttpUpstream {
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .expect("failed to build reqwest client");
-        Self { client, base_url }
+        let streaming_client = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .expect("failed to build streaming reqwest client");
+        Self {
+            client,
+            streaming_client,
+            base_url,
+        }
     }
 }
 
-impl Upstream for HttpUpstream {
-    fn forward(
-        &self,
+impl HttpUpstream {
+    /// Shared forwarding logic used by both `forward` and `forward_streaming`.
+    fn forward_with_client(
+        client: reqwest::Client,
+        base_url: String,
         request: Request<Body>,
     ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
-        let client = self.client.clone();
-        let base_url = self.base_url.clone();
-
         Box::pin(async move {
             let (parts, body) = request.into_parts();
 
@@ -128,5 +149,25 @@ impl Upstream for HttpUpstream {
                 .body(body)
                 .map_err(|e| UpstreamError(format!("failed to build response: {e}")))
         })
+    }
+}
+
+impl Upstream for HttpUpstream {
+    fn forward(
+        &self,
+        request: Request<Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
+        Self::forward_with_client(self.client.clone(), self.base_url.clone(), request)
+    }
+
+    fn forward_streaming(
+        &self,
+        request: Request<Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
+        Self::forward_with_client(
+            self.streaming_client.clone(),
+            self.base_url.clone(),
+            request,
+        )
     }
 }

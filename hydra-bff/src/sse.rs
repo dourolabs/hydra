@@ -57,7 +57,7 @@ pub async fn sse_relay<U: Upstream>(
         }
     };
 
-    match bff.upstream.forward(upstream_req).await {
+    match bff.upstream.forward_streaming(upstream_req).await {
         Ok(upstream_resp) => {
             // Stream the SSE response back with proper headers.
             let (parts, body) = upstream_resp.into_parts();
