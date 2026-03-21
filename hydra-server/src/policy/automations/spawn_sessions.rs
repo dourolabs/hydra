@@ -120,8 +120,10 @@ impl Automation for SpawnSessionsAutomation {
             let active_tasks = task_state.running_tasks + task_state.pending_tasks;
             let mut remaining_capacity = max_simultaneous.saturating_sub(active_tasks);
 
-            // Resolve the prompt once per agent, lazily (only if needed).
+            // Resolve the prompt and MCP config once per agent, lazily (only if needed).
             let mut cached_prompt: Option<String> = None;
+            let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
+                None;
 
             for (issue_id, issue) in &target_issues {
                 if remaining_capacity == 0 {
@@ -135,6 +137,7 @@ impl Automation for SpawnSessionsAutomation {
                         issue,
                         &task_state,
                         &mut cached_prompt,
+                        &mut cached_mcp_config,
                     )
                     .await
                 {

@@ -1,8 +1,9 @@
 use crate::{domain::agents::Agent, store::ReadOnlyStore};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
+use hydra_common::api::v1::sessions::McpConfig;
 use std::collections::HashMap;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::app_state::AppState;
 
@@ -125,6 +126,40 @@ impl AppState {
                 Some((agent.name.clone(), body.clone()))
             })
             .collect()
+    }
+
+    /// Fetch and parse MCP config for an agent from the document store.
+    ///
+    /// Returns `None` if the document is not found (logs a warning).
+    /// Returns an error only on unexpected failures (e.g. network/parse errors).
+    pub async fn resolve_agent_mcp_config(
+        &self,
+        mcp_config_path: &str,
+    ) -> anyhow::Result<Option<McpConfig>> {
+        let query = SearchDocumentsQuery::new(
+            None,
+            Some(mcp_config_path.to_string()),
+            Some(true),
+            None,
+            None,
+        );
+
+        let documents = self
+            .list_documents(&query)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to query document store for MCP config: {e}"))?;
+
+        let Some((_, versioned)) = documents.into_iter().next() else {
+            warn!(path = %mcp_config_path, "MCP config document not found; leaving mcp_config as None");
+            return Ok(None);
+        };
+
+        let mcp_config: McpConfig = serde_json::from_str(versioned.item.body_markdown.trim_end())
+            .map_err(|e| {
+            anyhow::anyhow!("failed to parse MCP config at '{mcp_config_path}' as JSON: {e}")
+        })?;
+
+        Ok(Some(mcp_config))
     }
 
     pub async fn delete_agent(&self, agent_name: &str) -> Result<Agent, AgentError> {
