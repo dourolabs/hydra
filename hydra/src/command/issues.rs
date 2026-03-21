@@ -23,10 +23,12 @@ use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     api::v1::relations::ListRelationsRequest,
     constants::ENV_HYDRA_ISSUE_ID,
+    form::Form,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus,
         IssueSummaryRecord, IssueType, IssueVersionRecord, ReplaceTodoListRequest,
-        SearchIssuesQuery, SessionSettings, SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
+        SearchIssuesQuery, SessionSettings, SetTodoItemStatusRequest, SubmitFormRequest, TodoItem,
+        UpsertIssueRequest,
     },
     patches::{PatchVersionRecord, Review},
     sessions::{SearchSessionsQuery, Session, SessionSummaryRecord},
@@ -147,6 +149,14 @@ pub enum IssueCommands {
         /// Comma-separated label names to assign (creates labels if they don't exist).
         #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
         labels: Vec<String>,
+
+        /// Path to a YAML file defining a form to attach to the issue.
+        #[arg(long = "form", value_name = "FILE", conflicts_with = "form_inline")]
+        form: Option<String>,
+
+        /// Inline YAML string defining a form to attach to the issue.
+        #[arg(long = "form-inline", value_name = "YAML")]
+        form_inline: Option<String>,
     },
     /// Update an existing issue.
     Update {
@@ -271,6 +281,22 @@ pub enum IssueCommands {
             value_delimiter = ','
         )]
         remove_labels: Vec<String>,
+
+        /// Path to a YAML file defining a form to set on the issue.
+        #[arg(long = "form", value_name = "FILE", conflicts_with_all = ["form_inline", "clear_form"])]
+        form: Option<String>,
+
+        /// Inline YAML string defining a form to set on the issue.
+        #[arg(
+            long = "form-inline",
+            value_name = "YAML",
+            conflicts_with = "clear_form"
+        )]
+        form_inline: Option<String>,
+
+        /// Remove the form from the issue.
+        #[arg(long = "clear-form")]
+        clear_form: bool,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -348,6 +374,20 @@ pub enum IssueCommands {
         #[arg(long)]
         version: Option<i64>,
     },
+    /// Submit a form response for an issue.
+    SubmitForm {
+        /// Issue ID to submit the form for.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Action ID to take (must match an action defined on the issue's form).
+        #[arg(long, value_name = "ACTION_ID")]
+        action: String,
+
+        /// Field values as a JSON or YAML string (object mapping field keys to values).
+        #[arg(long, value_name = "JSON_OR_YAML", default_value = "{}")]
+        values: String,
+    },
     /// Show changelog for an issue (most recent first).
     Changelog {
         /// Issue ID to show changelog for.
@@ -408,7 +448,10 @@ pub async fn run(
             max_retries,
             secrets,
             labels,
+            form,
+            form_inline,
         } => {
+            let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
             create_issue(
                 client,
@@ -430,6 +473,7 @@ pub async fn run(
                 secrets,
                 current_issue_id,
                 labels,
+                parsed_form,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -459,35 +503,43 @@ pub async fn run(
             clear_job_settings,
             add_labels,
             remove_labels,
-        } => update_issue(
-            client,
-            id,
-            r#type,
-            title,
-            status,
-            assignee,
-            clear_assignee,
-            description,
-            dependencies,
-            clear_dependencies,
-            patches,
-            clear_patches,
-            progress,
-            clear_progress,
-            repo_name,
-            remote_url,
-            image,
-            model,
-            branch,
-            max_retries,
-            secrets,
-            clear_secrets,
-            clear_job_settings,
-            add_labels,
-            remove_labels,
-        )
-        .await
-        .and_then(|issue| write_issue_records(context.output_format, &[issue])),
+            form,
+            form_inline,
+            clear_form,
+        } => {
+            let parsed_form = parse_form_flag(form, form_inline)?;
+            update_issue(
+                client,
+                id,
+                r#type,
+                title,
+                status,
+                assignee,
+                clear_assignee,
+                description,
+                dependencies,
+                clear_dependencies,
+                patches,
+                clear_patches,
+                progress,
+                clear_progress,
+                repo_name,
+                remote_url,
+                image,
+                model,
+                branch,
+                max_retries,
+                secrets,
+                clear_secrets,
+                clear_job_settings,
+                add_labels,
+                remove_labels,
+                parsed_form,
+                clear_form,
+            )
+            .await
+            .and_then(|issue| write_issue_records(context.output_format, &[issue]))
+        }
         IssueCommands::Todo {
             id,
             add,
@@ -538,6 +590,9 @@ pub async fn run(
             let issue = resolve_issue(client, &id, include_deleted, version).await?;
             write_issue_records(context.output_format, &[issue])?;
             Ok(())
+        }
+        IssueCommands::SubmitForm { id, action, values } => {
+            submit_form(client, id, action, values, context.output_format).await
         }
         IssueCommands::Changelog { id, limit } => {
             changelog_issue(client, id, context.output_format, limit).await
@@ -1241,6 +1296,60 @@ async fn resolve_inherited_job_settings(
     Ok(job_settings)
 }
 
+/// Parse a form from either a `--form <file>` or `--form-inline <yaml>` flag.
+fn parse_form_flag(form_file: Option<String>, form_inline: Option<String>) -> Result<Option<Form>> {
+    let yaml_str = match (form_file, form_inline) {
+        (Some(path), None) => std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read form file '{path}'"))?,
+        (None, Some(inline)) => inline,
+        (None, None) => return Ok(None),
+        _ => unreachable!("clap conflicts_with prevents both being set"),
+    };
+
+    let form: Form = serde_yaml_ng::from_str(&yaml_str).context("failed to parse form YAML")?;
+    form.validate_field_keys()
+        .map_err(|e| anyhow!("invalid form: {e}"))?;
+    Ok(Some(form))
+}
+
+/// Parse values from a JSON or YAML string into a map.
+fn parse_values(values_str: &str) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    // Try JSON first, then YAML
+    if let Ok(map) = serde_json::from_str(values_str) {
+        return Ok(map);
+    }
+    serde_yaml_ng::from_str(values_str).context("failed to parse values as JSON or YAML")
+}
+
+async fn submit_form(
+    client: &dyn HydraClientInterface,
+    id: IssueId,
+    action: String,
+    values: String,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    let values = parse_values(&values)?;
+    let request = SubmitFormRequest::new(action, values);
+    let response = client
+        .submit_form(&id, &request)
+        .await
+        .with_context(|| format!("failed to submit form for issue '{id}'"))?;
+
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            println!(
+                "Submitted form for issue '{}' (action: '{}', version: {})",
+                response.issue_id, response.form_response.action_id, response.version,
+            );
+        }
+        ResolvedOutputFormat::Jsonl => {
+            let json = serde_json::to_string(&response)?;
+            println!("{json}");
+        }
+    }
+    Ok(())
+}
+
 async fn create_issue(
     client: &dyn HydraClientInterface,
     issue_type: IssueType,
@@ -1261,6 +1370,7 @@ async fn create_issue(
     secrets: Vec<String>,
     current_issue_id: Option<IssueId>,
     labels: Vec<String>,
+    form: Option<Form>,
 ) -> Result<IssueVersionRecord> {
     let description = description.trim();
     if description.is_empty() {
@@ -1312,7 +1422,7 @@ async fn create_issue(
         dependencies,
         patches,
         false,
-        None,
+        form,
         None,
     );
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
@@ -1367,6 +1477,8 @@ async fn update_issue(
     clear_job_settings: bool,
     add_labels: Vec<String>,
     remove_labels: Vec<String>,
+    form: Option<Form>,
+    clear_form: bool,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
@@ -1426,6 +1538,7 @@ async fn update_issue(
         || clear_secrets;
 
     let labels_requested = !add_labels.is_empty() || !remove_labels.is_empty();
+    let form_requested = form.is_some() || clear_form;
 
     let no_changes = issue_type.is_none()
         && title.is_none()
@@ -1436,7 +1549,8 @@ async fn update_issue(
         && patches_update.is_none()
         && progress_update.is_none()
         && !job_settings_requested
-        && !labels_requested;
+        && !labels_requested
+        && !form_requested;
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -1464,6 +1578,12 @@ async fn update_issue(
         Some(current.issue.session_settings.clone())
     };
 
+    let form_update = if clear_form {
+        Some(None)
+    } else {
+        form.map(Some)
+    };
+
     let issue_fields_changed = issue_type.is_some()
         || title.is_some()
         || status.is_some()
@@ -1472,7 +1592,8 @@ async fn update_issue(
         || dependencies_update.is_some()
         || patches_update.is_some()
         || progress_update.is_some()
-        || job_settings_changed;
+        || job_settings_changed
+        || form_update.is_some();
 
     let result = if issue_fields_changed {
         let updated_issue = Issue::new(
@@ -1488,7 +1609,7 @@ async fn update_issue(
             dependencies_update.unwrap_or(current.issue.dependencies),
             patches_update.unwrap_or(current.issue.patches),
             current.issue.deleted,
-            current.issue.form,
+            form_update.unwrap_or(current.issue.form),
             current.issue.form_response,
         );
 
@@ -1981,6 +2102,62 @@ fn write_issue_details_pretty(
                 }
             }
             write_patch_review_summary(&patch.patch.reviews, indent, writer)?;
+        }
+    }
+
+    if let Some(form) = &issue_record.issue.form {
+        writeln!(writer, "{indent}Form:")?;
+        writeln!(writer, "{indent}  Prompt: {}", form.prompt)?;
+        if !form.fields.is_empty() {
+            writeln!(writer, "{indent}  Fields:")?;
+            for field in &form.fields {
+                let input_type = match &field.input {
+                    hydra_common::form::Input::Text { .. } => "text",
+                    hydra_common::form::Input::Textarea { .. } => "textarea",
+                    hydra_common::form::Input::Select { .. } => "select",
+                    hydra_common::form::Input::Checkbox => "checkbox",
+                    hydra_common::form::Input::Number { .. } => "number",
+                };
+                writeln!(
+                    writer,
+                    "{indent}    - {} ({}, {})",
+                    field.label, field.key, input_type
+                )?;
+            }
+        }
+        if !form.actions.is_empty() {
+            writeln!(writer, "{indent}  Actions:")?;
+            for action in &form.actions {
+                let requires = if action.requires.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (requires: {})", action.requires.join(", "))
+                };
+                writeln!(
+                    writer,
+                    "{indent}    - {} [{}]{requires}",
+                    action.label, action.id,
+                )?;
+            }
+        }
+    }
+
+    if let Some(response) = &issue_record.issue.form_response {
+        writeln!(writer, "{indent}Form Response:")?;
+        writeln!(writer, "{indent}  Action: {}", response.action_id)?;
+        writeln!(writer, "{indent}  Submitted by: {}", response.actor)?;
+        writeln!(
+            writer,
+            "{indent}  Submitted at: {}",
+            response
+                .submitted_at
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+        )?;
+        if !response.values.is_empty() {
+            writeln!(writer, "{indent}  Values:")?;
+            for (key, value) in &response.values {
+                writeln!(writer, "{indent}    {key}: {value}")?;
+            }
         }
     }
 
@@ -2827,6 +3004,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -2893,6 +3071,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -2988,6 +3167,7 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3091,6 +3271,7 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3155,6 +3336,7 @@ mod tests {
             vec!["my-api-secret".into(), "my-db-secret".into()],
             None,
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3247,6 +3429,7 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3281,6 +3464,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
         )
         .await
         .is_err());
@@ -3310,6 +3494,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
         )
         .await
         .is_err());
@@ -3409,6 +3594,8 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3509,6 +3696,8 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3613,6 +3802,8 @@ mod tests {
             true,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3712,6 +3903,8 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
         )
         .await
         .unwrap();
@@ -3811,6 +4004,8 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            false,
         )
         .await
         .unwrap();
