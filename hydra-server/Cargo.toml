@@ -52,6 +52,7 @@ sqlx = { version = "0.7", default-features = false, features = [
     "migrate",
 ] }
 openssl-sys = { workspace = true }
+regex = "1"
 httpmock = { version = "0.7", optional = true }
 openssl = { version = "0.10", optional = true }
 

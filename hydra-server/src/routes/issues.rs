@@ -1,14 +1,16 @@
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::issues::TodoItem;
 use crate::{
-    app::{AppState, UpdateTodoListError, UpsertIssueError},
+    app::{AppState, SubmitFormActionError, UpdateTodoListError, UpsertIssueError},
     store::StoreError,
 };
 use anyhow::anyhow;
+use axum::http::StatusCode;
 use axum::{
     Extension, Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
+    response::IntoResponse,
 };
 use hydra_common::{
     HydraId, IssueId,
@@ -567,4 +569,46 @@ pub async fn delete_issue(
         labels,
     );
     Ok(Json(response))
+}
+
+pub async fn submit_form_action(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(request): Json<api_issues::SubmitFormRequest>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    info!(issue_id = %issue_id, action_id = %request.action_id, "submit_form_action invoked");
+
+    match state
+        .submit_form_action(
+            issue_id.clone(),
+            request.action_id,
+            request.values,
+            ActorRef::from(&actor),
+        )
+        .await
+    {
+        Ok((version, form_response)) => {
+            info!(issue_id = %issue_id, "submit_form_action completed");
+            Ok(Json(api_issues::SubmitFormResponse::new(
+                issue_id,
+                version,
+                form_response,
+            )))
+        }
+        Err(SubmitFormActionError::IssueNotFound { issue_id, source }) => {
+            Err(map_issue_error(source, Some(&issue_id)).into_response())
+        }
+        Err(SubmitFormActionError::ActionNotFound { issue_id }) => Err(ApiError::not_found(
+            format!("issue '{issue_id}' has no form or no matching action"),
+        )
+        .into_response()),
+        Err(SubmitFormActionError::ValidationFailed { field_errors }) => {
+            let body = api_issues::FormValidationError::new(field_errors);
+            Err((StatusCode::BAD_REQUEST, Json(body)).into_response())
+        }
+        Err(SubmitFormActionError::Store { issue_id, source }) => {
+            Err(map_issue_error(source, Some(&issue_id)).into_response())
+        }
+    }
 }

@@ -5,7 +5,8 @@ pub use crate::IssueId;
 use crate::{LabelId, PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use serde_json::Value;
+use std::{collections::HashMap, fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -711,6 +712,66 @@ pub struct ListIssueVersionsResponse {
 impl ListIssueVersionsResponse {
     pub fn new(versions: Vec<IssueVersionRecord>) -> Self {
         Self { versions }
+    }
+}
+
+/// Request body for POST /v1/issues/{issue_id}/actions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct SubmitFormRequest {
+    /// Which action button was clicked.
+    pub action_id: String,
+
+    /// Collected field values, keyed by field key.
+    #[serde(default)]
+    pub values: HashMap<String, Value>,
+}
+
+impl SubmitFormRequest {
+    pub fn new(action_id: String, values: HashMap<String, Value>) -> Self {
+        Self { action_id, values }
+    }
+}
+
+/// Response body for a successful form submission.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct SubmitFormResponse {
+    pub issue_id: IssueId,
+    pub version: VersionNumber,
+    pub form_response: FormResponse,
+}
+
+impl SubmitFormResponse {
+    pub fn new(issue_id: IssueId, version: VersionNumber, form_response: FormResponse) -> Self {
+        Self {
+            issue_id,
+            version,
+            form_response,
+        }
+    }
+}
+
+/// Structured validation error response for form submissions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct FormValidationError {
+    pub error: String,
+    pub field_errors: HashMap<String, String>,
+}
+
+impl FormValidationError {
+    pub fn new(field_errors: HashMap<String, String>) -> Self {
+        Self {
+            error: "validation_failed".to_string(),
+            field_errors,
+        }
     }
 }
 

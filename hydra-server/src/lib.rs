@@ -257,6 +257,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             post(routes::issues::set_todo_item_status),
         )
         .route(
+            "/v1/issues/:issue_id/actions",
+            post(routes::issues::submit_form_action),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )

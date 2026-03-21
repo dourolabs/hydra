@@ -3,11 +3,16 @@ use crate::{
     domain::issues::{Issue, IssueDependencyType, IssueStatus, TodoItem},
     store::{ReadOnlyStore, Status, StoreError},
 };
+use chrono::Utc;
 use hydra_common::{
-    SessionId, VersionNumber, Versioned, api::v1 as api, api::v1::issues::SearchIssuesQuery,
+    SessionId, VersionNumber, Versioned,
+    api::v1 as api,
+    api::v1::form::{Effect, FormResponse, Input},
+    api::v1::issues::SearchIssuesQuery,
     issues::IssueId,
 };
-use std::collections::HashSet;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use tracing::info;
 
@@ -85,6 +90,28 @@ pub enum UpdateTodoListError {
     InvalidItemNumber {
         issue_id: IssueId,
         item_number: usize,
+    },
+    #[error("issue store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum SubmitFormActionError {
+    #[error("issue '{issue_id}' not found")]
+    IssueNotFound {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
+    #[error("issue has no form or action not found")]
+    ActionNotFound { issue_id: IssueId },
+    #[error("validation failed")]
+    ValidationFailed {
+        field_errors: HashMap<String, String>,
     },
     #[error("issue store operation failed")]
     Store {
@@ -416,6 +443,136 @@ impl AppState {
         Ok(todo_list)
     }
 
+    pub async fn submit_form_action(
+        &self,
+        issue_id: IssueId,
+        action_id: String,
+        values: HashMap<String, Value>,
+        actor: ActorRef,
+    ) -> Result<(VersionNumber, FormResponse), SubmitFormActionError> {
+        let store = self.store.as_ref();
+        let versioned = store.get_issue(&issue_id, false).await.map_err(|source| {
+            SubmitFormActionError::IssueNotFound {
+                source,
+                issue_id: issue_id.clone(),
+            }
+        })?;
+        let mut issue = versioned.item;
+
+        // Find the form and action
+        let form = issue
+            .form
+            .as_ref()
+            .ok_or_else(|| SubmitFormActionError::ActionNotFound {
+                issue_id: issue_id.clone(),
+            })?;
+
+        let action = form
+            .actions
+            .iter()
+            .find(|a| a.id == action_id)
+            .ok_or_else(|| SubmitFormActionError::ActionNotFound {
+                issue_id: issue_id.clone(),
+            })?;
+
+        // Build a map of field key -> &Field for lookup
+        let field_map: HashMap<&str, _> = form.fields.iter().map(|f| (f.key.as_str(), f)).collect();
+
+        // Check for unknown keys
+        let mut field_errors: HashMap<String, String> = HashMap::new();
+        for key in values.keys() {
+            if !field_map.contains_key(key.as_str()) {
+                field_errors.insert(key.clone(), "unknown field".to_string());
+            }
+        }
+        if !field_errors.is_empty() {
+            return Err(SubmitFormActionError::ValidationFailed { field_errors });
+        }
+
+        // Validate required fields and type-check all provided values
+        let required_keys: HashSet<&str> = action.requires.iter().map(|s| s.as_str()).collect();
+
+        for key in &action.requires {
+            match values.get(key) {
+                None | Some(Value::Null) => {
+                    field_errors.insert(key.clone(), "required".to_string());
+                }
+                Some(val) => {
+                    if let Some(field) = field_map.get(key.as_str()) {
+                        if let Some(err) = validate_field_value(&field.input, val) {
+                            field_errors.insert(key.clone(), err);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate non-required fields if present
+        for (key, val) in &values {
+            if required_keys.contains(key.as_str()) {
+                continue; // already validated above
+            }
+            if val.is_null() {
+                continue; // absent/null non-required fields are fine
+            }
+            if let Some(field) = field_map.get(key.as_str()) {
+                if let Some(err) = validate_field_value(&field.input, val) {
+                    field_errors.insert(key.clone(), err);
+                }
+            }
+        }
+
+        if !field_errors.is_empty() {
+            return Err(SubmitFormActionError::ValidationFailed { field_errors });
+        }
+
+        // Extract actor_id from ActorRef for the FormResponse
+        let actor_id = match &actor {
+            ActorRef::Authenticated { actor_id } => actor_id.clone(),
+            ActorRef::System {
+                on_behalf_of: Some(id),
+                ..
+            } => id.clone(),
+            ActorRef::Automation {
+                automation_name, ..
+            } => hydra_common::actor_ref::ActorId::Service(automation_name.clone()),
+            ActorRef::System { worker_name, .. } => {
+                hydra_common::actor_ref::ActorId::Service(worker_name.clone())
+            }
+        };
+
+        // Build the FormResponse
+        let form_response = FormResponse {
+            action_id: action_id.clone(),
+            actor: actor_id,
+            values: values.clone(),
+            submitted_at: Utc::now(),
+        };
+
+        // Apply effects
+        let effect = action.effect.clone();
+        issue.form_response = Some(form_response.clone());
+
+        match effect {
+            Effect::UpdateIssue { status } => {
+                issue.status = status.into();
+            }
+            Effect::RecordOnly => {}
+        }
+
+        let version = self
+            .store
+            .update_issue_with_actor(&issue_id, issue, actor)
+            .await
+            .map_err(|source| SubmitFormActionError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        info!(issue_id = %issue_id, action_id, "form action submitted");
+        Ok((version, form_response))
+    }
+
     pub async fn set_todo_item_status(
         &self,
         issue_id: IssueId,
@@ -560,6 +717,104 @@ fn subtree_has_ready_issue<'a>(
             }
         }
     })
+}
+
+/// Validates a single field value against its input type definition.
+/// Returns `None` if valid, or `Some(error_message)` if invalid.
+fn validate_field_value(input: &Input, value: &Value) -> Option<String> {
+    match input {
+        Input::Text {
+            min_length,
+            max_length,
+            pattern,
+            ..
+        } => {
+            let Some(s) = value.as_str() else {
+                return Some("must be a string".to_string());
+            };
+            if let Some(min) = min_length {
+                if s.len() < *min {
+                    return Some(format!("must be at least {min} characters"));
+                }
+            }
+            if let Some(max) = max_length {
+                if s.len() > *max {
+                    return Some(format!("must be at most {max} characters"));
+                }
+            }
+            if let Some(pat) = pattern {
+                match regex::Regex::new(pat) {
+                    Ok(re) => {
+                        if !re.is_match(s) {
+                            return Some(format!("must match pattern '{pat}'"));
+                        }
+                    }
+                    Err(_) => {
+                        return Some(format!("invalid pattern '{pat}'"));
+                    }
+                }
+            }
+            None
+        }
+        Input::Textarea {
+            min_length,
+            max_length,
+            ..
+        } => {
+            let Some(s) = value.as_str() else {
+                return Some("must be a string".to_string());
+            };
+            if let Some(min) = min_length {
+                if s.len() < *min {
+                    return Some(format!("must be at least {min} characters"));
+                }
+            }
+            if let Some(max) = max_length {
+                if s.len() > *max {
+                    return Some(format!("must be at most {max} characters"));
+                }
+            }
+            None
+        }
+        Input::Select { options, .. } => {
+            let Some(s) = value.as_str() else {
+                return Some("must be a string".to_string());
+            };
+            if !options.iter().any(|opt| opt.value == s) {
+                return Some(format!(
+                    "must be one of: {}",
+                    options
+                        .iter()
+                        .map(|o| o.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            None
+        }
+        Input::Checkbox => {
+            if !value.is_boolean() {
+                return Some("must be a boolean".to_string());
+            }
+            None
+        }
+        Input::Number { min, max, .. } => {
+            let Some(n) = value.as_f64() else {
+                return Some("must be a number".to_string());
+            };
+            if let Some(min_val) = min {
+                if n < *min_val {
+                    return Some(format!("must be at least {min_val}"));
+                }
+            }
+            if let Some(max_val) = max {
+                if n > *max_val {
+                    return Some(format!("must be at most {max_val}"));
+                }
+            }
+            None
+        }
+    }
 }
 
 #[cfg(test)]
