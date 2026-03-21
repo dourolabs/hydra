@@ -4604,7 +4604,9 @@ mod tests {
     use hydra_common::{
         PatchId, RepoName, SessionId, VersionNumber, Versioned,
         actor_ref::ActorId,
-        api::v1::form::{Action, Effect, Field, Form, FormResponse, Input, SelectOption},
+        api::v1::form::{
+            Action, ActionStyle, Effect, Field, Form, FormResponse, Input, SelectOption,
+        },
         repositories::{
             MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
             SearchRepositoriesQuery,
@@ -4890,7 +4892,7 @@ mod tests {
                 Action {
                     id: "approve".to_string(),
                     label: "Approve".to_string(),
-                    style: "primary".to_string(),
+                    style: ActionStyle::Primary,
                     requires: vec!["name".to_string(), "agree".to_string()],
                     effect: Effect::UpdateIssue {
                         status: IssueStatus::Closed,
@@ -4899,7 +4901,7 @@ mod tests {
                 Action {
                     id: "reject".to_string(),
                     label: "Reject".to_string(),
-                    style: "danger".to_string(),
+                    style: ActionStyle::Danger,
                     requires: vec![],
                     effect: Effect::RecordOnly,
                 },

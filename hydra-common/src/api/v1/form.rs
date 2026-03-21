@@ -112,6 +112,20 @@ pub struct SelectOption {
     pub label: String,
 }
 
+/// Visual style for an action button.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum ActionStyle {
+    #[serde(rename = "primary")]
+    Primary,
+    #[serde(rename = "danger")]
+    Danger,
+    #[default]
+    #[serde(rename = "default")]
+    Default,
+}
+
 /// An action button on the form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -123,9 +137,9 @@ pub struct Action {
     /// Button label.
     pub label: String,
 
-    /// Visual style: "primary", "danger", "default".
-    #[serde(default = "default_style")]
-    pub style: String,
+    /// Visual style for the button.
+    #[serde(default)]
+    pub style: ActionStyle,
 
     /// Which field keys are required for this action.
     #[serde(default)]
@@ -186,10 +200,6 @@ fn default_rows() -> usize {
     4
 }
 
-fn default_style() -> String {
-    "default".into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,7 +214,7 @@ mod tests {
                 Action {
                     id: "yes".to_string(),
                     label: "Yes".to_string(),
-                    style: "primary".to_string(),
+                    style: ActionStyle::Primary,
                     requires: vec![],
                     effect: Effect::UpdateIssue {
                         status: IssueStatus::Closed,
@@ -213,7 +223,7 @@ mod tests {
                 Action {
                     id: "no".to_string(),
                     label: "No".to_string(),
-                    style: "danger".to_string(),
+                    style: ActionStyle::Danger,
                     requires: vec![],
                     effect: Effect::RecordOnly,
                 },
@@ -295,7 +305,7 @@ mod tests {
             actions: vec![Action {
                 id: "submit".to_string(),
                 label: "Submit".to_string(),
-                style: "primary".to_string(),
+                style: ActionStyle::Primary,
                 requires: vec!["name".to_string(), "env".to_string()],
                 effect: Effect::UpdateIssue {
                     status: IssueStatus::Closed,

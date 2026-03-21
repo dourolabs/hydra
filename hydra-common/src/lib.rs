@@ -162,6 +162,7 @@ mod ts_export {
         crate::form::Field::export_all(&cfg).expect("Field");
         crate::form::Input::export_all(&cfg).expect("Input");
         crate::form::SelectOption::export_all(&cfg).expect("SelectOption");
+        crate::form::ActionStyle::export_all(&cfg).expect("ActionStyle");
         crate::form::Action::export_all(&cfg).expect("Action");
         crate::form::Effect::export_all(&cfg).expect("Effect");
         crate::form::FormResponse::export_all(&cfg).expect("FormResponse");
