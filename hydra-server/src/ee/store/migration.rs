@@ -1025,8 +1025,6 @@ mod tests {
             form: None,
             form_response: None,
             deleted: false,
-            form: None,
-            form_response: None,
             feedback: None,
         };
         let actor = ActorRef::System {
