@@ -66,6 +66,9 @@ impl HttpUpstream {
     pub fn new(base_url: String) -> Self {
         let client = reqwest::Client::builder()
             .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(60))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .expect("failed to build reqwest client");
         Self { client, base_url }
