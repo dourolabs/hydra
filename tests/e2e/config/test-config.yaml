@@ -1,0 +1,21 @@
+hydra:
+  namespace: "e2e-test"
+  HYDRA_SECRET_ENCRYPTION_KEY: "dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItZTJlLXRlc3Rz"
+  CLAUDE_CODE_OAUTH_TOKEN: "$CLAUDE_CODE_OAUTH_TOKEN"
+
+storage_backend: "sqlite"
+sqlite_path: "hydra.db"
+
+job_engine: "local"
+
+auth_mode: "local"
+
+github_token: "$GH_TOKEN"
+
+job:
+  default_image: "hydra-worker:latest"
+  default_model: "claude-sonnet-4-20250514"
+  cpu_limit: "500m"
+  memory_limit: "1Gi"
+  cpu_request: "500m"
+  memory_request: "1Gi"

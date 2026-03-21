@@ -41,6 +41,7 @@ pub async fn run(
         prompt,
         model,
         build_cache,
+        mcp_config,
         ..
     } = client.get_session_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
@@ -183,6 +184,7 @@ pub async fn run(
             &repo_path,
             &execution_env,
             &output_path,
+            mcp_config.as_deref(),
         )
         .await
     {
