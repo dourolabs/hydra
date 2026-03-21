@@ -15,6 +15,7 @@ use crate::{
 use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
+use hydra_common::api::v1::sessions::McpConfig;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
@@ -55,6 +56,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
         prompt: &str,
+        mcp_config: Option<McpConfig>,
     ) -> anyhow::Result<Option<Session>> {
         let session_settings =
             state.apply_session_settings_defaults(issue.session_settings.clone());
@@ -133,7 +135,7 @@ impl AgentQueue {
             session_settings.cpu_limit.clone(),
             session_settings.memory_limit.clone(),
             merged_secrets,
-            None,
+            mcp_config,
             Status::Created,
             None,
             None,
@@ -192,6 +194,7 @@ impl AgentQueue {
         issue: &Issue,
         task_state: &AgentTaskState,
         cached_prompt: &mut Option<String>,
+        cached_mcp_config: &mut Option<Option<McpConfig>>,
     ) -> anyhow::Result<Option<Session>> {
         // Assignment check.
         if self.agent.is_assignment_agent {
@@ -257,7 +260,28 @@ impl AgentQueue {
         }
         let prompt = cached_prompt.as_deref().unwrap();
 
-        let maybe_task = self.build_task(state, issue_id, issue, prompt).await?;
+        // Resolve MCP config (lazily cached across calls).
+        if cached_mcp_config.is_none() {
+            let mcp_config = if let Some(path) = &self.agent.mcp_config_path {
+                state
+                    .resolve_agent_mcp_config(path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to resolve MCP config for agent '{}' at path '{}'",
+                            self.agent.name, path
+                        )
+                    })?
+            } else {
+                None
+            };
+            *cached_mcp_config = Some(mcp_config);
+        }
+        let mcp_config = cached_mcp_config.as_ref().unwrap().clone();
+
+        let maybe_task = self
+            .build_task(state, issue_id, issue, prompt, mcp_config)
+            .await?;
         let Some(task) = maybe_task else {
             return Ok(None);
         };
@@ -630,6 +654,7 @@ mod tests {
                     &versioned_issue.item,
                     &task_state,
                     &mut cached_prompt,
+                    &mut None,
                 )
                 .await
             {
@@ -725,6 +750,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -785,6 +811,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -815,6 +842,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -851,6 +879,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -895,6 +924,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -933,6 +963,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -979,6 +1010,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1053,6 +1085,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1141,6 +1174,7 @@ mod tests {
                 &issue1,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result1.is_some());
@@ -1153,6 +1187,7 @@ mod tests {
                 &issue2,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result2.is_some());
@@ -1221,6 +1256,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1236,6 +1272,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1317,6 +1354,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1416,6 +1454,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1461,6 +1500,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1476,6 +1516,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1491,6 +1532,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1528,6 +1570,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(first_run.is_some());
@@ -1542,6 +1585,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(blocked.is_none());
@@ -1564,6 +1608,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1602,6 +1647,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1618,6 +1664,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(blocked.is_none());
@@ -1652,6 +1699,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -1717,6 +1765,7 @@ mod tests {
                 &parent_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(parent_result.is_some());
@@ -1730,6 +1779,7 @@ mod tests {
                 &child_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(child_result.is_some());
@@ -1746,6 +1796,7 @@ mod tests {
                 &parent_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(blocked.is_none());
@@ -1772,6 +1823,7 @@ mod tests {
                 &parent_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(parent_result.is_some());
@@ -1784,6 +1836,7 @@ mod tests {
                 &child_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(child_result.is_some());
@@ -1841,6 +1894,7 @@ mod tests {
                 &parent_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(parent_result.is_some());
@@ -1854,6 +1908,7 @@ mod tests {
                 &child_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(child_result.is_some());
@@ -1870,6 +1925,7 @@ mod tests {
                 &parent_issue,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1928,6 +1984,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -1963,6 +2020,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -2023,6 +2081,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2104,6 +2163,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2162,6 +2222,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2214,6 +2275,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none(), "should not spawn without unread messages");
@@ -2234,6 +2296,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(
@@ -2292,6 +2355,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -2356,6 +2420,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_none());
@@ -2394,6 +2459,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2410,6 +2476,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(blocked.is_none());
@@ -2430,6 +2497,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(still_blocked.is_none());
@@ -2472,6 +2540,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2492,6 +2561,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2512,6 +2582,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(
@@ -2556,6 +2627,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2604,6 +2676,7 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
@@ -2645,11 +2718,179 @@ mod tests {
                 &issue_item,
                 &task_state,
                 &mut cached_prompt,
+                &mut None,
             )
             .await?;
         assert!(result.is_some());
 
         assert_eq!(result.unwrap().secrets, None);
+
+        Ok(())
+    }
+
+    fn queue_with_mcp_config_path(agent_name: &str, mcp_config_path: &str) -> AgentQueue {
+        use crate::domain::agents::Agent;
+        AgentQueue::new(
+            Agent::new(
+                agent_name.to_string(),
+                format!("/agents/{agent_name}/prompt.md"),
+                Some(mcp_config_path.to_string()),
+                DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                false,
+                Vec::new(),
+            ),
+            shared_attempts(),
+        )
+    }
+
+    async fn seed_mcp_config(
+        handles: &TestStateHandles,
+        path: &str,
+        config_json: &str,
+    ) -> anyhow::Result<()> {
+        use crate::domain::documents::Document;
+        let doc = Document {
+            title: "MCP config".to_string(),
+            body_markdown: config_json.to_string(),
+            path: Some(path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawn_populates_mcp_config_from_agent() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let mcp_config_path = "/agents/agent-a/mcp_config.json";
+        let mcp_json = r#"{"mcpServers":{"playwright":{"command":"npx","args":["@anthropic/mcp-playwright"]}}}"#;
+
+        seed_mcp_config(&handles, mcp_config_path, mcp_json).await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Test MCP config",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue_with_mcp_config_path("agent-a", mcp_config_path);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
+            None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut cached_mcp_config,
+            )
+            .await?;
+
+        let session = result.expect("should spawn a session");
+        let mcp_config = session
+            .mcp_config
+            .expect("session should have mcp_config populated");
+        let expected: serde_json::Value = serde_json::from_str(mcp_json).unwrap();
+        assert_eq!(mcp_config, expected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawn_leaves_mcp_config_none_when_no_path() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "No MCP config",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a"); // no mcp_config_path
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
+            None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut cached_mcp_config,
+            )
+            .await?;
+
+        let session = result.expect("should spawn a session");
+        assert!(session.mcp_config.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawn_leaves_mcp_config_none_when_doc_missing() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Missing MCP doc",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Agent has mcp_config_path but the document doesn't exist
+        let queue =
+            queue_with_mcp_config_path("agent-a", "/agents/agent-a/nonexistent_mcp_config.json");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
+            None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut cached_mcp_config,
+            )
+            .await?;
+
+        let session = result.expect("should spawn a session");
+        assert!(
+            session.mcp_config.is_none(),
+            "mcp_config should be None when document is missing"
+        );
 
         Ok(())
     }
