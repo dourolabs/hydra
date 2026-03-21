@@ -96,10 +96,9 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
         target_path.to_string()
     };
 
-    tracing::debug!(upstream_path = %uri, "forwarding to upstream");
-
     let method = original.method().clone();
-    let mut builder = Request::builder().method(method).uri(&uri);
+    tracing::info!(method = %method, upstream_path = %uri, "proxying request to upstream");
+    let mut builder = Request::builder().method(&method).uri(&uri);
 
     // Set the Authorization header: either override with token or pass through.
     if let Some(token) = override_token {
@@ -133,11 +132,17 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
     };
 
     match bff.upstream.forward(internal_req).await {
-        Ok(response) => response,
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": "internal error" })),
-        )
-            .into_response(),
+        Ok(response) => {
+            tracing::info!(method = %method, upstream_path = %uri, status = %response.status(), "upstream response received");
+            response
+        }
+        Err(e) => {
+            tracing::error!(method = %method, upstream_path = %uri, error = %e, "upstream request failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": "internal error" })),
+            )
+                .into_response()
+        }
     }
 }

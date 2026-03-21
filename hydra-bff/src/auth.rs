@@ -8,7 +8,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::Deserialize;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::state::BffState;
 use crate::upstream::Upstream;
@@ -51,6 +51,11 @@ async fn auth_login<U: Upstream>(
     };
 
     // Validate the token by calling the upstream whoami endpoint.
+    info!(
+        bff_path = "/auth/login",
+        upstream_path = "/v1/whoami",
+        "proxying login validation to upstream"
+    );
     let whoami_req = http::Request::builder()
         .uri("/v1/whoami")
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
@@ -58,8 +63,12 @@ async fn auth_login<U: Upstream>(
         .unwrap();
 
     let response = match bff.upstream.forward(whoami_req).await {
-        Ok(r) => r,
-        Err(_) => {
+        Ok(r) => {
+            info!(bff_path = "/auth/login", upstream_path = "/v1/whoami", status = %r.status(), "upstream response received");
+            r
+        }
+        Err(e) => {
+            error!(bff_path = "/auth/login", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({ "error": "internal error" })),
@@ -117,6 +126,11 @@ async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) ->
         }
     };
 
+    info!(
+        bff_path = "/auth/me",
+        upstream_path = "/v1/whoami",
+        "proxying auth check to upstream"
+    );
     let whoami_req = http::Request::builder()
         .uri("/v1/whoami")
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
@@ -124,8 +138,12 @@ async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) ->
         .unwrap();
 
     let response = match bff.upstream.forward(whoami_req).await {
-        Ok(r) => r,
-        Err(_) => {
+        Ok(r) => {
+            info!(bff_path = "/auth/me", upstream_path = "/v1/whoami", status = %r.status(), "upstream response received");
+            r
+        }
+        Err(e) => {
+            error!(bff_path = "/auth/me", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({ "error": "internal error" })),
