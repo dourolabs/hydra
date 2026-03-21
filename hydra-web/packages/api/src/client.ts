@@ -294,6 +294,11 @@ export class HydraApiClient {
     return this.del(`/v1/issues/${encodeURIComponent(issueId)}`);
   }
 
+  /** POST /v1/issues/:issueId/feedback */
+  submitFeedback(issueId: string, feedback: string): Promise<IssueVersionRecord> {
+    return this.post(`/v1/issues/${encodeURIComponent(issueId)}/feedback`, { feedback });
+  }
+
   /** POST /v1/issues/:issueId/todo-items */
   addTodoItem(issueId: string, request: AddTodoItemRequest): Promise<TodoListResponse> {
     return this.post(`/v1/issues/${encodeURIComponent(issueId)}/todo-items`, request);
