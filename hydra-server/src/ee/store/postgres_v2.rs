@@ -4642,6 +4642,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -5662,6 +5663,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
@@ -5678,6 +5680,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
         );
@@ -7235,6 +7238,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7250,6 +7254,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
