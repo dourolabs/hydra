@@ -54,6 +54,7 @@ pub trait WorkerCommands: Send + Sync {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
+        mcp_config: Option<&str>,
     ) -> Result<String>;
 }
 
@@ -175,6 +176,7 @@ impl WorkerCommands for CodexCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
+        _mcp_config: Option<&str>,
     ) -> Result<String> {
         let openai_api_key = env.get(ENV_OPENAI_API_KEY).map(|s| s.as_str());
         self.login(openai_api_key).await?;
@@ -191,6 +193,7 @@ impl ClaudeCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
+        mcp_config_path: Option<&Path>,
     ) -> Result<String> {
         if let Some(dir) = output_path.parent() {
             fs::create_dir_all(dir)
@@ -220,6 +223,10 @@ impl ClaudeCommands {
         if let Some(model) = model {
             command.arg("--model");
             command.arg(model);
+        }
+        if let Some(mcp_path) = mcp_config_path {
+            command.arg("--mcp-config");
+            command.arg(mcp_path);
         }
         command.current_dir(working_dir).envs(env);
         #[cfg(unix)]
@@ -383,10 +390,33 @@ impl WorkerCommands for ClaudeCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
+        mcp_config: Option<&str>,
     ) -> Result<String> {
-        Self::run_claude(prompt, model, working_dir, env, output_path)
-            .await
-            .with_context(|| "failed to execute claude for worker context")
+        // Write MCP config to a temp file if provided. The TempDir handle must
+        // stay alive until run_claude completes so the file isn't cleaned up.
+        let (_mcp_temp_dir, mcp_config_path) = if let Some(config_json) = mcp_config {
+            let tmp_dir = tempfile::Builder::new()
+                .prefix("mcp-config")
+                .tempdir()
+                .context("failed to create temporary directory for MCP config")?;
+            let config_path = tmp_dir.path().join("mcp-config.json");
+            fs::write(&config_path, config_json)
+                .await
+                .context("failed to write MCP config to temp file")?;
+            (Some(tmp_dir), Some(config_path))
+        } else {
+            (None, None)
+        };
+        Self::run_claude(
+            prompt,
+            model,
+            working_dir,
+            env,
+            output_path,
+            mcp_config_path.as_deref(),
+        )
+        .await
+        .with_context(|| "failed to execute claude for worker context")
     }
 }
 
@@ -399,16 +429,17 @@ impl WorkerCommands for ModelAwareCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
+        mcp_config: Option<&str>,
     ) -> Result<String> {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
-                    .run(prompt, model, working_dir, env, output_path)
+                    .run(prompt, model, working_dir, env, output_path, mcp_config)
                     .await
             }
             None => {
                 self.codex
-                    .run(prompt, model, working_dir, env, output_path)
+                    .run(prompt, model, working_dir, env, output_path, mcp_config)
                     .await
             }
         }

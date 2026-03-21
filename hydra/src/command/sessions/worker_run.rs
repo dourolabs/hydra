@@ -41,8 +41,13 @@ pub async fn run(
         prompt,
         model,
         build_cache,
+        mcp_config,
         ..
     } = client.get_session_context(&job).await?;
+    let mcp_config_json = mcp_config
+        .map(|c| serde_json::to_string(&c))
+        .transpose()
+        .context("failed to serialize MCP config")?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
@@ -183,6 +188,7 @@ pub async fn run(
             &repo_path,
             &execution_env,
             &output_path,
+            mcp_config_json.as_deref(),
         )
         .await
     {
