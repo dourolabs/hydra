@@ -15,6 +15,7 @@ import { DocumentPreview } from "./DocumentPreview";
 import { extractDocumentPaths } from "../../utils/documentPaths";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
+import { FormPanel } from "./FormPanel";
 import styles from "./IssueDetail.module.css";
 
 function BlockingIssueLink({ issueId }: { issueId: string }) {
@@ -132,6 +133,15 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <p className={styles.empty}>No description.</p>
         )}
       </div>
+
+      {/* Form */}
+      {issue.form && (
+        <FormPanel
+          issueId={record.issue_id}
+          form={issue.form}
+          formResponse={issue.form_response}
+        />
+      )}
 
       {/* Patch Preview */}
       {(issue.patches ?? []).length > 0 && (
