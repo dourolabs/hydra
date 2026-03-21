@@ -1079,6 +1079,7 @@ mod tests {
                         deleted: false,
                         form: None,
                         form_response: None,
+                        feedback: None,
                     },
                     ActorRef::test(),
                 )

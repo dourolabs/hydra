@@ -161,6 +161,8 @@ struct IssueRow {
     form: Option<String>,
     #[sqlx(default)]
     form_response: Option<String>,
+    #[sqlx(default)]
+    feedback: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -607,8 +609,8 @@ impl SqliteStore {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -625,6 +627,7 @@ impl SqliteStore {
         .bind(actor)
         .bind(&form_json)
         .bind(&form_response_json)
+        .bind(issue.feedback.as_deref())
         .execute(executor)
         .await
         .map_err(map_sqlx_error)?;
@@ -1135,6 +1138,7 @@ impl SqliteStore {
             deleted: row.deleted,
             form,
             form_response,
+            feedback: row.feedback.clone(),
         })
     }
 
@@ -5017,6 +5021,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -7245,6 +7250,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7260,6 +7266,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );

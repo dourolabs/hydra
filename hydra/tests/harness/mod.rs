@@ -135,6 +135,7 @@ pub async fn create_merge_request_issue(
         false,
         None,
         None,
+        None,
     );
     let response = client
         .create_issue(&UpsertIssueRequest::new(issue, None))
