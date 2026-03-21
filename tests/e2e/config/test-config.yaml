@@ -1,0 +1,16 @@
+hydra:
+  namespace: "test"
+  server_hostname: "127.0.0.1:8080"
+  CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
+
+storage_backend: "sqlite"
+sqlite_path: "~/.hydra/server/hydra.db"
+
+job_engine: "local"
+
+auth_mode: "local"
+github_token: "${GH_TOKEN}"
+username: "test-agent"
+
+job:
+  default_model: "opus"

@@ -273,6 +273,8 @@ fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String>
 const SWE_PROMPT: &str = include_str!("../../prompts/agents/swe.md");
 const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
+const TESTER_PROMPT: &str = include_str!("../../prompts/agents/tester.md");
+const TESTER_MCP_CONFIG: &str = include_str!("../../prompts/agents/tester-mcp.json");
 
 // Embedded playbook content (compiled into the binary).
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
@@ -283,18 +285,26 @@ const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/desig
 fn create_default_agents(auth_token: &str) -> Result<()> {
     let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
 
-    let agents: &[(&str, &str, bool)] = &[
-        ("swe", SWE_PROMPT, false),
-        ("pm", PM_PROMPT, true),
-        ("reviewer", REVIEWER_PROMPT, false),
+    // (name, prompt, is_assignment_agent, mcp_config_path)
+    let agents: &[(&str, &str, bool, Option<&str>)] = &[
+        ("swe", SWE_PROMPT, false, None),
+        ("pm", PM_PROMPT, true, None),
+        ("reviewer", REVIEWER_PROMPT, false, None),
+        (
+            "tester",
+            TESTER_PROMPT,
+            false,
+            Some("agents/tester/mcp-config.json"),
+        ),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
     // so we create a small runtime to drive the async HydraClient calls.
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    for &(name, prompt, is_assignment_agent) in agents {
-        let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX, None);
+    for &(name, prompt, is_assignment_agent, mcp_config_path) in agents {
+        let mut request =
+            UpsertAgentRequest::new(name, prompt, 3, i32::MAX, mcp_config_path.map(String::from));
         request.is_assignment_agent = is_assignment_agent;
         if name == "pm" {
             request.secrets = vec!["GH_TOKEN".to_string()];
@@ -322,6 +332,11 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
             "Design Document Review",
             PLAYBOOK_DESIGN_REVIEW,
             "playbooks/design-review.md",
+        ),
+        (
+            "Tester MCP Config",
+            TESTER_MCP_CONFIG,
+            "agents/tester/mcp-config.json",
         ),
     ];
 
