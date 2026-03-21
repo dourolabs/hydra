@@ -8,7 +8,7 @@ import type {
   Action,
   ActionStyle,
 } from "@hydra/api";
-import type { JsonValue } from "@hydra/api/src/generated/serde_json/JsonValue";
+import type { JsonValue } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./FormPanel.module.css";
