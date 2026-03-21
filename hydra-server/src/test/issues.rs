@@ -7,13 +7,19 @@ use crate::{
 };
 use hydra_common::{
     IssueId, PatchId,
-    api::v1::issues::{
-        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+    api::v1::{
+        form::{Action, ActionStyle, Effect, Field, Form, Input, SelectOption},
+        issues::{
+            AddTodoItemRequest, FormValidationError, IssueVersionRecord, ListIssueVersionsResponse,
+            ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+            SetTodoItemStatusRequest, SubmitFormRequest, SubmitFormResponse, TodoListResponse,
+            UpsertIssueRequest, UpsertIssueResponse,
+        },
     },
 };
 use reqwest::StatusCode;
+use serde_json::json;
+use std::collections::HashMap;
 
 fn issue(
     issue_type: IssueType,
@@ -1363,6 +1369,383 @@ async fn list_issues_count_true_returns_total_count() -> anyhow::Result<()> {
         .await?;
     assert_eq!(resp.issues.len(), 2);
     assert_eq!(resp.total_count, Some(3));
+
+    Ok(())
+}
+
+fn test_form() -> Form {
+    Form {
+        prompt: "Please answer these questions".to_string(),
+        fields: vec![
+            Field {
+                key: "name".to_string(),
+                label: "Name".to_string(),
+                description: None,
+                input: Input::Text {
+                    placeholder: None,
+                    min_length: Some(1),
+                    max_length: Some(50),
+                    pattern: None,
+                },
+                default: None,
+            },
+            Field {
+                key: "env".to_string(),
+                label: "Environment".to_string(),
+                description: None,
+                input: Input::Select {
+                    options: vec![
+                        SelectOption {
+                            value: "staging".to_string(),
+                            label: "Staging".to_string(),
+                        },
+                        SelectOption {
+                            value: "prod".to_string(),
+                            label: "Production".to_string(),
+                        },
+                    ],
+                    radio: false,
+                },
+                default: None,
+            },
+            Field {
+                key: "score".to_string(),
+                label: "Score".to_string(),
+                description: None,
+                input: Input::Number {
+                    min: Some(1.0),
+                    max: Some(5.0),
+                    step: Some(1.0),
+                },
+                default: None,
+            },
+            Field {
+                key: "agree".to_string(),
+                label: "I agree".to_string(),
+                description: None,
+                input: Input::Checkbox,
+                default: None,
+            },
+        ],
+        actions: vec![
+            Action {
+                id: "submit".to_string(),
+                label: "Submit".to_string(),
+                style: ActionStyle::Primary,
+                requires: vec!["name".to_string(), "env".to_string()],
+                effect: Effect::UpdateIssue {
+                    status: hydra_common::api::v1::issues::IssueStatus::Closed,
+                },
+            },
+            Action {
+                id: "skip".to_string(),
+                label: "Skip".to_string(),
+                style: ActionStyle::Default,
+                requires: vec![],
+                effect: Effect::RecordOnly,
+            },
+        ],
+    }
+}
+
+/// Creates an issue with a form and returns its ID.
+async fn create_issue_with_form(
+    client: &reqwest::Client,
+    base_url: &str,
+    form: Form,
+) -> anyhow::Result<IssueId> {
+    let mut api_issue: hydra_common::api::v1::issues::Issue = issue(
+        IssueType::Task,
+        "issue with form",
+        default_user(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    )
+    .into();
+    api_issue.form = Some(form);
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{base_url}/v1/issues"))
+        .json(&UpsertIssueRequest::new(api_issue, None))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    Ok(created.issue_id)
+}
+
+#[tokio::test]
+async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    let mut values = HashMap::new();
+    values.insert("name".to_string(), json!("Alice"));
+    values.insert("env".to_string(), json!("staging"));
+    values.insert("score".to_string(), json!(4));
+
+    let resp: SubmitFormResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new("submit".to_string(), values))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue_id, issue_id);
+    assert_eq!(resp.form_response.action_id, "submit");
+    assert_eq!(resp.form_response.values["name"], json!("Alice"));
+    assert_eq!(resp.form_response.values["env"], json!("staging"));
+
+    // Verify issue was updated (status should be closed due to UpdateIssue effect)
+    let fetched: IssueVersionRecord = client
+        .get(format!("{}/v1/issues/{}", server.base_url(), issue_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.issue.status,
+        hydra_common::api::v1::issues::IssueStatus::Closed
+    );
+    // Form should still be present
+    assert!(fetched.issue.form.is_some());
+    // FormResponse should be stored
+    assert!(fetched.issue.form_response.is_some());
+    assert_eq!(fetched.issue.form_response.unwrap().action_id, "submit");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_record_only_does_not_change_status() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    let resp: SubmitFormResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new("skip".to_string(), HashMap::new()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(resp.form_response.action_id, "skip");
+
+    // Status should remain open
+    let fetched: IssueVersionRecord = client
+        .get(format!("{}/v1/issues/{}", server.base_url(), issue_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.issue.status,
+        hydra_common::api::v1::issues::IssueStatus::Open
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_missing_required_fields() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    // Submit without required fields
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new(
+            "submit".to_string(),
+            HashMap::new(),
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: FormValidationError = resp.json().await?;
+    assert_eq!(body.error, "validation_failed");
+    assert!(body.field_errors.contains_key("name"));
+    assert!(body.field_errors.contains_key("env"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_type_mismatch() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    // Provide wrong types: number for name, string for score
+    let mut values = HashMap::new();
+    values.insert("name".to_string(), json!(42));
+    values.insert("env".to_string(), json!("staging"));
+    values.insert("score".to_string(), json!("not a number"));
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new("submit".to_string(), values))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: FormValidationError = resp.json().await?;
+    assert!(body.field_errors.contains_key("name"));
+    assert!(body.field_errors.contains_key("score"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_unknown_keys_rejected() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    let mut values = HashMap::new();
+    values.insert("name".to_string(), json!("Alice"));
+    values.insert("env".to_string(), json!("staging"));
+    values.insert("unknown_field".to_string(), json!("bad"));
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new("submit".to_string(), values))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: FormValidationError = resp.json().await?;
+    assert!(body.field_errors.contains_key("unknown_field"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_nonexistent_action() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new(
+            "nonexistent".to_string(),
+            HashMap::new(),
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_no_form_on_issue() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create issue without a form
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "no form",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SubmitFormRequest::new(
+            "submit".to_string(),
+            HashMap::new(),
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_select_invalid_option() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let issue_id = create_issue_with_form(&client, &server.base_url(), test_form()).await?;
+
+    let mut values = HashMap::new();
+    values.insert("name".to_string(), json!("Alice"));
+    values.insert("env".to_string(), json!("invalid_env"));
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new("submit".to_string(), values))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: FormValidationError = resp.json().await?;
+    assert!(body.field_errors.contains_key("env"));
 
     Ok(())
 }
