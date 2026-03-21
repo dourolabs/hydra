@@ -222,6 +222,8 @@ struct TaskRow {
     last_message: Option<String>,
     error: Option<String>,
     secrets: Option<String>,
+    #[sqlx(default)]
+    mcp_config: Option<String>,
     creator: Option<String>,
     deleted: bool,
     actor: Option<String>,
@@ -240,6 +242,7 @@ struct TaskRow {
 struct AgentRow {
     name: String,
     prompt_path: String,
+    mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
     is_assignment_agent: bool,
@@ -302,6 +305,7 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
+        mcp_config_path: row.mcp_config_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
         is_assignment_agent: row.is_assignment_agent,
@@ -912,6 +916,15 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
+        let mcp_config_json = session
+            .mcp_config
+            .as_ref()
+            .map(|c| {
+                serde_json::to_string(c).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize mcp_config: {err}"))
+                })
+            })
+            .transpose()?;
         let status_str = super::status_to_db_str(session.status);
         let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
@@ -920,7 +933,39 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at, creation_time, start_time, end_time)
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
+                )
+            )
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&session.prompt)
+            .bind(&context_json)
+            .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(session.creator.as_str())
+            .bind(session.image.as_deref())
+            .bind(session.model.as_deref())
+            .bind(&env_vars_json)
+            .bind(session.cpu_limit.as_deref())
+            .bind(session.memory_limit.as_deref())
+            .bind(status_str)
+            .bind(session.last_message.as_deref())
+            .bind(&error_json)
+            .bind(session.deleted)
+            .bind(actor)
+            .bind(&secrets_json)
+            .bind(&mcp_config_json)
+            .bind(ts)
+            .bind(creation_time_str.as_deref())
+            .bind(start_time_str.as_deref())
+            .bind(end_time_str.as_deref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        } else {
+            sqlx::query(
+                &format!(
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"
                 )
             )
@@ -941,37 +986,7 @@ impl SqliteStore {
             .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
-            .bind(ts)
-            .bind(creation_time_str.as_deref())
-            .bind(start_time_str.as_deref())
-            .bind(end_time_str.as_deref())
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        } else {
-            sqlx::query(
-                &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
-                )
-            )
-            .bind(id.as_ref())
-            .bind(version_number)
-            .bind(&session.prompt)
-            .bind(&context_json)
-            .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
-            .bind(session.creator.as_str())
-            .bind(session.image.as_deref())
-            .bind(session.model.as_deref())
-            .bind(&env_vars_json)
-            .bind(session.cpu_limit.as_deref())
-            .bind(session.memory_limit.as_deref())
-            .bind(status_str)
-            .bind(session.last_message.as_deref())
-            .bind(&error_json)
-            .bind(session.deleted)
-            .bind(actor)
-            .bind(&secrets_json)
+            .bind(&mcp_config_json)
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
@@ -1045,6 +1060,16 @@ impl SqliteStore {
             .map(parse_sqlite_timestamp)
             .transpose()?;
 
+        let mcp_config: Option<serde_json::Value> = row
+            .mcp_config
+            .as_deref()
+            .map(|s| {
+                serde_json::from_str(s).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize mcp_config: {e}"))
+                })
+            })
+            .transpose()?;
+
         Ok(Session {
             prompt: row.prompt.clone(),
             context,
@@ -1056,6 +1081,7 @@ impl SqliteStore {
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
             secrets,
+            mcp_config,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -2535,7 +2561,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Session>, StoreError> {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at,
                  creation_time, start_time, end_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
@@ -2561,7 +2587,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -2594,7 +2620,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.mcp_config, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
              t.creation_time, t.start_time, t.end_time \
              FROM {TABLE_TASKS_V2} t \
              INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
@@ -2676,7 +2702,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -3103,7 +3129,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                     is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
@@ -3122,7 +3148,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                     is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
         );
@@ -4059,13 +4085,14 @@ impl Store for SqliteStore {
                 })?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
-                     SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
-                         is_assignment_agent = ?4, secrets = ?5, deleted = 0, \
-                         created_at = ?6, updated_at = ?7 \
-                     WHERE name = ?8"
+                     SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
+                         is_assignment_agent = ?5, secrets = ?6, deleted = 0, \
+                         created_at = ?7, updated_at = ?8 \
+                     WHERE name = ?9"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
+                    .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
@@ -4098,13 +4125,14 @@ impl Store for SqliteStore {
                 })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
-                     (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
+                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, is_assignment_agent, \
                       secrets, deleted, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
                     .bind(&agent.prompt_path)
+                    .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
@@ -4142,12 +4170,13 @@ impl Store for SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
-             SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
-                 is_assignment_agent = ?4, secrets = ?5, updated_at = ?6 \
-             WHERE name = ?7"
+             SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
+                 is_assignment_agent = ?5, secrets = ?6, updated_at = ?7 \
+             WHERE name = ?8"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
+            .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
             .bind(agent.is_assignment_agent)
@@ -5735,6 +5764,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Status::Created,
             None,
             None,
@@ -6123,6 +6153,9 @@ mod tests {
             Some("2".to_string()),
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
+            Some(
+                serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
+            ),
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {
@@ -6200,6 +6233,7 @@ mod tests {
         Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
+            None,
             3,
             i32::MAX,
             false,
@@ -6379,6 +6413,7 @@ mod tests {
         let agent = Agent::new(
             "swe".to_string(),
             "/agents/swe/prompt.md".to_string(),
+            Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,
             false,

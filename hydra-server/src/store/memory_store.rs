@@ -2157,6 +2157,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Status::Created,
             None,
             None,
@@ -6321,6 +6322,7 @@ mod tests {
         Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
+            None,
             3,
             i32::MAX,
             false,

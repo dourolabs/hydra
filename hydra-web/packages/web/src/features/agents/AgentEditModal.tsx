@@ -65,12 +65,13 @@ export function AgentEditModal({
       name: agent.name,
       prompt: prompt.trim(),
       prompt_path: agent.prompt_path,
+      mcp_config_path: agent.mcp_config_path ?? null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, agent.mcp_config_path, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
