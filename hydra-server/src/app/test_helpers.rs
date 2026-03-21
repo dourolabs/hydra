@@ -105,6 +105,8 @@ pub fn issue_with_status(
         Vec::new(),
         dependencies,
         Vec::new(),
+        None,
+        None,
     )
 }
 
