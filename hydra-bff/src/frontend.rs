@@ -63,7 +63,11 @@ fn cache_control_for(path: &str) -> &'static str {
 
 async fn serve_directory_file(dir: &Path, path: &str) -> Response {
     let file_path = dir.join(path);
-    if file_path.is_file() {
+    let is_file = tokio::fs::metadata(&file_path)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false);
+    if is_file {
         match tokio::fs::read(&file_path).await {
             Ok(contents) => {
                 let mime = mime_guess::from_path(path).first_or_octet_stream();
