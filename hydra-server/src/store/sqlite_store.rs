@@ -157,6 +157,10 @@ struct IssueRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
+    #[sqlx(default)]
+    form: Option<String>,
+    #[sqlx(default)]
+    form_response: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -590,9 +594,21 @@ impl SqliteStore {
             })?;
         let todo_list_json = serde_json::to_string(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
+        let form_json = issue
+            .form
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to serialize form: {e}")))?;
+        let form_response_json = issue
+            .form_response
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -607,6 +623,8 @@ impl SqliteStore {
         .bind(&todo_list_json)
         .bind(issue.deleted)
         .bind(actor)
+        .bind(&form_json)
+        .bind(&form_response_json)
         .execute(executor)
         .await
         .map_err(map_sqlx_error)?;
@@ -1088,6 +1106,20 @@ impl SqliteStore {
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
+        let form = row
+            .form
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize form: {e}")))?;
+        let form_response = row
+            .form_response
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize form_response: {e}"))
+            })?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -1101,6 +1133,8 @@ impl SqliteStore {
             dependencies: vec![],
             patches: vec![],
             deleted: row.deleted,
+            form,
+            form_response,
         })
     }
 

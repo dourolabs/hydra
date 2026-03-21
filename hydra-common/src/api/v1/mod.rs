@@ -2,6 +2,7 @@ pub mod agents;
 pub mod documents;
 pub mod error;
 pub mod events;
+pub mod form;
 pub mod issues;
 pub mod labels;
 pub mod login;

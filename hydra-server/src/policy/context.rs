@@ -21,6 +21,7 @@ pub enum Operation {
 
 /// The payload describing the proposed change for restriction evaluation.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum OperationPayload {
     /// An issue is being created or updated.
     Issue {

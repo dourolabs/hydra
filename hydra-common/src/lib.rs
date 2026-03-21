@@ -22,8 +22,8 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, labels, login, logs, merge_queues, notifications, patches,
-    repositories, secrets, session_status, sessions, task_status, users, version, whoami,
+    agents, documents, events, form, issues, labels, login, logs, merge_queues, notifications,
+    patches, repositories, secrets, session_status, sessions, task_status, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -156,6 +156,15 @@ mod ts_export {
         crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)
             .expect("ListIssueVersionsResponse");
+
+        // API v1: form
+        crate::form::Form::export_all(&cfg).expect("Form");
+        crate::form::Field::export_all(&cfg).expect("Field");
+        crate::form::Input::export_all(&cfg).expect("Input");
+        crate::form::SelectOption::export_all(&cfg).expect("SelectOption");
+        crate::form::Action::export_all(&cfg).expect("Action");
+        crate::form::Effect::export_all(&cfg).expect("Effect");
+        crate::form::FormResponse::export_all(&cfg).expect("FormResponse");
 
         // API v1: session_status
         crate::session_status::SessionStatusUpdate::export_all(&cfg).expect("SessionStatusUpdate");

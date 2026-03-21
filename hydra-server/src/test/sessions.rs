@@ -239,6 +239,8 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
+                form: None,
+                form_response: None,
             },
             &ActorRef::test(),
         )
@@ -327,6 +329,8 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
+                form: None,
+                form_response: None,
             },
             &ActorRef::test(),
         )

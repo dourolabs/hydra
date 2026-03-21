@@ -1,3 +1,4 @@
+use super::form::{Form, FormResponse};
 use super::labels::LabelSummary;
 use super::users::Username;
 pub use crate::IssueId;
@@ -261,7 +262,7 @@ impl SetTodoItemStatusRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -292,6 +293,10 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<Form>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_response: Option<FormResponse>,
 }
 
 impl Issue {
@@ -323,6 +328,8 @@ impl Issue {
             dependencies,
             patches,
             deleted,
+            form: None,
+            form_response: None,
         }
     }
 }
@@ -393,7 +400,7 @@ impl SessionSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -431,7 +438,7 @@ impl IssueVersionRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -693,7 +700,7 @@ impl ListIssuesResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -868,6 +875,8 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            form: None,
+            form_response: None,
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");
@@ -896,6 +905,8 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            form: None,
+            form_response: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -926,6 +937,8 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            form: None,
+            form_response: None,
         };
 
         let ts = chrono::Utc::now();
@@ -976,6 +989,8 @@ mod tests {
             )],
             patches: vec!["p-abcd".parse().unwrap()],
             deleted: false,
+            form: None,
+            form_response: None,
         }
     }
 

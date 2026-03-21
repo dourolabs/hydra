@@ -545,7 +545,7 @@ pub async fn run(
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 struct IssueWithPatches {
     issue: IssueVersionRecord,
     patches: Vec<PatchVersionRecord>,

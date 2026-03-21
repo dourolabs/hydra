@@ -469,6 +469,7 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
             "failed to kill task '{job_id}' for dropped issue '{issue_id}': {source}"
         )),
         UpsertIssueError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
+        UpsertIssueError::InvalidForm { message } => ApiError::bad_request(message),
     }
 }
 

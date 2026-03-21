@@ -1,5 +1,6 @@
 use super::users::Username;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::form::{Form, FormResponse};
 use hydra_common::{IssueId, PatchId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -180,7 +181,7 @@ impl TodoItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
@@ -204,6 +205,10 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<Form>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_response: Option<FormResponse>,
 }
 
 impl Issue {
@@ -234,6 +239,8 @@ impl Issue {
             dependencies,
             patches,
             deleted: false,
+            form: None,
+            form_response: None,
         }
     }
 }
@@ -451,13 +458,15 @@ impl From<api::issues::Issue> for Issue {
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
             deleted: value.deleted,
+            form: value.form,
+            form_response: value.form_response,
         }
     }
 }
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        let mut issue = api::issues::Issue::new(
             value.issue_type.into(),
             value.title,
             value.description,
@@ -470,7 +479,10 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
-        )
+        );
+        issue.form = value.form;
+        issue.form_response = value.form_response;
+        issue
     }
 }
 
@@ -516,6 +528,8 @@ mod tests {
             }],
             patches: vec![patch_id.clone()],
             deleted: false,
+            form: None,
+            form_response: None,
         };
 
         let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");

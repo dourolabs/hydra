@@ -246,9 +246,21 @@ impl PostgresStoreV2 {
         })?;
         let todo_list_json = serde_json::to_value(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
+        let form_json = issue
+            .form
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to serialize form: {e}")))?;
+        let form_response_json = issue
+            .form_response
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -264,6 +276,8 @@ impl PostgresStoreV2 {
             .bind(&todo_list_json)
             .bind(issue.deleted)
             .bind(actor)
+            .bind(&form_json)
+            .bind(&form_response_json)
             .execute(executor)
             .await
             .map_err(map_sqlx_error)?;
@@ -333,6 +347,20 @@ impl PostgresStoreV2 {
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
+        let form = row
+            .form
+            .as_ref()
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize form: {e}")))?;
+        let form_response = row
+            .form_response
+            .as_ref()
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize form_response: {e}"))
+            })?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -346,6 +374,8 @@ impl PostgresStoreV2 {
             dependencies: vec![],
             patches: vec![],
             deleted: row.deleted,
+            form,
+            form_response,
         })
     }
 
@@ -1262,6 +1292,10 @@ struct IssueRow {
     updated_at: DateTime<Utc>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    form: Option<Value>,
+    #[sqlx(default)]
+    form_response: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -4569,12 +4603,14 @@ mod tests {
     use chrono::Timelike;
     use hydra_common::{
         PatchId, RepoName, SessionId, VersionNumber, Versioned,
+        actor_ref::ActorId,
+        api::v1::form::{Action, Effect, Field, Form, FormResponse, Input, SelectOption},
         repositories::{
             MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
             SearchRepositoriesQuery,
         },
     };
-    use std::{collections::HashSet, str::FromStr, sync::Arc};
+    use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
         actual: &Versioned<T>,
@@ -4758,7 +4794,7 @@ mod tests {
 
     /// Issue with every optional field set so serialization round-trip can assert full equality.
     fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
-        Issue::new(
+        let mut issue = Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "full description".to_string(),
@@ -4783,7 +4819,107 @@ mod tests {
             ],
             dependencies,
             patches,
-        )
+        );
+
+        issue.form = Some(Form {
+            prompt: "Please review and respond".to_string(),
+            fields: vec![
+                Field {
+                    key: "name".to_string(),
+                    label: "Name".to_string(),
+                    description: Some("Your full name".to_string()),
+                    input: Input::Text {
+                        placeholder: Some("John Doe".to_string()),
+                        min_length: Some(1),
+                        max_length: Some(100),
+                        pattern: Some(r"^[a-zA-Z ]+$".to_string()),
+                    },
+                    default: Some(serde_json::json!("Default Name")),
+                },
+                Field {
+                    key: "notes".to_string(),
+                    label: "Notes".to_string(),
+                    description: None,
+                    input: Input::Textarea {
+                        placeholder: Some("Enter notes...".to_string()),
+                        min_length: None,
+                        max_length: Some(5000),
+                        rows: 6,
+                    },
+                    default: None,
+                },
+                Field {
+                    key: "priority".to_string(),
+                    label: "Priority".to_string(),
+                    description: Some("Select priority level".to_string()),
+                    input: Input::Select {
+                        options: vec![
+                            SelectOption {
+                                value: "low".to_string(),
+                                label: "Low".to_string(),
+                            },
+                            SelectOption {
+                                value: "high".to_string(),
+                                label: "High".to_string(),
+                            },
+                        ],
+                        radio: true,
+                    },
+                    default: Some(serde_json::json!("low")),
+                },
+                Field {
+                    key: "agree".to_string(),
+                    label: "I agree".to_string(),
+                    description: None,
+                    input: Input::Checkbox,
+                    default: Some(serde_json::json!(false)),
+                },
+                Field {
+                    key: "count".to_string(),
+                    label: "Count".to_string(),
+                    description: None,
+                    input: Input::Number {
+                        min: Some(0.0),
+                        max: Some(100.0),
+                        step: Some(1.0),
+                    },
+                    default: Some(serde_json::json!(42)),
+                },
+            ],
+            actions: vec![
+                Action {
+                    id: "approve".to_string(),
+                    label: "Approve".to_string(),
+                    style: "primary".to_string(),
+                    requires: vec!["name".to_string(), "agree".to_string()],
+                    effect: Effect::UpdateIssue {
+                        status: IssueStatus::Closed,
+                    },
+                },
+                Action {
+                    id: "reject".to_string(),
+                    label: "Reject".to_string(),
+                    style: "danger".to_string(),
+                    requires: vec![],
+                    effect: Effect::RecordOnly,
+                },
+            ],
+        });
+
+        issue.form_response = Some(FormResponse {
+            action_id: "approve".to_string(),
+            actor: ActorId::Username(Username::from("responder")),
+            values: HashMap::from([
+                ("name".to_string(), serde_json::json!("Jane Doe")),
+                ("notes".to_string(), serde_json::json!("Looks good")),
+                ("priority".to_string(), serde_json::json!("high")),
+                ("agree".to_string(), serde_json::json!(true)),
+                ("count".to_string(), serde_json::json!(7)),
+            ]),
+            submitted_at: truncate_to_micros(Utc::now()),
+        });
+
+        issue
     }
 
     #[sqlx::test(migrations = "./migrations")]

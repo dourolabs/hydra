@@ -37,6 +37,7 @@ use tokio::sync::broadcast;
 /// Wrapped in `Arc` inside `ServerEvent` so that cloning events to multiple
 /// broadcast receivers is cheap regardless of payload size.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum MutationPayload {
     Issue {
         old: Option<Issue>,
