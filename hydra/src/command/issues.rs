@@ -1443,7 +1443,11 @@ async fn update_issue(
     } else {
         feedback.map(|f| {
             let trimmed = f.trim().to_string();
-            if trimmed.is_empty() { None } else { Some(trimmed) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
         })
     };
 
