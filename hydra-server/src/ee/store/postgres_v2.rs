@@ -4603,12 +4603,14 @@ mod tests {
     use chrono::Timelike;
     use hydra_common::{
         PatchId, RepoName, SessionId, VersionNumber, Versioned,
+        actor_ref::ActorId,
+        api::v1::form::{Action, Effect, Field, Form, FormResponse, Input, SelectOption},
         repositories::{
             MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
             SearchRepositoriesQuery,
         },
     };
-    use std::{collections::HashSet, str::FromStr, sync::Arc};
+    use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
         actual: &Versioned<T>,
@@ -4792,7 +4794,7 @@ mod tests {
 
     /// Issue with every optional field set so serialization round-trip can assert full equality.
     fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
-        Issue::new(
+        let mut issue = Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "full description".to_string(),
@@ -4817,7 +4819,107 @@ mod tests {
             ],
             dependencies,
             patches,
-        )
+        );
+
+        issue.form = Some(Form {
+            prompt: "Please review and respond".to_string(),
+            fields: vec![
+                Field {
+                    key: "name".to_string(),
+                    label: "Name".to_string(),
+                    description: Some("Your full name".to_string()),
+                    input: Input::Text {
+                        placeholder: Some("John Doe".to_string()),
+                        min_length: Some(1),
+                        max_length: Some(100),
+                        pattern: Some(r"^[a-zA-Z ]+$".to_string()),
+                    },
+                    default: Some(serde_json::json!("Default Name")),
+                },
+                Field {
+                    key: "notes".to_string(),
+                    label: "Notes".to_string(),
+                    description: None,
+                    input: Input::Textarea {
+                        placeholder: Some("Enter notes...".to_string()),
+                        min_length: None,
+                        max_length: Some(5000),
+                        rows: 6,
+                    },
+                    default: None,
+                },
+                Field {
+                    key: "priority".to_string(),
+                    label: "Priority".to_string(),
+                    description: Some("Select priority level".to_string()),
+                    input: Input::Select {
+                        options: vec![
+                            SelectOption {
+                                value: "low".to_string(),
+                                label: "Low".to_string(),
+                            },
+                            SelectOption {
+                                value: "high".to_string(),
+                                label: "High".to_string(),
+                            },
+                        ],
+                        radio: true,
+                    },
+                    default: Some(serde_json::json!("low")),
+                },
+                Field {
+                    key: "agree".to_string(),
+                    label: "I agree".to_string(),
+                    description: None,
+                    input: Input::Checkbox,
+                    default: Some(serde_json::json!(false)),
+                },
+                Field {
+                    key: "count".to_string(),
+                    label: "Count".to_string(),
+                    description: None,
+                    input: Input::Number {
+                        min: Some(0.0),
+                        max: Some(100.0),
+                        step: Some(1.0),
+                    },
+                    default: Some(serde_json::json!(42)),
+                },
+            ],
+            actions: vec![
+                Action {
+                    id: "approve".to_string(),
+                    label: "Approve".to_string(),
+                    style: "primary".to_string(),
+                    requires: vec!["name".to_string(), "agree".to_string()],
+                    effect: Effect::UpdateIssue {
+                        status: IssueStatus::Closed,
+                    },
+                },
+                Action {
+                    id: "reject".to_string(),
+                    label: "Reject".to_string(),
+                    style: "danger".to_string(),
+                    requires: vec![],
+                    effect: Effect::RecordOnly,
+                },
+            ],
+        });
+
+        issue.form_response = Some(FormResponse {
+            action_id: "approve".to_string(),
+            actor: ActorId::Username(Username::from("responder")),
+            values: HashMap::from([
+                ("name".to_string(), serde_json::json!("Jane Doe")),
+                ("notes".to_string(), serde_json::json!("Looks good")),
+                ("priority".to_string(), serde_json::json!("high")),
+                ("agree".to_string(), serde_json::json!(true)),
+                ("count".to_string(), serde_json::json!(7)),
+            ]),
+            submitted_at: truncate_to_micros(Utc::now()),
+        });
+
+        issue
     }
 
     #[sqlx::test(migrations = "./migrations")]
