@@ -158,6 +158,7 @@ fn normalize_and_build_agent(
     let agent = Agent::new(
         name,
         prompt_path,
+        payload.mcp_config_path,
         payload.max_tries,
         payload.max_simultaneous,
         payload.is_assignment_agent,
@@ -180,6 +181,7 @@ fn agent_to_record(agent: Agent, prompt: String) -> AgentRecord {
         agent.name,
         prompt,
         agent.prompt_path,
+        agent.mcp_config_path,
         agent.max_tries,
         agent.max_simultaneous,
         agent.is_assignment_agent,

@@ -133,6 +133,7 @@ impl AgentQueue {
             session_settings.cpu_limit.clone(),
             session_settings.memory_limit.clone(),
             merged_secrets,
+            None,
             Status::Created,
             None,
             None,
@@ -389,6 +390,7 @@ mod tests {
             Agent::new(
                 agent_name.to_string(),
                 format!("/agents/{agent_name}/prompt.md"),
+                None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
@@ -404,6 +406,7 @@ mod tests {
             Agent::new(
                 agent_name.to_string(),
                 format!("/agents/{agent_name}/prompt.md"),
+                None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
@@ -558,6 +561,7 @@ mod tests {
             image.map(str::to_string),
             None,
             env_vars,
+            None,
             None,
             None,
             None,
@@ -872,6 +876,7 @@ mod tests {
                 Agent::new(
                     "assignment".to_string(),
                     "/agents/assignment/prompt.md".to_string(),
+                    None,
                     DEFAULT_AGENT_MAX_TRIES,
                     DEFAULT_AGENT_MAX_SIMULTANEOUS,
                     true,
@@ -1284,6 +1289,7 @@ mod tests {
                     cpu_limit: None,
                     memory_limit: None,
                     secrets: None,
+                    mcp_config: None,
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1386,6 +1392,7 @@ mod tests {
                     cpu_limit: None,
                     memory_limit: None,
                     secrets: None,
+                    mcp_config: None,
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1877,6 +1884,7 @@ mod tests {
         let agent = Agent::new(
             "test-agent".to_string(),
             "/agents/test-agent/prompt.md".to_string(),
+            None,
             5,
             10,
             true,

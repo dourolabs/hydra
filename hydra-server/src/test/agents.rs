@@ -29,6 +29,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
         let agent = Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
+            None,
             3,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,

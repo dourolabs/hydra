@@ -263,6 +263,7 @@ mod tests {
         let agent = Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
+            None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
@@ -290,6 +291,7 @@ mod tests {
         let agent = Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
+            None,
             max_tries,
             max_simultaneous,
             false,
