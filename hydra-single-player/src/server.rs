@@ -294,7 +294,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
     for &(name, prompt, is_assignment_agent) in agents {
-        let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX);
+        let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX, None);
         request.is_assignment_agent = is_assignment_agent;
         if name == "pm" {
             request.secrets = vec!["GH_TOKEN".to_string()];
