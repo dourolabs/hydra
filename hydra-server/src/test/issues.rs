@@ -1990,3 +1990,155 @@ async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
+    use crate::{
+        domain::{
+            actors::ActorRef,
+            issues::Issue,
+            sessions::BundleSpec,
+            users::Username,
+        },
+        job_engine::{JobEngine, JobStatus},
+        store::{Session, Status},
+        test_utils::{
+            MockJobEngine, spawn_test_server_with_state, test_client,
+            test_state_with_engine_handles,
+        },
+    };
+    use chrono::Utc;
+    use std::sync::Arc;
+
+    let engine = Arc::new(MockJobEngine::new());
+    let handles = test_state_with_engine_handles(engine.clone());
+    let state = handles.state;
+    let store = handles.store.clone();
+
+    // Create an in-progress issue
+    let (issue_id, _) = store
+        .add_issue(
+            Issue {
+                issue_type: IssueType::Task,
+                title: "test feedback kills sessions".to_string(),
+                description: "test".to_string(),
+                creator: Username::from("test-creator"),
+                progress: String::new(),
+                status: IssueStatus::InProgress,
+                assignee: None,
+                session_settings: Default::default(),
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+                deleted: false,
+                form: None,
+                form_response: None,
+                feedback: None,
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+
+    // Helper to create a session linked to this issue
+    let make_session = || Session {
+        prompt: "0".to_string(),
+        context: BundleSpec::None,
+        spawned_from: Some(issue_id.clone()),
+        creator: Username::from("test-creator"),
+        image: None,
+        model: None,
+        env_vars: HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        mcp_config: None,
+        status: Status::Created,
+        last_message: None,
+        error: None,
+        deleted: false,
+        creation_time: None,
+        start_time: None,
+        end_time: None,
+    };
+
+    // Session 1: Running (should be killed)
+    let (s_running, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
+    state.transition_task_to_pending(&s_running, ActorRef::test()).await?;
+    state.transition_task_to_running(&s_running, ActorRef::test()).await?;
+    engine.insert_job(&s_running, JobStatus::Running).await;
+
+    // Session 2: Pending (should be killed)
+    let (s_pending, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
+    state.transition_task_to_pending(&s_pending, ActorRef::test()).await?;
+    engine.insert_job(&s_pending, JobStatus::Pending).await;
+
+    // Session 3: Completed (should NOT be killed)
+    let (s_complete, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
+    state.transition_task_to_pending(&s_complete, ActorRef::test()).await?;
+    state.transition_task_to_running(&s_complete, ActorRef::test()).await?;
+    state
+        .transition_task_to_completion(&s_complete, Ok(()), None, ActorRef::test())
+        .await?;
+    engine.insert_job(&s_complete, JobStatus::Complete).await;
+
+    // Session 4: Failed (should NOT be killed)
+    let (s_failed, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
+    state.transition_task_to_pending(&s_failed, ActorRef::test()).await?;
+    state.transition_task_to_running(&s_failed, ActorRef::test()).await?;
+    state
+        .transition_task_to_completion(
+            &s_failed,
+            Err(crate::domain::task_status::TaskError::JobEngineError { reason: "err".to_string() }),
+            None,
+            ActorRef::test(),
+        )
+        .await?;
+    engine.insert_job(&s_failed, JobStatus::Failed).await;
+
+    let server = spawn_test_server_with_state(state, store).await?;
+    let client = test_client();
+
+    // Submit feedback
+    client
+        .post(format!(
+            "{}/v1/issues/{}/feedback",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFeedbackRequest::new("please fix".to_string()))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Active sessions should have been killed (job status -> Failed)
+    let running_job = engine.find_job_by_hydra_id(&s_running).await?;
+    assert_eq!(
+        running_job.status,
+        JobStatus::Failed,
+        "Running session should have been killed"
+    );
+
+    let pending_job = engine.find_job_by_hydra_id(&s_pending).await?;
+    assert_eq!(
+        pending_job.status,
+        JobStatus::Failed,
+        "Pending session should have been killed"
+    );
+
+    // Terminal sessions should be unchanged
+    let complete_job = engine.find_job_by_hydra_id(&s_complete).await?;
+    assert_eq!(
+        complete_job.status,
+        JobStatus::Complete,
+        "Completed session should NOT have been killed"
+    );
+
+    let failed_job = engine.find_job_by_hydra_id(&s_failed).await?;
+    assert_eq!(
+        failed_job.status,
+        JobStatus::Failed,
+        "Already-failed session should NOT have been affected"
+    );
+
+    Ok(())
+}
