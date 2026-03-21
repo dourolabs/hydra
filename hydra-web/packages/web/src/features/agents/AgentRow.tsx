@@ -59,6 +59,12 @@ export function AgentRow({ agent, onEdit, onDelete }: AgentRowProps) {
             </span>
           </div>
           <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>MCP Config Path</span>
+            <span className={styles.detailValueMono}>
+              {agent.mcp_config_path || <span className={styles.dimText}>—</span>}
+            </span>
+          </div>
+          <div className={styles.detailRow}>
             <span className={styles.detailLabel}>Max Tries</span>
             <span className={styles.detailValue}>{agent.max_tries}</span>
           </div>
