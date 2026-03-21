@@ -40,26 +40,37 @@ fn directory_router(dir: std::path::PathBuf) -> Router {
             "/*path",
             get(move |AxumPath(path): AxumPath<String>| {
                 let dir = dir.clone();
-                async move { serve_directory_file(&dir, &path) }
+                async move { serve_directory_file(&dir, &path).await }
             }),
         )
         .route(
             "/",
             get(move || async move {
-                serve_directory_file(&dir_for_root, "index.html").into_response()
+                serve_directory_file(&dir_for_root, "index.html")
+                    .await
+                    .into_response()
             }),
         )
 }
 
-fn serve_directory_file(dir: &Path, path: &str) -> Response {
+fn cache_control_for(path: &str) -> &'static str {
+    if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
+async fn serve_directory_file(dir: &Path, path: &str) -> Response {
     let file_path = dir.join(path);
     if file_path.is_file() {
-        match std::fs::read(&file_path) {
+        match tokio::fs::read(&file_path).await {
             Ok(contents) => {
                 let mime = mime_guess::from_path(path).first_or_octet_stream();
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, mime.as_ref())
+                    .header(header::CACHE_CONTROL, cache_control_for(path))
                     .body(Body::from(contents))
                     .unwrap()
             }
@@ -68,10 +79,11 @@ fn serve_directory_file(dir: &Path, path: &str) -> Response {
     } else {
         // SPA fallback: serve index.html.
         let index_path = dir.join("index.html");
-        match std::fs::read(&index_path) {
+        match tokio::fs::read(&index_path).await {
             Ok(contents) => Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/html")
+                .header(header::CACHE_CONTROL, "no-cache")
                 .body(Body::from(contents))
                 .unwrap(),
             Err(_) => Response::builder()
