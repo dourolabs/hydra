@@ -216,6 +216,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         )
     }
 
@@ -240,6 +241,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         )
     }
 
@@ -585,6 +587,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         );
         let (issue_id, _) = handles
             .store

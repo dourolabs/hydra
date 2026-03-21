@@ -227,6 +227,7 @@ impl Issue {
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
+        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
@@ -243,7 +244,7 @@ impl Issue {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
+            feedback,
         }
     }
 }
@@ -483,10 +484,10 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
+            value.feedback,
         );
         issue.form = value.form;
         issue.form_response = value.form_response;
-        issue.feedback = value.feedback;
         issue
     }
 }

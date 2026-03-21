@@ -133,6 +133,7 @@ pub async fn create_merge_request_issue(
         )],
         vec![patch_id],
         false,
+        None,
     );
     let response = client
         .create_issue(&UpsertIssueRequest::new(issue, None))

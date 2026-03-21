@@ -316,6 +316,7 @@ impl Issue {
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
         deleted: bool,
+        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
@@ -332,7 +333,7 @@ impl Issue {
             deleted,
             form: None,
             form_response: None,
-            feedback: None,
+            feedback,
         }
     }
 }

@@ -99,6 +99,7 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
+            None,
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -127,6 +128,7 @@ impl UserHandle {
             )],
             Vec::new(),
             false,
+            None,
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -298,6 +300,7 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
+            None,
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -337,6 +340,7 @@ impl UserHandle {
             dependencies,
             patches,
             false,
+            None,
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self

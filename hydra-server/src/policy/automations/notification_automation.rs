@@ -154,6 +154,7 @@ mod tests {
             vec![],
             deps,
             vec![],
+            None,
         )
     }
 

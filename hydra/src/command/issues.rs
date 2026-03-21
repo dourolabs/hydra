@@ -780,6 +780,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
             summary.issue.dependencies,
             summary.issue.patches,
             summary.issue.deleted,
+            summary.issue.feedback,
         ),
         summary.actor,
         summary.creation_time,
@@ -1319,7 +1320,7 @@ async fn create_issue(
         }
     });
 
-    let mut issue = Issue::new(
+    let issue = Issue::new(
         issue_type,
         title,
         description.to_string(),
@@ -1332,8 +1333,8 @@ async fn create_issue(
         dependencies,
         patches,
         false,
+        feedback,
     );
-    issue.feedback = feedback;
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
     let label_names: Vec<String> = labels
         .into_iter()
@@ -1507,7 +1508,7 @@ async fn update_issue(
         || job_settings_changed;
 
     let result = if issue_fields_changed {
-        let mut updated_issue = Issue::new(
+        let updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
@@ -1520,8 +1521,8 @@ async fn update_issue(
             dependencies_update.unwrap_or(current.issue.dependencies),
             patches_update.unwrap_or(current.issue.patches),
             current.issue.deleted,
+            feedback_update.unwrap_or(current.issue.feedback),
         );
-        updated_issue.feedback = feedback_update.unwrap_or(current.issue.feedback);
 
         let response = client
             .update_issue(
@@ -2317,6 +2318,7 @@ mod tests {
                 dependencies,
                 patches,
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -2346,6 +2348,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -2407,6 +2410,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -2459,6 +2463,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -2824,6 +2829,7 @@ mod tests {
                 Vec::new(),
                 patch_ids.clone(),
                 false,
+                None,
             ),
             None,
         );
@@ -2889,6 +2895,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
             ),
             None,
         );
@@ -2957,6 +2964,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -2981,6 +2989,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
             ),
             None,
         );
@@ -3051,6 +3060,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3081,6 +3091,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
             ),
             None,
         );
@@ -3144,6 +3155,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
             ),
             None,
         );
@@ -3209,6 +3221,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3233,6 +3246,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                None,
             ),
             None,
         );
@@ -3382,6 +3396,7 @@ mod tests {
                 )],
                 vec![patch_id("p-3")],
                 false,
+                None,
             ),
             None,
         );
@@ -3463,6 +3478,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3482,6 +3498,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
         );
@@ -3561,6 +3578,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3583,6 +3601,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
         );
@@ -3658,6 +3677,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3679,6 +3699,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
         );
@@ -3756,6 +3777,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -3775,6 +3797,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                None,
             ),
             None,
         );
@@ -3851,6 +3874,7 @@ mod tests {
                     )],
                     Vec::new(),
                     false,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -3873,6 +3897,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -3928,6 +3953,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    None,
                 ),
                 None,
                 Utc::now(),
@@ -4120,6 +4146,7 @@ mod tests {
                         vec![],
                         vec![main_patch_id],
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4145,6 +4172,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4189,6 +4217,7 @@ mod tests {
             vec![],
             vec![main_patch_id.clone()],
             false,
+            None,
         );
         let mut updated_issue = base_issue.clone();
         updated_issue.status = IssueStatus::InProgress;
@@ -4339,6 +4368,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4364,6 +4394,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4389,6 +4420,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4434,6 +4466,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4459,6 +4492,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4484,6 +4518,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4548,6 +4583,7 @@ mod tests {
                         vec![],
                         vec![main_patch_id.clone()],
                         false,
+                        None,
                     ),
                     None,
                     Utc::now(),
@@ -4837,6 +4873,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),
@@ -4896,6 +4933,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                None,
             ),
             None,
             Utc::now(),

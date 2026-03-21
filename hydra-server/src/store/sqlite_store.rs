@@ -151,6 +151,7 @@ struct IssueRow {
     session_settings: String,
     todo_list: String,
     deleted: bool,
+    feedback: Option<String>,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -607,8 +608,8 @@ impl SqliteStore {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, form, form_response)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -622,6 +623,7 @@ impl SqliteStore {
         .bind(&session_settings_json)
         .bind(&todo_list_json)
         .bind(issue.deleted)
+        .bind(&issue.feedback)
         .bind(actor)
         .bind(&form_json)
         .bind(&form_response_json)
@@ -1135,7 +1137,7 @@ impl SqliteStore {
             deleted: row.deleted,
             form,
             form_response,
-            feedback: None,
+            feedback: row.feedback.clone(),
         })
     }
 
@@ -1891,7 +1893,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -1937,7 +1939,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -1984,7 +1986,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.feedback, i.actor, i.created_at, i.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
@@ -5016,6 +5018,7 @@ mod tests {
             Vec::new(),
             dependencies,
             Vec::new(),
+            None,
         )
     }
 
@@ -7242,6 +7245,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7257,6 +7261,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         );
         store.add_issue(closed, &actor).await.unwrap();
 

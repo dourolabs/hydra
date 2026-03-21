@@ -97,6 +97,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                None,
             ),
             &ActorRef::test(),
         )
@@ -217,6 +218,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                None,
             ),
             &ActorRef::test(),
         )
@@ -308,6 +310,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                None,
             ),
             &ActorRef::test(),
         )

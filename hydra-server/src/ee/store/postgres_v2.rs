@@ -259,8 +259,8 @@ impl PostgresStoreV2 {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, form, form_response)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -275,6 +275,7 @@ impl PostgresStoreV2 {
             .bind(&job_settings_json)
             .bind(&todo_list_json)
             .bind(issue.deleted)
+            .bind(&issue.feedback)
             .bind(actor)
             .bind(&form_json)
             .bind(&form_response_json)
@@ -376,6 +377,7 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
             form,
             form_response,
+            feedback: row.feedback.clone(),
         })
     }
 
@@ -1286,6 +1288,7 @@ struct IssueRow {
     job_settings: Value,
     todo_list: Value,
     deleted: bool,
+    feedback: Option<String>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1933,7 +1936,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -1973,7 +1976,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, feedback, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2036,7 +2039,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // subqueries or DISTINCT ON.
         let mut sql = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-             i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
+             i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.feedback, i.actor, \
              i.created_at, i.updated_at, \
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time \
              FROM {TABLE_ISSUES_V2} i"
@@ -4636,6 +4639,7 @@ mod tests {
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
+            None,
         )
     }
 
@@ -4821,6 +4825,7 @@ mod tests {
             ],
             dependencies,
             patches,
+            None,
         );
 
         issue.form = Some(Form {
@@ -5657,6 +5662,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
@@ -5673,6 +5679,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
         );
         store
             .update_issue(&issue_id, updated_issue, &ActorRef::test())
@@ -7226,6 +7233,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7241,6 +7249,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
         );
         store.add_issue(closed, &actor).await.unwrap();
 
