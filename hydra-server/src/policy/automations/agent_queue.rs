@@ -538,6 +538,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         }
     }
 
@@ -763,6 +764,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1084,6 +1086,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1117,6 +1120,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1199,6 +1203,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1260,6 +1265,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1340,6 +1346,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1362,6 +1369,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1998,6 +2006,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2079,6 +2088,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2137,6 +2147,7 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )

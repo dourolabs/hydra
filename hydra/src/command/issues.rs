@@ -144,6 +144,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "SECRETS", value_delimiter = ',')]
         secrets: Vec<String>,
 
+        /// Feedback for the issue. Set to "" to clear.
+        #[arg(long, value_name = "FEEDBACK")]
+        feedback: Option<String>,
+
         /// Comma-separated label names to assign (creates labels if they don't exist).
         #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
         labels: Vec<String>,
@@ -259,6 +263,10 @@ pub enum IssueCommands {
         /// Remove all job settings from the issue.
         #[arg(long)]
         clear_job_settings: bool,
+
+        /// Feedback for the issue. Set to "" to clear.
+        #[arg(long, value_name = "FEEDBACK")]
+        feedback: Option<String>,
 
         /// Comma-separated label names to add (creates labels if they don't exist).
         #[arg(long = "add-labels", value_name = "LABEL_NAME", value_delimiter = ',')]
@@ -407,6 +415,7 @@ pub async fn run(
             branch,
             max_retries,
             secrets,
+            feedback,
             labels,
         } => {
             let creator = resolve_username(client).await?;
@@ -421,6 +430,7 @@ pub async fn run(
                 creator,
                 description,
                 progress,
+                feedback,
                 repo_name,
                 remote_url,
                 image,
@@ -457,6 +467,7 @@ pub async fn run(
             secrets,
             clear_secrets,
             clear_job_settings,
+            feedback,
             add_labels,
             remove_labels,
         } => update_issue(
@@ -474,6 +485,7 @@ pub async fn run(
             clear_patches,
             progress,
             clear_progress,
+            feedback,
             repo_name,
             remote_url,
             image,
@@ -1250,6 +1262,7 @@ async fn create_issue(
     creator: Username,
     description: String,
     progress: Option<String>,
+    feedback: Option<String>,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
@@ -1297,7 +1310,16 @@ async fn create_issue(
     let job_settings = (job_settings_requested || !SessionSettings::is_default(&job_settings))
         .then_some(job_settings);
 
-    let issue = Issue::new(
+    let feedback = feedback.and_then(|v| {
+        let trimmed = v.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let mut issue = Issue::new(
         issue_type,
         title,
         description.to_string(),
@@ -1311,6 +1333,7 @@ async fn create_issue(
         patches,
         false,
     );
+    issue.feedback = feedback;
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
     let label_names: Vec<String> = labels
         .into_iter()
@@ -1352,6 +1375,7 @@ async fn update_issue(
     clear_patches: bool,
     progress: Option<String>,
     clear_progress: bool,
+    feedback: Option<String>,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
@@ -1411,6 +1435,16 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
+    // feedback: Some(Some("text")) = set, Some(None) = clear, None = no change
+    let feedback_update: Option<Option<String>> = feedback.map(|v| {
+        let trimmed = v.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
     let job_settings_requested = clear_job_settings
         || repo_name.is_some()
         || remote_url.is_some()
@@ -1431,6 +1465,7 @@ async fn update_issue(
         && dependencies_update.is_none()
         && patches_update.is_none()
         && progress_update.is_none()
+        && feedback_update.is_none()
         && !job_settings_requested
         && !labels_requested;
     if no_changes {
@@ -1468,10 +1503,11 @@ async fn update_issue(
         || dependencies_update.is_some()
         || patches_update.is_some()
         || progress_update.is_some()
+        || feedback_update.is_some()
         || job_settings_changed;
 
     let result = if issue_fields_changed {
-        let updated_issue = Issue::new(
+        let mut updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
@@ -1485,6 +1521,7 @@ async fn update_issue(
             patches_update.unwrap_or(current.issue.patches),
             current.issue.deleted,
         );
+        updated_issue.feedback = feedback_update.unwrap_or(current.issue.feedback);
 
         let response = client
             .update_issue(
@@ -1918,6 +1955,13 @@ fn write_issue_details_pretty(
         writeln!(writer, "{indent}  -")?;
     } else {
         for line in progress.lines() {
+            writeln!(writer, "{indent}  {line}")?;
+        }
+    }
+
+    if let Some(feedback) = &issue_record.issue.feedback {
+        writeln!(writer, "{indent}Feedback:")?;
+        for line in feedback.lines() {
             writeln!(writer, "{indent}  {line}")?;
         }
     }
@@ -2808,6 +2852,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Vec::new(),
             None,
             Vec::new(),
@@ -2866,6 +2911,7 @@ mod tests {
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:latest".into()),
@@ -2957,6 +3003,7 @@ mod tests {
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
             None,
             None,
             None,
@@ -3056,6 +3103,7 @@ mod tests {
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
             Some("dourolabs/override".into()),
             None,
             Some("custom:tag".into()),
@@ -3117,6 +3165,7 @@ mod tests {
             None,
             Username::from("creator-a"),
             "Issue with secrets".into(),
+            None,
             None,
             None,
             None,
@@ -3212,6 +3261,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
@@ -3246,6 +3296,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Vec::new(),
             None,
             Vec::new(),
@@ -3268,6 +3319,7 @@ mod tests {
             Some("   ".into()),
             empty_user(),
             "Valid description".into(),
+            None,
             None,
             None,
             None,
@@ -3364,6 +3416,7 @@ mod tests {
             false,
             Some("New progress".into()),
             false,
+            None,
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:123".into()),
@@ -3460,6 +3513,7 @@ mod tests {
             true,
             None,
             true,
+            None,
             None,
             None,
             None,
@@ -3566,6 +3620,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Vec::new(),
             false,
             true,
@@ -3661,6 +3716,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             vec!["new-secret".into()],
             false,
             false,
@@ -3750,6 +3806,7 @@ mod tests {
             false,
             None,
             false,
+            None,
             None,
             None,
             None,

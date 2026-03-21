@@ -1135,6 +1135,7 @@ impl SqliteStore {
             deleted: row.deleted,
             form,
             form_response,
+            feedback: None,
         })
     }
 

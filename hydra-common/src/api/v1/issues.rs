@@ -297,6 +297,8 @@ pub struct Issue {
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_response: Option<FormResponse>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl Issue {
@@ -330,6 +332,7 @@ impl Issue {
             deleted,
             form: None,
             form_response: None,
+            feedback: None,
         }
     }
 }
@@ -593,6 +596,8 @@ pub struct IssueSummary {
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelSummary>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl From<&Issue> for IssueSummary {
@@ -621,6 +626,7 @@ impl From<&Issue> for IssueSummary {
             todo_list: issue.todo_list.clone(),
             deleted: issue.deleted,
             labels: Vec::new(),
+            feedback: issue.feedback.clone(),
         }
     }
 }
@@ -877,6 +883,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");
@@ -907,6 +914,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -939,6 +947,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
 
         let ts = chrono::Utc::now();
@@ -991,6 +1000,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         }
     }
 
