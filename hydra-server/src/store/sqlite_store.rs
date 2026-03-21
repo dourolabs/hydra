@@ -5025,10 +5025,7 @@ mod tests {
         )
     }
 
-    fn sample_issue_all_fields(
-        dependencies: Vec<IssueDependency>,
-        patches: Vec<PatchId>,
-    ) -> Issue {
+    fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
