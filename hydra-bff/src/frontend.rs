@@ -125,6 +125,7 @@ mod embedded {
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, mime.as_ref())
+                    .header(header::CACHE_CONTROL, cache_control_for(path))
                     .body(Body::from(file.data.to_vec()))
                     .unwrap()
             }
@@ -132,6 +133,7 @@ mod embedded {
                 Some(index) => Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::CACHE_CONTROL, "no-cache")
                     .body(Body::from(index.data.to_vec()))
                     .unwrap(),
                 None => Response::builder()
