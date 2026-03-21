@@ -1077,6 +1077,7 @@ mod tests {
                         dependencies: Vec::new(),
                         patches: Vec::new(),
                         deleted: false,
+                        feedback: None,
                     },
                     ActorRef::test(),
                 )

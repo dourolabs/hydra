@@ -214,6 +214,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         };
         let updated_issue = Issue {
             description: "Updated".to_string(),
@@ -317,6 +318,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         };
 
         let actor = ActorRef::Authenticated {

@@ -7,4 +7,4 @@ import type { SessionSettings } from "./SessionSettings";
 import type { TodoItem } from "./TodoItem";
 import type { Username } from "./Username";
 
-export type Issue = { type: IssueType, title: string, description: string, creator: Username, progress: string, status: IssueStatus, assignee?: string | null, session_settings?: SessionSettings, todo_list?: Array<TodoItem>, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, };
+export type Issue = { type: IssueType, title: string, description: string, creator: Username, progress: string, status: IssueStatus, assignee?: string | null, session_settings?: SessionSettings, todo_list?: Array<TodoItem>, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, feedback?: string | null, };

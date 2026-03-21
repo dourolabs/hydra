@@ -536,6 +536,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         }
     }
 
@@ -759,6 +760,7 @@ mod tests {
                     dependencies: vec![],
                     patches: vec![patch_id.clone()],
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1078,6 +1080,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1109,6 +1112,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1189,6 +1193,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1248,6 +1253,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1326,6 +1332,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1346,6 +1353,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1980,6 +1988,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2059,6 +2068,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2115,6 +2125,7 @@ mod tests {
                     dependencies: vec![],
                     patches: Vec::new(),
                     deleted: false,
+                    feedback: None,
                 },
                 &ActorRef::test(),
             )

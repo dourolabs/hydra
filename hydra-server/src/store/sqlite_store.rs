@@ -1101,6 +1101,7 @@ impl SqliteStore {
             dependencies: vec![],
             patches: vec![],
             deleted: row.deleted,
+            feedback: None,
         })
     }
 

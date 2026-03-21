@@ -292,6 +292,8 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl Issue {
@@ -323,6 +325,7 @@ impl Issue {
             dependencies,
             patches,
             deleted,
+            feedback: None,
         }
     }
 }
@@ -586,6 +589,8 @@ pub struct IssueSummary {
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelSummary>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl From<&Issue> for IssueSummary {
@@ -614,6 +619,7 @@ impl From<&Issue> for IssueSummary {
             todo_list: issue.todo_list.clone(),
             deleted: issue.deleted,
             labels: Vec::new(),
+            feedback: issue.feedback.clone(),
         }
     }
 }
@@ -868,6 +874,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");
@@ -896,6 +903,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -926,6 +934,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            feedback: None,
         };
 
         let ts = chrono::Utc::now();
@@ -976,6 +985,7 @@ mod tests {
             )],
             patches: vec!["p-abcd".parse().unwrap()],
             deleted: false,
+            feedback: None,
         }
     }
 

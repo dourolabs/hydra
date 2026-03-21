@@ -204,6 +204,8 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl Issue {
@@ -234,6 +236,7 @@ impl Issue {
             dependencies,
             patches,
             deleted: false,
+            feedback: None,
         }
     }
 }
@@ -451,13 +454,14 @@ impl From<api::issues::Issue> for Issue {
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
             deleted: value.deleted,
+            feedback: value.feedback,
         }
     }
 }
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        let mut issue = api::issues::Issue::new(
             value.issue_type.into(),
             value.title,
             value.description,
@@ -470,7 +474,9 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
-        )
+        );
+        issue.feedback = value.feedback;
+        issue
     }
 }
 
@@ -516,6 +522,7 @@ mod tests {
             }],
             patches: vec![patch_id.clone()],
             deleted: false,
+            feedback: None,
         };
 
         let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");
