@@ -747,24 +747,24 @@ fn validate_field_value(input: &Input, value: &Value) -> Option<String> {
                 }
             }
             if let Some(pat) = pattern {
-                let mut cache = REGEX_CACHE.lock().unwrap();
-                if let Some(re) = cache.get(pat) {
-                    if !re.is_match(s) {
-                        return Some(format!("must match pattern '{pat}'"));
-                    }
-                } else {
-                    match regex::Regex::new(pat) {
-                        Ok(re) => {
-                            let matched = re.is_match(s);
-                            cache.insert(pat.clone(), re);
-                            if !matched {
-                                return Some(format!("must match pattern '{pat}'"));
+                let re = {
+                    let mut cache = REGEX_CACHE.lock().unwrap();
+                    if let Some(re) = cache.get(pat) {
+                        re.clone()
+                    } else {
+                        match regex::Regex::new(pat) {
+                            Ok(re) => {
+                                cache.insert(pat.clone(), re.clone());
+                                re
+                            }
+                            Err(_) => {
+                                return Some(format!("invalid pattern '{pat}'"));
                             }
                         }
-                        Err(_) => {
-                            return Some(format!("invalid pattern '{pat}'"));
-                        }
                     }
+                };
+                if !re.is_match(s) {
+                    return Some(format!("must match pattern '{pat}'"));
                 }
             }
             None
