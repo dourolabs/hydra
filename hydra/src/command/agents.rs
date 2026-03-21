@@ -172,7 +172,8 @@ async fn create_agent(
     let name = normalize_non_empty(&args.name, "agent name")?;
     let prompt = read_prompt_file(&args.prompt_file)?;
 
-    let mut request = UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None);
+    let mut request =
+        UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None);
     request.is_assignment_agent = args.is_assignment_agent;
     request.secrets = parse_secrets(args.secrets.as_deref());
 
