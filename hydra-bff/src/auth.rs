@@ -8,7 +8,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::Deserialize;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::state::BffState;
 use crate::upstream::Upstream;
@@ -68,7 +68,7 @@ async fn auth_login<U: Upstream>(
             r
         }
         Err(e) => {
-            tracing::error!(bff_path = "/auth/login", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
+            error!(bff_path = "/auth/login", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({ "error": "internal error" })),
@@ -143,7 +143,7 @@ async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) ->
             r
         }
         Err(e) => {
-            tracing::error!(bff_path = "/auth/me", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
+            error!(bff_path = "/auth/me", upstream_path = "/v1/whoami", error = %e, "upstream request failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({ "error": "internal error" })),
