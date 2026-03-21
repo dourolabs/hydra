@@ -1,0 +1,1 @@
+ALTER TABLE issues_v2 ADD COLUMN feedback TEXT DEFAULT NULL;

@@ -209,6 +209,8 @@ pub struct Issue {
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_response: Option<FormResponse>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
 }
 
 impl Issue {
@@ -227,6 +229,7 @@ impl Issue {
         patches: Vec<PatchId>,
         form: Option<Form>,
         form_response: Option<FormResponse>,
+        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
@@ -243,6 +246,7 @@ impl Issue {
             deleted: false,
             form,
             form_response,
+            feedback,
         }
     }
 }
@@ -462,6 +466,7 @@ impl From<api::issues::Issue> for Issue {
             deleted: value.deleted,
             form: value.form,
             form_response: value.form_response,
+            feedback: value.feedback,
         }
     }
 }
@@ -483,6 +488,7 @@ impl From<Issue> for api::issues::Issue {
             value.deleted,
             value.form,
             value.form_response,
+            value.feedback,
         )
     }
 }
@@ -531,6 +537,7 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
+            feedback: None,
         };
 
         let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");

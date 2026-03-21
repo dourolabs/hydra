@@ -208,6 +208,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         let (issue_id, _) = handles
             .store

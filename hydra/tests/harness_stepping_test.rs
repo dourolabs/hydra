@@ -33,6 +33,7 @@ async fn create_spawnable_issue(
         false,
         None,
         None,
+        None,
     );
     let request = UpsertIssueRequest::new(issue, None);
     let response = harness

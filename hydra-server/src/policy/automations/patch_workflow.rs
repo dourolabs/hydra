@@ -291,6 +291,7 @@ impl PatchWorkflowAutomation {
                     vec![patch_id.clone()],
                     None,
                     None,
+                    None,
                 );
 
                 let (issue_id, _version) = ctx
@@ -353,6 +354,7 @@ impl PatchWorkflowAutomation {
                 Vec::new(),
                 dependencies,
                 vec![patch_id.clone()],
+                None,
                 None,
                 None,
             );
@@ -555,6 +557,7 @@ mod tests {
             vec![patch_id.clone()],
             None,
             None,
+            None,
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -573,6 +576,7 @@ mod tests {
                 parent_id.clone(),
             )],
             vec![patch_id.clone()],
+            None,
             None,
             None,
         );
@@ -677,6 +681,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
             None,
             None,
         );
@@ -1793,6 +1798,7 @@ merge_request:
             vec![patch_id.clone()],
             None,
             None,
+            None,
         );
         store
             .add_issue(existing_rr, &ActorRef::test())
@@ -1884,6 +1890,7 @@ merge_request:
             vec![patch_id.clone()],
             None,
             None,
+            None,
         );
         store
             .add_issue(existing_rr, &ActorRef::test())
@@ -1903,6 +1910,7 @@ merge_request:
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            None,
             None,
             None,
         );
@@ -1992,6 +2000,7 @@ merge_request:
                 vec![patch_id.clone()],
                 None,
                 None,
+                None,
             );
             store.add_issue(rr, &ActorRef::test()).await.unwrap();
 
@@ -2007,6 +2016,7 @@ merge_request:
                 Vec::new(),
                 Vec::new(),
                 vec![patch_id.clone()],
+                None,
                 None,
                 None,
             );
