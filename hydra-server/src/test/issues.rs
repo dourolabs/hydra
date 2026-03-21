@@ -8,7 +8,7 @@ use crate::{
 use hydra_common::{
     IssueId, PatchId,
     api::v1::{
-        form::{Action, Effect, Field, Form, Input, SelectOption},
+        form::{Action, ActionStyle, Effect, Field, Form, Input, SelectOption},
         issues::{
             AddTodoItemRequest, FormValidationError, IssueVersionRecord, ListIssueVersionsResponse,
             ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
@@ -1419,7 +1419,7 @@ fn test_form() -> Form {
             Action {
                 id: "submit".to_string(),
                 label: "Submit".to_string(),
-                style: "primary".to_string(),
+                style: ActionStyle::Primary,
                 requires: vec!["name".to_string(), "env".to_string()],
                 effect: Effect::UpdateIssue {
                     status: hydra_common::api::v1::issues::IssueStatus::Closed,
@@ -1428,7 +1428,7 @@ fn test_form() -> Form {
             Action {
                 id: "skip".to_string(),
                 label: "Skip".to_string(),
-                style: "default".to_string(),
+                style: ActionStyle::Default,
                 requires: vec![],
                 effect: Effect::RecordOnly,
             },
