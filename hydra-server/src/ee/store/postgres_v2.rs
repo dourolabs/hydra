@@ -1938,7 +1938,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
             "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
+             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
+             form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -1977,7 +1978,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+             form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2042,7 +2044,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
              i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
-             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time \
+             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
+             i.form, i.form_response, i.feedback \
              FROM {TABLE_ISSUES_V2} i"
         );
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
