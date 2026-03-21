@@ -434,6 +434,66 @@ pub async fn set_todo_item_status(
     Ok(Json(response))
 }
 
+pub async fn submit_feedback(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(request): Json<api_issues::SubmitFeedbackRequest>,
+) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
+    info!(issue_id = %issue_id, "submit_feedback invoked");
+    let version = state
+        .submit_feedback(issue_id.clone(), request.feedback, ActorRef::from(&actor))
+        .await
+        .map_err(map_submit_feedback_error)?;
+
+    // Fetch the updated issue to return
+    let issue = state
+        .get_issue(&issue_id, false)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let object_id = HydraId::from(issue_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
+    info!(issue_id = %issue_id, version, "submit_feedback completed");
+    let response = api_issues::IssueVersionRecord::new(
+        issue_id,
+        issue.version,
+        issue.timestamp,
+        issue.item.into(),
+        issue.actor,
+        issue.creation_time,
+        labels,
+    );
+    Ok(Json(response))
+}
+
+fn map_submit_feedback_error(err: crate::app::SubmitFeedbackError) -> ApiError {
+    use crate::app::SubmitFeedbackError;
+    match err {
+        SubmitFeedbackError::IssueNotFound { issue_id, .. } => {
+            ApiError::not_found(format!("issue '{issue_id}' not found"))
+        }
+        SubmitFeedbackError::IssueDeleted { issue_id } => {
+            ApiError::not_found(format!("issue '{issue_id}' not found"))
+        }
+        SubmitFeedbackError::Store { source, issue_id } => map_issue_error(source, Some(&issue_id)),
+        SubmitFeedbackError::KillSession {
+            issue_id,
+            session_id,
+            source,
+        } => ApiError::internal(anyhow!(
+            "failed to kill session '{session_id}' for issue '{issue_id}': {source}"
+        )),
+    }
+}
+
 fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
     match err {
         UpsertIssueError::JobIdProvidedForUpdate => {

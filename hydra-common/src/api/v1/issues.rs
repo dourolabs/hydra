@@ -762,6 +762,21 @@ impl SubmitFormResponse {
     }
 }
 
+/// Request body for POST /v1/issues/{issue_id}/feedback.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct SubmitFeedbackRequest {
+    pub feedback: String,
+}
+
+impl SubmitFeedbackRequest {
+    pub fn new(feedback: String) -> Self {
+        Self { feedback }
+    }
+}
+
 /// Structured validation error response for form submissions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

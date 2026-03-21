@@ -3056,6 +3056,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -3123,6 +3124,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
             None,
         )
         .await
@@ -3221,6 +3223,7 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
+            None,
             None,
         )
         .await
@@ -3328,6 +3331,7 @@ mod tests {
             Some(current_issue_id),
             Vec::new(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -3393,6 +3397,7 @@ mod tests {
             vec!["my-api-secret".into(), "my-db-secret".into()],
             None,
             Vec::new(),
+            None,
             None,
         )
         .await
@@ -3489,6 +3494,7 @@ mod tests {
             Some(current_issue_id),
             Vec::new(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -3524,6 +3530,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            None,
         )
         .await
         .is_err());
@@ -3553,6 +3560,7 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
+            None,
             None,
         )
         .await
