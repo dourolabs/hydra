@@ -96,6 +96,8 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
         target_path.to_string()
     };
 
+    tracing::debug!(upstream_path = %uri, "forwarding to upstream");
+
     let method = original.method().clone();
     let mut builder = Request::builder().method(method).uri(&uri);
 
