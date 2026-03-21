@@ -302,9 +302,13 @@ pub enum IssueCommands {
         #[arg(long = "clear-form")]
         clear_form: bool,
 
-        /// Updated feedback. Use empty string to clear.
-        #[arg(long, value_name = "FEEDBACK")]
+        /// Updated feedback.
+        #[arg(long, value_name = "FEEDBACK", conflicts_with = "clear_feedback")]
         feedback: Option<String>,
+
+        /// Remove the current feedback.
+        #[arg(long)]
+        clear_feedback: bool,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -517,6 +521,7 @@ pub async fn run(
             form_inline,
             clear_form,
             feedback,
+            clear_feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             update_issue(
@@ -548,6 +553,7 @@ pub async fn run(
                 parsed_form,
                 clear_form,
                 feedback,
+                clear_feedback,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -1495,6 +1501,7 @@ async fn update_issue(
     form: Option<Form>,
     clear_form: bool,
     feedback: Option<String>,
+    clear_feedback: bool,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
@@ -1543,10 +1550,14 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
-    let feedback_update = feedback.map(|f| {
-        let trimmed = f.trim().to_string();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
-    });
+    let feedback_update = if clear_feedback {
+        Some(None)
+    } else {
+        feedback.map(|f| {
+            let trimmed = f.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        })
+    };
 
     let job_settings_requested = clear_job_settings
         || repo_name.is_some()
@@ -3642,6 +3653,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3747,6 +3759,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3856,6 +3869,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -3960,6 +3974,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -4064,6 +4079,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .await
         .unwrap();
