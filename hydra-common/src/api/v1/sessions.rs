@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// MCP (Model Context Protocol) server configuration.
+///
+/// Stored as a JSON object to remain flexible as the MCP config schema evolves.
+pub type McpConfig = Value;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -31,6 +36,8 @@ pub struct Session {
     pub memory_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
     #[serde(default = "default_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,6 +67,7 @@ impl Session {
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
+        mcp_config: Option<McpConfig>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -79,6 +87,7 @@ impl Session {
             cpu_limit,
             memory_limit,
             secrets,
+            mcp_config,
             status,
             last_message,
             error,
@@ -260,6 +269,8 @@ pub struct WorkerContext {
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_cache: Option<BuildCacheContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
 }
 
 impl WorkerContext {
@@ -269,6 +280,7 @@ impl WorkerContext {
         model: Option<String>,
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
+        mcp_config: Option<McpConfig>,
     ) -> Self {
         Self {
             request_context,
@@ -276,6 +288,7 @@ impl WorkerContext {
             model,
             variables,
             build_cache,
+            mcp_config,
         }
     }
 }
@@ -659,6 +672,7 @@ mod tests {
             Some("500m".to_string()),
             Some("1Gi".to_string()),
             Some(vec!["secret".to_string()]),
+            None,
             Status::Running,
             Some("last message text".to_string()),
             None,
@@ -786,5 +800,60 @@ mod tests {
         });
         let resp: KillSessionResponse = serde_json::from_value(json).unwrap();
         assert_eq!(resp.session_id, session_id);
+    }
+
+    #[test]
+    fn session_serializes_mcp_config() {
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "playwright": {
+                    "command": "npx",
+                    "args": ["@anthropic-ai/mcp-server-playwright"]
+                }
+            }
+        });
+        let mut session = make_test_session("mcp test");
+        session.mcp_config = Some(mcp_config.clone());
+
+        let json = serde_json::to_value(&session).unwrap();
+        assert_eq!(json.get("mcp_config").unwrap(), &mcp_config);
+
+        let deserialized: Session = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.mcp_config, Some(mcp_config));
+    }
+
+    #[test]
+    fn session_deserializes_without_mcp_config() {
+        let json = serde_json::json!({
+            "prompt": "test",
+            "context": {"type": "none"},
+            "creator": "alice",
+            "status": "created"
+        });
+        let session: Session = serde_json::from_value(json).unwrap();
+        assert_eq!(session.mcp_config, None);
+    }
+
+    #[test]
+    fn worker_context_serializes_mcp_config() {
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "browser": {"command": "mcp-browser"}
+            }
+        });
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            Some(mcp_config.clone()),
+        );
+
+        let json = serde_json::to_value(&context).unwrap();
+        assert_eq!(json.get("mcp_config").unwrap(), &mcp_config);
+
+        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.mcp_config, Some(mcp_config));
     }
 }

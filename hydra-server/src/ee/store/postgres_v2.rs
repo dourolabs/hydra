@@ -635,8 +635,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -656,6 +656,7 @@ impl PostgresStoreV2 {
             .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
+            .bind(session.mcp_config.as_ref())
             .bind(session.creation_time)
             .bind(session.start_time)
             .bind(session.end_time)
@@ -723,6 +724,7 @@ impl PostgresStoreV2 {
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
             secrets,
+            mcp_config: row.mcp_config.clone(),
             status,
             last_message: row.last_message.clone(),
             error,
@@ -1313,6 +1315,8 @@ struct TaskRow {
     creator: Option<String>,
     secrets: Option<Value>,
     #[sqlx(default)]
+    mcp_config: Option<Value>,
+    #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     start_time: Option<DateTime<Utc>>,
@@ -1428,6 +1432,7 @@ struct LabelRow {
 struct AgentRow {
     name: String,
     prompt_path: String,
+    mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
     is_assignment_agent: bool,
@@ -2515,7 +2520,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2552,7 +2557,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2593,7 +2598,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time \
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -2685,7 +2690,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -3105,7 +3110,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                     is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = $1"
         );
@@ -3124,7 +3129,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                     is_assignment_agent, secrets, deleted, created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = false ORDER BY name"
         );
@@ -4148,13 +4153,14 @@ impl Store for PostgresStoreV2 {
                 })?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
-                     SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
-                         is_assignment_agent = $4, secrets = $5, deleted = false, \
-                         created_at = $6, updated_at = $7 \
-                     WHERE name = $8"
+                     SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, max_simultaneous = $4, \
+                         is_assignment_agent = $5, secrets = $6, deleted = false, \
+                         created_at = $7, updated_at = $8 \
+                     WHERE name = $9"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
+                    .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
@@ -4188,13 +4194,14 @@ impl Store for PostgresStoreV2 {
                 })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
-                     (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
+                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, is_assignment_agent, \
                       secrets, deleted, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
                     .bind(&agent.prompt_path)
+                    .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
@@ -4234,12 +4241,13 @@ impl Store for PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
-             SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
-                 is_assignment_agent = $4, secrets = $5, updated_at = $6 \
-             WHERE name = $7"
+             SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, max_simultaneous = $4, \
+                 is_assignment_agent = $5, secrets = $6, updated_at = $7 \
+             WHERE name = $8"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
+            .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
             .bind(agent.is_assignment_agent)
@@ -4496,6 +4504,7 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
+        mcp_config_path: row.mcp_config_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
         is_assignment_agent: row.is_assignment_agent,
@@ -4641,6 +4650,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Status::Created,
             None,
             None,
@@ -4657,6 +4667,7 @@ mod tests {
             Some("hydra-worker:latest".to_string()),
             Some("model-v1".to_string()),
             Default::default(),
+            None,
             None,
             None,
             None,
@@ -4707,6 +4718,7 @@ mod tests {
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
+            None,
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -6563,6 +6575,7 @@ mod tests {
         Agent::new(
             "test-agent".to_string(),
             "/agents/test-agent/prompt.md".to_string(),
+            None,
             3,
             5,
             false,
@@ -6592,6 +6605,7 @@ mod tests {
         let updated = Agent::new(
             "test-agent".to_string(),
             "/agents/test-agent/prompt_v2.md".to_string(),
+            None,
             5,
             10,
             false,
@@ -6652,6 +6666,7 @@ mod tests {
         let agent_a = Agent::new(
             "agent-a".to_string(),
             "/agents/a/prompt.md".to_string(),
+            None,
             3,
             5,
             true,
@@ -6663,6 +6678,7 @@ mod tests {
         let agent_b = Agent::new(
             "agent-b".to_string(),
             "/agents/b/prompt.md".to_string(),
+            None,
             3,
             5,
             true,
@@ -6678,6 +6694,7 @@ mod tests {
         let agent_b_no_assign = Agent::new(
             "agent-b".to_string(),
             "/agents/b/prompt.md".to_string(),
+            None,
             3,
             5,
             false,
@@ -6689,6 +6706,7 @@ mod tests {
         let agent_b_assign = Agent::new(
             "agent-b".to_string(),
             "/agents/b/prompt.md".to_string(),
+            None,
             3,
             5,
             true,
@@ -6705,6 +6723,7 @@ mod tests {
         let agent_c = Agent::new(
             "agent-c".to_string(),
             "/agents/c/prompt.md".to_string(),
+            None,
             3,
             5,
             true,
@@ -6732,6 +6751,7 @@ mod tests {
         let reactivated = Agent::new(
             "test-agent".to_string(),
             "/agents/test-agent/prompt_new.md".to_string(),
+            None,
             7,
             12,
             false,
@@ -6758,6 +6778,7 @@ mod tests {
         let agent = Agent::new(
             "swe".to_string(),
             "/agents/swe/prompt.md".to_string(),
+            None,
             3,
             i32::MAX,
             false,

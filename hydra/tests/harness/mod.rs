@@ -545,6 +545,7 @@ impl TestHarnessBuilder {
             let agent = Agent::new(
                 name.clone(),
                 format!("/agents/{name}/prompt.md"),
+                None,
                 3,
                 10,
                 is_assignment,

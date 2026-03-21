@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct Agent {
     pub name: String,
     pub prompt_path: String,
+    pub mcp_config_path: Option<String>,
     pub max_tries: i32,
     pub max_simultaneous: i32,
     pub is_assignment_agent: bool,
@@ -21,6 +22,7 @@ impl Agent {
     pub fn new(
         name: String,
         prompt_path: String,
+        mcp_config_path: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,
         is_assignment_agent: bool,
@@ -30,6 +32,7 @@ impl Agent {
         Self {
             name,
             prompt_path,
+            mcp_config_path,
             max_tries,
             max_simultaneous,
             is_assignment_agent,

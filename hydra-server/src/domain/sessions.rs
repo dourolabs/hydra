@@ -2,6 +2,7 @@ use super::task_status::{Status, TaskError};
 use super::users::Username;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::sessions::McpConfig;
 use hydra_common::{IssueId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,6 +30,8 @@ pub struct Session {
     pub memory_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,6 +61,7 @@ impl Session {
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
+        mcp_config: Option<McpConfig>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -73,6 +77,7 @@ impl Session {
             cpu_limit,
             memory_limit,
             secrets,
+            mcp_config,
             status,
             last_message,
             error,
@@ -193,6 +198,7 @@ impl From<api::sessions::Session> for Session {
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
             secrets: value.secrets,
+            mcp_config: value.mcp_config,
             status: value.status.into(),
             last_message: value.last_message,
             error: value.error.map(Into::into),
@@ -217,6 +223,7 @@ impl From<Session> for api::sessions::Session {
             value.cpu_limit,
             value.memory_limit,
             value.secrets,
+            value.mcp_config,
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
@@ -266,6 +273,7 @@ mod tests {
             Some("400m".to_string()),
             Some("768Mi".to_string()),
             secrets.clone(),
+            None,
             Status::Created,
             None,
             None,
@@ -290,6 +298,7 @@ mod tests {
             None,
             None,
             HashMap::new(),
+            None,
             None,
             None,
             None,
