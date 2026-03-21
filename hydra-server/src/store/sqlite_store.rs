@@ -6153,7 +6153,9 @@ mod tests {
             Some("2".to_string()),
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
-            Some(serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}})),
+            Some(
+                serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
+            ),
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {

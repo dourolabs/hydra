@@ -4758,7 +4758,9 @@ mod tests {
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
-            Some(serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}})),
+            Some(
+                serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
+            ),
             Status::Created,
             Some("last message".to_string()),
             None,
