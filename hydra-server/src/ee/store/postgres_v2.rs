@@ -4636,6 +4636,8 @@ mod tests {
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
+            None,
+            None,
         )
     }
 
@@ -4893,7 +4895,7 @@ mod tests {
                         style: ActionStyle::Primary,
                         requires: vec!["name".to_string(), "agree".to_string()],
                         effect: Effect::UpdateIssue {
-                            status: IssueStatus::Closed,
+                            status: IssueStatus::Closed.into(),
                         },
                     },
                     Action {
@@ -4907,7 +4909,7 @@ mod tests {
             }),
             Some(FormResponse {
                 action_id: "approve".to_string(),
-                actor: ActorId::Username(Username::from("responder")),
+                actor: ActorId::Username(Username::from("responder").into()),
                 values: HashMap::from([
                     ("name".to_string(), serde_json::json!("Jane Doe")),
                     ("notes".to_string(), serde_json::json!("Looks good")),
@@ -5653,6 +5655,8 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
+            None,
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
@@ -5669,6 +5673,8 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
+            None,
         );
         store
             .update_issue(&issue_id, updated_issue, &ActorRef::test())
@@ -7222,6 +7228,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
+            None,
         );
         store.add_issue(bug, &actor).await.unwrap();
 
@@ -7237,6 +7245,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
+            None,
         );
         store.add_issue(closed, &actor).await.unwrap();
 

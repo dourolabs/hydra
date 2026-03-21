@@ -1022,6 +1022,8 @@ mod tests {
             todo_list: vec![],
             dependencies: vec![],
             patches: vec![],
+            form: None,
+            form_response: None,
             deleted: false,
         };
         let actor = ActorRef::System {
