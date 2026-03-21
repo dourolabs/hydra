@@ -26,6 +26,8 @@ fn dummy_issue() -> Issue {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        None,
+        None,
     )
 }
 
@@ -179,6 +181,8 @@ fn make_issue_payload() -> OperationPayload {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
+            None,
         ),
         old: None,
     }
@@ -889,6 +893,8 @@ async fn disabling_restriction_allows_blocked_operation() {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        None,
+        None,
     );
 
     let actor = ActorRef::test();

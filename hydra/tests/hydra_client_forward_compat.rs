@@ -470,6 +470,8 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![],
         vec![],
         false,
+        None,
+        None,
     );
     let issue_request = UpsertIssueRequest::new(issue, None);
 
