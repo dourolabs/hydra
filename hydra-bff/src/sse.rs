@@ -31,10 +31,13 @@ pub async fn sse_relay<U: Upstream>(
         }
     };
 
+    let method = request.method().clone();
     let mut uri = "/v1/events".to_string();
     if let Some(query) = request.uri().query() {
         uri = format!("{uri}?{query}");
     }
+
+    tracing::info!(%method, bff_path = "/api/v1/events", upstream_path = %uri, "proxying SSE connection to upstream");
 
     let mut builder = Request::builder()
         .method(request.method())
@@ -59,6 +62,7 @@ pub async fn sse_relay<U: Upstream>(
 
     match bff.upstream.forward(upstream_req).await {
         Ok(upstream_resp) => {
+            tracing::info!(%method, upstream_path = %uri, status = %upstream_resp.status(), "SSE upstream connection established");
             // Stream the SSE response back with proper headers.
             let (parts, body) = upstream_resp.into_parts();
             let mut response = Response::from_parts(parts, body);
@@ -76,10 +80,13 @@ pub async fn sse_relay<U: Upstream>(
 
             response.into_response()
         }
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": "internal error" })),
-        )
-            .into_response(),
+        Err(e) => {
+            tracing::error!(%method, upstream_path = %uri, error = %e, "SSE upstream connection failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": "internal error" })),
+            )
+                .into_response()
+        }
     }
 }
