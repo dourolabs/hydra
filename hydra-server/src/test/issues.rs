@@ -1994,12 +1994,7 @@ async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
 #[tokio::test]
 async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
     use crate::{
-        domain::{
-            actors::ActorRef,
-            issues::Issue,
-            sessions::BundleSpec,
-            users::Username,
-        },
+        domain::{actors::ActorRef, issues::Issue, sessions::BundleSpec, users::Username},
         job_engine::{JobEngine, JobStatus},
         store::{Session, Status},
         test_utils::{
@@ -2062,38 +2057,68 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
     };
 
     // Session 1: Running (should be killed)
-    let (s_running, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
-    state.transition_task_to_pending(&s_running, ActorRef::test()).await?;
-    state.transition_task_to_running(&s_running, ActorRef::test()).await?;
+    let (s_running, _) = store
+        .add_session(make_session(), Utc::now(), &ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_pending(&s_running, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&s_running, ActorRef::test())
+        .await?;
     engine.insert_job(&s_running, JobStatus::Running).await;
 
     // Session 2: Pending (should be killed)
-    let (s_pending, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
-    state.transition_task_to_pending(&s_pending, ActorRef::test()).await?;
+    let (s_pending, _) = store
+        .add_session(make_session(), Utc::now(), &ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_pending(&s_pending, ActorRef::test())
+        .await?;
     engine.insert_job(&s_pending, JobStatus::Pending).await;
 
     // Session 3: Completed (should NOT be killed)
-    let (s_complete, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
-    state.transition_task_to_pending(&s_complete, ActorRef::test()).await?;
-    state.transition_task_to_running(&s_complete, ActorRef::test()).await?;
+    let (s_complete, _) = store
+        .add_session(make_session(), Utc::now(), &ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_pending(&s_complete, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&s_complete, ActorRef::test())
+        .await?;
     state
         .transition_task_to_completion(&s_complete, Ok(()), None, ActorRef::test())
         .await?;
     engine.insert_job(&s_complete, JobStatus::Complete).await;
 
     // Session 4: Failed (should NOT be killed)
-    let (s_failed, _) = store.add_session(make_session(), Utc::now(), &ActorRef::test()).await?;
-    state.transition_task_to_pending(&s_failed, ActorRef::test()).await?;
-    state.transition_task_to_running(&s_failed, ActorRef::test()).await?;
+    let (s_failed, _) = store
+        .add_session(make_session(), Utc::now(), &ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_pending(&s_failed, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&s_failed, ActorRef::test())
+        .await?;
     state
         .transition_task_to_completion(
             &s_failed,
-            Err(crate::domain::task_status::TaskError::JobEngineError { reason: "err".to_string() }),
+            Err(crate::domain::task_status::TaskError::JobEngineError {
+                reason: "err".to_string(),
+            }),
             None,
             ActorRef::test(),
         )
         .await?;
     engine.insert_job(&s_failed, JobStatus::Failed).await;
+
+    // Session 5: Created (should be killed)
+    let (s_created, _) = store
+        .add_session(make_session(), Utc::now(), &ActorRef::test())
+        .await?;
+    engine.insert_job(&s_created, JobStatus::Pending).await;
 
     let server = spawn_test_server_with_state(state, store).await?;
     let client = test_client();
@@ -2138,6 +2163,13 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         failed_job.status,
         JobStatus::Failed,
         "Already-failed session should NOT have been affected"
+    );
+
+    let created_job = engine.find_job_by_hydra_id(&s_created).await?;
+    assert_eq!(
+        created_job.status,
+        JobStatus::Failed,
+        "Created session should have been killed"
     );
 
     Ok(())
