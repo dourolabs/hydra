@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use hydra_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
 };
+use serde_json::Value;
 use tokio::{
     fs,
     io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -80,6 +81,90 @@ fn is_claude_model(model: &str) -> bool {
     lc.contains("claude") || lc.contains("haiku") || lc.contains("sonnet") || lc.contains("opus")
 }
 
+/// Converts Claude MCP JSON config to Codex TOML config format.
+///
+/// Input (Claude format):
+///   {"mcpServers": {"name": {"command": "...", "args": [...], "env": {...}}}}
+///
+/// Output (Codex format):
+///   [mcp_servers.name]
+///   command = "..."
+///   args = [...]
+///   env = { KEY = "VALUE" }
+fn mcp_config_to_codex_toml(mcp_json: &str) -> Result<String> {
+    let parsed: Value =
+        serde_json::from_str(mcp_json).context("failed to parse MCP config JSON")?;
+    let servers = parsed
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| anyhow!("MCP config missing 'mcpServers' object"))?;
+
+    let mut toml_table = toml::map::Map::new();
+    let mut mcp_servers = toml::map::Map::new();
+
+    for (name, server) in servers {
+        let server_obj = server
+            .as_object()
+            .ok_or_else(|| anyhow!("MCP server '{name}' is not an object"))?;
+        let mut entry = toml::map::Map::new();
+
+        if let Some(command) = server_obj.get("command").and_then(|v| v.as_str()) {
+            entry.insert(
+                "command".to_string(),
+                toml::Value::String(command.to_string()),
+            );
+        }
+
+        if let Some(args) = server_obj.get("args").and_then(|v| v.as_array()) {
+            let toml_args: Vec<toml::Value> = args
+                .iter()
+                .filter_map(|a| a.as_str().map(|s| toml::Value::String(s.to_string())))
+                .collect();
+            entry.insert("args".to_string(), toml::Value::Array(toml_args));
+        }
+
+        if let Some(env) = server_obj.get("env").and_then(|v| v.as_object()) {
+            let mut env_table = toml::map::Map::new();
+            for (k, v) in env {
+                if let Some(val) = v.as_str() {
+                    env_table.insert(k.clone(), toml::Value::String(val.to_string()));
+                }
+            }
+            entry.insert("env".to_string(), toml::Value::Table(env_table));
+        }
+
+        mcp_servers.insert(name.clone(), toml::Value::Table(entry));
+    }
+
+    toml_table.insert("mcp_servers".to_string(), toml::Value::Table(mcp_servers));
+
+    toml::to_string(&toml_table).context("failed to serialize Codex config to TOML")
+}
+
+/// Guard that cleans up a .codex/config.toml written for a Codex run.
+/// If the file existed before, restores the original; otherwise removes it
+/// and the .codex directory if empty.
+struct CodexConfigGuard {
+    config_path: std::path::PathBuf,
+    codex_dir: std::path::PathBuf,
+    original_content: Option<String>,
+    created_dir: bool,
+}
+
+impl CodexConfigGuard {
+    async fn cleanup(self) {
+        if let Some(original) = self.original_content {
+            let _ = fs::write(&self.config_path, original).await;
+        } else {
+            let _ = fs::remove_file(&self.config_path).await;
+        }
+        if self.created_dir {
+            // Remove .codex dir only if we created it and it's now empty
+            let _ = fs::remove_dir(&self.codex_dir).await;
+        }
+    }
+}
+
 impl CodexCommands {
     async fn login(&self, openai_api_key: Option<&str>) -> Result<()> {
         let openai_api_key = openai_api_key.map(str::to_owned).ok_or_else(|| {
@@ -114,6 +199,65 @@ impl CodexCommands {
         }
 
         Ok(())
+    }
+
+    /// Writes a .codex/config.toml in `working_dir` with MCP server config
+    /// and returns a guard that will clean it up when dropped.
+    async fn write_codex_mcp_config(
+        working_dir: &Path,
+        mcp_config: &str,
+    ) -> Result<CodexConfigGuard> {
+        let codex_dir = working_dir.join(".codex");
+        let config_path = codex_dir.join("config.toml");
+        let toml_content = mcp_config_to_codex_toml(mcp_config)?;
+
+        let created_dir = !codex_dir.exists();
+        if created_dir {
+            fs::create_dir_all(&codex_dir)
+                .await
+                .with_context(|| format!("failed to create {codex_dir:?}"))?;
+        }
+
+        // Preserve any existing config.toml content
+        let original_content = if config_path.exists() {
+            let existing = fs::read_to_string(&config_path)
+                .await
+                .with_context(|| format!("failed to read existing {config_path:?}"))?;
+            // Merge: parse existing TOML, add our mcp_servers on top
+            let mut existing_table: toml::map::Map<String, toml::Value> = toml::from_str(&existing)
+                .with_context(|| format!("failed to parse existing {config_path:?}"))?;
+            let new_table: toml::map::Map<String, toml::Value> =
+                toml::from_str(&toml_content).context("failed to parse generated TOML")?;
+            // Merge mcp_servers into existing config
+            if let Some(toml::Value::Table(new_servers)) = new_table.get("mcp_servers") {
+                let servers = existing_table
+                    .entry("mcp_servers".to_string())
+                    .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+                if let toml::Value::Table(ref mut existing_servers) = servers {
+                    for (k, v) in new_servers {
+                        existing_servers.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            let merged = toml::to_string(&existing_table)
+                .context("failed to serialize merged Codex config")?;
+            fs::write(&config_path, &merged)
+                .await
+                .with_context(|| format!("failed to write {config_path:?}"))?;
+            Some(existing)
+        } else {
+            fs::write(&config_path, &toml_content)
+                .await
+                .with_context(|| format!("failed to write {config_path:?}"))?;
+            None
+        };
+
+        Ok(CodexConfigGuard {
+            config_path,
+            codex_dir,
+            original_content,
+            created_dir,
+        })
     }
 
     async fn run_codex(
@@ -176,13 +320,32 @@ impl WorkerCommands for CodexCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
-        _mcp_config: Option<&str>,
+        mcp_config: Option<&str>,
     ) -> Result<String> {
         let openai_api_key = env.get(ENV_OPENAI_API_KEY).map(|s| s.as_str());
         self.login(openai_api_key).await?;
-        Self::run_codex(prompt, model, working_dir, env, output_path)
+
+        // Write .codex/config.toml if MCP config is provided
+        let config_guard = if let Some(config_json) = mcp_config {
+            Some(
+                Self::write_codex_mcp_config(working_dir, config_json)
+                    .await
+                    .context("failed to write Codex MCP config")?,
+            )
+        } else {
+            None
+        };
+
+        let result = Self::run_codex(prompt, model, working_dir, env, output_path)
             .await
-            .with_context(|| "failed to execute codex for worker context")
+            .with_context(|| "failed to execute codex for worker context");
+
+        // Clean up .codex/config.toml regardless of success or failure
+        if let Some(guard) = config_guard {
+            guard.cleanup().await;
+        }
+
+        result
     }
 }
 
@@ -443,5 +606,81 @@ impl WorkerCommands for ModelAwareCommands {
                     .await
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_config_to_codex_toml_basic() {
+        let json = r#"{
+            "mcpServers": {
+                "my-server": {
+                    "command": "npx",
+                    "args": ["-y", "some-server"],
+                    "env": {"API_KEY": "secret123"}
+                }
+            }
+        }"#;
+
+        let toml_str = mcp_config_to_codex_toml(json).unwrap();
+        let parsed: toml::map::Map<String, toml::Value> = toml::from_str(&toml_str).unwrap();
+
+        let servers = parsed["mcp_servers"].as_table().unwrap();
+        let server = servers["my-server"].as_table().unwrap();
+        assert_eq!(server["command"].as_str().unwrap(), "npx");
+        assert_eq!(
+            server["args"].as_array().unwrap(),
+            &[
+                toml::Value::String("-y".to_string()),
+                toml::Value::String("some-server".to_string()),
+            ]
+        );
+        assert_eq!(
+            server["env"].as_table().unwrap()["API_KEY"]
+                .as_str()
+                .unwrap(),
+            "secret123"
+        );
+    }
+
+    #[test]
+    fn test_mcp_config_to_codex_toml_multiple_servers() {
+        let json = r#"{
+            "mcpServers": {
+                "server-a": {"command": "cmd-a"},
+                "server-b": {"command": "cmd-b", "args": ["--flag"]}
+            }
+        }"#;
+
+        let toml_str = mcp_config_to_codex_toml(json).unwrap();
+        let parsed: toml::map::Map<String, toml::Value> = toml::from_str(&toml_str).unwrap();
+
+        let servers = parsed["mcp_servers"].as_table().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers["server-a"]["command"].as_str().unwrap(), "cmd-a");
+        assert_eq!(servers["server-b"]["command"].as_str().unwrap(), "cmd-b");
+    }
+
+    #[test]
+    fn test_mcp_config_to_codex_toml_missing_mcp_servers() {
+        let json = r#"{"other": "data"}"#;
+        let result = mcp_config_to_codex_toml(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("mcpServers"));
+    }
+
+    #[test]
+    fn test_mcp_config_to_codex_toml_no_optional_fields() {
+        let json = r#"{"mcpServers": {"minimal": {"command": "run"}}}"#;
+        let toml_str = mcp_config_to_codex_toml(json).unwrap();
+        let parsed: toml::map::Map<String, toml::Value> = toml::from_str(&toml_str).unwrap();
+
+        let server = parsed["mcp_servers"]["minimal"].as_table().unwrap();
+        assert_eq!(server["command"].as_str().unwrap(), "run");
+        assert!(!server.contains_key("args"));
+        assert!(!server.contains_key("env"));
     }
 }
