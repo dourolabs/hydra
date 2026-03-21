@@ -69,6 +69,8 @@ pub enum UpsertIssueError {
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
+    #[error("invalid form: {message}")]
+    InvalidForm { message: String },
 }
 
 #[derive(Debug, Error)]
@@ -142,6 +144,10 @@ impl AppState {
             ..
         } = request;
         let issue: Issue = issue.into();
+        if let Some(ref form) = issue.form {
+            form.validate_field_keys()
+                .map_err(|message| UpsertIssueError::InvalidForm { message })?;
+        }
         let is_create = issue_id.is_none();
         let dependencies = issue.dependencies.clone();
 

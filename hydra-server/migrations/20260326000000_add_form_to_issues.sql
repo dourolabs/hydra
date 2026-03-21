@@ -1,0 +1,2 @@
+ALTER TABLE metis.issues_v2 ADD COLUMN form JSONB DEFAULT NULL;
+ALTER TABLE metis.issues_v2 ADD COLUMN form_response JSONB DEFAULT NULL;
