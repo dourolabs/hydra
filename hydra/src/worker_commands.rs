@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path, process::Stdio, time::Instant};
 
 use crate::claude_formatter::StreamFormatter;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use hydra_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
