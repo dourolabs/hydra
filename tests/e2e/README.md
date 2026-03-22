@@ -105,12 +105,11 @@ config live in the top-level Hydra instance's doc store.
 
 ### Scenario Execution
 
-Scenarios are executed by the tester agent with Playwright MCP configured. The agent:
+Scenarios are executed by the tester agent against the server that `run.sh` has already started. The agent:
 
 1. Reads scenario files from this directory
-2. Initializes the Hydra server in single-player mode using `--config`
-3. Executes each scenario's steps via the dashboard using Playwright MCP
-4. Verifies expected results
-5. Reports pass/fail status
+2. Executes each scenario's steps via the dashboard using Playwright MCP
+3. Verifies expected results
+4. Reports pass/fail status
 
 See the design document at `/designs/hydra-e2e-testing-process.md` in the document store for the full architecture.
