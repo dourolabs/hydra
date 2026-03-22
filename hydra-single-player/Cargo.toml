@@ -1,6 +1,6 @@
 [package]
 name = "hydra-single-player"
-version = "0.5.8"
+version = "0.6.0"
 edition = "2021"
 
 [features]
