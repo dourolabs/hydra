@@ -113,12 +113,17 @@ function upsertBatchSession(qc: QueryClient, entityId: string, record: SessionSu
 function invalidatePageAndTreeCaches(qc: QueryClient) {
   // Issue list caches (paginated dashboard)
   qc.invalidateQueries({ queryKey: ["issues"] });
+  // Paginated issue list and badge counts
+  qc.invalidateQueries({ queryKey: ["paginatedIssues"] });
+  qc.invalidateQueries({ queryKey: ["issueCount"] });
   // Tree relationship caches
   qc.invalidateQueries({ queryKey: ["relations"] });
   // Batch issue/session caches used by usePageIssueTrees
   qc.invalidateQueries({ queryKey: ["issues", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions"] });
+  // Patch list caches
+  qc.invalidateQueries({ queryKey: ["patches"] });
   // Paginated document caches
   qc.invalidateQueries({ queryKey: ["paginatedDocuments"] });
   // Labels
@@ -137,6 +142,7 @@ export function useSSE(): SSEConnectionState {
   const retriesRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const lastEventIdRef = useRef<string | null>(null);
 
   /** Apply a direct cache update from SSE entity data. */
   const handleEntityEvent = useCallback(
@@ -222,11 +228,20 @@ export function useSSE(): SSEConnectionState {
     es.onopen = () => {
       setState("connected");
       retriesRef.current = 0;
+
+      // If this is a reconnection (we previously received events), invalidate
+      // caches to cover any events missed during the disconnect window.
+      if (lastEventIdRef.current !== null) {
+        invalidatePageAndTreeCaches(queryClient);
+      }
     };
 
     // Entity mutation events
     for (const eventType of ENTITY_EVENT_TYPES) {
       es.addEventListener(eventType, (e: MessageEvent) => {
+        if (e.lastEventId) {
+          lastEventIdRef.current = e.lastEventId;
+        }
         try {
           const data: EntityEventData = JSON.parse(e.data);
           handleEntityEvent(eventType, data);
