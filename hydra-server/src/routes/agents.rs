@@ -23,6 +23,10 @@ fn default_prompt_path(name: &str) -> String {
     format!("/agents/{name}/prompt.md")
 }
 
+fn default_mcp_config_path(name: &str) -> String {
+    format!("/agents/{name}/mcp-config.json")
+}
+
 pub async fn list_agents(
     State(state): State<AppState>,
 ) -> Result<Json<ListAgentsResponse>, ApiError> {
@@ -34,7 +38,7 @@ pub async fn list_agents(
         .into_iter()
         .map(|agent| {
             let prompt = prompt_map.get(&agent.name).cloned().unwrap_or_default();
-            agent_to_record(agent, prompt)
+            agent_to_record(agent, prompt, None)
         })
         .collect();
 
@@ -58,8 +62,12 @@ pub async fn get_agent(
         .await
         .unwrap_or_default();
 
+    let mcp_config = resolve_mcp_config_content(&state, &agent).await;
+
     info!(agent = %agent_name, "get_agent completed");
-    Ok(Json(AgentResponse::new(agent_to_record(agent, prompt))))
+    Ok(Json(AgentResponse::new(agent_to_record(
+        agent, prompt, mcp_config,
+    ))))
 }
 
 pub async fn create_agent(
@@ -68,18 +76,24 @@ pub async fn create_agent(
     Json(payload): Json<UpsertAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     info!(agent = %payload.name, "create_agent invoked");
-    let (agent, prompt_text) = normalize_and_build_agent(payload)?;
+    let (agent, prompt_text, mcp_config_text) = normalize_and_build_agent(payload)?;
 
     let created = state.create_agent(agent).await.map_err(map_agent_error)?;
 
     if let Some(prompt) = &prompt_text {
         write_prompt(&state, &created.prompt_path, prompt, &actor).await?;
     }
+    if let Some(mcp_config) = &mcp_config_text {
+        if let Some(mcp_config_path) = &created.mcp_config_path {
+            write_mcp_config(&state, mcp_config_path, mcp_config, &actor).await?;
+        }
+    }
 
     info!(agent = %created.name, "create_agent completed");
     Ok(Json(AgentResponse::new(agent_to_record(
         created,
         prompt_text.unwrap_or_default(),
+        mcp_config_text,
     ))))
 }
 
@@ -90,7 +104,7 @@ pub async fn update_agent(
     Json(payload): Json<UpsertAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     info!(agent = %agent_name, "update_agent invoked");
-    let (agent, prompt_text) = normalize_and_build_agent(payload)?;
+    let (agent, prompt_text, mcp_config_text) = normalize_and_build_agent(payload)?;
     if agent.name != agent_name {
         return Err(ApiError::bad_request(
             "agent name must match path parameter".to_string(),
@@ -105,6 +119,11 @@ pub async fn update_agent(
     if let Some(prompt) = &prompt_text {
         write_prompt(&state, &updated.prompt_path, prompt, &actor).await?;
     }
+    if let Some(mcp_config) = &mcp_config_text {
+        if let Some(mcp_config_path) = &updated.mcp_config_path {
+            write_mcp_config(&state, mcp_config_path, mcp_config, &actor).await?;
+        }
+    }
 
     let resolved_prompt = if prompt_text.is_some() {
         prompt_text.unwrap_or_default()
@@ -115,10 +134,17 @@ pub async fn update_agent(
             .unwrap_or_default()
     };
 
+    let resolved_mcp_config = if mcp_config_text.is_some() {
+        mcp_config_text
+    } else {
+        resolve_mcp_config_content(&state, &updated).await
+    };
+
     info!(agent = %agent_name, "update_agent completed");
     Ok(Json(AgentResponse::new(agent_to_record(
         updated,
         resolved_prompt,
+        resolved_mcp_config,
     ))))
 }
 
@@ -136,12 +162,13 @@ pub async fn delete_agent(
     Ok(Json(DeleteAgentResponse::new(agent_to_record(
         deleted,
         String::new(),
+        None,
     ))))
 }
 
 fn normalize_and_build_agent(
     payload: UpsertAgentRequest,
-) -> Result<(Agent, Option<String>), ApiError> {
+) -> Result<(Agent, Option<String>, Option<String>), ApiError> {
     let name = normalize_non_empty("name", payload.name)?;
     let prompt_path = if payload.prompt_path.trim().is_empty() {
         default_prompt_path(&name)
@@ -155,17 +182,36 @@ fn normalize_and_build_agent(
         Some(payload.prompt.trim().to_string())
     };
 
+    let mcp_config_text = payload.mcp_config.and_then(|s| {
+        let trimmed = s.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let mcp_config_path = if mcp_config_text.is_some() {
+        Some(
+            payload
+                .mcp_config_path
+                .unwrap_or_else(|| default_mcp_config_path(&name)),
+        )
+    } else {
+        payload.mcp_config_path
+    };
+
     let agent = Agent::new(
         name,
         prompt_path,
-        payload.mcp_config_path,
+        mcp_config_path,
         payload.max_tries,
         payload.max_simultaneous,
         payload.is_assignment_agent,
         payload.secrets,
     );
 
-    Ok((agent, prompt_text))
+    Ok((agent, prompt_text, mcp_config_text))
 }
 
 fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
@@ -176,12 +222,13 @@ fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
     Ok(trimmed.to_string())
 }
 
-fn agent_to_record(agent: Agent, prompt: String) -> AgentRecord {
+fn agent_to_record(agent: Agent, prompt: String, mcp_config: Option<String>) -> AgentRecord {
     AgentRecord::new(
         agent.name,
         prompt,
         agent.prompt_path,
         agent.mcp_config_path,
+        mcp_config,
         agent.max_tries,
         agent.max_simultaneous,
         agent.is_assignment_agent,
@@ -220,6 +267,61 @@ async fn write_prompt(
         .await
         .map_err(|e| {
             ApiError::internal(format!("failed to write prompt to document store: {e}"))
+        })?;
+
+    Ok(())
+}
+
+async fn resolve_mcp_config_content(state: &AppState, agent: &Agent) -> Option<String> {
+    let mcp_config_path = agent.mcp_config_path.as_deref()?;
+    let query = SearchDocumentsQuery::new(
+        None,
+        Some(mcp_config_path.to_string()),
+        Some(true),
+        None,
+        None,
+    );
+    let documents = state.list_documents(&query).await.ok()?;
+    let (_, versioned) = documents.into_iter().next()?;
+    Some(versioned.item.body_markdown.trim_end().to_string())
+}
+
+async fn write_mcp_config(
+    state: &AppState,
+    mcp_config_path: &str,
+    mcp_config: &str,
+    actor: &Actor,
+) -> Result<(), ApiError> {
+    let query = SearchDocumentsQuery::new(
+        None,
+        Some(mcp_config_path.to_string()),
+        Some(true),
+        None,
+        None,
+    );
+
+    let existing = state
+        .list_documents(&query)
+        .await
+        .map_err(|e| ApiError::internal(format!("failed to query document store: {e}")))?;
+
+    let document = Document {
+        title: format!("Agent MCP config: {mcp_config_path}"),
+        body_markdown: mcp_config.to_string(),
+        path: Some(mcp_config_path.parse().map_err(|e| {
+            ApiError::bad_request(format!("invalid mcp_config_path '{mcp_config_path}': {e}"))
+        })?),
+        created_by: None,
+        deleted: false,
+    };
+
+    let document_id = existing.into_iter().next().map(|(id, _)| id);
+
+    state
+        .upsert_document(document_id, document, ActorRef::from(actor))
+        .await
+        .map_err(|e| {
+            ApiError::internal(format!("failed to write MCP config to document store: {e}"))
         })?;
 
     Ok(())
