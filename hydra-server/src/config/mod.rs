@@ -1249,6 +1249,32 @@ github_app:
     }
 
     #[test]
+    fn e2e_test_config_parses_as_app_config() {
+        // Verify the E2E test config YAML (with env vars substituted) parses
+        // as a valid AppConfig. This catches drift between the config file and
+        // the struct definition.
+        let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
+        // Substitute the env-var placeholders with dummy values.
+        let substituted = raw
+            .replace("${CLAUDE_CODE_OAUTH_TOKEN}", "test-oauth-token")
+            .replace("${GH_TOKEN}", "ghp_test_token");
+        let config: AppConfig =
+            serde_yaml_ng::from_str(&substituted).expect("E2E test config should parse");
+        assert_eq!(config.hydra.namespace, "test");
+        assert!(config.auth.is_local());
+        assert_eq!(config.auth.local_username(), Some("test-agent"));
+        assert!(
+            matches!(config.storage, StorageConfig::Sqlite { .. }),
+            "expected sqlite storage"
+        );
+        assert!(
+            matches!(config.job_engine, JobEngineConfig::Local { .. }),
+            "expected local job engine"
+        );
+        assert_eq!(config.job.default_model, Some("opus".to_string()));
+    }
+
+    #[test]
     fn config_rejects_local_mode_without_github_token() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join("config.yaml");
