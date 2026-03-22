@@ -36,8 +36,24 @@ pub struct CreateAgentArgs {
     pub name: String,
 
     /// Path to a local file containing the agent prompt.
-    #[arg(long = "prompt-file", value_name = "PATH")]
-    pub prompt_file: String,
+    #[arg(
+        long = "prompt-file",
+        value_name = "PATH",
+        conflicts_with = "prompt_path"
+    )]
+    pub prompt_file: Option<String>,
+
+    /// Document store path for the agent prompt.
+    #[arg(
+        long = "prompt-path",
+        value_name = "PATH",
+        conflicts_with = "prompt_file"
+    )]
+    pub prompt_path: Option<String>,
+
+    /// Document store path for the agent MCP config.
+    #[arg(long = "mcp-config-path", value_name = "PATH")]
+    pub mcp_config_path: Option<String>,
 
     /// Maximum retries for this agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
@@ -67,8 +83,24 @@ pub struct UpdateAgentArgs {
     pub name: String,
 
     /// Path to a local file containing the updated agent prompt.
-    #[arg(long = "prompt-file", value_name = "PATH")]
+    #[arg(
+        long = "prompt-file",
+        value_name = "PATH",
+        conflicts_with = "prompt_path"
+    )]
     pub prompt_file: Option<String>,
+
+    /// Document store path for the agent prompt.
+    #[arg(
+        long = "prompt-path",
+        value_name = "PATH",
+        conflicts_with = "prompt_file"
+    )]
+    pub prompt_path: Option<String>,
+
+    /// Document store path for the agent MCP config.
+    #[arg(long = "mcp-config-path", value_name = "PATH")]
+    pub mcp_config_path: Option<String>,
 
     /// Updated max retries for the agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
@@ -170,10 +202,26 @@ async fn create_agent(
     args: CreateAgentArgs,
 ) -> Result<AgentRecord> {
     let name = normalize_non_empty(&args.name, "agent name")?;
-    let prompt = read_prompt_file(&args.prompt_file)?;
 
-    let mut request =
-        UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None);
+    let mut request = if let Some(ref prompt_file) = args.prompt_file {
+        let prompt = read_prompt_file(prompt_file)?;
+        UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None)
+    } else if let Some(ref prompt_path) = args.prompt_path {
+        let prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
+        let mut req = UpsertAgentRequest::new(
+            name,
+            String::new(),
+            args.max_tries,
+            args.max_simultaneous,
+            None,
+        );
+        req.prompt_path = prompt_path;
+        req
+    } else {
+        bail!("either --prompt-file or --prompt-path must be provided");
+    };
+
+    request.mcp_config_path = args.mcp_config_path;
     request.is_assignment_agent = args.is_assignment_agent;
     request.secrets = parse_secrets(args.secrets.as_deref());
 
@@ -200,6 +248,13 @@ async fn update_agent(
 
     if let Some(prompt_file) = &args.prompt_file {
         request.prompt = read_prompt_file(prompt_file)?;
+        request.prompt_path = String::new();
+    } else if let Some(ref prompt_path) = args.prompt_path {
+        request.prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
+        request.prompt = String::new();
+    }
+    if let Some(mcp_config_path) = args.mcp_config_path {
+        request.mcp_config_path = Some(mcp_config_path);
     }
     if let Some(max_tries) = args.max_tries {
         request.max_tries = max_tries;
@@ -359,7 +414,9 @@ mod tests {
 
         let args = CreateAgentArgs {
             name: "writer".to_string(),
-            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: 2,
             max_simultaneous: 4,
             is_assignment_agent: false,
@@ -409,7 +466,9 @@ mod tests {
 
         let args = CreateAgentArgs {
             name: "pm".to_string(),
-            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: true,
@@ -497,6 +556,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: " writer ".to_string(),
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: Some(10),
             is_assignment_agent: false,
@@ -561,6 +622,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: "writer".to_string(),
             prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: true,
@@ -623,6 +686,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: "writer".to_string(),
             prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -685,6 +750,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: "writer".to_string(),
             prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -753,7 +820,9 @@ mod tests {
 
         let args = CreateAgentArgs {
             name: "worker".to_string(),
-            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: false,
@@ -839,6 +908,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: "worker".to_string(),
             prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -901,6 +972,8 @@ mod tests {
         let args = UpdateAgentArgs {
             name: "worker".to_string(),
             prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -958,5 +1031,309 @@ mod tests {
     async fn read_prompt_file_rejects_missing() {
         let err = read_prompt_file("/nonexistent/path.md").unwrap_err();
         assert!(err.to_string().contains("failed to read prompt file"));
+    }
+
+    #[tokio::test]
+    async fn create_agent_with_prompt_path_and_mcp_config_path() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let args = CreateAgentArgs {
+            name: "tester".to_string(),
+            prompt_file: None,
+            prompt_path: Some("/agents/tester/prompt.md".to_string()),
+            mcp_config_path: Some("/agents/tester/mcp-config.json".to_string()),
+            max_tries: 3,
+            max_simultaneous: i32::MAX,
+            is_assignment_agent: false,
+            secrets: None,
+        };
+        let response = AgentResponse::new(AgentRecord::new(
+            "tester",
+            "",
+            "/agents/tester/prompt.md",
+            Some("/agents/tester/mcp-config.json".to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/agents").json_body(json!({
+                "name": "tester",
+                "prompt": "",
+                "prompt_path": "/agents/tester/prompt.md",
+                "mcp_config_path": "/agents/tester/mcp-config.json",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = create_agent(&client, args).await?;
+        mock.assert();
+
+        assert_eq!(agent.name, "tester");
+        assert_eq!(agent.prompt_path, "/agents/tester/prompt.md");
+        assert_eq!(
+            agent.mcp_config_path,
+            Some("/agents/tester/mcp-config.json".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_agent_requires_prompt_file_or_prompt_path() {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
+                .unwrap();
+
+        let args = CreateAgentArgs {
+            name: "tester".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
+            max_tries: 3,
+            max_simultaneous: i32::MAX,
+            is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let err = create_agent(&client, args).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("either --prompt-file or --prompt-path must be provided"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn create_agent_rejects_both_prompt_file_and_prompt_path() {
+        use clap::Parser;
+
+        #[derive(Debug, Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: CreateAgentArgs,
+        }
+
+        let result = Cli::try_parse_from([
+            "cli",
+            "tester",
+            "--prompt-file",
+            "prompt.md",
+            "--prompt-path",
+            "/agents/tester/prompt.md",
+        ]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot be used with"),
+            "expected conflict error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_agent_with_prompt_path_clears_prompt() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "old prompt",
+            "",
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "",
+            "/agents/writer/prompt.md",
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "",
+                "prompt_path": "/agents/writer/prompt.md",
+                "mcp_config_path": null,
+                "max_tries": 3,
+                "max_simultaneous": 2147483647,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: None,
+            prompt_path: Some("/agents/writer/prompt.md".to_string()),
+            mcp_config_path: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(response.prompt, "");
+        assert_eq!(response.prompt_path, "/agents/writer/prompt.md");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_with_mcp_config_path() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "draft",
+            "",
+            Some("/agents/writer/mcp-config.json".to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "draft",
+                "prompt_path": "",
+                "mcp_config_path": "/agents/writer/mcp-config.json",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: Some("/agents/writer/mcp-config.json".to_string()),
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(
+            response.mcp_config_path,
+            Some("/agents/writer/mcp-config.json".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_prompt_file_clears_prompt_path() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "",
+            "/agents/writer/prompt.md",
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "writer",
+            "new inline prompt",
+            "",
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let prompt_file = write_prompt_file("new inline prompt");
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "new inline prompt",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "max_tries": 3,
+                "max_simultaneous": 2147483647,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(response.prompt, "new inline prompt");
+        assert_eq!(response.prompt_path, "");
+
+        Ok(())
     }
 }
