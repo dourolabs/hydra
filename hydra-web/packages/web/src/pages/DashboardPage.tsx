@@ -176,12 +176,13 @@ export function DashboardPage() {
     isLoading: pageTreeLoading,
   } = usePageIssueTrees(issues, username);
 
-  // Issue IDs from only the last loaded page (for scoping artifacts)
+  // Issue IDs from all loaded pages (for scoping artifacts in infinite scroll)
   const currentPageIssueIds = useMemo(() => {
     const pages = paginatedData?.pages;
     if (!pages || pages.length === 0) return new Set<string>();
-    const lastPage = pages[pages.length - 1];
-    return new Set((lastPage.issues ?? []).map((i) => i.issue_id));
+    return new Set(
+      pages.flatMap((page) => (page.issues ?? []).map((i) => i.issue_id)),
+    );
   }, [paginatedData]);
 
   // Collect unique patch/document IDs and build reverse lookup (artifact -> source issue)

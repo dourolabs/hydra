@@ -175,31 +175,18 @@ function buildIssueTrees(set: CollectedSet): {
       });
     }
 
-    // Collect all descendants for artifact attribution
-    const descendants = new Set<string>([pageIssueId]);
-    const queue = [pageIssueId];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      for (const cid of childrenMap.get(current) ?? []) {
-        if (!descendants.has(cid)) {
-          descendants.add(cid);
-          queue.push(cid);
-        }
-      }
-    }
-
-    // Patches linked to this issue's subtree
+    // Patches linked directly to this page issue (not descendants)
     const patchIds: string[] = [];
     for (const rel of set.patchRelations) {
-      if (descendants.has(rel.source_id)) {
+      if (rel.source_id === pageIssueId) {
         patchIds.push(rel.target_id);
       }
     }
 
-    // Documents linked to this issue's subtree
+    // Documents linked directly to this page issue (not descendants)
     const documentIds: string[] = [];
     for (const rel of set.documentRelations) {
-      if (descendants.has(rel.source_id)) {
+      if (rel.source_id === pageIssueId) {
         documentIds.push(rel.target_id);
       }
     }
@@ -278,9 +265,10 @@ export function usePageIssueTrees(
     [pageIssueIds, allDescendantIds],
   );
 
-  // Step 3: Artifacts — collect patches and documents for expanded set
-  const { data: patchRelations } = useArtifactRelations(allIssueIds, "has-patch");
-  const { data: documentRelations } = useArtifactRelations(allIssueIds, "has-document");
+  // Step 3: Artifacts — collect patches and documents for page-level issues only
+  // (not transitive descendants) to keep the dashboard Artifacts section scoped
+  const { data: patchRelations } = useArtifactRelations(pageIssueIds, "has-patch");
+  const { data: documentRelations } = useArtifactRelations(pageIssueIds, "has-document");
 
   // Step 4: Sessions — collect sessions for expanded set
   const { data: sessions } = useSessions(allIssueIds);
