@@ -39,12 +39,15 @@ pub fn build_bff_router<U: Upstream>(state: BffState<U>) -> Router {
     }
 
     let trace_layer = TraceLayer::new_for_http()
-        .on_request(|request: &Request<Body>, _span: &tracing::Span| {
-            tracing::debug!(
+        .make_span_with(|request: &Request<Body>| {
+            tracing::info_span!(
+                "http_request",
                 method = %request.method(),
                 path = %request.uri().path(),
-                "started processing request"
-            );
+            )
+        })
+        .on_request(|_request: &Request<Body>, _span: &tracing::Span| {
+            tracing::debug!("started processing request");
         })
         .on_response(
             |response: &Response, latency: Duration, _span: &tracing::Span| {

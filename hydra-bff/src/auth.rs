@@ -107,10 +107,16 @@ async fn auth_logout<U: Upstream>(
 ) -> impl IntoResponse {
     // When auto_login_token is set, logout is a no-op (no session to clear).
     if bff.auto_login_token.is_some() {
+        info!(
+            bff_path = "/auth/logout",
+            status = 404u16,
+            "logout no-op (auto-login mode)"
+        );
         return StatusCode::NOT_FOUND.into_response();
     }
 
     let jar = jar.remove(Cookie::build(COOKIE_NAME).path("/"));
+    info!(bff_path = "/auth/logout", status = 200u16, "logout success");
     (jar, axum::Json(serde_json::json!({ "ok": true }))).into_response()
 }
 

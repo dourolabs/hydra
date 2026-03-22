@@ -71,29 +71,67 @@ async fn serve_directory_file(dir: &Path, path: &str) -> Response {
         match tokio::fs::read(&file_path).await {
             Ok(contents) => {
                 let mime = mime_guess::from_path(path).first_or_octet_stream();
+                let cache_control = cache_control_for(path);
+                tracing::info!(
+                    path,
+                    status = 200u16,
+                    cache_control,
+                    source = "directory",
+                    "serving frontend asset"
+                );
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, mime.as_ref())
-                    .header(header::CACHE_CONTROL, cache_control_for(path))
+                    .header(header::CACHE_CONTROL, cache_control)
                     .body(Body::from(contents))
                     .unwrap()
             }
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(_) => {
+                tracing::info!(
+                    path,
+                    status = 500u16,
+                    source = "directory",
+                    "failed to read frontend asset"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
         }
     } else {
         // SPA fallback: serve index.html.
+        tracing::info!(
+            path,
+            source = "directory",
+            "asset not found, falling back to index.html"
+        );
         let index_path = dir.join("index.html");
         match tokio::fs::read(&index_path).await {
-            Ok(contents) => Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/html")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from(contents))
-                .unwrap(),
-            Err(_) => Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("frontend not found"))
-                .unwrap(),
+            Ok(contents) => {
+                tracing::info!(
+                    path,
+                    status = 200u16,
+                    cache_control = "no-cache",
+                    source = "directory",
+                    "serving SPA fallback"
+                );
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .header(header::CACHE_CONTROL, "no-cache")
+                    .body(Body::from(contents))
+                    .unwrap()
+            }
+            Err(_) => {
+                tracing::info!(
+                    path,
+                    status = 404u16,
+                    source = "directory",
+                    "frontend not found"
+                );
+                Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("frontend not found"))
+                    .unwrap()
+            }
         }
     }
 }
@@ -126,25 +164,57 @@ mod embedded {
         match EmbeddedAssets::get(path) {
             Some(file) => {
                 let mime = mime_guess::from_path(path).first_or_octet_stream();
+                let cache_control = cache_control_for(path);
+                tracing::info!(
+                    path,
+                    status = 200u16,
+                    cache_control,
+                    source = "embedded",
+                    "serving frontend asset"
+                );
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, mime.as_ref())
-                    .header(header::CACHE_CONTROL, cache_control_for(path))
+                    .header(header::CACHE_CONTROL, cache_control)
                     .body(Body::from(file.data.to_vec()))
                     .unwrap()
             }
-            None => match EmbeddedAssets::get("index.html") {
-                Some(index) => Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .header(header::CACHE_CONTROL, "no-cache")
-                    .body(Body::from(index.data.to_vec()))
-                    .unwrap(),
-                None => Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("frontend not found"))
-                    .unwrap(),
-            },
+            None => {
+                tracing::info!(
+                    path,
+                    source = "embedded",
+                    "asset not found, falling back to index.html"
+                );
+                match EmbeddedAssets::get("index.html") {
+                    Some(index) => {
+                        tracing::info!(
+                            path,
+                            status = 200u16,
+                            cache_control = "no-cache",
+                            source = "embedded",
+                            "serving SPA fallback"
+                        );
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/html")
+                            .header(header::CACHE_CONTROL, "no-cache")
+                            .body(Body::from(index.data.to_vec()))
+                            .unwrap()
+                    }
+                    None => {
+                        tracing::info!(
+                            path,
+                            status = 404u16,
+                            source = "embedded",
+                            "frontend not found"
+                        );
+                        Response::builder()
+                            .status(StatusCode::NOT_FOUND)
+                            .body(Body::from("frontend not found"))
+                            .unwrap()
+                    }
+                }
+            }
         }
     }
 }
