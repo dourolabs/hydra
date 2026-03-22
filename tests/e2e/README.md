@@ -13,6 +13,9 @@ All test interactions go through the dashboard UI at `http://localhost:8080` -- 
 ```
 tests/e2e/
 ├── README.md              # This file
+├── run.sh                 # E2E test runner script
+├── config/
+│   └── test-config.yaml   # Server init config for test runs
 └── scenarios/
     ├── server-init.md           # P0: Server initialization and dashboard load
     ├── add-github-repo.md       # P0: Add a GitHub repo via dashboard issue
@@ -73,9 +76,36 @@ navigate to pages, click buttons, fill forms, wait for state changes.>
 | Playwright MCP | `npx @anthropic-ai/mcp-playwright` |
 | Test repo | `dourolabs/hydra-test-fixture` |
 
-## Running Scenarios
+## Running Tests
 
-Scenarios are executed by a testing agent with Playwright MCP configured. The agent:
+### Quick Start
+
+```bash
+# Set required environment variables
+export CLAUDE_CODE_OAUTH_TOKEN="your-oauth-token"
+export GH_TOKEN="your-github-pat"
+
+# Bootstrap a test server
+./tests/e2e/run.sh
+```
+
+### What the Runner Does
+
+The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra instance for testing:
+
+1. **Validates prerequisites** -- checks for required env vars, the `hydra` binary, and `npx`
+2. **Cleans previous state** -- removes `~/.hydra/server/` for a fresh run
+3. **Starts the server** -- runs `hydra server init` with the test config, starts `hydra server run`, and waits for the health check
+
+The script keeps the server running in the foreground and cleans up on exit (Ctrl+C).
+
+The tester agent (running in the top-level Hydra instance) is responsible for executing
+test scenarios against the server using Playwright MCP. The tester agent's prompt and MCP
+config live in the top-level Hydra instance's doc store.
+
+### Scenario Execution
+
+Scenarios are executed by the tester agent with Playwright MCP configured. The agent:
 
 1. Reads scenario files from this directory
 2. Initializes the Hydra server in single-player mode using `--config`
