@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path, process::Stdio, time::Instant};
 
 use crate::claude_formatter::StreamFormatter;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use hydra_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
@@ -141,25 +141,18 @@ fn mcp_config_to_codex_toml(mcp_json: &str) -> Result<String> {
     toml::to_string(&toml_table).context("failed to serialize Codex config to TOML")
 }
 
-/// Guard that cleans up a .codex/config.toml written for a Codex run.
-/// If the file existed before, restores the original; otherwise removes it
-/// and the .codex directory if empty.
+/// Guard that cleans up ~/.codex/config.toml written for a Codex run.
 struct CodexConfigGuard {
     config_path: std::path::PathBuf,
     codex_dir: std::path::PathBuf,
-    original_content: Option<String>,
     created_dir: bool,
 }
 
 impl CodexConfigGuard {
     async fn cleanup(self) {
-        if let Some(original) = self.original_content {
-            let _ = fs::write(&self.config_path, original).await;
-        } else {
-            let _ = fs::remove_file(&self.config_path).await;
-        }
+        let _ = fs::remove_file(&self.config_path).await;
         if self.created_dir {
-            // Remove .codex dir only if we created it and it's now empty
+            // Remove ~/.codex dir only if we created it and it's now empty
             let _ = fs::remove_dir(&self.codex_dir).await;
         }
     }
@@ -201,13 +194,12 @@ impl CodexCommands {
         Ok(())
     }
 
-    /// Writes a .codex/config.toml in `working_dir` with MCP server config
-    /// and returns a guard that will clean it up when dropped.
-    async fn write_codex_mcp_config(
-        working_dir: &Path,
-        mcp_config: &str,
-    ) -> Result<CodexConfigGuard> {
-        let codex_dir = working_dir.join(".codex");
+    /// Writes ~/.codex/config.toml with MCP server config and returns a guard
+    /// that will clean it up when dropped. Uses the home directory (global
+    /// Codex config) since hydra manages the agent's home directory.
+    async fn write_codex_mcp_config(mcp_config: &str) -> Result<CodexConfigGuard> {
+        let home = std::env::var("HOME").context("HOME environment variable not set")?;
+        let codex_dir = std::path::PathBuf::from(home).join(".codex");
         let config_path = codex_dir.join("config.toml");
         let toml_content = mcp_config_to_codex_toml(mcp_config)?;
 
@@ -218,44 +210,13 @@ impl CodexCommands {
                 .with_context(|| format!("failed to create {codex_dir:?}"))?;
         }
 
-        // Preserve any existing config.toml content
-        let original_content = if config_path.exists() {
-            let existing = fs::read_to_string(&config_path)
-                .await
-                .with_context(|| format!("failed to read existing {config_path:?}"))?;
-            // Merge: parse existing TOML, add our mcp_servers on top
-            let mut existing_table: toml::map::Map<String, toml::Value> = toml::from_str(&existing)
-                .with_context(|| format!("failed to parse existing {config_path:?}"))?;
-            let new_table: toml::map::Map<String, toml::Value> =
-                toml::from_str(&toml_content).context("failed to parse generated TOML")?;
-            // Merge mcp_servers into existing config
-            if let Some(toml::Value::Table(new_servers)) = new_table.get("mcp_servers") {
-                let servers = existing_table
-                    .entry("mcp_servers".to_string())
-                    .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-                if let toml::Value::Table(ref mut existing_servers) = servers {
-                    for (k, v) in new_servers {
-                        existing_servers.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-            let merged = toml::to_string(&existing_table)
-                .context("failed to serialize merged Codex config")?;
-            fs::write(&config_path, &merged)
-                .await
-                .with_context(|| format!("failed to write {config_path:?}"))?;
-            Some(existing)
-        } else {
-            fs::write(&config_path, &toml_content)
-                .await
-                .with_context(|| format!("failed to write {config_path:?}"))?;
-            None
-        };
+        fs::write(&config_path, &toml_content)
+            .await
+            .with_context(|| format!("failed to write {config_path:?}"))?;
 
         Ok(CodexConfigGuard {
             config_path,
             codex_dir,
-            original_content,
             created_dir,
         })
     }
@@ -325,10 +286,10 @@ impl WorkerCommands for CodexCommands {
         let openai_api_key = env.get(ENV_OPENAI_API_KEY).map(|s| s.as_str());
         self.login(openai_api_key).await?;
 
-        // Write .codex/config.toml if MCP config is provided
+        // Write ~/.codex/config.toml if MCP config is provided
         let config_guard = if let Some(config_json) = mcp_config {
             Some(
-                Self::write_codex_mcp_config(working_dir, config_json)
+                Self::write_codex_mcp_config(config_json)
                     .await
                     .context("failed to write Codex MCP config")?,
             )
