@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
+import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -8,6 +8,7 @@ import { useIssue } from "./useIssue";
 import { IssueRelatedIssues } from "./IssueRelatedIssues";
 import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
+import { FeedbackModal } from "./FeedbackModal";
 import { SessionList } from "../sessions/SessionList";
 import { PatchList } from "../patches/PatchList";
 import { PatchPreview } from "./PatchPreview";
@@ -50,6 +51,7 @@ const TABS = [
 export function IssueDetail({ record }: IssueDetailProps) {
   const [activeTab, setActiveTab] = useState("related");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const { issue } = record;
 
   const blockedOnIds = useMemo(
@@ -83,19 +85,28 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <span className={styles.type}>{issue.type}</span>
           </div>
         </div>
-        <button
-          type="button"
-          className={styles.statusChip}
-          data-testid="status-chip"
-          onClick={() => setUpdateModalOpen(true)}
-        >
-          <Badge status={normalizeIssueStatus(issue.status)} />
-          <span className={styles.statusChipIcon}>
-            <svg viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </span>
-        </button>
+        <div className={styles.headerActions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setFeedbackModalOpen(true)}
+          >
+            Give Feedback
+          </Button>
+          <button
+            type="button"
+            className={styles.statusChip}
+            data-testid="status-chip"
+            onClick={() => setUpdateModalOpen(true)}
+          >
+            <Badge status={normalizeIssueStatus(issue.status)} />
+            <span className={styles.statusChipIcon}>
+              <svg viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </span>
+          </button>
+        </div>
       </div>
 
       <IssueUpdateModal
@@ -103,6 +114,12 @@ export function IssueDetail({ record }: IssueDetailProps) {
         onClose={() => setUpdateModalOpen(false)}
         issueId={record.issue_id}
         issue={issue}
+      />
+
+      <FeedbackModal
+        open={feedbackModalOpen}
+        onClose={() => setFeedbackModalOpen(false)}
+        issueId={record.issue_id}
       />
 
       {/* Blocked-by banner */}
@@ -154,6 +171,15 @@ export function IssueDetail({ record }: IssueDetailProps) {
       {/* Document Preview */}
       {documentPaths.length > 0 && (
         <DocumentPreview paths={documentPaths} />
+      )}
+
+      {/* Feedback */}
+      {issue.feedback && (
+        <Panel header={<span className={styles.sectionTitle}>Feedback</span>}>
+          <div className={styles.feedbackBody}>
+            <MarkdownViewer content={issue.feedback} />
+          </div>
+        </Panel>
       )}
 
       {/* Progress */}

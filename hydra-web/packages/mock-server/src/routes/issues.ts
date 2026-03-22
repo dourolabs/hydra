@@ -249,6 +249,20 @@ export function createIssueRoutes(store: Store): Hono {
     return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime));
   });
 
+  // POST /v1/issues/:id/feedback — submit feedback
+  app.post("/v1/issues/:id/feedback", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ feedback: string }>();
+    const existing = store.get<Issue>(COLLECTION, id);
+    if (!existing) {
+      return c.json({ error: `issue '${id}' not found` }, 404);
+    }
+    const updated: Issue = { ...existing.data, feedback: body.feedback };
+    const entry = store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
+    const creationTime = store.getCreationTime(COLLECTION, id)!;
+    return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime));
+  });
+
   // POST /v1/issues/:id/todo-items — add a todo item
   app.post("/v1/issues/:id/todo-items", async (c) => {
     const id = c.req.param("id");
