@@ -5,6 +5,7 @@ export type UpsertAgentRequest = {
   prompt: string;
   prompt_path: string;
   mcp_config_path: string | null;
+  mcp_config: string | null;
   max_tries: number;
   max_simultaneous: number;
   is_assignment_agent: boolean;
