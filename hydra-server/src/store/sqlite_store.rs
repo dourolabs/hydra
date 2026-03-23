@@ -2463,10 +2463,10 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let subquery = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
-             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = {TABLE_DOCUMENTS_V2}.id) AS creation_time
-             FROM {TABLE_DOCUMENTS_V2}
-             WHERE is_latest = 1"
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
+             FROM {TABLE_DOCUMENTS_V2} d
+             WHERE d.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_documents_predicates_sqlite(query);
@@ -7732,5 +7732,120 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(found, None);
+    }
+
+    /// Helper to query is_latest values for a given document id, ordered by version_number.
+    async fn get_is_latest_flags(store: &SqliteStore, doc_id: &DocumentId) -> Vec<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT version_number, is_latest FROM documents_v2 WHERE id = ?1 ORDER BY version_number",
+        )
+        .bind(doc_id.as_ref())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn is_latest_set_on_new_document() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        assert_eq!(flags, vec![(1, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_updated_on_document_update() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let mut updated = sample_document(Some("docs/test.md"), None);
+        updated.body_markdown = "Updated body".to_string();
+        store
+            .update_document(&doc_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        // Version 1 should have is_latest = 0, version 2 should have is_latest = 1
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+
+        // A third update should only keep the newest as latest
+        updated.body_markdown = "Third version".to_string();
+        store
+            .update_document(&doc_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_maintained_on_delete() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        // Version 1 is the original, version 2 is the soft-delete; only version 2 should be latest
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_independent_across_documents() {
+        let store = create_test_store().await;
+        let (doc1, _) = store
+            .add_document(
+                sample_document(Some("docs/one.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (doc2, _) = store
+            .add_document(
+                sample_document(Some("docs/two.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Update doc1 only
+        let mut updated = sample_document(Some("docs/one.md"), None);
+        updated.body_markdown = "Updated".to_string();
+        store
+            .update_document(&doc1, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // doc1 should have version 1 not latest, version 2 latest
+        let flags1 = get_is_latest_flags(&store, &doc1).await;
+        assert_eq!(flags1, vec![(1, 0), (2, 1)]);
+
+        // doc2 should still have version 1 as latest
+        let flags2 = get_is_latest_flags(&store, &doc2).await;
+        assert_eq!(flags2, vec![(1, 1)]);
     }
 }
