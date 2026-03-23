@@ -81,7 +81,7 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Give Feedback">
+    <Modal open={open} onClose={handleClose} title="Give Feedback" className={styles.largeModal}>
       <div className={styles.form} onKeyDown={handleKeyDown}>
         <Textarea
           label="Feedback"
