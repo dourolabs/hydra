@@ -796,16 +796,31 @@ pub enum PushError {
     Other(#[from] anyhow::Error),
 }
 
+/// Resolve a ref (e.g., "origin/main") to its OID in the repository at `repo_root`.
+pub fn resolve_ref_oid(repo_root: &Path, ref_name: &str) -> Result<Oid> {
+    let repo = repo_for_path(repo_root)?;
+    let obj = repo
+        .revparse_single(ref_name)
+        .with_context(|| format!("failed to resolve ref '{ref_name}'"))?;
+    Ok(obj.id())
+}
+
 /// Push a local branch to a different ref on the remote.
 ///
 /// For example, `push_to_ref(root, "feature", "main", token, false)` pushes
 /// the local "feature" branch to `refs/heads/main` on origin.
+///
+/// When `expected_old_oid` is provided, the push uses compare-and-swap
+/// semantics: it aborts with `NotFastForward` if the remote ref has moved
+/// past the expected value, preventing silent overwrites from concurrent
+/// pushes.
 pub fn push_to_ref(
     repo_root: &Path,
     local_branch: &str,
     remote_ref: &str,
     github_token: Option<&str>,
     force: bool,
+    expected_old_oid: Option<Oid>,
 ) -> Result<(), PushError> {
     let repo = repo_for_path(repo_root).map_err(PushError::Other)?;
 
@@ -838,6 +853,31 @@ pub fn push_to_ref(
             Ok(())
         });
     }
+
+    // Compare-and-swap: use push_negotiation to reject the push if the remote
+    // ref has moved past the expected old OID. This prevents concurrent pushes
+    // from silently overwriting each other on transports (like file://) where
+    // libgit2 may not enforce fast-forward checks atomically.
+    let cas_rejection: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    if let Some(expected_oid) = expected_old_oid {
+        let cas_rejection = Arc::clone(&cas_rejection);
+        let remote_ref_owned = remote_ref.to_string();
+        callbacks.push_negotiation(move |updates| {
+            let target = format!("refs/heads/{remote_ref_owned}");
+            for update in updates {
+                // src() is the current (old) OID on the remote;
+                // dst() is the new value we are pushing.
+                if update.dst_refname() == Some(&target) && update.src() != expected_oid {
+                    *cas_rejection.lock().unwrap() = true;
+                    return Err(git2::Error::from_str(
+                        "compare-and-swap failed: remote ref was updated concurrently",
+                    ));
+                }
+            }
+            Ok(())
+        });
+    }
+
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
 
@@ -849,6 +889,12 @@ pub fn push_to_ref(
     remote
         .push(&[refspec.as_str()], Some(&mut push_options))
         .map_err(|err| {
+            // Check if the push was rejected by our CAS check.
+            if *cas_rejection.lock().unwrap() {
+                return PushError::NotFastForward {
+                    remote_ref: remote_ref.to_string(),
+                };
+            }
             if !force && err.code() == ErrorCode::NotFastForward {
                 PushError::NotFastForward {
                     remote_ref: remote_ref.to_string(),

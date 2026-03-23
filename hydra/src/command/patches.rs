@@ -25,7 +25,7 @@ use crate::git::{
     diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch, push_to_ref,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
-    squash_merge_onto as git_squash_merge_onto, PushError,
+    resolve_ref_oid as git_resolve_ref_oid, squash_merge_onto as git_squash_merge_onto, PushError,
 };
 use crate::{
     client::HydraClientInterface,
@@ -873,6 +873,10 @@ async fn merge_patch(
             );
         }
 
+        // Record the base branch OID for compare-and-swap push semantics.
+        // This prevents concurrent pushes from silently overwriting each other.
+        let expected_old_oid = git_resolve_ref_oid(&repo_root, &onto_ref).ok();
+
         // Push the squash-merged branch to the base branch on origin.
         match push_to_ref(
             &repo_root,
@@ -880,6 +884,7 @@ async fn merge_patch(
             &base_branch,
             github_token.as_deref(),
             false,
+            expected_old_oid,
         ) {
             Ok(()) => {
                 push_succeeded = true;
