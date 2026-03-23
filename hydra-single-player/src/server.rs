@@ -294,11 +294,21 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
     for &(name, prompt, is_assignment_agent) in agents {
-        let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX, None, None);
-        request.is_assignment_agent = is_assignment_agent;
-        if name == "pm" {
-            request.secrets = vec!["GH_TOKEN".to_string()];
-        }
+        let secrets = if name == "pm" {
+            vec!["GH_TOKEN".to_string()]
+        } else {
+            vec![]
+        };
+        let request = UpsertAgentRequest::new(
+            name,
+            prompt,
+            3,
+            i32::MAX,
+            None,
+            None,
+            is_assignment_agent,
+            secrets,
+        );
 
         rt.block_on(client.create_agent(&request))
             .with_context(|| format!("failed to create agent '{name}'"))?;
