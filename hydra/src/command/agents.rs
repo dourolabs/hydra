@@ -239,6 +239,8 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
+            false,
+            vec![],
         )
     } else if let Some(ref prompt_path) = args.prompt_path {
         let prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
@@ -249,6 +251,8 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
+            false,
+            vec![],
         );
         req.prompt_path = prompt_path;
         req
