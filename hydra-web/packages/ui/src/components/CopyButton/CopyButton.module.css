@@ -22,3 +22,19 @@
 .copyButton:active {
   color: var(--color-text-primary);
 }
+
+.copied {
+  color: var(--color-success, #22c55e);
+}
+
+.copied:hover {
+  color: var(--color-success, #22c55e);
+}
+
+.failed {
+  color: var(--color-error, #ef4444);
+}
+
+.failed:hover {
+  color: var(--color-error, #ef4444);
+}
