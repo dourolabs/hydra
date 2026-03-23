@@ -250,7 +250,7 @@ async fn create_agent(
             None,
             mcp_config,
         );
-        req.prompt_path = prompt_path;
+        req.prompt_path = Some(prompt_path);
         req
     } else {
         bail!("either --prompt-file or --prompt-path must be provided");
@@ -283,9 +283,9 @@ async fn update_agent(
 
     if let Some(prompt_file) = &args.prompt_file {
         request.prompt = read_prompt_file(prompt_file)?;
-        request.prompt_path = String::new();
+        request.prompt_path = Some(String::new());
     } else if let Some(ref prompt_path) = args.prompt_path {
-        request.prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
+        request.prompt_path = Some(normalize_non_empty(prompt_path, "prompt path")?);
         request.prompt = String::new();
     }
     if let Some(mcp_config_path) = args.mcp_config_path {

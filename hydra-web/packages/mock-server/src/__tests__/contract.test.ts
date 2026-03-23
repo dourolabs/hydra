@@ -516,8 +516,9 @@ describe("Agents", () => {
   const agentPayload: UpsertAgentRequest = {
     name: "test-agent",
     prompt: "You are a test agent.",
-    prompt_path: "",
+    prompt_path: null,
     mcp_config_path: null,
+    mcp_config: null,
     max_tries: 5,
     max_simultaneous: 3,
     is_assignment_agent: false,
