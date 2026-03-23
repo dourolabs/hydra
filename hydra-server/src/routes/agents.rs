@@ -246,7 +246,14 @@ async fn write_mcp_config(
     mcp_config: &str,
     actor: &Actor,
 ) -> Result<(), ApiError> {
-    write_document_content(state, mcp_config_path, "Agent MCP config", mcp_config, actor).await
+    write_document_content(
+        state,
+        mcp_config_path,
+        "Agent MCP config",
+        mcp_config,
+        actor,
+    )
+    .await
 }
 
 async fn write_document_content(
@@ -256,8 +263,7 @@ async fn write_document_content(
     content: &str,
     actor: &Actor,
 ) -> Result<(), ApiError> {
-    let query =
-        SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
+    let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
 
     let existing = state
         .list_documents(&query)
@@ -267,9 +273,10 @@ async fn write_document_content(
     let document = Document {
         title: format!("{title_prefix}: {path}"),
         body_markdown: content.to_string(),
-        path: Some(path.parse().map_err(|e| {
-            ApiError::bad_request(format!("invalid path '{path}': {e}"))
-        })?),
+        path: Some(
+            path.parse()
+                .map_err(|e| ApiError::bad_request(format!("invalid path '{path}': {e}")))?,
+        ),
         created_by: None,
         deleted: false,
     };
@@ -280,9 +287,7 @@ async fn write_document_content(
         .upsert_document(document_id, document, ActorRef::from(actor))
         .await
         .map_err(|e| {
-            ApiError::internal(format!(
-                "failed to write document to document store: {e}"
-            ))
+            ApiError::internal(format!("failed to write document to document store: {e}"))
         })?;
 
     Ok(())
