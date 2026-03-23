@@ -103,6 +103,42 @@ impl AppState {
     ///
     /// Returns a map from agent name to prompt text.
     pub async fn resolve_agent_prompts(&self, agents: &[Agent]) -> HashMap<String, String> {
+        self.resolve_batch_from_documents(agents, |agent| Some(agent.prompt_path.as_str()))
+            .await
+    }
+
+    /// Batch-fetch MCP config content for multiple agents with a single document store query.
+    ///
+    /// Returns a map from agent name to raw MCP config text.
+    pub async fn resolve_mcp_configs_batch(&self, agents: &[Agent]) -> HashMap<String, String> {
+        self.resolve_batch_from_documents(agents, |agent| agent.mcp_config_path.as_deref())
+            .await
+    }
+
+    /// Fetch raw MCP config content for a single agent from the document store.
+    pub async fn resolve_mcp_config_content(&self, agent: &Agent) -> Option<String> {
+        let mcp_config_path = agent.mcp_config_path.as_deref()?;
+        let query = SearchDocumentsQuery::new(
+            None,
+            Some(mcp_config_path.to_string()),
+            Some(true),
+            None,
+            None,
+        );
+        let documents = self.list_documents(&query).await.ok()?;
+        let (_, versioned) = documents.into_iter().next()?;
+        Some(versioned.item.body_markdown.trim_end().to_string())
+    }
+
+    /// Shared helper that batch-fetches document content for agents.
+    ///
+    /// Queries documents with the `/agents/` prefix, builds a path-to-body map,
+    /// then matches each agent using the provided `path_extractor`.
+    async fn resolve_batch_from_documents(
+        &self,
+        agents: &[Agent],
+        path_extractor: impl Fn(&Agent) -> Option<&str>,
+    ) -> HashMap<String, String> {
         let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None, None);
 
         let documents = match self.list_documents(&query).await {
@@ -110,7 +146,6 @@ impl AppState {
             Err(_) => return HashMap::new(),
         };
 
-        // Build a map from document path -> body_markdown
         let path_to_body: HashMap<String, String> = documents
             .into_iter()
             .filter_map(|(_, versioned)| {
@@ -122,7 +157,8 @@ impl AppState {
         agents
             .iter()
             .filter_map(|agent| {
-                let body = path_to_body.get(&agent.prompt_path)?;
+                let path = path_extractor(agent)?;
+                let body = path_to_body.get(path)?;
                 Some((agent.name.clone(), body.clone()))
             })
             .collect()

@@ -34,7 +34,7 @@ pub async fn list_agents(
     let agents = state.list_agents().await.map_err(map_agent_error)?;
 
     let prompt_map = state.resolve_agent_prompts(&agents).await;
-    let mcp_config_map = resolve_mcp_configs_batch(&state, &agents).await;
+    let mcp_config_map = state.resolve_mcp_configs_batch(&agents).await;
     let records: Vec<AgentRecord> = agents
         .into_iter()
         .map(|agent| {
@@ -64,7 +64,7 @@ pub async fn get_agent(
         .await
         .unwrap_or_default();
 
-    let mcp_config = resolve_mcp_config_content(&state, &agent).await;
+    let mcp_config = state.resolve_mcp_config_content(&agent).await;
 
     info!(agent = %agent_name, "get_agent completed");
     Ok(Json(AgentResponse::new(agent_to_record(
@@ -139,7 +139,7 @@ pub async fn update_agent(
     let resolved_mcp_config = if mcp_config_text.is_some() {
         mcp_config_text
     } else {
-        resolve_mcp_config_content(&state, &updated).await
+        state.resolve_mcp_config_content(&updated).await
     };
 
     info!(agent = %agent_name, "update_agent completed");
@@ -265,49 +265,6 @@ async fn write_prompt(
         })?;
 
     Ok(())
-}
-
-async fn resolve_mcp_configs_batch(
-    state: &AppState,
-    agents: &[Agent],
-) -> std::collections::HashMap<String, String> {
-    let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None, None);
-
-    let documents = match state.list_documents(&query).await {
-        Ok(docs) => docs,
-        Err(_) => return std::collections::HashMap::new(),
-    };
-
-    let path_to_body: std::collections::HashMap<String, String> = documents
-        .into_iter()
-        .filter_map(|(_, versioned)| {
-            let path = versioned.item.path.as_ref()?.to_string();
-            Some((path, versioned.item.body_markdown.trim_end().to_string()))
-        })
-        .collect();
-
-    agents
-        .iter()
-        .filter_map(|agent| {
-            let mcp_config_path = agent.mcp_config_path.as_deref()?;
-            let body = path_to_body.get(mcp_config_path)?;
-            Some((agent.name.clone(), body.clone()))
-        })
-        .collect()
-}
-
-async fn resolve_mcp_config_content(state: &AppState, agent: &Agent) -> Option<String> {
-    let mcp_config_path = agent.mcp_config_path.as_deref()?;
-    let query = SearchDocumentsQuery::new(
-        None,
-        Some(mcp_config_path.to_string()),
-        Some(true),
-        None,
-        None,
-    );
-    let documents = state.list_documents(&query).await.ok()?;
-    let (_, versioned) = documents.into_iter().next()?;
-    Some(versioned.item.body_markdown.trim_end().to_string())
 }
 
 async fn write_mcp_config(
