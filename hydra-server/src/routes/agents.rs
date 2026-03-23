@@ -172,14 +172,16 @@ fn normalize_and_build_agent(
     payload: UpsertAgentRequest,
 ) -> Result<(Agent, Option<String>, Option<String>), ApiError> {
     let name = normalize_non_empty("name", payload.name)?;
-    let prompt_path = payload
-        .prompt_path
-        .unwrap_or_else(|| default_prompt_path(&name));
+    let prompt_path = if payload.prompt_path.trim().is_empty() {
+        default_prompt_path(&name)
+    } else {
+        payload.prompt_path.trim().to_string()
+    };
 
-    let prompt_text = if payload.prompt.is_empty() {
+    let prompt_text = if payload.prompt.trim().is_empty() {
         None
     } else {
-        Some(payload.prompt)
+        Some(payload.prompt.trim().to_string())
     };
 
     let mcp_config_text = payload.mcp_config;

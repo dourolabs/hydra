@@ -66,7 +66,7 @@ pub struct UpsertAgentRequest {
     pub name: String,
     pub prompt: String,
     #[serde(default)]
-    pub prompt_path: Option<String>,
+    pub prompt_path: String,
     #[serde(default)]
     pub mcp_config_path: Option<String>,
     #[serde(default)]
@@ -93,7 +93,7 @@ impl UpsertAgentRequest {
         Self {
             name: name.into(),
             prompt: prompt.into(),
-            prompt_path: None,
+            prompt_path: String::new(),
             mcp_config_path,
             mcp_config,
             max_tries,
@@ -109,7 +109,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
         Self {
             name: request.name,
             prompt: request.prompt,
-            prompt_path: request.prompt_path.unwrap_or_default(),
+            prompt_path: request.prompt_path,
             mcp_config_path: request.mcp_config_path,
             mcp_config: request.mcp_config,
             max_tries: request.max_tries,
@@ -125,7 +125,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
         Self {
             name: record.name,
             prompt: record.prompt,
-            prompt_path: Some(record.prompt_path),
+            prompt_path: record.prompt_path,
             mcp_config_path: record.mcp_config_path,
             mcp_config: record.mcp_config,
             max_tries: record.max_tries,

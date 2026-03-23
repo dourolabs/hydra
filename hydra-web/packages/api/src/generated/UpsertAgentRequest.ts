@@ -3,7 +3,7 @@
 export type UpsertAgentRequest = {
   name: string;
   prompt: string;
-  prompt_path: string | null;
+  prompt_path: string;
   mcp_config_path: string | null;
   mcp_config: string | null;
   max_tries: number;
