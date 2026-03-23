@@ -835,10 +835,20 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
 
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_DOCUMENTS_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor, is_latest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
             )
         )
         .bind(id.as_ref())
@@ -2368,9 +2378,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
-             WHERE id = ?1
-             ORDER BY version_number DESC
-             LIMIT 1"
+             WHERE id = ?1 AND is_latest = 1"
         ))
         .bind(id.as_ref())
         .fetch_optional(&self.pool)
@@ -2455,11 +2463,10 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let subquery = format!(
-            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at,
-             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
-             FROM {TABLE_DOCUMENTS_V2} d
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
-             ON d.id = latest.id AND d.version_number = latest.max_vn"
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = {TABLE_DOCUMENTS_V2}.id) AS creation_time
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_documents_predicates_sqlite(query);
@@ -2518,10 +2525,9 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
         let subquery = format!(
-            "SELECT d.id, d.title, d.body_markdown, d.path, d.created_by, d.deleted
-             FROM {TABLE_DOCUMENTS_V2} d
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
-             ON d.id = latest.id AND d.version_number = latest.max_vn"
+            "SELECT id, title, body_markdown, path, created_by, deleted
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE is_latest = 1"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
         let (predicates, bindings) = build_documents_predicates_sqlite(query);
@@ -2549,13 +2555,8 @@ impl ReadOnlyStore for SqliteStore {
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
         let row = sqlx::query_as::<_, (String,)>(&format!(
-            "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
-                 INNER JOIN (
-                     SELECT id, MAX(version_number) AS max_ver
-                     FROM {TABLE_DOCUMENTS_V2}
-                     GROUP BY id
-                 ) latest ON d.id = latest.id AND d.version_number = latest.max_ver
-                 WHERE d.path = ?1 AND COALESCE(d.deleted, 0) = 0
+            "SELECT id FROM {TABLE_DOCUMENTS_V2}
+                 WHERE path = ?1 AND is_latest = 1 AND COALESCE(deleted, 0) = 0
                  LIMIT 1"
         ))
         .bind(path)
