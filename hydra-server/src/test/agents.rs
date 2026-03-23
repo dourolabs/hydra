@@ -58,6 +58,8 @@ fn agent_request(name: &str) -> UpsertAgentRequest {
         DEFAULT_AGENT_MAX_SIMULTANEOUS,
         None,
         None,
+        false,
+        vec![],
     )
 }
 
@@ -133,7 +135,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
-    let request = UpsertAgentRequest::new("alpha", "updated prompt", 7, 11, None, None);
+    let request = UpsertAgentRequest::new("alpha", "updated prompt", 7, 11, None, None, false, vec![]);
     let response = client
         .put(format!("{}/v1/agents/alpha", server.base_url()))
         .json(&request)

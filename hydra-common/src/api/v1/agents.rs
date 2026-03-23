@@ -89,6 +89,8 @@ impl UpsertAgentRequest {
         max_simultaneous: i32,
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
+        is_assignment_agent: bool,
+        secrets: Vec<String>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -98,8 +100,8 @@ impl UpsertAgentRequest {
             mcp_config,
             max_tries,
             max_simultaneous,
-            is_assignment_agent: false,
-            secrets: Vec::new(),
+            is_assignment_agent,
+            secrets,
         }
     }
 }
