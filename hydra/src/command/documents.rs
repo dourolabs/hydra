@@ -73,6 +73,8 @@ pub enum DocumentsCommand {
     Sync(SyncArgs),
     /// Push local document changes back to the server.
     Push(PushArgs),
+    /// Remove duplicate documents that share the same path, keeping one per path.
+    Dedup(DedupArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -176,6 +178,13 @@ pub struct PushArgs {
     pub issue_id: Option<IssueId>,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct DedupArgs {
+    /// Show what would be deleted without making changes.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
 #[derive(Debug, Clone, Default, Args)]
 pub struct DocumentBodyInput {
     /// Inline markdown body text.
@@ -239,6 +248,9 @@ pub async fn run(
         }
         DocumentsCommand::Push(args) => {
             push_documents(client, args).await?;
+        }
+        DocumentsCommand::Dedup(args) => {
+            dedup_documents(client, args).await?;
         }
     }
 
@@ -1011,6 +1023,153 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
         "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {deleted_count} deleted, {unchanged_count} unchanged, {skipped_count} skipped, {conflict_count} conflicts)"
     );
 
+    Ok(())
+}
+
+async fn list_all_documents(
+    client: &dyn HydraClientInterface,
+) -> Result<Vec<DocumentSummaryRecord>> {
+    let mut all_documents = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut query = SearchDocumentsQuery::new(None, None, None, None, None);
+        query.cursor = cursor;
+        let response = client
+            .list_documents(&query)
+            .await
+            .context("failed to list documents")?;
+        all_documents.extend(response.documents);
+        match response.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    Ok(all_documents)
+}
+
+async fn dedup_documents(client: &dyn HydraClientInterface, args: DedupArgs) -> Result<()> {
+    let all_documents = list_all_documents(client).await?;
+
+    // Group documents by path. Only consider documents that have a path.
+    let mut by_path: BTreeMap<String, Vec<&DocumentSummaryRecord>> = BTreeMap::new();
+    for doc in &all_documents {
+        if let Some(ref path) = doc.document.path {
+            by_path.entry(path.to_string()).or_default().push(doc);
+        }
+    }
+
+    // Filter to only paths with duplicates
+    let duplicated: Vec<(String, Vec<&DocumentSummaryRecord>)> = by_path
+        .into_iter()
+        .filter(|(_, docs)| docs.len() > 1)
+        .collect();
+
+    if duplicated.is_empty() {
+        println!("No duplicate documents found.");
+        return Ok(());
+    }
+
+    let total_excess: usize = duplicated.iter().map(|(_, docs)| docs.len() - 1).sum();
+    println!(
+        "Found {} path(s) with duplicates ({} excess document(s)).",
+        duplicated.len(),
+        total_excess
+    );
+
+    let mut deleted_count = 0u64;
+    for (path, mut docs) in duplicated {
+        // Sort by creation_time ascending so the oldest is first
+        docs.sort_by_key(|d| d.creation_time);
+
+        // The document to keep is the oldest (first after sort).
+        // But if a newer duplicate was updated more recently, we need to
+        // preserve that content by updating the kept document.
+        let keep = docs[0];
+        let to_delete = &docs[1..];
+
+        // Find the duplicate with the most recent timestamp (last update)
+        let most_recently_updated = docs.iter().max_by_key(|d| d.timestamp).unwrap();
+
+        // If a newer duplicate has more recent content than the kept one, update it
+        if most_recently_updated.document_id != keep.document_id
+            && most_recently_updated.timestamp > keep.timestamp
+        {
+            if args.dry_run {
+                println!(
+                    "  Would update {} with content from {} (newer update at {})",
+                    keep.document_id,
+                    most_recently_updated.document_id,
+                    most_recently_updated.timestamp
+                );
+            } else {
+                // Fetch the full content of the most recently updated document
+                let source_record = client
+                    .get_document(&most_recently_updated.document_id, false)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to fetch document '{}' for content merge",
+                            most_recently_updated.document_id
+                        )
+                    })?;
+
+                // Fetch the kept document and update it with the newer content
+                let kept_record = client
+                    .get_document(&keep.document_id, false)
+                    .await
+                    .with_context(|| {
+                        format!("failed to fetch document '{}' for update", keep.document_id)
+                    })?;
+
+                let mut updated_doc = kept_record.document.clone();
+                updated_doc.body_markdown = source_record.document.body_markdown;
+                updated_doc.title = source_record.document.title;
+
+                client
+                    .update_document(&keep.document_id, &UpsertDocumentRequest::new(updated_doc))
+                    .await
+                    .with_context(|| format!("failed to update document '{}'", keep.document_id))?;
+
+                println!(
+                    "  Updated {} with content from {} (newer update at {})",
+                    keep.document_id,
+                    most_recently_updated.document_id,
+                    most_recently_updated.timestamp
+                );
+            }
+        }
+
+        let deleted_ids: Vec<String> = to_delete
+            .iter()
+            .map(|d| d.document_id.to_string())
+            .collect();
+
+        if args.dry_run {
+            println!(
+                "  Would keep {} and delete [{}] at path '{}'",
+                keep.document_id,
+                deleted_ids.join(", "),
+                path
+            );
+        } else {
+            for dup in to_delete {
+                client
+                    .delete_document(&dup.document_id)
+                    .await
+                    .with_context(|| format!("failed to delete document '{}'", dup.document_id))?;
+            }
+            println!(
+                "  Kept {} and deleted [{}] at path '{}'",
+                keep.document_id,
+                deleted_ids.join(", "),
+                path
+            );
+        }
+        deleted_count += to_delete.len() as u64;
+    }
+
+    let prefix = if args.dry_run { "Dry run: " } else { "" };
+    println!("{prefix}Removed {deleted_count} duplicate document(s).");
     Ok(())
 }
 
