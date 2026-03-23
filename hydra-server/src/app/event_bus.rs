@@ -1386,6 +1386,15 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.count_documents(query).await
     }
 
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError> {
+        self.inner
+            .find_non_deleted_document_by_exact_path(path)
+            .await
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,

@@ -2537,6 +2537,26 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(count as u64)
     }
 
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError> {
+        let row = sqlx::query_as::<_, (String,)>(&format!(
+            "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
+                 WHERE d.path = $1 AND d.is_latest = true AND COALESCE(d.deleted, false) = false
+                 LIMIT 1"
+        ))
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(row
+            .map(|(id,)| id.parse::<DocumentId>())
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("invalid document id: {e}")))?)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,

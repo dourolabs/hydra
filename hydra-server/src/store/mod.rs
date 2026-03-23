@@ -385,6 +385,13 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts documents matching the search query, ignoring pagination (cursor/limit).
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError>;
 
+    /// Finds a non-deleted document with the exact given path.
+    /// Returns the document ID and its latest version, or None if no such document exists.
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError>;
+
     /// Returns documents that start with the provided path prefix.
     async fn get_documents_by_path(
         &self,

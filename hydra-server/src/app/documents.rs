@@ -42,6 +42,11 @@ pub enum UpsertDocumentError {
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
+    #[error("a document already exists at path '{path}'")]
+    PathConflict {
+        path: String,
+        existing_id: DocumentId,
+    },
 }
 
 impl AppState {
@@ -84,6 +89,22 @@ impl AppState {
                 self.policy_engine
                     .check_create_document(&document, store, &actor)
                     .await?;
+            }
+        }
+
+        // Check path uniqueness for new documents
+        if document_id.is_none() {
+            if let Some(ref path) = document.path {
+                let existing_id = store
+                    .find_non_deleted_document_by_exact_path(path.as_ref())
+                    .await
+                    .map_err(|source| UpsertDocumentError::Store { source })?;
+                if let Some(existing_id) = existing_id {
+                    return Err(UpsertDocumentError::PathConflict {
+                        path: path.to_string(),
+                        existing_id,
+                    });
+                }
             }
         }
 
@@ -211,6 +232,94 @@ mod tests {
         let result = state
             .upsert_document(None, document, ActorRef::test())
             .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn upsert_document_rejects_duplicate_path() {
+        let state = test_state();
+        let doc1 = Document {
+            title: "First".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some("docs/unique.md".parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        let (first_id, _) = state
+            .upsert_document(None, doc1, ActorRef::test())
+            .await
+            .unwrap();
+
+        let doc2 = Document {
+            title: "Second".to_string(),
+            body_markdown: "body2".to_string(),
+            path: Some("docs/unique.md".parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
+        match result {
+            Err(super::UpsertDocumentError::PathConflict { existing_id, .. }) => {
+                assert_eq!(existing_id, first_id);
+            }
+            other => panic!("expected PathConflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_document_allows_path_after_deletion() {
+        let state = test_state();
+        let doc = Document {
+            title: "First".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some("docs/reuse.md".parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        let (first_id, _) = state
+            .upsert_document(None, doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        state
+            .delete_document(&first_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        let doc2 = Document {
+            title: "Second".to_string(),
+            body_markdown: "body2".to_string(),
+            path: Some("docs/reuse.md".parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn upsert_document_allows_duplicate_none_path() {
+        let state = test_state();
+        let doc1 = Document {
+            title: "First".to_string(),
+            body_markdown: "body".to_string(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        };
+        state
+            .upsert_document(None, doc1, ActorRef::test())
+            .await
+            .unwrap();
+
+        let doc2 = Document {
+            title: "Second".to_string(),
+            body_markdown: "body2".to_string(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        };
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(result.is_ok());
     }
 }

@@ -146,6 +146,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        _path: &str,
+    ) -> Result<Option<DocumentId>, StoreError> {
+        fail()
+    }
+
     async fn get_documents_by_path(
         &self,
         _path_prefix: &str,
