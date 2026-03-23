@@ -12,6 +12,12 @@
   gap: var(--space-3);
 }
 
+@media (max-width: 768px) {
+  .header {
+    flex-wrap: wrap;
+  }
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -67,7 +73,6 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
-
 
 .error {
   color: var(--color-status-failed);
