@@ -311,6 +311,37 @@ impl WorkerCommands for CodexCommands {
 }
 
 impl ClaudeCommands {
+    /// Builds the argument list for the Claude CLI invocation.
+    ///
+    /// Uses `--` to separate options from the positional prompt argument.
+    /// This is necessary because `--mcp-config` accepts variadic values
+    /// (`<configs...>`), so without `--` it would consume the prompt text
+    /// as an additional config path.
+    fn build_claude_args(
+        prompt: &str,
+        model: Option<&str>,
+        mcp_config_path: Option<&Path>,
+    ) -> Vec<String> {
+        let mut args = vec![
+            "--print".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--verbose".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+        ];
+        if let Some(model) = model {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
+        if let Some(mcp_path) = mcp_config_path {
+            args.push("--mcp-config".to_string());
+            args.push(mcp_path.to_string_lossy().to_string());
+        }
+        args.push("--".to_string());
+        args.push(prompt.to_string());
+        args
+    }
+
     async fn run_claude(
         prompt: &str,
         model: Option<&str>,
@@ -338,25 +369,15 @@ impl ClaudeCommands {
             ));
         }
 
+        let args = Self::build_claude_args(prompt, model, mcp_config_path);
+
         let mut command = Command::new("claude");
-        command.arg("--print");
-        command.arg("--dangerously-skip-permissions");
-        command.arg("--verbose");
-        command.arg("--output-format");
-        command.arg("stream-json");
-        if let Some(model) = model {
-            command.arg("--model");
-            command.arg(model);
-        }
-        if let Some(mcp_path) = mcp_config_path {
-            command.arg("--mcp-config");
-            command.arg(mcp_path);
-        }
+        command.args(&args);
         command.current_dir(working_dir).envs(env);
         #[cfg(unix)]
         command.process_group(0);
 
-        command.arg(prompt);
+        eprintln!("Claude CLI args: {:?}", command.as_std());
 
         let mut child = command
             .stdout(Stdio::piped())
@@ -643,5 +664,70 @@ mod tests {
         assert_eq!(server["command"].as_str().unwrap(), "run");
         assert!(!server.contains_key("args"));
         assert!(!server.contains_key("env"));
+    }
+
+    #[test]
+    fn test_build_claude_args_without_mcp_config() {
+        let args = ClaudeCommands::build_claude_args("Do something", None, None);
+        assert_eq!(
+            args,
+            vec![
+                "--print",
+                "--dangerously-skip-permissions",
+                "--verbose",
+                "--output-format",
+                "stream-json",
+                "--",
+                "Do something",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_claude_args_with_mcp_config() {
+        let mcp_path = Path::new("/tmp/mcp-config/mcp-config.json");
+        let args = ClaudeCommands::build_claude_args(
+            "Do something",
+            Some("claude-sonnet-4-6"),
+            Some(mcp_path),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "--print",
+                "--dangerously-skip-permissions",
+                "--verbose",
+                "--output-format",
+                "stream-json",
+                "--model",
+                "claude-sonnet-4-6",
+                "--mcp-config",
+                "/tmp/mcp-config/mcp-config.json",
+                "--",
+                "Do something",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_claude_args_prompt_after_separator() {
+        // Verify the prompt always comes after "--" to prevent --mcp-config
+        // from consuming it as a variadic argument.
+        let mcp_path = Path::new("/tmp/config.json");
+        let prompt = "You are a tester agent responsible for running tests...";
+        let args = ClaudeCommands::build_claude_args(prompt, None, Some(mcp_path));
+
+        let separator_pos = args.iter().position(|a| a == "--").unwrap();
+        let prompt_pos = args.iter().position(|a| a == prompt).unwrap();
+        assert!(
+            prompt_pos == separator_pos + 1,
+            "prompt must immediately follow '--' separator"
+        );
+
+        let mcp_config_pos = args.iter().position(|a| a == "--mcp-config").unwrap();
+        assert!(
+            mcp_config_pos < separator_pos,
+            "--mcp-config must come before '--' separator"
+        );
     }
 }
