@@ -239,8 +239,8 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
-            false,
-            vec![],
+            args.is_assignment_agent,
+            parse_secrets(args.secrets.as_deref()),
         )
     } else if let Some(ref prompt_path) = args.prompt_path {
         let prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
@@ -251,8 +251,8 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
-            false,
-            vec![],
+            args.is_assignment_agent,
+            parse_secrets(args.secrets.as_deref()),
         );
         req.prompt_path = prompt_path;
         req
@@ -261,8 +261,6 @@ async fn create_agent(
     };
 
     request.mcp_config_path = args.mcp_config_path;
-    request.is_assignment_agent = args.is_assignment_agent;
-    request.secrets = parse_secrets(args.secrets.as_deref());
 
     let response = client
         .create_agent(&request)
