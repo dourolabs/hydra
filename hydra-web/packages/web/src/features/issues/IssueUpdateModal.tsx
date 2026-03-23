@@ -5,6 +5,7 @@ import type { SelectOption } from "@hydra/ui";
 import type { Issue, IssueStatus, IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
+import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./IssueUpdateModal.module.css";
 
 const statusOptions: SelectOption[] = [
@@ -23,12 +24,7 @@ interface IssueUpdateModalProps {
   issue: Issue;
 }
 
-export function IssueUpdateModal({
-  open,
-  onClose,
-  issueId,
-  issue,
-}: IssueUpdateModalProps) {
+export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateModalProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
@@ -76,10 +72,7 @@ export function IssueUpdateModal({
       if (context?.previous) {
         queryClient.setQueryData(["issue", issueId], context.previous);
       }
-      addToast(
-        err instanceof Error ? err.message : "Failed to update issue",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to update issue", "error");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
@@ -108,7 +101,12 @@ export function IssueUpdateModal({
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Update Issue" className={styles.largeModal}>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Update Issue"
+      className={largeModalStyles.largeModal}
+    >
       <div className={styles.form} onKeyDown={handleKeyDown}>
         <Select
           label="Status"
@@ -127,8 +125,7 @@ export function IssueUpdateModal({
         </div>
         <div className={styles.footer}>
           <span className={styles.hint}>
-            {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to
-            submit
+            {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
             <Button variant="secondary" size="md" onClick={handleClose}>

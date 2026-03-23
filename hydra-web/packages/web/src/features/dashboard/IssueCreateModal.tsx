@@ -10,6 +10,7 @@ import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
 import { LabelPicker } from "../labels/LabelPicker";
+import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./IssueCreateModal.module.css";
 
 const issueTypeOptions: SelectOption[] = [
@@ -19,9 +20,7 @@ const issueTypeOptions: SelectOption[] = [
   { value: "chore", label: "Chore" },
 ];
 
-function buildRepoOptions(
-  repos: RepositoryRecord[] | undefined,
-): SelectOption[] {
+function buildRepoOptions(repos: RepositoryRecord[] | undefined): SelectOption[] {
   const options: SelectOption[] = [{ value: "", label: "None" }];
   if (repos) {
     for (const r of repos) {
@@ -37,23 +36,37 @@ interface IssueCreateModalProps {
   assignees: string[];
 }
 
-export function IssueCreateModal({
-  open,
-  onClose,
-  assignees,
-}: IssueCreateModalProps) {
+export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
   const { user } = useAuth();
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const { data: repos } = useRepositories();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const [title, setTitle, clearTitleDraft] = useFormDraft("hydra:draft:issue-create-modal:title", "");
-  const [description, setDescription, clearDescriptionDraft] = useFormDraft("hydra:draft:issue-create-modal:description", "");
-  const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("hydra:draft:issue-create-modal:issueType", "task");
-  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("hydra:draft:issue-create-modal:assignee", "");
-  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("hydra:draft:issue-create-modal:repoName", "");
-  const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>("hydra:draft:issue-create-modal:labelNames", []);
+  const [title, setTitle, clearTitleDraft] = useFormDraft(
+    "hydra:draft:issue-create-modal:title",
+    "",
+  );
+  const [description, setDescription, clearDescriptionDraft] = useFormDraft(
+    "hydra:draft:issue-create-modal:description",
+    "",
+  );
+  const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>(
+    "hydra:draft:issue-create-modal:issueType",
+    "task",
+  );
+  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft(
+    "hydra:draft:issue-create-modal:assignee",
+    "",
+  );
+  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft(
+    "hydra:draft:issue-create-modal:repoName",
+    "",
+  );
+  const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>(
+    "hydra:draft:issue-create-modal:labelNames",
+    [],
+  );
   const [showMoreOptions, setShowMoreOptions] = useState(false);
 
   const resetForm = useCallback(() => {
@@ -69,7 +82,20 @@ export function IssueCreateModal({
     clearAssigneeDraft();
     clearRepoNameDraft();
     clearLabelNamesDraft();
-  }, [setTitle, setDescription, setIssueType, setAssignee, setRepoName, setLabelNames, clearTitleDraft, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft, clearLabelNamesDraft]);
+  }, [
+    setTitle,
+    setDescription,
+    setIssueType,
+    setAssignee,
+    setRepoName,
+    setLabelNames,
+    clearTitleDraft,
+    clearDescriptionDraft,
+    clearIssueTypeDraft,
+    clearAssigneeDraft,
+    clearRepoNameDraft,
+    clearLabelNamesDraft,
+  ]);
 
   const mutation = useMutation({
     mutationFn: (params: {
@@ -97,9 +123,10 @@ export function IssueCreateModal({
           }),
         },
         session_id: null,
-        ...(params.labelNames && params.labelNames.length > 0 && {
-          label_names: params.labelNames,
-        }),
+        ...(params.labelNames &&
+          params.labelNames.length > 0 && {
+            label_names: params.labelNames,
+          }),
       }),
     onSuccess: (data) => {
       resetForm();
@@ -108,10 +135,7 @@ export function IssueCreateModal({
       onClose();
     },
     onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to create issue",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to create issue", "error");
     },
   });
 
@@ -157,7 +181,7 @@ export function IssueCreateModal({
       open={open}
       onClose={handleClose}
       title="Create Issue"
-      className={styles.largeModal}
+      className={largeModalStyles.largeModal}
     >
       <div className={styles.form} onKeyDown={handleKeyDown}>
         <Input
@@ -208,8 +232,7 @@ export function IssueCreateModal({
               {showMoreOptions ? "Hide options" : "More options"}
             </button>
             <span className={styles.hint}>
-              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to
-              submit
+              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit
             </span>
           </div>
           <div className={styles.footerActions}>
