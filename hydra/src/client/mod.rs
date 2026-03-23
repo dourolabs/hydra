@@ -54,7 +54,7 @@ use hydra_common::{
     ActorId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RelativeVersionNumber,
     RepoName, SessionId,
 };
-use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
+use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
 use std::path::Path;
 use std::pin::Pin;
@@ -78,6 +78,16 @@ pub struct HydraClientUnauthenticated {
 
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+
+/// Result of attempting to create a document, distinguishing success from
+/// a 409 Conflict (duplicate path).
+pub enum CreateDocumentOutcome {
+    Created(UpsertDocumentResponse),
+    /// The server returned 409 because a document already exists at this path.
+    Conflict {
+        existing_document_id: DocumentId,
+    },
+}
 
 trait ResponseExt {
     async fn error_for_status_with_body(self, context: &str) -> Result<Response>;
@@ -123,6 +133,15 @@ impl ResponseExt for Response {
 
         Err(anyhow!(message))
     }
+}
+
+/// Parse the existing document ID from a 409 Conflict error message.
+/// Expected format: `"... (existing document: doc-xxxxxx)"`
+fn parse_conflict_document_id(error_message: &str) -> Option<DocumentId> {
+    let marker = "(existing document: ";
+    let start = error_message.find(marker)? + marker.len();
+    let end = error_message[start..].find(')')? + start;
+    error_message[start..end].parse().ok()
 }
 
 #[async_trait]
@@ -203,6 +222,12 @@ pub trait HydraClientInterface: Send + Sync {
         &self,
         request: &UpsertDocumentRequest,
     ) -> Result<UpsertDocumentResponse>;
+    /// Attempt to create a document, returning `Conflict` with the existing
+    /// document ID when the server responds with 409.
+    async fn try_create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<CreateDocumentOutcome>;
     async fn update_document(
         &self,
         document_id: &DocumentId,
@@ -992,6 +1017,50 @@ impl HydraClient {
             .json::<UpsertDocumentResponse>()
             .await
             .context("failed to decode create document response")
+    }
+
+    /// Like `create_document`, but returns `CreateDocumentOutcome::Conflict`
+    /// instead of failing when the server responds with 409 Conflict.
+    pub async fn try_create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<CreateDocumentOutcome> {
+        let url = self.endpoint("/v1/documents")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create document request")?;
+
+        if response.status() == StatusCode::CONFLICT {
+            let body_text = response.text().await.unwrap_or_default();
+            let existing_id = serde_json::from_str::<ApiErrorBody>(&body_text)
+                .ok()
+                .and_then(|body| parse_conflict_document_id(&body.error));
+            match existing_id {
+                Some(id) => {
+                    return Ok(CreateDocumentOutcome::Conflict {
+                        existing_document_id: id,
+                    })
+                }
+                None => {
+                    return Err(anyhow!(
+                        "hydra-server returned 409 Conflict but could not parse existing document ID: {body_text}"
+                    ));
+                }
+            }
+        }
+
+        let response = response
+            .error_for_status_with_body("hydra-server rejected create document request")
+            .await?;
+
+        let upsert_response = response
+            .json::<UpsertDocumentResponse>()
+            .await
+            .context("failed to decode create document response")?;
+        Ok(CreateDocumentOutcome::Created(upsert_response))
     }
 
     /// Call `PUT /v1/documents/:document_id` to update a document.
@@ -2154,6 +2223,13 @@ impl HydraClientInterface for HydraClient {
         HydraClient::create_document(self, request).await
     }
 
+    async fn try_create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<CreateDocumentOutcome> {
+        HydraClient::try_create_document(self, request).await
+    }
+
     async fn update_document(
         &self,
         document_id: &DocumentId,
@@ -2636,5 +2712,21 @@ mod tests {
         assert!(message.contains("404"), "{message}");
 
         Ok(())
+    }
+
+    #[test]
+    fn parse_conflict_document_id_extracts_id() {
+        let doc_id = DocumentId::new();
+        let msg = format!(
+            "a document already exists at path '/docs/test.md' (existing document: {doc_id})"
+        );
+        let id = parse_conflict_document_id(&msg).expect("should parse");
+        assert_eq!(id, doc_id);
+    }
+
+    #[test]
+    fn parse_conflict_document_id_returns_none_for_unrelated_message() {
+        let msg = "some other error";
+        assert!(parse_conflict_document_id(msg).is_none());
     }
 }

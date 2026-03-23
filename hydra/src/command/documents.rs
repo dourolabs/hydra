@@ -1,5 +1,5 @@
 use crate::{
-    client::HydraClientInterface,
+    client::{CreateDocumentOutcome, HydraClientInterface},
     command::{
         output::{
             render_document_records, render_document_summary_records, CommandContext,
@@ -945,22 +945,59 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                     None,
                     false,
                 )?;
-                let response = client
-                    .create_document(&UpsertDocumentRequest::new(document))
+                let request = UpsertDocumentRequest::new(document);
+                let outcome = client
+                    .try_create_document(&request)
                     .await
                     .with_context(|| format!("failed to create document for '{relative_path}'"))?;
 
-                new_entries.insert(
-                    relative_path.to_string(),
-                    SyncManifestEntry {
-                        document_id: response.document_id.clone(),
-                        content_hash: local_hash,
-                        version: response.version,
-                    },
-                );
-                let doc_id = &response.document_id;
-                maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
-                println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+                match outcome {
+                    CreateDocumentOutcome::Created(response) => {
+                        new_entries.insert(
+                            relative_path.to_string(),
+                            SyncManifestEntry {
+                                document_id: response.document_id.clone(),
+                                content_hash: local_hash.clone(),
+                                version: response.version,
+                            },
+                        );
+                        let doc_id = &response.document_id;
+                        maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
+                        println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+                    }
+                    CreateDocumentOutcome::Conflict {
+                        existing_document_id,
+                    } => {
+                        // A document already exists at this path — update it instead.
+                        let mut update_doc = request.document;
+                        update_doc.body_markdown = content.clone();
+                        let update_response = client
+                            .update_document(
+                                &existing_document_id,
+                                &UpsertDocumentRequest::new(update_doc),
+                            )
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "failed to update existing document '{existing_document_id}' for '{relative_path}'"
+                                )
+                            })?;
+
+                        new_entries.insert(
+                            relative_path.to_string(),
+                            SyncManifestEntry {
+                                document_id: existing_document_id.clone(),
+                                content_hash: local_hash.clone(),
+                                version: update_response.version,
+                            },
+                        );
+                        maybe_link_document(client, args.issue_id.as_ref(), &existing_document_id)
+                            .await;
+                        println!(
+                            "Updated (conflict): {relative_path} ({existing_document_id}, title: \"{title}\")"
+                        );
+                    }
+                }
             }
             created_count += 1;
         }
@@ -2773,5 +2810,83 @@ mod tests {
         assert!(!updated_manifest.documents.contains_key("playbooks/old.md"));
         // guides/old.md should still be in manifest (not affected by path prefix)
         assert!(updated_manifest.documents.contains_key("guides/old.md"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_handles_409_conflict_by_updating() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create manifest with no documents (new file from manifest's perspective)
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents: BTreeMap::new(),
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Create a new local file
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        let body = "# Existing Guide\nUpdated content";
+        fs::write(dir.path().join("guides/existing.md"), body).unwrap();
+
+        let existing_doc_id = DocumentId::new();
+        let server = MockServer::start();
+
+        // Mock list_documents — returns empty (stale manifest scenario)
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        // Mock create returns 409 Conflict with the existing document ID
+        let conflict_message = format!(
+            "a document already exists at path '/guides/existing.md' (existing document: {})",
+            existing_doc_id
+        );
+        let create_mock = server.mock(move |when, then| {
+            when.method(POST).path("/v1/documents");
+            then.status(409)
+                .json_body(json!({ "error": conflict_message }));
+        });
+
+        // Mock update succeeds for the existing document
+        let existing_doc_id_for_mock = existing_doc_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/documents/{existing_doc_id_for_mock}"));
+            then.status(200).json_body_obj(&UpsertDocumentResponse::new(
+                existing_doc_id_for_mock.clone(),
+                2,
+            ));
+        });
+
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: Some(dir.path().to_path_buf()),
+                dry_run: false,
+                path_prefix: None,
+                issue_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        create_mock.assert();
+        update_mock.assert();
+
+        // Verify manifest contains the existing document ID with the update version
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert!(updated_manifest
+            .documents
+            .contains_key("guides/existing.md"));
+        assert_eq!(
+            updated_manifest.documents["guides/existing.md"].document_id,
+            existing_doc_id
+        );
+        assert_eq!(updated_manifest.documents["guides/existing.md"].version, 2);
     }
 }
