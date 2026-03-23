@@ -849,6 +849,23 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self.filter_documents(query).len() as u64)
     }
 
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError> {
+        let ids = self.document_ids_with_exact_path(path);
+        for id in ids {
+            if let Some(entry) = self.documents.get(&id) {
+                if let Some(latest) = Self::latest_versioned(entry.value()) {
+                    if !latest.item.deleted {
+                        return Ok(Some(id));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -6861,5 +6878,55 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].target_id, p);
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_existing() {
+        let store = MemoryStore::new();
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/unique.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/unique.md")
+            .await
+            .unwrap();
+        assert_eq!(found, Some(doc_id));
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
+        let store = MemoryStore::new();
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/deleted.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/deleted.md")
+            .await
+            .unwrap();
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_none_for_missing() {
+        let store = MemoryStore::new();
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/nonexistent.md")
+            .await
+            .unwrap();
+        assert_eq!(found, None);
     }
 }

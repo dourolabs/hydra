@@ -265,6 +265,11 @@ pub enum StoreError {
     InvalidActorName(String),
     #[error("Invalid auth token")]
     InvalidAuthToken,
+    #[error("Document path conflict: a non-deleted document already exists at path '{path}' (existing document: {existing_id})")]
+    DocumentPathConflict {
+        path: String,
+        existing_id: DocumentId,
+    },
 }
 
 /// Trait for read-only store operations: queries and lookups.
@@ -384,6 +389,13 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Counts documents matching the search query, ignoring pagination (cursor/limit).
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError>;
+
+    /// Finds a non-deleted document with the exact given path.
+    /// Returns the document ID and its latest version, or None if no such document exists.
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError>;
 
     /// Returns documents that start with the provided path prefix.
     async fn get_documents_by_path(

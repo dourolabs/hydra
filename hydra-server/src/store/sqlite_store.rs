@@ -2544,6 +2544,33 @@ impl ReadOnlyStore for SqliteStore {
         Ok(count as u64)
     }
 
+    async fn find_non_deleted_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<DocumentId>, StoreError> {
+        let row = sqlx::query_as::<_, (String,)>(
+            &format!(
+                "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
+                 INNER JOIN (
+                     SELECT id, MAX(version_number) AS max_ver
+                     FROM {TABLE_DOCUMENTS_V2}
+                     GROUP BY id
+                 ) latest ON d.id = latest.id AND d.version_number = latest.max_ver
+                 WHERE d.path = ?1 AND COALESCE(d.deleted, 0) = 0
+                 LIMIT 1"
+            ),
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(row
+            .map(|(id,)| id.parse::<DocumentId>())
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("invalid document id: {e}")))?)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -7656,5 +7683,55 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].target_id, p);
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_existing() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/unique.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/unique.md")
+            .await
+            .unwrap();
+        assert_eq!(found, Some(doc_id));
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/deleted.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/deleted.md")
+            .await
+            .unwrap();
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn find_non_deleted_document_by_exact_path_returns_none_for_missing() {
+        let store = create_test_store().await;
+        let found = store
+            .find_non_deleted_document_by_exact_path("/docs/nonexistent.md")
+            .await
+            .unwrap();
+        assert_eq!(found, None);
     }
 }
