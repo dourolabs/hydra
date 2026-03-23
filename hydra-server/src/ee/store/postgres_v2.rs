@@ -2544,12 +2544,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let row = sqlx::query_as::<_, (String,)>(
             &format!(
                 "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
-                 INNER JOIN (
-                     SELECT id, MAX(version_number) AS max_ver
-                     FROM {TABLE_DOCUMENTS_V2}
-                     GROUP BY id
-                 ) latest ON d.id = latest.id AND d.version_number = latest.max_ver
-                 WHERE d.path = $1 AND COALESCE(d.deleted, false) = false
+                 WHERE d.path = $1 AND d.is_latest = true AND COALESCE(d.deleted, false) = false
                  LIMIT 1"
             ),
         )
