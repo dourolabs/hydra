@@ -826,6 +826,21 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
         .map(|r| (&r.document_id, r.version))
         .collect();
 
+    // Build a path → (document_id, version) map so we can detect documents that
+    // exist on the server but are missing from the local manifest (stale manifest).
+    let server_docs_by_path: std::collections::HashMap<&str, (&DocumentId, VersionNumber)> =
+        server_response
+            .documents
+            .iter()
+            .filter(|r| !r.document.deleted)
+            .filter_map(|r| {
+                r.document
+                    .path
+                    .as_ref()
+                    .map(|p| (p.as_str(), (&r.document_id, r.version)))
+            })
+            .collect();
+
     let mut updated_count = 0u64;
     let mut created_count = 0u64;
     let mut unchanged_count = 0u64;
@@ -927,42 +942,100 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
             }
             updated_count += 1;
         } else {
-            // New file — create a new document on the server
+            // File not in manifest — check if a document already exists on the
+            // server at this path (the manifest may be stale).
             let doc_path = format!("/{relative_path}");
-            let filename = Path::new(relative_path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| relative_path.clone());
-            let title = title_from_filename(&filename);
 
-            if args.dry_run {
-                println!("Would create: {relative_path} (title: \"{title}\")");
+            // First check the pre-fetched server data; if the path isn't there,
+            // do an explicit exact-path query in case the upfront query used a
+            // narrower path prefix.
+            let existing = if let Some(&(doc_id, version)) =
+                server_docs_by_path.get(doc_path.as_str())
+            {
+                Some((doc_id.clone(), version))
             } else {
-                let document = DocumentPayload::new(
-                    title.clone(),
-                    content.clone(),
-                    Some(doc_path),
-                    None,
-                    false,
-                )?;
-                let response = client
-                    .create_document(&UpsertDocumentRequest::new(document))
-                    .await
-                    .with_context(|| format!("failed to create document for '{relative_path}'"))?;
+                let exact_query =
+                    SearchDocumentsQuery::new(None, Some(doc_path.clone()), Some(true), None, None);
+                let exact_response =
+                    client.list_documents(&exact_query).await.with_context(|| {
+                        format!("failed to query server for existing document at '{doc_path}'")
+                    })?;
+                exact_response
+                    .documents
+                    .into_iter()
+                    .find(|r| !r.document.deleted)
+                    .map(|r| (r.document_id, r.version))
+            };
 
-                new_entries.insert(
-                    relative_path.to_string(),
-                    SyncManifestEntry {
-                        document_id: response.document_id.clone(),
-                        content_hash: local_hash,
-                        version: response.version,
-                    },
-                );
-                let doc_id = &response.document_id;
-                maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
-                println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+            if let Some((existing_id, _existing_version)) = existing {
+                // Document exists on server — update it instead of creating a duplicate.
+                if args.dry_run {
+                    println!("Would update (found on server): {relative_path} ({existing_id})");
+                } else {
+                    let server_record = client
+                        .get_document(&existing_id, false)
+                        .await
+                        .with_context(|| {
+                            format!("failed to fetch document '{existing_id}' from server")
+                        })?;
+                    let mut document = server_record.document.clone();
+                    document.body_markdown = content.clone();
+                    let update_response = client
+                        .update_document(&existing_id, &UpsertDocumentRequest::new(document))
+                        .await
+                        .with_context(|| format!("failed to update document '{existing_id}'"))?;
+
+                    new_entries.insert(
+                        relative_path.to_string(),
+                        SyncManifestEntry {
+                            document_id: existing_id.clone(),
+                            content_hash: local_hash,
+                            version: update_response.version,
+                        },
+                    );
+                    maybe_link_document(client, args.issue_id.as_ref(), &existing_id).await;
+                    println!("Updated (found on server): {relative_path} ({existing_id})");
+                }
+                updated_count += 1;
+            } else {
+                // Truly new file — create a new document on the server.
+                let filename = Path::new(relative_path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| relative_path.clone());
+                let title = title_from_filename(&filename);
+
+                if args.dry_run {
+                    println!("Would create: {relative_path} (title: \"{title}\")");
+                } else {
+                    let document = DocumentPayload::new(
+                        title.clone(),
+                        content.clone(),
+                        Some(doc_path),
+                        None,
+                        false,
+                    )?;
+                    let response = client
+                        .create_document(&UpsertDocumentRequest::new(document))
+                        .await
+                        .with_context(|| {
+                            format!("failed to create document for '{relative_path}'")
+                        })?;
+
+                    new_entries.insert(
+                        relative_path.to_string(),
+                        SyncManifestEntry {
+                            document_id: response.document_id.clone(),
+                            content_hash: local_hash,
+                            version: response.version,
+                        },
+                    );
+                    let doc_id = &response.document_id;
+                    maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
+                    println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+                }
+                created_count += 1;
             }
-            created_count += 1;
         }
     }
 
@@ -2773,5 +2846,104 @@ mod tests {
         assert!(!updated_manifest.documents.contains_key("playbooks/old.md"));
         // guides/old.md should still be in manifest (not affected by path prefix)
         assert!(updated_manifest.documents.contains_key("guides/old.md"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_updates_existing_server_doc_when_manifest_stale() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Empty manifest — simulates a stale/cleared manifest
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents: BTreeMap::new(),
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Create a local file that already exists on the server
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        let local_body = "# Updated Guide\nNew content";
+        fs::write(dir.path().join("guides/existing.md"), local_body).unwrap();
+
+        let existing_doc_id = DocumentId::new();
+
+        // Server already has a document at this path
+        let server_record = DocumentVersionRecord::new(
+            existing_doc_id.clone(),
+            3,
+            Utc::now(),
+            DocumentPayload::new(
+                "Existing".to_string(),
+                "# Old content".to_string(),
+                Some("/guides/existing.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+
+        let server = MockServer::start();
+
+        // Mock list_documents — returns the existing document
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        // Mock GET document (for update base)
+        let doc_id_for_get = existing_doc_id.clone();
+        let get_mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&server_record);
+        });
+
+        // Mock PUT update
+        let doc_id_for_update = existing_doc_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/documents/{doc_id_for_update}").as_str());
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 4));
+        });
+
+        // Mock POST create — should NOT be called
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/documents");
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(DocumentId::new(), 1));
+        });
+
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: Some(dir.path().to_path_buf()),
+                dry_run: false,
+                path_prefix: None,
+                issue_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Verify: document was updated, NOT created
+        get_mock.assert();
+        update_mock.assert();
+        create_mock.assert_hits(0);
+
+        // Manifest should now contain the existing document ID
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            updated_manifest.documents["guides/existing.md"].document_id,
+            existing_doc_id
+        );
+        assert_eq!(updated_manifest.documents["guides/existing.md"].version, 4);
     }
 }
