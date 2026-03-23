@@ -617,6 +617,9 @@ fn write_agent_details(agent: &AgentRecord, writer: &mut impl Write) -> Result<(
     if !agent.prompt.is_empty() {
         writeln!(writer, "  prompt: {}", agent.prompt)?;
     }
+    if let Some(mcp_config_path) = &agent.mcp_config_path {
+        writeln!(writer, "  mcp_config_path: {mcp_config_path}")?;
+    }
     writeln!(writer, "  max_tries: {}", agent.max_tries)?;
     writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
     writeln!(

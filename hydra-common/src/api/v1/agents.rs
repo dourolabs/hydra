@@ -20,6 +20,8 @@ pub struct AgentRecord {
     pub prompt_path: String,
     #[serde(default)]
     pub mcp_config_path: Option<String>,
+    #[serde(default)]
+    pub mcp_config: Option<String>,
     #[serde(default = "default_max_tries")]
     pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
@@ -36,6 +38,7 @@ impl AgentRecord {
         prompt: impl Into<String>,
         prompt_path: impl Into<String>,
         mcp_config_path: Option<String>,
+        mcp_config: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,
         is_assignment_agent: bool,
@@ -46,6 +49,7 @@ impl AgentRecord {
             prompt: prompt.into(),
             prompt_path: prompt_path.into(),
             mcp_config_path,
+            mcp_config,
             max_tries,
             max_simultaneous,
             is_assignment_agent,
@@ -65,6 +69,8 @@ pub struct UpsertAgentRequest {
     pub prompt_path: String,
     #[serde(default)]
     pub mcp_config_path: Option<String>,
+    #[serde(default)]
+    pub mcp_config: Option<String>,
     #[serde(default = "default_max_tries")]
     pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
@@ -82,12 +88,14 @@ impl UpsertAgentRequest {
         max_tries: i32,
         max_simultaneous: i32,
         mcp_config_path: Option<String>,
+        mcp_config: Option<String>,
     ) -> Self {
         Self {
             name: name.into(),
             prompt: prompt.into(),
             prompt_path: String::new(),
             mcp_config_path,
+            mcp_config,
             max_tries,
             max_simultaneous,
             is_assignment_agent: false,
@@ -103,6 +111,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
             prompt: request.prompt,
             prompt_path: request.prompt_path,
             mcp_config_path: request.mcp_config_path,
+            mcp_config: request.mcp_config,
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
             is_assignment_agent: request.is_assignment_agent,
@@ -118,6 +127,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
             prompt: record.prompt,
             prompt_path: record.prompt_path,
             mcp_config_path: record.mcp_config_path,
+            mcp_config: record.mcp_config,
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
             is_assignment_agent: record.is_assignment_agent,

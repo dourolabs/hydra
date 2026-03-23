@@ -55,6 +55,10 @@ pub struct CreateAgentArgs {
     #[arg(long = "mcp-config-path", value_name = "PATH")]
     pub mcp_config_path: Option<String>,
 
+    /// Path to a local JSON file containing MCP server configuration.
+    #[arg(long = "mcp-config-file", value_name = "PATH")]
+    pub mcp_config_file: Option<String>,
+
     /// Maximum retries for this agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
     pub max_tries: i32,
@@ -101,6 +105,10 @@ pub struct UpdateAgentArgs {
     /// Document store path for the agent MCP config.
     #[arg(long = "mcp-config-path", value_name = "PATH")]
     pub mcp_config_path: Option<String>,
+
+    /// Path to a local JSON file containing updated MCP server configuration.
+    #[arg(long = "mcp-config-file", value_name = "PATH")]
+    pub mcp_config_file: Option<String>,
 
     /// Updated max retries for the agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
@@ -187,6 +195,19 @@ fn parse_secrets(input: Option<&str>) -> Vec<String> {
     }
 }
 
+fn read_mcp_config_file(path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read MCP config file: {path}"))?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        bail!("MCP config file is empty: {path}");
+    }
+    // Validate that the content is valid JSON.
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .with_context(|| format!("MCP config file is not valid JSON: {path}"))?;
+    Ok(trimmed.to_string())
+}
+
 fn read_prompt_file(path: &str) -> Result<String> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read prompt file: {path}"))?;
@@ -203,9 +224,22 @@ async fn create_agent(
 ) -> Result<AgentRecord> {
     let name = normalize_non_empty(&args.name, "agent name")?;
 
+    let mcp_config = args
+        .mcp_config_file
+        .as_deref()
+        .map(read_mcp_config_file)
+        .transpose()?;
+
     let mut request = if let Some(ref prompt_file) = args.prompt_file {
         let prompt = read_prompt_file(prompt_file)?;
-        UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None)
+        UpsertAgentRequest::new(
+            name,
+            prompt,
+            args.max_tries,
+            args.max_simultaneous,
+            None,
+            mcp_config,
+        )
     } else if let Some(ref prompt_path) = args.prompt_path {
         let prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
         let mut req = UpsertAgentRequest::new(
@@ -214,6 +248,7 @@ async fn create_agent(
             args.max_tries,
             args.max_simultaneous,
             None,
+            mcp_config,
         );
         req.prompt_path = prompt_path;
         req
@@ -255,6 +290,9 @@ async fn update_agent(
     }
     if let Some(mcp_config_path) = args.mcp_config_path {
         request.mcp_config_path = Some(mcp_config_path);
+    }
+    if let Some(mcp_config_file) = &args.mcp_config_file {
+        request.mcp_config = Some(read_mcp_config_file(mcp_config_file)?);
     }
     if let Some(max_tries) = args.max_tries {
         request.max_tries = max_tries;
@@ -325,8 +363,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", "", None, 3, i32::MAX, false, Vec::new()),
-            AgentRecord::new("beta", "", "", None, 3, i32::MAX, false, Vec::new()),
+            AgentRecord::new("alpha", "", "", None, None, 3, i32::MAX, false, Vec::new()),
+            AgentRecord::new("beta", "", "", None, None, 3, i32::MAX, false, Vec::new()),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -356,6 +394,7 @@ mod tests {
             "prompt",
             "/agents/alpha/prompt.md",
             None,
+            None,
             2,
             5,
             true,
@@ -384,6 +423,7 @@ mod tests {
             "swe",
             "do software engineering",
             "/agents/swe/prompt.md",
+            None,
             None,
             3,
             i32::MAX,
@@ -417,6 +457,7 @@ mod tests {
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: 2,
             max_simultaneous: 4,
             is_assignment_agent: false,
@@ -426,6 +467,7 @@ mod tests {
             "writer",
             "draft this",
             "",
+            None,
             None,
             2,
             4,
@@ -438,6 +480,7 @@ mod tests {
                 "prompt": "draft this",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 2,
                 "max_simultaneous": 4,
                 "is_assignment_agent": false,
@@ -469,6 +512,7 @@ mod tests {
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: true,
@@ -478,6 +522,7 @@ mod tests {
             "pm",
             "assign issues",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -490,6 +535,7 @@ mod tests {
                 "prompt": "assign issues",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": true,
@@ -517,6 +563,7 @@ mod tests {
             "draft",
             "",
             None,
+            None,
             3,
             i32::MAX,
             false,
@@ -526,6 +573,7 @@ mod tests {
             "writer",
             "revised",
             "",
+            None,
             None,
             3,
             10,
@@ -545,6 +593,7 @@ mod tests {
                 "prompt": "revised",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 10,
                 "is_assignment_agent": false,
@@ -558,6 +607,7 @@ mod tests {
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: Some(10),
             is_assignment_agent: false,
@@ -585,6 +635,7 @@ mod tests {
             "draft",
             "",
             None,
+            None,
             3,
             i32::MAX,
             false,
@@ -594,6 +645,7 @@ mod tests {
             "writer",
             "draft",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -611,6 +663,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": true,
@@ -624,6 +677,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: true,
@@ -649,6 +703,7 @@ mod tests {
             "draft",
             "",
             None,
+            None,
             3,
             i32::MAX,
             true,
@@ -658,6 +713,7 @@ mod tests {
             "writer",
             "draft",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -675,6 +731,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": false,
@@ -688,6 +745,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -713,6 +771,7 @@ mod tests {
             "draft",
             "",
             None,
+            None,
             3,
             i32::MAX,
             true,
@@ -722,6 +781,7 @@ mod tests {
             "writer",
             "draft",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -739,6 +799,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": true,
@@ -752,6 +813,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -796,7 +858,8 @@ mod tests {
         let server = MockServer::start();
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new("writer", "", "", None, 3, i32::MAX, false, Vec::new());
+        let deleted =
+            AgentRecord::new("writer", "", "", None, None, 3, i32::MAX, false, Vec::new());
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
@@ -823,6 +886,7 @@ mod tests {
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: false,
@@ -832,6 +896,7 @@ mod tests {
             "worker",
             "do stuff",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -844,6 +909,7 @@ mod tests {
                 "prompt": "do stuff",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": false,
@@ -871,6 +937,7 @@ mod tests {
             "do stuff",
             "",
             None,
+            None,
             3,
             i32::MAX,
             false,
@@ -880,6 +947,7 @@ mod tests {
             "worker",
             "do stuff",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -897,6 +965,7 @@ mod tests {
                 "prompt": "do stuff",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": false,
@@ -910,6 +979,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -935,6 +1005,7 @@ mod tests {
             "do stuff",
             "",
             None,
+            None,
             3,
             i32::MAX,
             false,
@@ -944,6 +1015,7 @@ mod tests {
             "worker",
             "do stuff",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -961,6 +1033,7 @@ mod tests {
                 "prompt": "do stuff",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": false,
@@ -974,6 +1047,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -995,6 +1069,7 @@ mod tests {
             "worker",
             "prompt",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -1033,6 +1108,40 @@ mod tests {
         assert!(err.to_string().contains("failed to read prompt file"));
     }
 
+    fn write_mcp_config_tempfile(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn read_mcp_config_file_validates_json() {
+        let f = write_mcp_config_tempfile("not json");
+        let err = read_mcp_config_file(f.path().to_str().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("not valid JSON"));
+    }
+
+    #[test]
+    fn read_mcp_config_file_rejects_empty() {
+        let f = write_mcp_config_tempfile("   ");
+        let err = read_mcp_config_file(f.path().to_str().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("MCP config file is empty"));
+    }
+
+    #[test]
+    fn read_mcp_config_file_rejects_missing() {
+        let err = read_mcp_config_file("/nonexistent/mcp.json").unwrap_err();
+        assert!(err.to_string().contains("failed to read MCP config file"));
+    }
+
+    #[test]
+    fn read_mcp_config_file_accepts_valid_json() {
+        let f = write_mcp_config_tempfile(r#"{"mcpServers": {}}"#);
+        let result = read_mcp_config_file(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(result, r#"{"mcpServers": {}}"#);
+    }
+
     #[tokio::test]
     async fn create_agent_with_prompt_path_and_mcp_config_path() -> Result<()> {
         let server = MockServer::start();
@@ -1044,6 +1153,7 @@ mod tests {
             prompt_file: None,
             prompt_path: Some("/agents/tester/prompt.md".to_string()),
             mcp_config_path: Some("/agents/tester/mcp-config.json".to_string()),
+            mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: false,
@@ -1054,6 +1164,7 @@ mod tests {
             "",
             "/agents/tester/prompt.md",
             Some("/agents/tester/mcp-config.json".to_string()),
+            None,
             3,
             i32::MAX,
             false,
@@ -1065,6 +1176,7 @@ mod tests {
                 "prompt": "",
                 "prompt_path": "/agents/tester/prompt.md",
                 "mcp_config_path": "/agents/tester/mcp-config.json",
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": false,
@@ -1098,6 +1210,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
             is_assignment_agent: false,
@@ -1139,6 +1252,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_agent_with_mcp_config_file() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let prompt_file = write_prompt_file("do stuff");
+        let mcp_file = write_mcp_config_tempfile(r#"{"mcpServers": {"test": {}}}"#);
+
+        let args = CreateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
+            max_tries: 3,
+            max_simultaneous: i32::MAX,
+            is_assignment_agent: false,
+            secrets: None,
+        };
+        let response = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            None,
+            Some(r#"{"mcpServers": {"test": {}}}"#.to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/agents").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "mcp_config": "{\"mcpServers\": {\"test\": {}}}",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = create_agent(&client, args).await?;
+        mock.assert();
+        assert_eq!(agent.name, "worker");
+        assert_eq!(
+            agent.mcp_config,
+            Some(r#"{"mcpServers": {"test": {}}}"#.to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_agent_with_prompt_path_clears_prompt() -> Result<()> {
         let server = MockServer::start();
         let client =
@@ -1147,6 +1317,7 @@ mod tests {
             "writer",
             "old prompt",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -1157,6 +1328,7 @@ mod tests {
             "writer",
             "",
             "/agents/writer/prompt.md",
+            None,
             None,
             3,
             i32::MAX,
@@ -1174,6 +1346,7 @@ mod tests {
                 "prompt": "",
                 "prompt_path": "/agents/writer/prompt.md",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": false,
@@ -1187,6 +1360,7 @@ mod tests {
             prompt_file: None,
             prompt_path: Some("/agents/writer/prompt.md".to_string()),
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -1213,6 +1387,7 @@ mod tests {
             "draft",
             "",
             None,
+            None,
             3,
             i32::MAX,
             false,
@@ -1223,6 +1398,7 @@ mod tests {
             "draft",
             "",
             Some("/agents/writer/mcp-config.json".to_string()),
+            None,
             3,
             i32::MAX,
             false,
@@ -1239,6 +1415,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "mcp_config_path": "/agents/writer/mcp-config.json",
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": false,
@@ -1252,6 +1429,7 @@ mod tests {
             prompt_file: None,
             prompt_path: None,
             mcp_config_path: Some("/agents/writer/mcp-config.json".to_string()),
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -1271,6 +1449,149 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_agent_with_mcp_config_file() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            None,
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let mcp_file = write_mcp_config_tempfile(r#"{"mcpServers": {}}"#);
+        let updated = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            None,
+            Some(r#"{"mcpServers": {}}"#.to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/worker");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/worker").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "mcp_config": "{\"mcpServers\": {}}",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(
+            response.mcp_config,
+            Some(r#"{"mcpServers": {}}"#.to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_preserves_mcp_config_when_flag_omitted() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            Some("/agents/worker/mcp-config.json".to_string()),
+            Some(r#"{"mcpServers": {}}"#.to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+        let updated = AgentResponse::new(AgentRecord::new(
+            "worker",
+            "do stuff",
+            "",
+            Some("/agents/worker/mcp-config.json".to_string()),
+            Some(r#"{"mcpServers": {}}"#.to_string()),
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/worker");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/worker").json_body(json!({
+                "name": "worker",
+                "prompt": "do stuff",
+                "prompt_path": "",
+                "mcp_config_path": "/agents/worker/mcp-config.json",
+                "mcp_config": "{\"mcpServers\": {}}",
+                "max_tries": 3,
+                "max_simultaneous": 2147483647i64,
+                "is_assignment_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "worker".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+            secrets: None,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(
+            response.mcp_config_path,
+            Some("/agents/worker/mcp-config.json".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_agent_prompt_file_clears_prompt_path() -> Result<()> {
         let server = MockServer::start();
         let client =
@@ -1279,6 +1600,7 @@ mod tests {
             "writer",
             "",
             "/agents/writer/prompt.md",
+            None,
             None,
             3,
             i32::MAX,
@@ -1289,6 +1611,7 @@ mod tests {
             "writer",
             "new inline prompt",
             "",
+            None,
             None,
             3,
             i32::MAX,
@@ -1308,6 +1631,7 @@ mod tests {
                 "prompt": "new inline prompt",
                 "prompt_path": "",
                 "mcp_config_path": null,
+                "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
                 "is_assignment_agent": false,
@@ -1321,6 +1645,7 @@ mod tests {
             prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             prompt_path: None,
             mcp_config_path: None,
+            mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
             is_assignment_agent: false,
@@ -1333,6 +1658,29 @@ mod tests {
         put_mock.assert();
         assert_eq!(response.prompt, "new inline prompt");
         assert_eq!(response.prompt_path, "");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pretty_output_shows_mcp_config_path() -> Result<()> {
+        let agents = vec![AgentRecord::new(
+            "worker",
+            "prompt",
+            "/agents/worker/prompt.md",
+            Some("/agents/worker/mcp-config.json".to_string()),
+            None,
+            3,
+            i32::MAX,
+            false,
+            Vec::new(),
+        )];
+        let mut output = Vec::new();
+
+        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
+        let output = String::from_utf8(output)?;
+
+        assert!(output.contains("mcp_config_path: /agents/worker/mcp-config.json"));
 
         Ok(())
     }

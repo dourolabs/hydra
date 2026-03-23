@@ -518,6 +518,7 @@ describe("Agents", () => {
     prompt: "You are a test agent.",
     prompt_path: "",
     mcp_config_path: null,
+    mcp_config: null,
     max_tries: 5,
     max_simultaneous: 3,
     is_assignment_agent: false,
