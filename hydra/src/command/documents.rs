@@ -1218,10 +1218,10 @@ impl DocumentBodyInput {
 mod tests {
     use super::*;
     use crate::client::HydraClient;
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
     use httpmock::prelude::*;
     use hydra_common::documents::{
-        Document as DocumentPayload, ListDocumentsResponse, UpsertDocumentResponse,
+        Document as DocumentPayload, DocumentSummary, ListDocumentsResponse, UpsertDocumentResponse,
     };
     use reqwest::Client as HttpClient;
     use serde_json::{json, Value};
@@ -2932,5 +2932,257 @@ mod tests {
         assert!(!updated_manifest.documents.contains_key("playbooks/old.md"));
         // guides/old.md should still be in manifest (not affected by path prefix)
         assert!(updated_manifest.documents.contains_key("guides/old.md"));
+    }
+
+    fn make_summary_record(
+        id: &DocumentId,
+        path: Option<&str>,
+        title: &str,
+        creation_time: DateTime<Utc>,
+        timestamp: DateTime<Utc>,
+    ) -> DocumentSummaryRecord {
+        let doc = DocumentPayload::new(
+            title.to_string(),
+            "# Body".to_string(),
+            path.map(|p| p.to_string()),
+            None,
+            false,
+        )
+        .unwrap();
+        let summary = DocumentSummary::from(&doc);
+        DocumentSummaryRecord::new(
+            id.clone(),
+            0,
+            timestamp,
+            summary,
+            None,
+            creation_time,
+            Vec::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn list_all_documents_paginates() {
+        let id1 = DocumentId::new();
+        let id2 = DocumentId::new();
+        let now = Utc::now();
+        let rec1 = make_summary_record(&id1, Some("a.md"), "A", now, now);
+        let rec2 = make_summary_record(&id2, Some("b.md"), "B", now, now);
+
+        let mut page1 = ListDocumentsResponse::new(vec![rec1.clone()]);
+        page1.next_cursor = Some("cursor1".to_string());
+        let page2 = ListDocumentsResponse::new(vec![rec2.clone()]);
+
+        let server = MockServer::start();
+        // First page: no cursor param
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents").matches(
+                |req: &httpmock::prelude::HttpMockRequest| {
+                    !req.query_params
+                        .as_ref()
+                        .map_or(false, |params| params.iter().any(|(k, _)| k == "cursor"))
+                },
+            );
+            then.status(200).json_body_obj(&page1);
+        });
+        // Second page: with cursor
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/documents")
+                .query_param("cursor", "cursor1");
+            then.status(200).json_body_obj(&page2);
+        });
+        let client = mock_client(&server);
+
+        let docs = list_all_documents(&client).await.unwrap();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].document_id, id1);
+        assert_eq!(docs[1].document_id, id2);
+    }
+
+    #[tokio::test]
+    async fn dedup_no_duplicates() {
+        let id1 = DocumentId::new();
+        let id2 = DocumentId::new();
+        let now = Utc::now();
+        let rec1 = make_summary_record(&id1, Some("a.md"), "A", now, now);
+        let rec2 = make_summary_record(&id2, Some("b.md"), "B", now, now);
+
+        let response = ListDocumentsResponse::new(vec![rec1, rec2]);
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        // Should succeed without any deletions
+        dedup_documents(&client, DedupArgs { dry_run: false })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dedup_keeps_oldest_deletes_newer() {
+        let old_id = DocumentId::new();
+        let new_id = DocumentId::new();
+        let t1 = Utc::now() - chrono::Duration::hours(2);
+        let t2 = Utc::now() - chrono::Duration::hours(1);
+
+        // Both at same path, old_id created first with later timestamp (so no content update needed)
+        let rec_old = make_summary_record(&old_id, Some("docs/plan.md"), "Plan", t1, t2);
+        let rec_new = make_summary_record(&new_id, Some("docs/plan.md"), "Plan", t2, t1);
+
+        let response = ListDocumentsResponse::new(vec![rec_old.clone(), rec_new.clone()]);
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+
+        // Expect delete of the newer document
+        let delete_record = sample_document_record(&new_id);
+        let new_id_str = new_id.to_string();
+        let delete_mock = server.mock(move |when, then| {
+            when.method(DELETE)
+                .path(format!("/v1/documents/{new_id_str}"));
+            then.status(200).json_body_obj(&delete_record);
+        });
+        let client = mock_client(&server);
+
+        dedup_documents(&client, DedupArgs { dry_run: false })
+            .await
+            .unwrap();
+
+        delete_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn dedup_updates_kept_doc_when_newer_has_recent_content() {
+        let old_id = DocumentId::new();
+        let new_id = DocumentId::new();
+        let t1 = Utc::now() - chrono::Duration::hours(2);
+        let t2 = Utc::now() - chrono::Duration::hours(1);
+        let t3 = Utc::now(); // newer doc was updated more recently
+
+        // old_id created first (t1), timestamp t1. new_id created second (t2), timestamp t3 (updated later).
+        let rec_old = make_summary_record(&old_id, Some("docs/plan.md"), "Plan", t1, t1);
+        let rec_new = make_summary_record(&new_id, Some("docs/plan.md"), "Plan Updated", t2, t3);
+
+        let response = ListDocumentsResponse::new(vec![rec_old.clone(), rec_new.clone()]);
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+
+        // get_document for the newer doc (source of content)
+        let new_id_str = new_id.to_string();
+        let source_record = DocumentVersionRecord::new(
+            new_id.clone(),
+            0,
+            t3,
+            DocumentPayload::new(
+                "Plan Updated".to_string(),
+                "# Updated content".to_string(),
+                Some("docs/plan.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
+            None,
+            t2,
+            Vec::new(),
+        );
+        server.mock(move |when, then| {
+            when.method(GET).path(format!("/v1/documents/{new_id_str}"));
+            then.status(200).json_body_obj(&source_record);
+        });
+
+        // get_document for the kept doc
+        let old_id_str = old_id.to_string();
+        let kept_record = DocumentVersionRecord::new(
+            old_id.clone(),
+            0,
+            t1,
+            DocumentPayload::new(
+                "Plan".to_string(),
+                "# Original content".to_string(),
+                Some("docs/plan.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
+            None,
+            t1,
+            Vec::new(),
+        );
+        let old_id_str2 = old_id.to_string();
+        server.mock(move |when, then| {
+            when.method(GET).path(format!("/v1/documents/{old_id_str}"));
+            then.status(200).json_body_obj(&kept_record);
+        });
+
+        // update_document for the kept doc
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/documents/{old_id_str2}"));
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(old_id.clone(), 1));
+        });
+
+        // delete of the newer doc
+        let new_id_for_delete = new_id.to_string();
+        let delete_record = sample_document_record(&new_id);
+        let delete_mock = server.mock(move |when, then| {
+            when.method(DELETE)
+                .path(format!("/v1/documents/{new_id_for_delete}"));
+            then.status(200).json_body_obj(&delete_record);
+        });
+        let client = mock_client(&server);
+
+        dedup_documents(&client, DedupArgs { dry_run: false })
+            .await
+            .unwrap();
+
+        update_mock.assert();
+        delete_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn dedup_dry_run_makes_no_mutations() {
+        let old_id = DocumentId::new();
+        let new_id = DocumentId::new();
+        let t1 = Utc::now() - chrono::Duration::hours(2);
+        let t2 = Utc::now();
+
+        let rec_old = make_summary_record(&old_id, Some("docs/plan.md"), "Plan", t1, t1);
+        let rec_new = make_summary_record(&new_id, Some("docs/plan.md"), "Plan", t2, t2);
+
+        let response = ListDocumentsResponse::new(vec![rec_old, rec_new]);
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+
+        // No DELETE or PUT mocks -- if dedup tries to mutate, the mock server will return errors
+        let delete_mock = server.mock(|when, then| {
+            when.method(DELETE);
+            then.status(500);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT);
+            then.status(500);
+        });
+        let client = mock_client(&server);
+
+        dedup_documents(&client, DedupArgs { dry_run: true })
+            .await
+            .unwrap();
+
+        // Verify no mutations happened
+        delete_mock.assert_hits(0);
+        update_mock.assert_hits(0);
     }
 }
