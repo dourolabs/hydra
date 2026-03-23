@@ -4,6 +4,7 @@ import { Modal, Button, Textarea } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
+import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./FeedbackModal.module.css";
 
 interface FeedbackModalProps {
@@ -47,10 +48,7 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
       if (context?.previous) {
         queryClient.setQueryData(["issue", issueId], context.previous);
       }
-      addToast(
-        err instanceof Error ? err.message : "Failed to submit feedback",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
@@ -81,7 +79,12 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Give Feedback" className={styles.largeModal}>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Give Feedback"
+      className={largeModalStyles.largeModal}
+    >
       <div className={styles.form} onKeyDown={handleKeyDown}>
         <Textarea
           label="Feedback"
@@ -92,8 +95,7 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
         />
         <div className={styles.footer}>
           <span className={styles.hint}>
-            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to
-            submit
+            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
             <Button variant="secondary" size="md" onClick={handleClose}>
