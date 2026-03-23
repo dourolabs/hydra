@@ -257,9 +257,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let result = state
-            .upsert_document(None, doc2, ActorRef::test())
-            .await;
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         match result {
             Err(super::UpsertDocumentError::PathConflict { existing_id, .. }) => {
                 assert_eq!(existing_id, first_id);
@@ -283,7 +281,10 @@ mod tests {
             .await
             .unwrap();
 
-        state.delete_document(&first_id, ActorRef::test()).await.unwrap();
+        state
+            .delete_document(&first_id, ActorRef::test())
+            .await
+            .unwrap();
 
         let doc2 = Document {
             title: "Second".to_string(),
@@ -292,9 +293,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let result = state
-            .upsert_document(None, doc2, ActorRef::test())
-            .await;
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(result.is_ok());
     }
 
@@ -320,9 +319,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let result = state
-            .upsert_document(None, doc2, ActorRef::test())
-            .await;
+        let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(result.is_ok());
     }
 }

@@ -2541,13 +2541,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
-        let row = sqlx::query_as::<_, (String,)>(
-            &format!(
-                "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
+        let row = sqlx::query_as::<_, (String,)>(&format!(
+            "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
                  WHERE d.path = $1 AND d.is_latest = true AND COALESCE(d.deleted, false) = false
                  LIMIT 1"
-            ),
-        )
+        ))
         .bind(path)
         .fetch_optional(&self.pool)
         .await
