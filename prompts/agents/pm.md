@@ -126,4 +126,11 @@ Clean up:
 
 Before ending your session, mark all notifications as read: `hydra notifications read-all`
 
-If you trigger any asynchronous work (e.g., waiting on created tasks), end the session so you can be re-run later.
+## Session lifecycle and waiting for child issues
+
+When you create child issues and need to wait for them to complete:
+1. Save your current state and plan in the progress field so you can resume later.
+2. END your session immediately. Do NOT continue running.
+3. The system will automatically create a new session for your issue when child issues complete (you will receive notifications about their status changes).
+
+**NEVER poll, sleep-loop, or repeatedly check child issue status in a loop.** This wastes resources and is not how the system works. The correct pattern is always: create child issues -> update progress -> end session. You will be re-invoked automatically when there is new information to act on.

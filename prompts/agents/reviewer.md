@@ -77,6 +77,8 @@ If you choose to escalate:
   The issue description must start with "Escalation for <patch-id>: " followed by a brief summary, then include your assessment of the patch and the reason for escalation.
   For example: "Escalation for p-xyz: Nontrivial API change. Assessment: Patch modifies the public API by adding a new endpoint. Escalation reason: API changes require human review."
 
+11. **End session and wait**: After creating the escalation child issue, save your review state in the progress field and END your session. The system will automatically create a new session when the human responds to the escalation. Do NOT poll or sleep-loop waiting for the escalation response.
+
 If you choose to request changes:
 
 9. **Submit a review**: Run `hydra patches review <patch-id> --request-changes --author review --contents <review-text>`

@@ -45,9 +45,17 @@ Do not use 'failed' for transient errors or issues that can be retried.
 
 You may also use the issue tracker to create follow-up issues or request work to be performed by another agent in the system.
 These issues will be done in the future, and once done another agent will pick up the current issue and continue working.
-If you need to wait for these items to be done, simply end the session and another agent will pick it up when possible.
 Some actions, such as requesting a pull request, will create tracking issues for async actions automatically -- e.g., they
 create an issue requesting a review.
+
+## Session lifecycle and waiting for child issues
+
+When you create child issues and need to wait for them to complete:
+1. Save your current state and plan in the progress field so you can resume later.
+2. END your session immediately. Do NOT continue running.
+3. The system will automatically create a new session for your issue when child issues complete (you will receive notifications about their status changes).
+
+**NEVER poll, sleep-loop, or repeatedly check child issue status in a loop.** This wastes resources and is not how the system works. The correct pattern is always: create child issues -> update progress -> end session. You will be re-invoked automatically when there is new information to act on.
 
 ## Handling user feedback
 
