@@ -237,34 +237,7 @@ async fn write_prompt(
     prompt: &str,
     actor: &Actor,
 ) -> Result<(), ApiError> {
-    let query =
-        SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None, None);
-
-    let existing = state
-        .list_documents(&query)
-        .await
-        .map_err(|e| ApiError::internal(format!("failed to query document store: {e}")))?;
-
-    let document = Document {
-        title: format!("Agent prompt: {prompt_path}"),
-        body_markdown: prompt.to_string(),
-        path: Some(prompt_path.parse().map_err(|e| {
-            ApiError::bad_request(format!("invalid prompt_path '{prompt_path}': {e}"))
-        })?),
-        created_by: None,
-        deleted: false,
-    };
-
-    let document_id = existing.into_iter().next().map(|(id, _)| id);
-
-    state
-        .upsert_document(document_id, document, ActorRef::from(actor))
-        .await
-        .map_err(|e| {
-            ApiError::internal(format!("failed to write prompt to document store: {e}"))
-        })?;
-
-    Ok(())
+    write_document_content(state, prompt_path, "Agent prompt", prompt, actor).await
 }
 
 async fn resolve_mcp_configs_batch(
@@ -316,13 +289,18 @@ async fn write_mcp_config(
     mcp_config: &str,
     actor: &Actor,
 ) -> Result<(), ApiError> {
-    let query = SearchDocumentsQuery::new(
-        None,
-        Some(mcp_config_path.to_string()),
-        Some(true),
-        None,
-        None,
-    );
+    write_document_content(state, mcp_config_path, "Agent MCP config", mcp_config, actor).await
+}
+
+async fn write_document_content(
+    state: &AppState,
+    path: &str,
+    title_prefix: &str,
+    content: &str,
+    actor: &Actor,
+) -> Result<(), ApiError> {
+    let query =
+        SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
 
     let existing = state
         .list_documents(&query)
@@ -330,10 +308,10 @@ async fn write_mcp_config(
         .map_err(|e| ApiError::internal(format!("failed to query document store: {e}")))?;
 
     let document = Document {
-        title: format!("Agent MCP config: {mcp_config_path}"),
-        body_markdown: mcp_config.to_string(),
-        path: Some(mcp_config_path.parse().map_err(|e| {
-            ApiError::bad_request(format!("invalid mcp_config_path '{mcp_config_path}': {e}"))
+        title: format!("{title_prefix}: {path}"),
+        body_markdown: content.to_string(),
+        path: Some(path.parse().map_err(|e| {
+            ApiError::bad_request(format!("invalid path '{path}': {e}"))
         })?),
         created_by: None,
         deleted: false,
@@ -345,7 +323,9 @@ async fn write_mcp_config(
         .upsert_document(document_id, document, ActorRef::from(actor))
         .await
         .map_err(|e| {
-            ApiError::internal(format!("failed to write MCP config to document store: {e}"))
+            ApiError::internal(format!(
+                "failed to write document to document store: {e}"
+            ))
         })?;
 
     Ok(())
