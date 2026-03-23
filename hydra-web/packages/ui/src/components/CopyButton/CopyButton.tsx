@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./CopyButton.module.css";
 
 export interface CopyButtonProps {
@@ -30,6 +30,10 @@ type CopyState = "idle" | "copied" | "failed";
 export function CopyButton({ value, onCopied }: CopyButtonProps) {
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   const handleClick = useCallback(
     async (e: React.MouseEvent) => {
