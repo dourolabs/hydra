@@ -34,11 +34,13 @@ pub async fn list_agents(
     let agents = state.list_agents().await.map_err(map_agent_error)?;
 
     let prompt_map = state.resolve_agent_prompts(&agents).await;
+    let mcp_config_map = resolve_mcp_configs_batch(&state, &agents).await;
     let records: Vec<AgentRecord> = agents
         .into_iter()
         .map(|agent| {
             let prompt = prompt_map.get(&agent.name).cloned().unwrap_or_default();
-            agent_to_record(agent, prompt, None)
+            let mcp_config = mcp_config_map.get(&agent.name).cloned();
+            agent_to_record(agent, prompt, mcp_config)
         })
         .collect();
 
@@ -170,26 +172,17 @@ fn normalize_and_build_agent(
     payload: UpsertAgentRequest,
 ) -> Result<(Agent, Option<String>, Option<String>), ApiError> {
     let name = normalize_non_empty("name", payload.name)?;
-    let prompt_path = if payload.prompt_path.trim().is_empty() {
-        default_prompt_path(&name)
-    } else {
-        payload.prompt_path.trim().to_string()
-    };
+    let prompt_path = payload
+        .prompt_path
+        .unwrap_or_else(|| default_prompt_path(&name));
 
-    let prompt_text = if payload.prompt.trim().is_empty() {
+    let prompt_text = if payload.prompt.is_empty() {
         None
     } else {
-        Some(payload.prompt.trim().to_string())
+        Some(payload.prompt)
     };
 
-    let mcp_config_text = payload.mcp_config.and_then(|s| {
-        let trimmed = s.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    });
+    let mcp_config_text = payload.mcp_config;
 
     let mcp_config_path = if mcp_config_text.is_some() {
         Some(
@@ -270,6 +263,35 @@ async fn write_prompt(
         })?;
 
     Ok(())
+}
+
+async fn resolve_mcp_configs_batch(
+    state: &AppState,
+    agents: &[Agent],
+) -> std::collections::HashMap<String, String> {
+    let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None, None);
+
+    let documents = match state.list_documents(&query).await {
+        Ok(docs) => docs,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    let path_to_body: std::collections::HashMap<String, String> = documents
+        .into_iter()
+        .filter_map(|(_, versioned)| {
+            let path = versioned.item.path.as_ref()?.to_string();
+            Some((path, versioned.item.body_markdown.trim_end().to_string()))
+        })
+        .collect();
+
+    agents
+        .iter()
+        .filter_map(|agent| {
+            let mcp_config_path = agent.mcp_config_path.as_deref()?;
+            let body = path_to_body.get(mcp_config_path)?;
+            Some((agent.name.clone(), body.clone()))
+        })
+        .collect()
 }
 
 async fn resolve_mcp_config_content(state: &AppState, agent: &Agent) -> Option<String> {

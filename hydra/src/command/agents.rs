@@ -198,9 +198,14 @@ async fn create_agent(
         .map(read_mcp_config_file)
         .transpose()?;
 
-    let mut request =
-        UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous, None);
-    request.mcp_config = mcp_config;
+    let mut request = UpsertAgentRequest::new(
+        name,
+        prompt,
+        args.max_tries,
+        args.max_simultaneous,
+        None,
+        mcp_config,
+    );
     request.is_assignment_agent = args.is_assignment_agent;
     request.secrets = parse_secrets(args.secrets.as_deref());
 
@@ -413,7 +418,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
                 "prompt": "draft this",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 2,
@@ -466,7 +471,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "pm",
                 "prompt": "assign issues",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -830,7 +835,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1094,7 +1099,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": "{\"mcpServers\": {\"test\": {}}}",
                 "max_tries": 3,

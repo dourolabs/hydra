@@ -67,6 +67,7 @@ export function AgentEditModal({
       prompt: prompt.trim(),
       prompt_path: agent.prompt_path,
       mcp_config_path: mcpConfigPath.trim() || null,
+      mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
