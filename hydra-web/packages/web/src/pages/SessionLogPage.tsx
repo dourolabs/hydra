@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Spinner, Tabs } from "@hydra/ui";
+import type { SessionVersionRecord } from "@hydra/api";
 import { normalizeSessionStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
 import { useSession } from "../features/sessions/useSession";
 import { SessionLogViewer } from "../features/sessions/SessionLogViewer";
 import { SessionSettings } from "../features/sessions/SessionSettings";
-import { KillSessionModal } from "../features/sessions/KillSessionModal";
-import { ApiError } from "../api/client";
+import { DeleteConfirmModal } from "../components/DeleteConfirmModal/DeleteConfirmModal";
+import { apiClient, ApiError } from "../api/client";
+import { useToast } from "../features/toast/useToast";
 import { Breadcrumbs } from "../layout/Breadcrumbs";
 import styles from "./SessionLogPage.module.css";
 
@@ -22,9 +25,48 @@ export function SessionLogPage() {
     sessionId: string;
   }>();
   const { data: record, isLoading, error } = useSession(sessionId ?? "");
+  const { addToast } = useToast();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("logs");
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [killRequested, setKillRequested] = useState(false);
+
+  const killMutation = useMutation({
+    mutationFn: () => apiClient.killSession(record!.session_id),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["session", record!.session_id] });
+      const previous = queryClient.getQueryData<SessionVersionRecord>(["session", record!.session_id]);
+      if (previous) {
+        queryClient.setQueryData<SessionVersionRecord>(["session", record!.session_id], {
+          ...previous,
+          session: { ...previous.session, status: "failed" },
+        });
+      }
+      return { previous };
+    },
+    onSuccess: () => {
+      addToast("Session killed successfully", "success");
+      setKillRequested(true);
+      setKillModalOpen(false);
+    },
+    onError: (err, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["session", record!.session_id], context.previous);
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to kill session",
+        "error",
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["session", record!.session_id] });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+
+  const handleKillConfirm = useCallback(() => {
+    killMutation.mutate();
+  }, [killMutation]);
 
   return (
     <div className={styles.page}>
@@ -113,11 +155,17 @@ export function SessionLogPage() {
           )}
           {activeTab === "settings" && <SessionSettings task={record.session} />}
 
-          <KillSessionModal
+          <DeleteConfirmModal
             open={killModalOpen}
             onClose={() => setKillModalOpen(false)}
-            onKillSuccess={() => setKillRequested(true)}
-            sessionId={record.session_id}
+            entityName={record.session_id}
+            entityLabel="Session"
+            onConfirm={handleKillConfirm}
+            isPending={killMutation.isPending}
+            actionLabel="Kill"
+            buttonLabel="Kill Session"
+            pendingLabel="Killing..."
+            description="This will terminate the running session and cannot be undone."
           />
         </>
       )}
