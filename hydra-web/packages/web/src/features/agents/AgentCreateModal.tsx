@@ -4,6 +4,7 @@ import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
 interface AgentCreateModalProps {
@@ -68,7 +69,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Agent">
-      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
+      <div className={sharedStyles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Name"
           placeholder="swe"
@@ -122,7 +123,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           selected={selectedSecrets}
           onChange={setSelectedSecrets}
         />
-        <div className={styles.formActions}>
+        <div className={sharedStyles.formActions}>
           <Button
             variant="secondary"
             size="md"

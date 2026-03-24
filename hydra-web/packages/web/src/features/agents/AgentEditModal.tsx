@@ -4,6 +4,7 @@ import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
 interface AgentEditModalProps {
@@ -66,7 +67,7 @@ export function AgentEditModal({
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
-      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
+      <div className={sharedStyles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Textarea
           label="Prompt"
           placeholder="Enter the agent prompt..."
@@ -113,7 +114,7 @@ export function AgentEditModal({
           selected={selectedSecrets}
           onChange={setSelectedSecrets}
         />
-        <div className={styles.formActions}>
+        <div className={sharedStyles.formActions}>
           <Button
             variant="secondary"
             size="md"
