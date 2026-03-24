@@ -6,7 +6,7 @@ import { AgentRow } from "./AgentRow";
 import { AgentCreateModal } from "./AgentCreateModal";
 import { AgentEditModal } from "./AgentEditModal";
 import { AgentDeleteModal } from "./AgentDeleteModal";
-import styles from "./AgentsSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 export function AgentsSection() {
   const { data: agents, isLoading: agentsLoading, error: agentsError } = useAgents();
@@ -17,28 +17,28 @@ export function AgentsSection() {
   return (
     <>
       {agentsLoading && (
-        <div className={styles.center}>
+        <div className={sharedStyles.center}>
           <Spinner size="md" />
         </div>
       )}
 
       {agentsError && (
-        <p className={styles.error}>Failed to load agents: {(agentsError as Error).message}</p>
+        <p className={sharedStyles.error}>Failed to load agents: {(agentsError as Error).message}</p>
       )}
 
       <Panel
         header={
-          <div className={styles.panelHeaderRow}>
-            <span className={styles.sectionTitle}>Agents</span>
+          <div className={sharedStyles.panelHeaderRow}>
+            <span className={sharedStyles.sectionTitle}>Agents</span>
             <Button variant="primary" size="sm" onClick={() => setAgentCreateOpen(true)}>
               Add Agent
             </Button>
           </div>
         }
       >
-        {agents && agents.length === 0 && <p className={styles.empty}>No agents configured.</p>}
+        {agents && agents.length === 0 && <p className={sharedStyles.empty}>No agents configured.</p>}
         {agents && agents.length > 0 && (
-          <div className={styles.agentList}>
+          <div className={sharedStyles.itemList}>
             {agents.map((agent) => (
               <AgentRow
                 key={agent.name}

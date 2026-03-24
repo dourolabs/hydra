@@ -6,7 +6,7 @@ import { RepositoryRow } from "./RepositoryRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
 import { RepositoryDeleteModal } from "./RepositoryDeleteModal";
-import styles from "./RepositoriesSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 export function RepositoriesSection() {
   const { data: repositories, isLoading, error } = useRepositories();
@@ -17,19 +17,19 @@ export function RepositoriesSection() {
   return (
     <>
       {isLoading && (
-        <div className={styles.center}>
+        <div className={sharedStyles.center}>
           <Spinner size="md" />
         </div>
       )}
 
       {error && (
-        <p className={styles.error}>Failed to load repositories: {(error as Error).message}</p>
+        <p className={sharedStyles.error}>Failed to load repositories: {(error as Error).message}</p>
       )}
 
       <Panel
         header={
-          <div className={styles.panelHeaderRow}>
-            <span className={styles.sectionTitle}>Repositories</span>
+          <div className={sharedStyles.panelHeaderRow}>
+            <span className={sharedStyles.sectionTitle}>Repositories</span>
             <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
               Add Repository
             </Button>
@@ -37,10 +37,10 @@ export function RepositoriesSection() {
         }
       >
         {repositories && repositories.length === 0 && (
-          <p className={styles.empty}>No repositories configured.</p>
+          <p className={sharedStyles.empty}>No repositories configured.</p>
         )}
         {repositories && repositories.length > 0 && (
-          <div className={styles.repoList}>
+          <div className={sharedStyles.itemList}>
             {repositories.map((repo) => (
               <RepositoryRow
                 key={repo.name}

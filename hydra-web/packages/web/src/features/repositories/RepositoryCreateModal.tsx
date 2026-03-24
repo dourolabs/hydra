@@ -8,7 +8,7 @@ import type {
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { PatchWorkflowSection } from "./PatchWorkflowSection";
-import styles from "./RepositoriesSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 interface RepositoryCreateModalProps {
   open: boolean;
@@ -112,7 +112,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
 
   return (
     <Modal open={open} onClose={handleClose} title="Add Repository">
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+      <div className={sharedStyles.formFields} onKeyDown={handleKeyDown}>
         <Input
           label="Name"
           placeholder="org/repo"
@@ -148,7 +148,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
           mergeAssignee={mergeAssignee}
           onMergeAssigneeChange={setMergeAssignee}
         />
-        <div className={styles.formActions}>
+        <div className={sharedStyles.formActions}>
           <Button
             variant="secondary"
             size="md"

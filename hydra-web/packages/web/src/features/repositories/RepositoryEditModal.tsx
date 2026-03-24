@@ -9,7 +9,7 @@ import type {
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { PatchWorkflowSection } from "./PatchWorkflowSection";
-import styles from "./RepositoriesSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 interface RepositoryEditModalProps {
   open: boolean;
@@ -104,7 +104,7 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
 
   return (
     <Modal open={open} onClose={handleClose} title={`Edit ${repo.name}`}>
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+      <div className={sharedStyles.formFields} onKeyDown={handleKeyDown}>
         <Input
           label="Remote URL"
           placeholder="https://github.com/org/repo.git"
@@ -130,7 +130,7 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           mergeAssignee={mergeAssignee}
           onMergeAssigneeChange={setMergeAssignee}
         />
-        <div className={styles.formActions}>
+        <div className={sharedStyles.formActions}>
           <Button
             variant="secondary"
             size="md"
