@@ -835,12 +835,15 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
         // Clear is_latest on the previous latest version
         sqlx::query(&format!(
             "UPDATE {TABLE_DOCUMENTS_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
         ))
         .bind(id.as_ref())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
 
@@ -859,9 +862,11 @@ impl SqliteStore {
         .bind(document.created_by.as_ref().map(|t| t.as_ref()))
         .bind(document.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
