@@ -54,7 +54,7 @@ use hydra_common::{
     ActorId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RelativeVersionNumber,
     RepoName, SessionId,
 };
-use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
+use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
 use std::path::Path;
 use std::pin::Pin;
@@ -78,6 +78,13 @@ pub struct HydraClientUnauthenticated {
 
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+
+/// Error returned when the server responds with 409 Conflict.
+#[derive(Debug, thiserror::Error)]
+#[error("conflict: {message}")]
+pub struct ConflictError {
+    pub message: String,
+}
 
 trait ResponseExt {
     async fn error_for_status_with_body(self, context: &str) -> Result<Response>;
@@ -974,6 +981,9 @@ impl HydraClient {
     }
 
     /// Call `POST /v1/documents` to create a document.
+    ///
+    /// Returns [`ConflictError`] when the server responds with 409 Conflict
+    /// (i.e., a document already exists at the requested path).
     pub async fn create_document(
         &self,
         request: &UpsertDocumentRequest,
@@ -984,7 +994,18 @@ impl HydraClient {
             .json(request)
             .send()
             .await
-            .context("failed to submit create document request")?
+            .context("failed to submit create document request")?;
+
+        if response.status() == StatusCode::CONFLICT {
+            let body_text = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiErrorBody>(&body_text)
+                .ok()
+                .map(|body| body.error)
+                .unwrap_or(body_text);
+            return Err(ConflictError { message }.into());
+        }
+
+        let response = response
             .error_for_status_with_body("hydra-server rejected create document request")
             .await?;
 
