@@ -1,0 +1,34 @@
+prompt: |
+  # Review Escalation
+
+  The reviewer agent has escalated this patch for your review. Please read the
+  escalation details in the issue description, review the patch, and provide
+  your decision below.
+
+fields:
+  - key: review_comment
+    label: Review Comment
+    description: Your feedback on the patch. This will be recorded in the issue activity log for the reviewer agent to read.
+    input:
+      type: textarea
+      placeholder: "Enter your review feedback..."
+      rows: 8
+
+actions:
+  - id: approve
+    label: Approve
+    style: primary
+    requires:
+      - review_comment
+    effect:
+      type: update_issue
+      status: closed
+
+  - id: request_changes
+    label: Request Changes
+    style: danger
+    requires:
+      - review_comment
+    effect:
+      type: update_issue
+      status: failed

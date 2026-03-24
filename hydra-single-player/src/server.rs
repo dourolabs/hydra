@@ -285,6 +285,10 @@ const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
 const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/design-review.md");
 
+// Embedded form content (compiled into the binary).
+const FORM_REVIEW_ESCALATION: &str = include_str!("../../prompts/forms/review_escalation.yaml");
+const FORM_DESIGN_REVIEW: &str = include_str!("../../prompts/forms/design_review.yaml");
+
 /// Create the default agents (swe, pm, reviewer) and upload their prompts
 /// to the running server via the HydraClient.
 fn create_default_agents(auth_token: &str) -> Result<()> {
@@ -340,6 +344,16 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
             PLAYBOOK_DESIGN_REVIEW,
             "playbooks/design-review.md",
         ),
+        (
+            "Review Escalation Form",
+            FORM_REVIEW_ESCALATION,
+            "forms/review_escalation.yaml",
+        ),
+        (
+            "Design Review Form",
+            FORM_DESIGN_REVIEW,
+            "forms/design_review.yaml",
+        ),
     ];
 
     let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
@@ -357,9 +371,9 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
         let request = UpsertDocumentRequest::new(document);
 
         rt.block_on(client.create_document(&request))
-            .with_context(|| format!("failed to upload playbook {path}"))?;
+            .with_context(|| format!("failed to upload document {path}"))?;
 
-        println!("Uploaded playbook: {path}");
+        println!("Uploaded document: {path}");
     }
 
     Ok(())

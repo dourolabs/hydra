@@ -43,41 +43,44 @@ Use this playbook whenever an issue requires a design document before implementa
 
 ### Phase 2: Request review
 
-4. Create a review issue assigned to the design's creator (the person who filed the original issue). The review issue should be a child of the current issue:
+4. First, download the design review form from the document store:
+
+   ```bash
+   hydra documents get /forms/design_review.yaml > /tmp/design_review_form.yaml
+   ```
+
+5. Create a review issue assigned to the design's creator (the person who filed the original issue). The review issue should be a child of the current issue, with the form attached:
 
    ```bash
    hydra issues create \
-     "Review design document: <Feature name>
-
-   Please review the design document at /designs/<feature-slug>.md
-
-   ## How to respond
-   - If the design is **approved**, close this issue:
-     hydra issues update <this-review-issue-id> --status closed
-   - If the design is **rejected**, mark this issue as failed and record your feedback in progress notes:
-     hydra issues update <this-review-issue-id> --status failed --progress 'Feedback: ...'
+     --title "Review design: <Feature name>" \
+     "Review the design document at /designs/<feature-slug>.md
 
    ## Design document link
    Path: /designs/<feature-slug>.md
    Read it from the filesystem: cat \$HYDRA_DOCUMENTS_DIR/designs/<feature-slug>.md
-   Or via CLI: hydra documents get --path /designs/<feature-slug>.md" \
+   Or via CLI: hydra documents get /designs/<feature-slug>.md" \
      --assignee <creator-username> \
-     --deps child-of:$HYDRA_ISSUE_ID
+     --deps child-of:$HYDRA_ISSUE_ID \
+     --form /tmp/design_review_form.yaml
    ```
 
-5. End the session. The agent must wait for the reviewer to act on the review issue before proceeding.
+   The form provides Approve and Request Changes buttons. The reviewer's comment is recorded in the
+   issue activity log. Approve sets the issue to `closed`; Request Changes sets it to `failed`.
+
+6. End the session. The agent must wait for the reviewer to act on the review issue before proceeding.
 
 ### Phase 3: Handle the review outcome
 
-6. When the agent is re-invoked on the parent issue, inspect the review issue's status:
+7. When the agent is re-invoked on the parent issue, inspect the review issue's status:
    - Check child issues: `hydra issues describe $HYDRA_ISSUE_ID` and look at children.
    - Read the review issue: `hydra issues describe <review-issue-id>`.
 
-7. **If the review issue status is `closed` (approved):**
+8. **If the review issue status is `closed` (approved):**
    - The design is approved. Proceed to Phase 4 (implementation planning).
 
-8. **If the review issue status is `failed` (rejected):**
-   - Read the reviewer's feedback from the review issue's progress field.
+9. **If the review issue status is `failed` (rejected):**
+   - Read the reviewer's feedback from the review issue's activity log (the form response contains their comment).
    - Revise the design document to address the feedback.
    - Publish the updated document under `/designs/`:
 
@@ -90,15 +93,15 @@ Use this playbook whenever an issue requires a design document before implementa
      hydra documents update <document-id> --body-file revised-design.md
      ```
 
-   - Create a new review issue following step 4 above, assigned to the same reviewer.
+   - Create a new review issue following steps 4-5 above, assigned to the same reviewer.
    - End the session and wait for the new review.
 
-9. **If the review issue is still open or in-progress:**
-   - The reviewer has not yet responded. End the session and wait.
+10. **If the review issue is still open or in-progress:**
+    - The reviewer has not yet responded. End the session and wait.
 
 ### Phase 4: Proceed with implementation
 
-10. Once the design is approved, continue with the normal planning and issue-creation flow:
+11. Once the design is approved, continue with the normal planning and issue-creation flow:
     - Break the approved design into PR-sized implementation tasks.
     - Create child issues for each task with appropriate dependencies.
     - Update the parent issue's progress field with the implementation plan and task list.
@@ -114,6 +117,6 @@ Use this playbook whenever an issue requires a design document before implementa
 
 ## Notes
 
-- The reviewer records feedback in the review issue's progress field regardless of outcome (approval or rejection).
+- The reviewer records feedback via the attached form. Their comment is stored in the issue activity log.
 - Each revision cycle creates a new review issue so there is a clear audit trail of review rounds.
 - The agent must never proceed to implementation without an approved (closed) review issue.
