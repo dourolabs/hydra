@@ -1,9 +1,12 @@
 import { useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
-import { Panel, Spinner, Button, Modal, Input, Textarea } from "@hydra/ui";
+import { Panel, Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { DocumentSummaryRecord, ListDocumentsResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
+import { LoadingState } from "../components/LoadingState/LoadingState";
+import { ErrorState } from "../components/ErrorState/ErrorState";
+import { EmptyState } from "../components/EmptyState/EmptyState";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
 import styles from "./DocumentsPage.module.css";
@@ -84,6 +87,7 @@ export function DocumentsPage() {
     data: paginatedData,
     isLoading,
     error,
+    refetch,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -105,17 +109,16 @@ export function DocumentsPage() {
         </Button>
       </div>
 
-      {isLoading && (
-        <div className={styles.center}>
-          <Spinner size="md" />
-        </div>
-      )}
+      {isLoading && <LoadingState />}
 
       {error && (
-        <p className={styles.error}>Failed to load documents: {(error as Error).message}</p>
+        <ErrorState
+          message={`Failed to load documents: ${(error as Error).message}`}
+          onRetry={() => refetch()}
+        />
       )}
 
-      {!isLoading && documents.length === 0 && <p className={styles.empty}>No documents found.</p>}
+      {!isLoading && documents.length === 0 && <EmptyState message="No documents found." />}
 
       {groups.map((group) => (
         <Panel

@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom";
-import { Badge, Spinner } from "@hydra/ui";
+import { Badge } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
+import { LoadingState } from "../../components/LoadingState/LoadingState";
+import { ErrorState } from "../../components/ErrorState/ErrorState";
+import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { useSessionsByIssue } from "./useSessionsByIssue";
 import styles from "./SessionList.module.css";
 
@@ -10,22 +13,23 @@ interface SessionListProps {
 }
 
 export function SessionList({ issueId }: SessionListProps) {
-  const { data: sessions, isLoading, error } = useSessionsByIssue(issueId);
+  const { data: sessions, isLoading, error, refetch } = useSessionsByIssue(issueId);
 
   if (isLoading) {
-    return <Spinner size="sm" />;
+    return <LoadingState size="sm" />;
   }
 
   if (error) {
     return (
-      <p className={styles.error}>
-        Failed to load sessions: {(error as Error).message}
-      </p>
+      <ErrorState
+        message={`Failed to load sessions: ${(error as Error).message}`}
+        onRetry={() => refetch()}
+      />
     );
   }
 
   if (!sessions || sessions.length === 0) {
-    return <p className={styles.empty}>No sessions.</p>;
+    return <EmptyState message="No sessions." />;
   }
 
   return (

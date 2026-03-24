@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Spinner } from "@hydra/ui";
+import { LoadingState } from "../components/LoadingState/LoadingState";
 import {
   usePaginatedIssues,
   useIssueCount,
@@ -296,11 +296,7 @@ export function DashboardPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (isLoading && !issues.length) {
-    return (
-      <div className={styles.center}>
-        <Spinner size="lg" />
-      </div>
-    );
+    return <LoadingState size="lg" />;
   }
 
   return (
