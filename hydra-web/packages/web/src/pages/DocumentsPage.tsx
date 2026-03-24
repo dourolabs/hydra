@@ -5,6 +5,7 @@ import { Panel, Spinner, Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { DocumentSummaryRecord, ListDocumentsResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { useToast } from "../features/toast/useToast";
+import { DeleteConfirmModal } from "../components/DeleteConfirmModal/DeleteConfirmModal";
 import { formatRelativeTime } from "../utils/time";
 import styles from "./DocumentsPage.module.css";
 
@@ -200,48 +201,15 @@ function DocumentRow({ doc }: DocumentRowProps) {
       >
         Delete
       </Button>
-      <DocumentDeleteModal
+      <DeleteConfirmModal
         open={deleteOpen}
-        onClose={() => {
-          if (!deleteMutation.isPending) setDeleteOpen(false);
-        }}
+        onClose={() => setDeleteOpen(false)}
+        entityName={getDocumentDisplayTitle(doc)}
+        entityLabel="Document"
         onConfirm={() => deleteMutation.mutate()}
         isPending={deleteMutation.isPending}
-        doc={doc}
       />
     </li>
-  );
-}
-
-interface DocumentDeleteModalProps {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  isPending: boolean;
-  doc: DocumentSummaryRecord;
-}
-
-function DocumentDeleteModal({ open, onClose, onConfirm, isPending, doc }: DocumentDeleteModalProps) {
-  return (
-    <Modal open={open} onClose={onClose} title="Delete Document">
-      <div className={styles.deleteModalContent}>
-        <p className={styles.deleteMessage}>
-          Are you sure you want to delete this document?
-        </p>
-        <p className={styles.deleteDocTitle}>{getDocumentDisplayTitle(doc)}</p>
-        {doc.document.path && (
-          <p className={styles.deleteDocPath}>{doc.document.path}</p>
-        )}
-        <div className={styles.deleteActions}>
-          <Button variant="secondary" size="md" onClick={onClose} disabled={isPending}>
-            Cancel
-          </Button>
-          <Button variant="danger" size="md" onClick={onConfirm} disabled={isPending}>
-            {isPending ? "Deleting..." : "Delete"}
-          </Button>
-        </div>
-      </div>
-    </Modal>
   );
 }
 
