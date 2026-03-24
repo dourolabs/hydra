@@ -1628,7 +1628,9 @@ impl Store for MemoryStore {
                     if let Some(entry) = self.documents.get(&other_id) {
                         if let Some(latest) = Self::latest_versioned(entry.value()) {
                             if !latest.item.deleted {
-                                return Err(StoreError::DocumentPathConflict(Some(path.to_string())));
+                                return Err(StoreError::DocumentPathConflict(Some(
+                                    path.to_string(),
+                                )));
                             }
                         }
                     }

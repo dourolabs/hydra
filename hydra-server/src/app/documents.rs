@@ -42,9 +42,9 @@ pub enum UpsertDocumentError {
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
-    #[error("a document already exists at path '{path}'")]
+    #[error("a document already exists at path '{}'", path.as_deref().unwrap_or("<unknown>"))]
     PathConflict {
-        path: String,
+        path: Option<String>,
         existing_id: Option<DocumentId>,
     },
 }
@@ -101,7 +101,7 @@ impl AppState {
                     .map_err(|source| UpsertDocumentError::Store { source })?;
                 if let Some(existing_id) = existing_id {
                     return Err(UpsertDocumentError::PathConflict {
-                        path: path.to_string(),
+                        path: Some(path.to_string()),
                         existing_id: Some(existing_id),
                     });
                 }
@@ -125,7 +125,7 @@ impl AppState {
                         },
                         StoreError::DocumentPathConflict(path) => {
                             UpsertDocumentError::PathConflict {
-                                path: path.unwrap_or_default(),
+                                path,
                                 existing_id: None,
                             }
                         }
@@ -144,7 +144,7 @@ impl AppState {
                     .map_err(|source| match source {
                         StoreError::DocumentPathConflict(path) => {
                             UpsertDocumentError::PathConflict {
-                                path: path.unwrap_or_default(),
+                                path,
                                 existing_id: None,
                             }
                         }
