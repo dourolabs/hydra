@@ -1821,13 +1821,7 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
                 return StoreError::LabelAlreadyExists(name);
             }
             if db_err.constraint() == Some("documents_v2_path_unique_active_idx") {
-                let path = db_err
-                    .message()
-                    .split("=(")
-                    .nth(1)
-                    .and_then(|s| s.split(')').next())
-                    .map(|s| s.to_string());
-                return StoreError::DocumentPathConflict(path);
+                return StoreError::DocumentPathConflict;
             }
         }
     }

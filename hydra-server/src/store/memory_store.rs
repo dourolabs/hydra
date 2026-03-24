@@ -1587,7 +1587,7 @@ impl Store for MemoryStore {
                 .await?
                 .is_some()
             {
-                return Err(StoreError::DocumentPathConflict(Some(path.to_string())));
+                return Err(StoreError::DocumentPathConflict);
             }
         }
 
@@ -1628,9 +1628,7 @@ impl Store for MemoryStore {
                     if let Some(entry) = self.documents.get(&other_id) {
                         if let Some(latest) = Self::latest_versioned(entry.value()) {
                             if !latest.item.deleted {
-                                return Err(StoreError::DocumentPathConflict(Some(
-                                    path.to_string(),
-                                )));
+                                return Err(StoreError::DocumentPathConflict);
                             }
                         }
                     }
@@ -6987,7 +6985,7 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(result, Err(StoreError::DocumentPathConflict(_))),
+            matches!(result, Err(StoreError::DocumentPathConflict)),
             "expected DocumentPathConflict, got {result:?}"
         );
     }
@@ -7065,7 +7063,7 @@ mod tests {
             .update_document(&doc1_id, updated, &ActorRef::test())
             .await;
         assert!(
-            matches!(result, Err(StoreError::DocumentPathConflict(_))),
+            matches!(result, Err(StoreError::DocumentPathConflict)),
             "expected DocumentPathConflict, got {result:?}"
         );
     }

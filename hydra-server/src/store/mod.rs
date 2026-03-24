@@ -265,8 +265,8 @@ pub enum StoreError {
     InvalidActorName(String),
     #[error("Invalid auth token")]
     InvalidAuthToken,
-    #[error("A document already exists at path '{}'", .0.as_deref().unwrap_or("<unknown>"))]
-    DocumentPathConflict(Option<String>),
+    #[error("A document already exists at this path")]
+    DocumentPathConflict,
 }
 
 /// Trait for read-only store operations: queries and lookups.
