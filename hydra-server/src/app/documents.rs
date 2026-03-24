@@ -42,11 +42,8 @@ pub enum UpsertDocumentError {
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
-    #[error("a document already exists at path '{path}'")]
-    PathConflict {
-        path: String,
-        existing_id: DocumentId,
-    },
+    #[error("a document already exists at this path")]
+    PathConflict,
 }
 
 impl AppState {
@@ -99,11 +96,8 @@ impl AppState {
                     .find_non_deleted_document_by_exact_path(path.as_ref())
                     .await
                     .map_err(|source| UpsertDocumentError::Store { source })?;
-                if let Some(existing_id) = existing_id {
-                    return Err(UpsertDocumentError::PathConflict {
-                        path: path.to_string(),
-                        existing_id,
-                    });
+                if existing_id.is_some() {
+                    return Err(UpsertDocumentError::PathConflict);
                 }
             }
         }
@@ -123,6 +117,7 @@ impl AppState {
                             document_id: id.clone(),
                             source,
                         },
+                        StoreError::DocumentPathConflict => UpsertDocumentError::PathConflict,
                         other => UpsertDocumentError::Store { source: other },
                     })?;
 
@@ -135,7 +130,10 @@ impl AppState {
                     .store
                     .add_document_with_actor(document, actor)
                     .await
-                    .map_err(|source| UpsertDocumentError::Store { source })?;
+                    .map_err(|source| match source {
+                        StoreError::DocumentPathConflict => UpsertDocumentError::PathConflict,
+                        other => UpsertDocumentError::Store { source: other },
+                    })?;
 
                 info!(
                     document_id = %document_id,
@@ -245,7 +243,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let (first_id, _) = state
+        state
             .upsert_document(None, doc1, ActorRef::test())
             .await
             .unwrap();
@@ -258,12 +256,10 @@ mod tests {
             deleted: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
-        match result {
-            Err(super::UpsertDocumentError::PathConflict { existing_id, .. }) => {
-                assert_eq!(existing_id, first_id);
-            }
-            other => panic!("expected PathConflict, got {other:?}"),
-        }
+        assert!(
+            matches!(result, Err(super::UpsertDocumentError::PathConflict)),
+            "expected PathConflict, got {result:?}"
+        );
     }
 
     #[tokio::test]

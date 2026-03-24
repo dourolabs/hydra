@@ -336,11 +336,9 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
             ApiError::internal(anyhow!("document store operation failed: {source}"))
         }
         UpsertDocumentError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
-        UpsertDocumentError::PathConflict { path, existing_id } => {
-            error!(path = %path, existing_id = %existing_id, "document path conflict");
-            ApiError::conflict(format!(
-                "a document already exists at path '{path}' (existing document: {existing_id})"
-            ))
+        UpsertDocumentError::PathConflict => {
+            error!("document path conflict");
+            ApiError::conflict("a document already exists at this path")
         }
     }
 }

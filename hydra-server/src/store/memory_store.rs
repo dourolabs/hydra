@@ -1580,6 +1580,17 @@ impl Store for MemoryStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        // Check path uniqueness for non-deleted documents
+        if let Some(ref path) = document.path {
+            if self
+                .find_non_deleted_document_by_exact_path(path.as_ref())
+                .await?
+                .is_some()
+            {
+                return Err(StoreError::DocumentPathConflict);
+            }
+        }
+
         let id = DocumentId::new();
         let path = document.path.clone();
         self.documents.insert(
@@ -1596,14 +1607,40 @@ impl Store for MemoryStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        // Read previous path without holding a long-lived guard
+        let previous_path = {
+            let versions = self
+                .documents
+                .get(id)
+                .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+            versions.last().and_then(|v| v.item.path.clone())
+        };
+        let new_path = document.path.clone();
+
+        // Check path uniqueness when the path is changing and the document is not being deleted
+        if !document.deleted && new_path != previous_path {
+            if let Some(ref path) = new_path {
+                let ids = self.document_ids_with_exact_path(path.as_ref());
+                for other_id in ids {
+                    if &other_id == id {
+                        continue;
+                    }
+                    if let Some(entry) = self.documents.get(&other_id) {
+                        if let Some(latest) = Self::latest_versioned(entry.value()) {
+                            if !latest.item.deleted {
+                                return Err(StoreError::DocumentPathConflict);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now get mutable access to push the new version
         let mut versions = self
             .documents
             .get_mut(id)
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        let previous_path = versions
-            .last()
-            .and_then(|version| version.item.path.clone());
-        let new_path = document.path.clone();
         let next_version = Self::next_version(&versions);
         versions.push(Self::versioned_now_with_actor(
             document,
@@ -6928,5 +6965,106 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn add_document_duplicate_path_fails() {
+        let store = MemoryStore::new();
+        store
+            .add_document(
+                sample_document(Some("docs/conflict.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let result = store
+            .add_document(
+                sample_document(Some("docs/conflict.md"), None),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::DocumentPathConflict)),
+            "expected DocumentPathConflict, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_document_path_reusable_after_deletion() {
+        let store = MemoryStore::new();
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/reuse.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Should succeed since the original document is deleted
+        let result = store
+            .add_document(
+                sample_document(Some("docs/reuse.md"), None),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "expected success after deletion, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_document_null_paths_not_constrained() {
+        let store = MemoryStore::new();
+        store
+            .add_document(sample_document(None, None), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Adding another document with no path should succeed
+        let result = store
+            .add_document(sample_document(None, None), &ActorRef::test())
+            .await;
+        assert!(
+            result.is_ok(),
+            "expected success for NULL paths, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_document_path_conflict_fails() {
+        let store = MemoryStore::new();
+        let (doc1_id, _) = store
+            .add_document(
+                sample_document(Some("docs/first.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let (_doc2_id, _) = store
+            .add_document(
+                sample_document(Some("docs/second.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Try to update doc1's path to conflict with doc2
+        let mut updated = sample_document(Some("docs/second.md"), None);
+        updated.title = "Updated".to_string();
+        let result = store
+            .update_document(&doc1_id, updated, &ActorRef::test())
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::DocumentPathConflict)),
+            "expected DocumentPathConflict, got {result:?}"
+        );
     }
 }
