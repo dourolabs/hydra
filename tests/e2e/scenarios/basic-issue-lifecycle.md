@@ -17,6 +17,7 @@ Create an issue via the dashboard assigned to an SWE agent, wait for the agent t
 3. Fill in the issue creation form:
    - Title: "Add a CONTRIBUTING.md file to hydra-test-fixture"
    - Description: "Create a CONTRIBUTING.md file in the dourolabs/hydra-test-fixture repo with basic contribution guidelines."
+   - Repository: dourolabs/hydra-test-fixture
    - Assignee: swe
 4. Submit the issue form
 5. Verify the issue appears in the issues list
