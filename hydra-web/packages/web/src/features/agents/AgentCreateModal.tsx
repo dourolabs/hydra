@@ -67,7 +67,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
   return (
-    <Modal open={open} onClose={() => handleClose(resetForm, onClose)} title="Add Agent">
+    <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Agent">
       <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Name"
@@ -126,7 +126,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           <Button
             variant="secondary"
             size="md"
-            onClick={() => handleClose(resetForm, onClose)}
+            onClick={() => handleClose(onClose, resetForm)}
             disabled={isPending}
           >
             Cancel

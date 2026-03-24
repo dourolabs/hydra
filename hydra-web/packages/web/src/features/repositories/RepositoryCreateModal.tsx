@@ -83,7 +83,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
   ]);
 
   return (
-    <Modal open={open} onClose={() => handleClose(resetForm, onClose)} title="Add Repository">
+    <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Repository">
       <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Name"
@@ -124,7 +124,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
           <Button
             variant="secondary"
             size="md"
-            onClick={() => handleClose(resetForm, onClose)}
+            onClick={() => handleClose(onClose, resetForm)}
             disabled={isPending}
           >
             Cancel

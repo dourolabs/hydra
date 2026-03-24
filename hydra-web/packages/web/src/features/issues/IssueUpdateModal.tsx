@@ -40,7 +40,8 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
     { status: IssueStatus; progress: string },
-    unknown
+    unknown,
+    { previous?: IssueVersionRecord }
   >({
     mutationFn: (params) =>
       apiClient.updateIssue(issueId, {
@@ -72,9 +73,8 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
       return { previous };
     },
     onError: (_err, _variables, context) => {
-      const ctx = context as { previous?: IssueVersionRecord } | undefined;
-      if (ctx?.previous) {
-        queryClient.setQueryData(["issue", issueId], ctx.previous);
+      if (context?.previous) {
+        queryClient.setQueryData(["issue", issueId], context.previous);
       }
     },
   });
@@ -83,12 +83,10 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
     mutation.mutate({ status, progress });
   }, [status, progress, mutation]);
 
-  const noop = useCallback(() => {}, []);
-
   return (
     <Modal
       open={open}
-      onClose={() => handleClose(noop, onClose)}
+      onClose={() => handleClose(onClose)}
       title="Update Issue"
       className={largeModalStyles.largeModal}
     >
@@ -113,7 +111,7 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
             {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={() => handleClose(noop, onClose)}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(onClose)}>
               Cancel
             </Button>
             <Button

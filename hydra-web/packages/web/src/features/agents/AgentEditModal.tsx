@@ -64,10 +64,8 @@ export function AgentEditModal({
     });
   }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
-  const noop = useCallback(() => {}, []);
-
   return (
-    <Modal open={open} onClose={() => handleClose(noop, onClose)} title={`Edit ${agent.name}`}>
+    <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
       <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Textarea
           label="Prompt"
@@ -119,7 +117,7 @@ export function AgentEditModal({
           <Button
             variant="secondary"
             size="md"
-            onClick={() => handleClose(noop, onClose)}
+            onClick={() => handleClose(onClose)}
             disabled={isPending}
           >
             Cancel

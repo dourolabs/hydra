@@ -3,34 +3,34 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseMutationResult } from "@tanstack/react-query";
 import { useToast } from "../features/toast/useToast";
 
-interface UseFormModalOptions<TInput, TOutput> {
+interface UseFormModalOptions<TInput, TOutput, TContext> {
   mutationFn: (input: TInput) => Promise<TOutput>;
   invalidateKeys: string[][];
-  successMessage: string;
+  successMessage: string | ((data: TOutput) => string);
   onSuccess?: (data: TOutput) => void;
-  onError?: (error: Error, variables: TInput, context: unknown) => void;
-  onMutate?: (variables: TInput) => Promise<unknown> | unknown;
+  onError?: (error: Error, variables: TInput, context: TContext | undefined) => void;
+  onMutate?: (variables: TInput) => Promise<TContext> | TContext;
 }
 
-interface UseFormModalResult<TInput, TOutput> {
-  mutation: UseMutationResult<TOutput, Error, TInput, unknown>;
-  handleClose: (resetForm: () => void, onClose: () => void) => void;
+interface UseFormModalResult<TInput, TOutput, TContext> {
+  mutation: UseMutationResult<TOutput, Error, TInput, TContext>;
+  handleClose: (onClose: () => void, resetForm?: () => void) => void;
   handleKeyDown: (e: React.KeyboardEvent, submitFn: () => void) => void;
   isPending: boolean;
 }
 
-export function useFormModal<TInput, TOutput>({
+export function useFormModal<TInput, TOutput, TContext = unknown>({
   mutationFn,
   invalidateKeys,
   successMessage,
   onSuccess: onSuccessCb,
   onError: onErrorCb,
   onMutate: onMutateCb,
-}: UseFormModalOptions<TInput, TOutput>): UseFormModalResult<TInput, TOutput> {
+}: UseFormModalOptions<TInput, TOutput, TContext>): UseFormModalResult<TInput, TOutput, TContext> {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
-  const mutation = useMutation<TOutput, Error, TInput, unknown>({
+  const mutation = useMutation<TOutput, Error, TInput, TContext>({
     mutationFn,
     onMutate: onMutateCb,
     onSuccess: (data) => {
@@ -39,7 +39,8 @@ export function useFormModal<TInput, TOutput>({
           queryClient.invalidateQueries({ queryKey: key });
         }
       }
-      addToast(successMessage, "success");
+      const message = typeof successMessage === "function" ? successMessage(data) : successMessage;
+      addToast(message, "success");
       onSuccessCb?.(data);
     },
     onError: (err, variables, context) => {
@@ -59,9 +60,9 @@ export function useFormModal<TInput, TOutput>({
   });
 
   const handleClose = useCallback(
-    (resetForm: () => void, onClose: () => void) => {
+    (onClose: () => void, resetForm?: () => void) => {
       if (!mutation.isPending) {
-        resetForm();
+        resetForm?.();
         onClose();
       }
     },

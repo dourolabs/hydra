@@ -75,10 +75,8 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
     mutation,
   ]);
 
-  const noop = useCallback(() => {}, []);
-
   return (
-    <Modal open={open} onClose={() => handleClose(noop, onClose)} title={`Edit ${repo.name}`}>
+    <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${repo.name}`}>
       <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Remote URL"
@@ -109,7 +107,7 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           <Button
             variant="secondary"
             size="md"
-            onClick={() => handleClose(noop, onClose)}
+            onClick={() => handleClose(onClose)}
             disabled={isPending}
           >
             Cancel

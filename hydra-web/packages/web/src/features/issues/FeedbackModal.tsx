@@ -23,7 +23,7 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
     }
   }, [open]);
 
-  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<string, unknown>({
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<string, unknown, { previous?: IssueVersionRecord }>({
     mutationFn: (text) => apiClient.submitFeedback(issueId, text),
     invalidateKeys: [["issue", issueId], ["issues"]],
     successMessage: "Feedback submitted",
@@ -45,9 +45,8 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
       return { previous };
     },
     onError: (_err, _variables, context) => {
-      const ctx = context as { previous?: IssueVersionRecord } | undefined;
-      if (ctx?.previous) {
-        queryClient.setQueryData(["issue", issueId], ctx.previous);
+      if (context?.previous) {
+        queryClient.setQueryData(["issue", issueId], context.previous);
       }
     },
   });
@@ -58,12 +57,10 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
     mutation.mutate(trimmed);
   }, [feedback, mutation]);
 
-  const noop = useCallback(() => {}, []);
-
   return (
     <Modal
       open={open}
-      onClose={() => handleClose(noop, onClose)}
+      onClose={() => handleClose(onClose)}
       title="Give Feedback"
       className={largeModalStyles.largeModal}
     >
@@ -80,7 +77,7 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
             {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={() => handleClose(noop, onClose)}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(onClose)}>
               Cancel
             </Button>
             <Button

@@ -129,7 +129,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           }),
       }),
     invalidateKeys: [["issues"]],
-    successMessage: "Issue created",
+    successMessage: (data) => `Issue ${data.issue_id} created`,
     onSuccess: () => {
       resetForm();
       onClose();
@@ -163,7 +163,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   return (
     <Modal
       open={open}
-      onClose={() => handleClose(resetAll, onClose)}
+      onClose={() => handleClose(onClose, resetAll)}
       title="Create Issue"
       className={largeModalStyles.largeModal}
     >
@@ -220,7 +220,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
             </span>
           </div>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={() => handleClose(resetAll, onClose)}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(onClose, resetAll)}>
               Cancel
             </Button>
             <Button
