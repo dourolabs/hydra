@@ -1,0 +1,101 @@
+.createModal {
+  width: 80vw;
+  max-width: 80vw;
+  height: 70vh;
+  max-height: 70vh;
+}
+
+.createModal > div:last-child {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.createForm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--space-3);
+}
+
+.createFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.createFields > * {
+  flex: 1;
+  min-width: 200px;
+}
+
+.createBodyWrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.createBodyWrapper > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.createBodyTextarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+}
+
+.createFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.createHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.createActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .createModal {
+    width: 95vw;
+    max-width: 95vw;
+    height: 85vh;
+    height: 85dvh;
+    max-height: 85vh;
+    max-height: 85dvh;
+  }
+
+  .createFields {
+    flex-direction: column;
+  }
+
+  .createFields > * {
+    min-width: 0;
+  }
+
+  .createFooter {
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: stretch;
+  }
+
+  .createActions {
+    justify-content: flex-end;
+  }
+}
