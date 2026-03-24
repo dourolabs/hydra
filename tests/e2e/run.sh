@@ -91,8 +91,7 @@ fi
 # --------------------------------------------------------------------------
 echo "==> Building hydra-single-player (release)..."
 (cd "${REPO_ROOT}" && cargo build -p hydra-single-player --release)
-ln -sf hydra-single-player "${REPO_ROOT}/target/release/hydra-sp"
-ln -sf hydra-single-player "${REPO_ROOT}/target/release/hydra"
+ln -sf hydra "${REPO_ROOT}/target/release/hydra-sp"
 echo "    Binary: ${HYDRA_SP}"
 
 # --------------------------------------------------------------------------
