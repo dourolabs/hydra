@@ -12,7 +12,7 @@ import { AgentRow } from "./AgentRow";
 import { AgentCreateModal } from "./AgentCreateModal";
 import { AgentEditModal } from "./AgentEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
-import styles from "./AgentsSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 export function AgentsSection() {
   const { data: agents, isLoading: agentsLoading, error: agentsError, refetch } = useAgents();
@@ -50,8 +50,8 @@ export function AgentsSection() {
 
       <Panel
         header={
-          <div className={styles.panelHeaderRow}>
-            <span className={styles.sectionTitle}>Agents</span>
+          <div className={sharedStyles.panelHeaderRow}>
+            <span className={sharedStyles.sectionTitle}>Agents</span>
             <Button variant="primary" size="sm" onClick={() => setAgentCreateOpen(true)}>
               Add Agent
             </Button>
@@ -60,7 +60,7 @@ export function AgentsSection() {
       >
         {agents && agents.length === 0 && <EmptyState message="No agents configured." />}
         {agents && agents.length > 0 && (
-          <div className={styles.agentList}>
+          <div className={sharedStyles.itemList}>
             {agents.map((agent) => (
               <AgentRow
                 key={agent.name}

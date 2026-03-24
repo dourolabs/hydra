@@ -1,5 +1,6 @@
 import { useUsername } from "../auth/useUsername";
 import { useSecrets } from "../secrets/useSecrets";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
 interface SecretsSelectorProps {
@@ -24,7 +25,7 @@ export function SecretsSelector({ selected, onChange }: SecretsSelectorProps) {
     return (
       <div className={styles.secretsField}>
         <span className={styles.secretsFieldLabel}>Secrets</span>
-        <span className={styles.dimText}>Loading secrets...</span>
+        <span className={sharedStyles.dimText}>Loading secrets...</span>
       </div>
     );
   }
@@ -33,7 +34,7 @@ export function SecretsSelector({ selected, onChange }: SecretsSelectorProps) {
     return (
       <div className={styles.secretsField}>
         <span className={styles.secretsFieldLabel}>Secrets</span>
-        <span className={styles.dimText}>
+        <span className={sharedStyles.dimText}>
           No secrets configured. Add secrets in the Secrets section above.
         </span>
       </div>
