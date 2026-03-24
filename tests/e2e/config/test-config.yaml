@@ -15,9 +15,11 @@ job:
   default_model: "opus"
 
 storage_backend: "sqlite"
+sqlite_path: "/tmp/hydra-e2e/hydra.db"
 
 job_engine: "local"
 
 auth_mode: "local"
+auth_token_file: "/tmp/hydra-e2e-auth-token"
 github_token: "${GH_TOKEN}"
 username: "test-agent"
