@@ -13,6 +13,7 @@ hydra:
 
 job:
   default_model: "opus"
+  default_image: "hydra-worker:latest"
 
 storage_backend: "sqlite"
 sqlite_path: "/tmp/hydra-e2e/hydra.db"
