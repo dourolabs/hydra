@@ -53,7 +53,7 @@ vi.mock("../../../api/client", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
-  Panel: ({ children }: { children: React.ReactNode }) => <div data-testid="panel">{children}</div>,
+  Panel: ({ children, header }: { children: React.ReactNode; header?: React.ReactNode }) => <div data-testid="panel">{header}{children}</div>,
   Spinner: () => <div data-testid="spinner" />,
   Button: ({ children, onClick, disabled, ...rest }: {
     children: React.ReactNode;
@@ -231,19 +231,19 @@ describe("SecretsSection", () => {
 
   it("shows Add Secret button", () => {
     render(<SecretsSection />);
-    expect(screen.getByText("+ Add Secret")).toBeDefined();
+    expect(screen.getByText("Add Secret")).toBeDefined();
   });
 
   it("opens add form on Add Secret click", () => {
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
     expect(screen.getByPlaceholderText("SECRET_NAME")).toBeDefined();
     expect(screen.getByPlaceholderText("Secret value")).toBeDefined();
   });
 
   it("validates secret name format", () => {
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: "1BAD" } });
@@ -253,7 +253,7 @@ describe("SecretsSection", () => {
 
   it("validates HYDRA_ prefix is reserved", () => {
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: "HYDRA_FOO" } });
@@ -264,7 +264,7 @@ describe("SecretsSection", () => {
   it("validates duplicate name on save", () => {
     mockSecrets = ["OPENAI_API_KEY", "MY_SECRET"];
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: "MY_SECRET" } });
@@ -281,7 +281,7 @@ describe("SecretsSection", () => {
 
   it("closes add form on Cancel", () => {
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
     expect(screen.getByPlaceholderText("SECRET_NAME")).toBeDefined();
 
     const cancelButtons = screen.getAllByText("Cancel");
@@ -291,7 +291,7 @@ describe("SecretsSection", () => {
 
   it("closes add form on Escape", () => {
     render(<SecretsSection />);
-    fireEvent.click(screen.getByText("+ Add Secret"));
+    fireEvent.click(screen.getByText("Add Secret"));
     const form = screen.getByPlaceholderText("SECRET_NAME").closest("div")!;
     fireEvent.keyDown(form, { key: "Escape" });
     expect(screen.queryByPlaceholderText("SECRET_NAME")).toBeNull();
