@@ -8,7 +8,7 @@ import { LoadingState } from "../../components/LoadingState/LoadingState";
 import { ErrorState } from "../../components/ErrorState/ErrorState";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { useToast } from "../toast/useToast";
-import { RepositoryRow } from "./RepositoryRow";
+import { ExpandableRow } from "../../components/ExpandableRow/ExpandableRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
@@ -63,14 +63,57 @@ export function RepositoriesSection() {
         )}
         {repositories && repositories.length > 0 && (
           <div className={sharedStyles.itemList}>
-            {repositories.map((repo) => (
-              <RepositoryRow
-                key={repo.name}
-                repo={repo}
-                onEdit={() => setEditTarget(repo)}
-                onDelete={() => setDeleteTarget(repo)}
-              />
-            ))}
+            {repositories.map((repo) => {
+              const pw = repo.repository.patch_workflow;
+              const reviewerCount = pw?.review_requests?.length ?? 0;
+              const hasMerge = !!pw?.merge_request?.assignee;
+              const parts: string[] = [];
+              if (reviewerCount > 0) {
+                parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
+              }
+              if (hasMerge) {
+                parts.push("merge");
+              }
+              const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
+
+              return (
+                <ExpandableRow
+                  key={repo.name}
+                  name={repo.name}
+                  onEdit={() => setEditTarget(repo)}
+                  onDelete={() => setDeleteTarget(repo)}
+                >
+                  <div className={sharedStyles.detailRow}>
+                    <span className={sharedStyles.detailLabel}>Remote URL</span>
+                    <span className={sharedStyles.detailValueMono}>
+                      {repo.repository.remote_url}
+                    </span>
+                  </div>
+                  <div className={sharedStyles.detailRow}>
+                    <span className={sharedStyles.detailLabel}>Default Branch</span>
+                    <span className={sharedStyles.detailValue}>
+                      {repo.repository.default_branch ?? (
+                        <span className={sharedStyles.dimText}>—</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className={sharedStyles.detailRow}>
+                    <span className={sharedStyles.detailLabel}>Default Image</span>
+                    <span className={sharedStyles.detailValueMono}>
+                      {repo.repository.default_image ?? (
+                        <span className={sharedStyles.dimText}>—</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className={sharedStyles.detailRow}>
+                    <span className={sharedStyles.detailLabel}>Patch Workflow</span>
+                    <span className={sharedStyles.detailValue}>
+                      {workflowSummary ?? <span className={sharedStyles.dimText}>—</span>}
+                    </span>
+                  </div>
+                </ExpandableRow>
+              );
+            })}
           </div>
         )}
       </Panel>

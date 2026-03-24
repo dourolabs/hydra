@@ -8,11 +8,12 @@ import { LoadingState } from "../../components/LoadingState/LoadingState";
 import { ErrorState } from "../../components/ErrorState/ErrorState";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { useToast } from "../toast/useToast";
-import { AgentRow } from "./AgentRow";
+import { ExpandableRow } from "../../components/ExpandableRow/ExpandableRow";
 import { AgentCreateModal } from "./AgentCreateModal";
 import { AgentEditModal } from "./AgentEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
+import styles from "./AgentsSection.module.css";
 
 export function AgentsSection() {
   const { data: agents, isLoading: agentsLoading, error: agentsError, refetch } = useAgents();
@@ -62,12 +63,56 @@ export function AgentsSection() {
         {agents && agents.length > 0 && (
           <div className={sharedStyles.itemList}>
             {agents.map((agent) => (
-              <AgentRow
+              <ExpandableRow
                 key={agent.name}
-                agent={agent}
+                name={agent.name}
                 onEdit={() => setAgentEditTarget(agent)}
                 onDelete={() => setAgentDeleteTarget(agent)}
-              />
+                headerExtra={
+                  agent.is_assignment_agent ? (
+                    <span className={styles.assignmentBadge}>assignment</span>
+                  ) : undefined
+                }
+              >
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Prompt Path</span>
+                  <span className={sharedStyles.detailValueMono}>
+                    {agent.prompt_path || <span className={sharedStyles.dimText}>—</span>}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>MCP Config Path</span>
+                  <span className={sharedStyles.detailValueMono}>
+                    {agent.mcp_config_path || <span className={sharedStyles.dimText}>—</span>}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Max Tries</span>
+                  <span className={sharedStyles.detailValue}>{agent.max_tries}</span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Max Simultaneous</span>
+                  <span className={sharedStyles.detailValue}>
+                    {agent.max_simultaneous}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Assignment Agent</span>
+                  <span className={sharedStyles.detailValue}>
+                    {agent.is_assignment_agent ? "Yes" : "No"}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Secrets</span>
+                  <span className={sharedStyles.detailValue}>
+                    {agent.secrets && agent.secrets.length > 0 ? (
+                      agent.secrets.join(", ")
+                    ) : (
+                      <span className={sharedStyles.dimText}>None</span>
+                    )}
+                  </span>
+                </div>
+              </ExpandableRow>
             ))}
           </div>
         )}
