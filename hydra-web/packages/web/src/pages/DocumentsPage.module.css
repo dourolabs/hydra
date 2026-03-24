@@ -166,41 +166,6 @@
   gap: var(--space-3);
 }
 
-/* Delete document modal */
-.deleteModalContent {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.deleteMessage {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  margin: 0;
-}
-
-.deleteDocTitle {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  margin: 0;
-}
-
-.deleteDocPath {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
-  margin: 0;
-}
-
-.deleteActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
-
 /* Mobile responsive */
 @media (max-width: 768px) {
   .docRow {
