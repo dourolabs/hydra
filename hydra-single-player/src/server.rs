@@ -83,12 +83,13 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
         );
     }
 
-    let job_engine = if let Some(ref source_config) = config_file {
+    let (job_engine, config_auth_token_file) = if let Some(ref source_config) = config_file {
         // Non-interactive mode: read config file, substitute env vars, validate, and copy.
         cmd_init_from_config(source_config, &server_dir, &config_path)?
     } else {
-        // Interactive mode: prompt for all values.
-        cmd_init_interactive(&server_dir, &config_path)?
+        // Interactive mode: prompt for all values (always uses hardcoded path).
+        let engine = cmd_init_interactive(&server_dir, &config_path)?;
+        (engine, None)
     };
 
     // If the user chose Docker, build the worker image before starting the server
@@ -97,9 +98,13 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
         build_worker_image();
     }
 
+    // Use the auth_token_file from the config if present, otherwise fall back
+    // to the hardcoded default path.
+    let token_path = config_auth_token_file.unwrap_or_else(|| expand_path(AUTH_TOKEN_PATH));
+
     // Delete any stale auth-token file from a previous run so that
     // wait_for_auth_token() only returns once the server has written a fresh one.
-    let _ = fs::remove_file(expand_path(AUTH_TOKEN_PATH));
+    let _ = fs::remove_file(&token_path);
 
     // Start the server in-process so it creates the local user and auth token.
     println!("Starting server...");
@@ -109,7 +114,6 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
     wait_for_server_healthy()?;
 
     // Wait for the auth token file to appear (the server writes it on startup).
-    let token_path = expand_path(AUTH_TOKEN_PATH);
     let auth_token = wait_for_auth_token(&token_path)?;
 
     // Verify the token actually works before proceeding.
@@ -148,12 +152,13 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
 
 /// Non-interactive init: read a pre-written config file, substitute environment
 /// variables, validate it, copy it to the server config path, and create the
-/// required directory structure. Returns the job engine name (e.g. "local", "docker").
+/// required directory structure. Returns the job engine name (e.g. "local", "docker")
+/// and the optional `auth_token_file` path from the parsed config.
 fn cmd_init_from_config(
     source_config: &Path,
     server_dir: &Path,
     config_path: &Path,
-) -> Result<String> {
+) -> Result<(String, Option<PathBuf>)> {
     ensure!(
         source_config.exists(),
         "Config file not found: {}",
@@ -201,7 +206,9 @@ fn cmd_init_from_config(
         source_config.display()
     );
 
-    Ok(job_engine.to_string())
+    let auth_token_file = app_config.auth.auth_token_file().map(|p| p.to_path_buf());
+
+    Ok((job_engine.to_string(), auth_token_file))
 }
 
 /// Create the server directory structure (server_dir, log_dir, job_log_dir).
@@ -1441,7 +1448,12 @@ mod tests {
 
         let result = cmd_init_from_config(&source, &server_dir, &dest_config);
         assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
-        assert_eq!(result.unwrap(), "local");
+        let (engine, auth_token_file) = result.unwrap();
+        assert_eq!(engine, "local");
+        assert_eq!(
+            auth_token_file.as_deref(),
+            Some(Path::new("/tmp/auth-token"))
+        );
 
         // Verify the config was copied.
         assert!(dest_config.exists(), "config should be written to dest");
@@ -1541,6 +1553,50 @@ mod tests {
         unsafe {
             std::env::remove_var("HYDRA_TEST_TOKEN_PLACEHOLDER");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cmd_init_from_config_returns_custom_auth_token_file() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let custom_token_path = Path::new("/tmp/custom-hydra-auth-token");
+        let keys = ApiKeys {
+            claude_code_oauth_token: Some("test-oauth-token".to_string()),
+            ..Default::default()
+        };
+        let config_content = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            custom_token_path,
+            "local",
+            Some("opus"),
+            &keys,
+            None,
+            Some("/tmp/job-logs"),
+        );
+
+        let dir =
+            std::env::temp_dir().join(format!("hydra-auth-token-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let source = dir.join("source-config.yaml");
+        fs::write(&source, &config_content).expect("write source config");
+
+        let server_dir = dir.join("server");
+        let dest_config = dir.join("server/config.yaml");
+
+        let result = cmd_init_from_config(&source, &server_dir, &dest_config);
+        assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
+        let (engine, auth_token_file) = result.unwrap();
+        assert_eq!(engine, "local");
+        assert_eq!(
+            auth_token_file.as_deref(),
+            Some(custom_token_path),
+            "should return the custom auth_token_file path from config"
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 }
