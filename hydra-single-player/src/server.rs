@@ -147,8 +147,8 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
 }
 
 /// Non-interactive init: read a pre-written config file, substitute environment
-/// variables, validate it, inject required single-player defaults, and write it
-/// to the server config path. Returns the job engine name (e.g. "local", "docker").
+/// variables, validate it, copy it to the server config path, and create the
+/// required directory structure. Returns the job engine name (e.g. "local", "docker").
 fn cmd_init_from_config(
     source_config: &Path,
     server_dir: &Path,
@@ -173,7 +173,7 @@ fn cmd_init_from_config(
         .to_string();
 
     // Validate the config by deserializing it.
-    let mut app_config: hydra_server::config::AppConfig = serde_yaml_ng::from_str(&config_content)
+    let app_config: hydra_server::config::AppConfig = serde_yaml_ng::from_str(&config_content)
         .with_context(|| {
             format!(
                 "invalid config file {}. The config must match the format \
@@ -189,49 +189,10 @@ fn cmd_init_from_config(
     };
 
     // Create directory structure.
-    let (_log_dir, job_log_dir) = create_server_dirs(server_dir)?;
+    let (_log_dir, _job_log_dir) = create_server_dirs(server_dir)?;
 
-    // Inject required defaults that the interactive flow always sets but a
-    // user-provided config may omit.
-    //
-    // auth_token_file is required for single-player BFF auto-login.
-    if let hydra_server::config::AuthConfig::Local {
-        ref mut auth_token_file,
-        ..
-    } = app_config.auth
-    {
-        if auth_token_file.is_none() {
-            *auth_token_file = Some(expand_path(AUTH_TOKEN_PATH));
-        }
-    }
-
-    // sqlite_path defaults to a relative "hydra.db", which creates the DB in
-    // whatever the current working directory is. Pin it to the server dir.
-    if let hydra_server::config::StorageConfig::Sqlite {
-        ref mut sqlite_path,
-    } = app_config.storage
-    {
-        let path = Path::new(sqlite_path.as_str());
-        if !path.is_absolute() {
-            *sqlite_path = expand_path(SERVER_DB_PATH).display().to_string();
-        }
-    }
-
-    // Ensure local job engine has a log_dir.
-    if let hydra_server::config::JobEngineConfig::Local { ref mut log_dir } = app_config.job_engine
-    {
-        if log_dir.is_none() {
-            *log_dir = Some(job_log_dir.display().to_string());
-        }
-    }
-
-    // Serialize the augmented config and write it.
-    let augmented_content = serde_yaml_ng::to_string(&app_config)
-        .context("failed to serialize augmented server config")?;
-    let config_output =
-        format!("# Hydra server configuration (from {source_config:?})\n{augmented_content}");
-
-    fs::write(config_path, &config_output)
+    // Write the config (with env vars substituted) to the server config path.
+    fs::write(config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
 
     println!(
@@ -1482,88 +1443,12 @@ mod tests {
         assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
         assert_eq!(result.unwrap(), "local");
 
-        // Verify the config was written and is valid YAML.
+        // Verify the config was copied.
         assert!(dest_config.exists(), "config should be written to dest");
         let written = fs::read_to_string(&dest_config).expect("read dest config");
-        let loaded: hydra_server::config::AppConfig =
-            serde_yaml_ng::from_str(&written).expect("written config should be valid");
-        assert_eq!(
-            loaded.auth.auth_token_file().map(|p| p.to_path_buf()),
-            Some(PathBuf::from("/tmp/auth-token"))
-        );
+        assert_eq!(written, config_content);
 
         // Clean up.
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn cmd_init_from_config_injects_missing_defaults() {
-        use base64::Engine;
-        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
-
-        // Minimal config that omits auth_token_file, sqlite_path, and log_dir.
-        let config_content = format!(
-            r#"
-hydra:
-  namespace: test
-  server_hostname: "127.0.0.1:8080"
-  HYDRA_SECRET_ENCRYPTION_KEY: "{encryption_key}"
-
-job:
-  default_model: opus
-
-storage_backend: sqlite
-
-job_engine: local
-
-auth_mode: local
-github_token: ghp_test123
-username: test-agent
-"#
-        );
-
-        let dir = std::env::temp_dir().join(format!("hydra-defaults-test-{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        let source = dir.join("minimal-config.yaml");
-        fs::write(&source, &config_content).expect("write source config");
-
-        let server_dir = dir.join("server");
-        let dest_config = dir.join("server/config.yaml");
-
-        let result = cmd_init_from_config(&source, &server_dir, &dest_config);
-        assert!(result.is_ok(), "cmd_init_from_config failed: {result:?}");
-
-        let written = fs::read_to_string(&dest_config).expect("read dest config");
-        let loaded: hydra_server::config::AppConfig =
-            serde_yaml_ng::from_str(&written).expect("written config should be valid");
-
-        // auth_token_file should be injected with the default path.
-        assert!(
-            loaded.auth.auth_token_file().is_some(),
-            "auth_token_file should be injected when missing"
-        );
-
-        // sqlite_path should be an absolute path (not the default "hydra.db").
-        if let hydra_server::config::StorageConfig::Sqlite { ref sqlite_path } = loaded.storage {
-            let path = Path::new(sqlite_path);
-            assert!(
-                path.is_absolute(),
-                "sqlite_path should be absolute, got: {sqlite_path}"
-            );
-        } else {
-            panic!("expected sqlite storage backend");
-        }
-
-        // log_dir should be injected for local job engine.
-        if let hydra_server::config::JobEngineConfig::Local { ref log_dir } = loaded.job_engine {
-            assert!(
-                log_dir.is_some(),
-                "log_dir should be injected for local job engine"
-            );
-        } else {
-            panic!("expected local job engine");
-        }
-
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -4,9 +4,6 @@
 # Required environment variables:
 #   CLAUDE_CODE_OAUTH_TOKEN - OAuth token for Claude Code
 #   GH_TOKEN                - GitHub personal access token (repo scope)
-#
-# Note: auth_token_file, sqlite_path, and log_dir are injected automatically
-# by `server init --config` when not specified.
 
 hydra:
   namespace: "test"
@@ -18,9 +15,12 @@ job:
   default_model: "opus"
 
 storage_backend: "sqlite"
+sqlite_path: "${HOME}/.hydra/server/hydra.db"
 
 job_engine: "local"
+log_dir: "${HOME}/.hydra/server/job-logs"
 
 auth_mode: "local"
 github_token: "${GH_TOKEN}"
 username: "test-agent"
+auth_token_file: "${HOME}/.hydra/server/auth-token"
