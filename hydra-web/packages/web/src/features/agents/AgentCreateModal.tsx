@@ -1,9 +1,8 @@
 import { useState, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
 import styles from "./AgentsSection.module.css";
 
@@ -14,9 +13,6 @@ interface AgentCreateModalProps {
 }
 
 export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProps) {
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
-
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [maxTries, setMaxTries] = useState("3");
@@ -35,19 +31,13 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setSelectedSecrets([]);
   }, []);
 
-  const mutation = useMutation({
-    mutationFn: (params: UpsertAgentRequest) => apiClient.createAgent(params),
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpsertAgentRequest, unknown>({
+    mutationFn: (params) => apiClient.createAgent(params),
+    invalidateKeys: [["agents"]],
+    successMessage: "Agent created",
     onSuccess: () => {
       resetForm();
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      addToast("Agent created", "success");
       onClose();
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to create agent",
-        "error",
-      );
     },
   });
 
@@ -76,26 +66,9 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     });
   }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      resetForm();
-      onClose();
-    }
-  }, [mutation.isPending, resetForm, onClose]);
-
   return (
-    <Modal open={open} onClose={handleClose} title="Add Agent">
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+    <Modal open={open} onClose={() => handleClose(resetForm, onClose)} title="Add Agent">
+      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Name"
           placeholder="swe"
@@ -153,8 +126,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           <Button
             variant="secondary"
             size="md"
-            onClick={handleClose}
-            disabled={mutation.isPending}
+            onClick={() => handleClose(resetForm, onClose)}
+            disabled={isPending}
           >
             Cancel
           </Button>
@@ -162,9 +135,9 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
             variant="primary"
             size="md"
             onClick={handleSubmit}
-            disabled={!isValid || mutation.isPending}
+            disabled={!isValid || isPending}
           >
-            {mutation.isPending ? "Creating..." : "Add Agent"}
+            {isPending ? "Creating..." : "Add Agent"}
           </Button>
         </div>
       </div>

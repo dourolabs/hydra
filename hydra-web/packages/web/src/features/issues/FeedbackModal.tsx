@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./FeedbackModal.module.css";
 
@@ -14,7 +14,6 @@ interface FeedbackModalProps {
 }
 
 export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
-  const { addToast } = useToast();
   const queryClient = useQueryClient();
   const [feedback, setFeedback] = useState("");
 
@@ -24,8 +23,13 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
     }
   }, [open]);
 
-  const mutation = useMutation({
-    mutationFn: (text: string) => apiClient.submitFeedback(issueId, text),
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<string, unknown>({
+    mutationFn: (text) => apiClient.submitFeedback(issueId, text),
+    invalidateKeys: [["issue", issueId], ["issues"]],
+    successMessage: "Feedback submitted",
+    onSuccess: () => {
+      onClose();
+    },
     onMutate: async (text) => {
       await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
       const previous = queryClient.getQueryData<IssueVersionRecord>(["issue", issueId]);
@@ -40,19 +44,11 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
       }
       return { previous };
     },
-    onSuccess: () => {
-      addToast("Feedback submitted", "success");
-      onClose();
-    },
-    onError: (err, _variables, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["issue", issueId], context.previous);
+    onError: (_err, _variables, context) => {
+      const ctx = context as { previous?: IssueVersionRecord } | undefined;
+      if (ctx?.previous) {
+        queryClient.setQueryData(["issue", issueId], ctx.previous);
       }
-      addToast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
-      queryClient.invalidateQueries({ queryKey: ["issues"] });
     },
   });
 
@@ -62,30 +58,16 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
     mutation.mutate(trimmed);
   }, [feedback, mutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      onClose();
-    }
-  }, [mutation.isPending, onClose]);
+  const noop = useCallback(() => {}, []);
 
   return (
     <Modal
       open={open}
-      onClose={handleClose}
+      onClose={() => handleClose(noop, onClose)}
       title="Give Feedback"
       className={largeModalStyles.largeModal}
     >
-      <div className={styles.form} onKeyDown={handleKeyDown}>
+      <div className={styles.form} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Textarea
           label="Feedback"
           placeholder="Describe what you'd like the agent to change..."
@@ -98,16 +80,16 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
             {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={handleClose}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(noop, onClose)}>
               Cancel
             </Button>
             <Button
               variant="primary"
               size="md"
               onClick={handleSubmit}
-              disabled={mutation.isPending || !feedback.trim()}
+              disabled={isPending || !feedback.trim()}
             >
-              {mutation.isPending ? "Submitting..." : "Submit Feedback"}
+              {isPending ? "Submitting..." : "Submit Feedback"}
             </Button>
           </div>
         </div>
