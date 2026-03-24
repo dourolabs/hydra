@@ -37,7 +37,7 @@
 }
 
 .deletion {
-  background-color: rgba(255, 68, 68, 0.12);
+  background-color: color-mix(in srgb, var(--color-status-failed) 12%, transparent);
   color: var(--color-status-failed);
 }
 

@@ -16,8 +16,8 @@
 .container:focus-within {
   border-color: var(--color-border-focus);
   box-shadow:
-    0 0 0 3px rgba(0, 204, 102, 0.15),
-    0 0 8px rgba(0, 204, 102, 0.1);
+    0 0 0 3px var(--color-focus-ring),
+    0 0 8px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .searchIcon {

@@ -41,12 +41,12 @@
   transition:
     background var(--transition-fast),
     text-shadow var(--transition-fast);
-  text-shadow: 0 0 10px rgba(0, 204, 102, 0.3);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
 .logo:hover {
   background: var(--color-bg-tertiary);
-  text-shadow: 0 0 20px rgba(0, 204, 102, 0.5);
+  text-shadow: 0 0 20px color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 .navItem {
@@ -70,9 +70,9 @@
 }
 
 .navItem.active {
-  background: rgba(0, 204, 102, 0.15);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
   color: var(--color-accent);
-  box-shadow: 0 0 8px rgba(0, 204, 102, 0.15);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 15%, transparent);
 }
 
 .navIcon {
@@ -139,7 +139,9 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   border-radius: var(--radius-md);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
   padding: 0;
 }
 
