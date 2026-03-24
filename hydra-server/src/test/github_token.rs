@@ -1,14 +1,18 @@
 use crate::{
+    app::{AppState, ServiceState},
+    config::AuthConfig,
     domain::{
         actors::{Actor, ActorRef, store_github_token_secrets},
         issues::{Issue, IssueStatus, IssueType},
+        secrets::SecretManager,
         sessions::{BundleSpec, Session},
         task_status::Status,
         users::{User, Username},
     },
+    store::MemoryStore,
     test_utils::{
-        github_user_response, spawn_test_server_with_state, test_client_without_auth,
-        test_state_handles, test_state_with_github_urls,
+        MockJobEngine, github_user_response, spawn_test_server_with_state,
+        test_client_without_auth, test_state_handles, test_state_with_github_urls,
     },
 };
 use chrono::Utc;
@@ -374,5 +378,66 @@ async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()>
         .await?;
 
     assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+/// In local auth mode (no GitHub App configured), `get_github_token_for_user`
+/// should return the PAT without attempting to read GITHUB_REFRESH_TOKEN.
+#[tokio::test]
+async fn github_token_returns_pat_in_local_mode_without_refresh_token() -> anyhow::Result<()> {
+    let mut config = crate::test_utils::test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_local_pat".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+
+    let store: std::sync::Arc<dyn crate::store::Store> = std::sync::Arc::new(MemoryStore::new());
+    let sm = std::sync::Arc::new(SecretManager::new([42u8; 32]));
+
+    let state = AppState::new(
+        std::sync::Arc::new(config),
+        None,
+        std::sync::Arc::new(ServiceState::default()),
+        store.clone(),
+        std::sync::Arc::new(MockJobEngine::new()),
+        sm.clone(),
+    );
+
+    let username = Username::from("local");
+
+    // Manually create user, actor, and store only GITHUB_TOKEN (no refresh token).
+    let user = User::new(username.clone(), None, false);
+    store.add_user(user, &ActorRef::test()).await?;
+
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
+    store.add_actor(actor, &ActorRef::test()).await?;
+
+    // Encrypt and store only the GitHub PAT — no refresh token.
+    let encrypted = sm.encrypt("ghp_local_pat")?;
+    store
+        .set_user_secret(
+            &username,
+            crate::domain::secrets::SECRET_GITHUB_TOKEN,
+            &encrypted,
+            true,
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, store).await?;
+    let client = auth_client(&auth_token);
+    let response = client
+        .get(format!("{}/v1/github/token", server.base_url()))
+        .send()
+        .await?;
+
+    assert!(
+        response.status().is_success(),
+        "local mode should return token without reading refresh token, got {}",
+        response.status()
+    );
+    let body: GithubTokenResponse = response.json().await?;
+    assert_eq!(body.github_token, "ghp_local_pat");
+
     Ok(())
 }
