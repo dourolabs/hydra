@@ -1968,12 +1968,10 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
-        // SQLite doesn't have DISTINCT ON, use a subquery instead
         let rows = sqlx::query_as::<_, RepositoryRow>(
             "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.deleted, r.patch_workflow, r.actor, r.created_at, r.updated_at
              FROM repositories_v2 r
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM repositories_v2 GROUP BY id) latest
-             ON r.id = latest.id AND r.version_number = latest.max_vn
+             WHERE r.is_latest = 1
              ORDER BY r.id"
         )
         .fetch_all(&self.pool)
@@ -2110,13 +2108,11 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
         let subquery = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
-             ON i.id = latest.id AND i.version_number = latest.max_vn"
+             WHERE i.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_issues_predicates_sqlite(query);
@@ -2179,8 +2175,7 @@ impl ReadOnlyStore for SqliteStore {
         let subquery = format!(
             "SELECT i.id, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.deleted, i.created_at
              FROM {TABLE_ISSUES_V2} i
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
-             ON i.id = latest.id AND i.version_number = latest.max_vn"
+             WHERE i.is_latest = 1"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
         let (predicates, bindings) = build_issues_predicates_sqlite(query);
@@ -2351,8 +2346,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.deleted, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = p.id) AS creation_time
              FROM {TABLE_PATCHES_V2} p
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_PATCHES_V2} GROUP BY id) latest
-             ON p.id = latest.id AND p.version_number = latest.max_vn"
+             WHERE p.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_patches_predicates_sqlite(query);
@@ -2413,8 +2407,7 @@ impl ReadOnlyStore for SqliteStore {
         let subquery = format!(
             "SELECT p.id, p.status, p.is_automatic_backup, p.branch_name, p.service_repo_name, p.github, p.title, p.description, p.diff, p.deleted
              FROM {TABLE_PATCHES_V2} p
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_PATCHES_V2} GROUP BY id) latest
-             ON p.id = latest.id AND p.version_number = latest.max_vn"
+             WHERE p.is_latest = 1"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
         let (predicates, bindings) = build_patches_predicates_sqlite(query);
@@ -2741,11 +2734,10 @@ impl ReadOnlyStore for SqliteStore {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.mcp_config, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
              t.creation_time, t.start_time, t.end_time \
-             FROM {TABLE_TASKS_V2} t \
-             INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
-             ON t.id = latest.id AND t.version_number = latest.max_version"
+             FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
+        predicates.insert(0, "t.is_latest = 1".to_string());
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -2780,11 +2772,10 @@ impl ReadOnlyStore for SqliteStore {
     async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         let mut sql = format!(
             "SELECT COUNT(*) \
-             FROM {TABLE_TASKS_V2} t \
-             INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
-             ON t.id = latest.id AND t.version_number = latest.max_version"
+             FROM {TABLE_TASKS_V2} t"
         );
-        let (predicates, bindings) = build_tasks_predicates_sqlite(query);
+        let (mut predicates, bindings) = build_tasks_predicates_sqlite(query);
+        predicates.insert(0, "t.is_latest = 1".to_string());
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2890,8 +2881,7 @@ impl ReadOnlyStore for SqliteStore {
         let rows = sqlx::query_as::<_, ActorRow>(
             "SELECT a.id, a.version_number, a.auth_token_hash, a.auth_token_salt, a.actor_id, a.creator, a.actor, a.created_at, a.updated_at
              FROM actors_v2 a
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM actors_v2 GROUP BY id) latest
-             ON a.id = latest.id AND a.version_number = latest.max_vn
+             WHERE a.is_latest = 1
              ORDER BY a.id"
         )
         .fetch_all(&self.pool)
@@ -2971,8 +2961,7 @@ impl ReadOnlyStore for SqliteStore {
         let rows = sqlx::query_as::<_, UserRow>(
             "SELECT u.id, u.version_number, u.username, u.github_user_id, u.deleted, u.actor, u.created_at, u.updated_at
              FROM users_v2 u
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM users_v2 GROUP BY id) latest
-             ON u.id = latest.id AND u.version_number = latest.max_vn
+             WHERE u.is_latest = 1
              ORDER BY u.id"
         )
         .fetch_all(&self.pool)
@@ -3159,14 +3148,12 @@ impl ReadOnlyStore for SqliteStore {
         let limit = i64::from(query.limit.unwrap_or(50));
         let include_deleted = query.include_deleted.unwrap_or(false);
 
-        // SQLite doesn't have DISTINCT ON, so use a subquery with GROUP BY to get the latest version
         let subquery = format!(
             "SELECT m.id, m.version_number, m.sender, m.recipient, m.body, m.is_read, \
              m.deleted, m.actor, m.created_at, m.updated_at, \
              (SELECT MIN(m2.created_at) FROM {TABLE_MESSAGES_V2} m2 WHERE m2.id = m.id) AS creation_time \
              FROM {TABLE_MESSAGES_V2} m \
-             INNER JOIN (SELECT id, MAX(version_number) AS max_ver FROM {TABLE_MESSAGES_V2} GROUP BY id) latest \
-             ON m.id = latest.id AND m.version_number = latest.max_ver"
+             WHERE m.is_latest = 1"
         );
 
         let mut conditions = Vec::new();
