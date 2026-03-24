@@ -32,7 +32,7 @@ Follow these steps to review a patch:
 2. **Gather escalation history**: Check the output from step 1 for any child issues of type `review-request`.
   For each such child issue, run `hydra issues describe <child-id>` to read:
   - The escalation reason (from the issue description)
-  - The human's response (from the progress field)
+  - The human's response (from the form_response field if a form was used, or from the progress field)
   - The issue status (closed = approved, failed = rejected)
   Collect this information as "escalation history" to use in subsequent review steps. If there are no child
   `review-request` issues, proceed without escalation history.
@@ -72,8 +72,12 @@ If you choose to approve:
 
 If you choose to escalate:
 
-10. **Create a child issue**: create an issue assigned to the creator of the current issue.
-  `hydra issues create --title "Escalation: <brief summary>" --assignee <creator> --deps child-of:$HYDRA_ISSUE_ID --patches <patch-id> --type review-request "Escalation for <patch-id>: <brief summary of issue>. Assessment: <your evaluation of the patch and what it does>. Escalation reason: <which escalation criteria triggered the escalation>"`.
+10. **Create a child issue**: create an issue assigned to the creator of the current issue, using the
+  review escalation form so the human can respond with structured approve/reject actions.
+  `hydra issues create --title "Escalation: <brief summary>" --assignee <creator> --deps child-of:$HYDRA_ISSUE_ID --patches <patch-id> --type review-request --form $HYDRA_DOCUMENTS_DIR/forms/review_escalation.yaml "Escalation for <patch-id>: <brief summary of issue>. Assessment: <your evaluation of the patch and what it does>. Escalation reason: <which escalation criteria triggered the escalation>"`.
+  The `--form` flag attaches a form with a review comment textarea and Approve/Request Changes buttons.
+  When the human clicks Approve, the escalation issue status is set to closed. When they click Request Changes,
+  the status is set to failed. The human's review comment is recorded in the form response on the issue.
   The issue description must start with "Escalation for <patch-id>: " followed by a brief summary, then include your assessment of the patch and the reason for escalation.
   For example: "Escalation for p-xyz: Nontrivial API change. Assessment: Patch modifies the public API by adding a new endpoint. Escalation reason: API changes require human review."
 
