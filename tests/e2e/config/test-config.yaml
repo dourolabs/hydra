@@ -4,6 +4,9 @@
 # Required environment variables:
 #   CLAUDE_CODE_OAUTH_TOKEN - OAuth token for Claude Code
 #   GH_TOKEN                - GitHub personal access token (repo scope)
+#
+# Note: auth_token_file, sqlite_path, and log_dir are injected automatically
+# by `server init --config` when not specified.
 
 hydra:
   namespace: "test"
