@@ -24,8 +24,10 @@
 
 .value {
   color: var(--color-text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-family-mono);
   margin: 0;
 }
 
-.empty { composes: empty from '../detail.module.css'; }
+.empty {
+  composes: empty from "../detail.module.css";
+}

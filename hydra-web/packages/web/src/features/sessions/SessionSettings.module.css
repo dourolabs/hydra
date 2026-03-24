@@ -24,7 +24,7 @@
 
 .value {
   color: var(--color-text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-family-mono);
   margin: 0;
 }
 
@@ -46,4 +46,6 @@
   color: var(--color-accent);
 }
 
-.empty { composes: empty from '../detail.module.css'; }
+.empty {
+  composes: empty from "../detail.module.css";
+}

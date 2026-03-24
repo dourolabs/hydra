@@ -11,7 +11,9 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s, background-color 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
 }
 
 .copyButton:hover {
@@ -24,17 +26,17 @@
 }
 
 .copied {
-  color: var(--color-success, #22c55e);
+  color: var(--color-success);
 }
 
 .copied:hover {
-  color: var(--color-success, #22c55e);
+  color: var(--color-success);
 }
 
 .failed {
-  color: var(--color-error, #ef4444);
+  color: var(--color-error);
 }
 
 .failed:hover {
-  color: var(--color-error, #ef4444);
+  color: var(--color-error);
 }
