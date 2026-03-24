@@ -1,0 +1,152 @@
+/* Shared styles for settings sections (Agents, Repositories, etc.) */
+
+.center {
+  composes: center from "../../pages/page.module.css";
+}
+.error {
+  composes: error from "../../pages/page.module.css";
+}
+.empty {
+  composes: empty from "../../pages/page.module.css";
+}
+
+.panelHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sectionTitle {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Item list */
+.itemList {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  background: none;
+  border: none;
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.header:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  transition: color var(--transition-fast);
+}
+
+.header:hover .chevron {
+  color: var(--color-text-secondary);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}
+
+.rowActions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3) calc(16px + var(--space-2) + var(--space-3));
+}
+
+.detailRow {
+  display: flex;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.detailLabel {
+  flex-shrink: 0;
+  width: 120px;
+  color: var(--color-text-tertiary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.detailValue {
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.detailValueMono {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  word-break: break-all;
+}
+
+.dimText {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+/* Form / modal styles */
+.formFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .detailRow {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .detailLabel {
+    width: auto;
+  }
+
+  .details {
+    padding-left: var(--space-3);
+  }
+}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@hydra/ui";
 import type { RepositoryRecord } from "@hydra/api";
-import styles from "./RepositoriesSection.module.css";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 interface RepositoryRowProps {
   repo: RepositoryRecord;
@@ -25,18 +25,18 @@ export function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
   const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
 
   return (
-    <div className={styles.repoItem}>
+    <div className={sharedStyles.item}>
       <button
         type="button"
-        className={styles.repoHeader}
+        className={sharedStyles.header}
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
       >
-        <span className={styles.chevron} aria-hidden="true">
+        <span className={sharedStyles.chevron} aria-hidden="true">
           {expanded ? "▾" : "▸"}
         </span>
-        <span className={styles.repoName}>{repo.name}</span>
-        <div className={styles.rowActions}>
+        <span className={sharedStyles.name}>{repo.name}</span>
+        <div className={sharedStyles.rowActions}>
           <Button
             variant="ghost"
             size="sm"
@@ -60,33 +60,33 @@ export function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
         </div>
       </button>
       {expanded && (
-        <div className={styles.repoDetails}>
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Remote URL</span>
-            <span className={styles.detailValueMono}>
+        <div className={sharedStyles.details}>
+          <div className={sharedStyles.detailRow}>
+            <span className={sharedStyles.detailLabel}>Remote URL</span>
+            <span className={sharedStyles.detailValueMono}>
               {repo.repository.remote_url}
             </span>
           </div>
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Default Branch</span>
-            <span className={styles.detailValue}>
+          <div className={sharedStyles.detailRow}>
+            <span className={sharedStyles.detailLabel}>Default Branch</span>
+            <span className={sharedStyles.detailValue}>
               {repo.repository.default_branch ?? (
-                <span className={styles.dimText}>—</span>
+                <span className={sharedStyles.dimText}>—</span>
               )}
             </span>
           </div>
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Default Image</span>
-            <span className={styles.detailValueMono}>
+          <div className={sharedStyles.detailRow}>
+            <span className={sharedStyles.detailLabel}>Default Image</span>
+            <span className={sharedStyles.detailValueMono}>
               {repo.repository.default_image ?? (
-                <span className={styles.dimText}>—</span>
+                <span className={sharedStyles.dimText}>—</span>
               )}
             </span>
           </div>
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Patch Workflow</span>
-            <span className={styles.detailValue}>
-              {workflowSummary ?? <span className={styles.dimText}>—</span>}
+          <div className={sharedStyles.detailRow}>
+            <span className={sharedStyles.detailLabel}>Patch Workflow</span>
+            <span className={sharedStyles.detailValue}>
+              {workflowSummary ?? <span className={sharedStyles.dimText}>—</span>}
             </span>
           </div>
         </div>
