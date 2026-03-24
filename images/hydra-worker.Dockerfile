@@ -16,7 +16,7 @@ RUN cargo chef cook --recipe-path recipe.json
 # Build the whole project
 COPY . .
 # Build only the hydra CLI
-RUN cargo build --bin hydra --release
+RUN cargo build -p hydra --bin hydra --release
 
 FROM rust:1.88.0
 ARG NODE_VERSION=22
