@@ -1,7 +1,9 @@
-.page { composes: page from './page.module.css'; }
-.center { composes: center from './page.module.css'; }
-.error { composes: error from './page.module.css'; }
-.empty { composes: empty from './page.module.css'; }
+.page {
+  composes: page from "./page.module.css";
+}
+.center {
+  composes: center from "./page.module.css";
+}
 
 .pageHeader {
   display: flex;
