@@ -31,6 +31,9 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
   const [mergeAssignee, setMergeAssignee] = useState(
     repo.repository.patch_workflow?.merge_request?.assignee ?? "",
   );
+  const [patchWorkflowEnabled, setPatchWorkflowEnabled] = useState(
+    !!repo.repository.patch_workflow,
+  );
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpdateRepositoryRequest, unknown>({
     mutationFn: (params) => apiClient.updateRepository(repo.name, params),
@@ -45,20 +48,25 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
-    const filteredReviewers = reviewerAssignees
-      .map((r) => r.trim())
-      .filter((r) => r.length > 0);
-    const trimmedMergeAssignee = mergeAssignee.trim();
-    const hasPatchWorkflow =
-      filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
-    const patch_workflow: RepoWorkflowConfig | undefined = hasPatchWorkflow
-      ? {
-          review_requests: filteredReviewers.map((assignee) => ({ assignee })),
-          merge_request: trimmedMergeAssignee
-            ? { assignee: trimmedMergeAssignee }
-            : null,
-        }
-      : undefined;
+    let patch_workflow: RepoWorkflowConfig | null | undefined;
+    if (!patchWorkflowEnabled) {
+      patch_workflow = null;
+    } else {
+      const filteredReviewers = reviewerAssignees
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0);
+      const trimmedMergeAssignee = mergeAssignee.trim();
+      const hasPatchWorkflow =
+        filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
+      patch_workflow = hasPatchWorkflow
+        ? {
+            review_requests: filteredReviewers.map((assignee) => ({ assignee })),
+            merge_request: trimmedMergeAssignee
+              ? { assignee: trimmedMergeAssignee }
+              : null,
+          }
+        : undefined;
+    }
     mutation.mutate({
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
@@ -71,6 +79,7 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
     defaultImage,
     reviewerAssignees,
     mergeAssignee,
+    patchWorkflowEnabled,
     isValid,
     mutation,
   ]);
@@ -98,6 +107,8 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           onChange={(e) => setDefaultImage(e.target.value)}
         />
         <PatchWorkflowSection
+          enabled={patchWorkflowEnabled}
+          onEnabledChange={setPatchWorkflowEnabled}
           reviewerAssignees={reviewerAssignees}
           onReviewerAssigneesChange={setReviewerAssignees}
           mergeAssignee={mergeAssignee}

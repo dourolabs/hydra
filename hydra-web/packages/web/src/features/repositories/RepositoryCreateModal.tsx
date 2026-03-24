@@ -21,6 +21,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
   const [defaultImage, setDefaultImage] = useState("");
   const [reviewerAssignees, setReviewerAssignees] = useState<string[]>([]);
   const [mergeAssignee, setMergeAssignee] = useState("");
+  const [patchWorkflowEnabled, setPatchWorkflowEnabled] = useState(false);
 
   const resetForm = useCallback(() => {
     setName("");
@@ -29,6 +30,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
     setDefaultImage("");
     setReviewerAssignees([]);
     setMergeAssignee("");
+    setPatchWorkflowEnabled(false);
   }, []);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<CreateRepositoryRequest, unknown>({
@@ -50,20 +52,23 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
-    const filteredReviewers = reviewerAssignees
-      .map((r) => r.trim())
-      .filter((r) => r.length > 0);
-    const trimmedMergeAssignee = mergeAssignee.trim();
-    const hasPatchWorkflow =
-      filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
-    const patch_workflow: RepoWorkflowConfig | undefined = hasPatchWorkflow
-      ? {
-          review_requests: filteredReviewers.map((assignee) => ({ assignee })),
-          merge_request: trimmedMergeAssignee
-            ? { assignee: trimmedMergeAssignee }
-            : null,
-        }
-      : undefined;
+    let patch_workflow: RepoWorkflowConfig | undefined;
+    if (patchWorkflowEnabled) {
+      const filteredReviewers = reviewerAssignees
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0);
+      const trimmedMergeAssignee = mergeAssignee.trim();
+      const hasPatchWorkflow =
+        filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
+      patch_workflow = hasPatchWorkflow
+        ? {
+            review_requests: filteredReviewers.map((assignee) => ({ assignee })),
+            merge_request: trimmedMergeAssignee
+              ? { assignee: trimmedMergeAssignee }
+              : null,
+          }
+        : undefined;
+    }
     mutation.mutate({
       name: name.trim(),
       remote_url: remoteUrl.trim(),
@@ -78,6 +83,7 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
     defaultImage,
     reviewerAssignees,
     mergeAssignee,
+    patchWorkflowEnabled,
     isValid,
     mutation,
   ]);
@@ -115,6 +121,8 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
           onChange={(e) => setDefaultImage(e.target.value)}
         />
         <PatchWorkflowSection
+          enabled={patchWorkflowEnabled}
+          onEnabledChange={setPatchWorkflowEnabled}
           reviewerAssignees={reviewerAssignees}
           onReviewerAssigneesChange={setReviewerAssignees}
           mergeAssignee={mergeAssignee}

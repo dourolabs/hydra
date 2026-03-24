@@ -3,6 +3,8 @@ import { Button, Input } from "@hydra/ui";
 import styles from "./RepositoriesSection.module.css";
 
 interface PatchWorkflowSectionProps {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
   reviewerAssignees: string[];
   onReviewerAssigneesChange: (assignees: string[]) => void;
   mergeAssignee: string;
@@ -10,6 +12,8 @@ interface PatchWorkflowSectionProps {
 }
 
 export function PatchWorkflowSection({
+  enabled,
+  onEnabledChange,
   reviewerAssignees,
   onReviewerAssigneesChange,
   mergeAssignee,
@@ -37,7 +41,16 @@ export function PatchWorkflowSection({
 
   return (
     <div className={styles.workflowSection}>
-      <div className={styles.workflowHeader}>Patch Workflow</div>
+      <label className={styles.workflowToggleRow}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onEnabledChange(e.target.checked)}
+        />
+        <span className={styles.workflowHeader}>Enable Patch Workflow</span>
+      </label>
+      {!enabled ? null : (
+      <>
       <p className={styles.formHint}>
         Use $patch_creator to auto-assign to the patch author
       </p>
@@ -69,6 +82,8 @@ export function PatchWorkflowSection({
         value={mergeAssignee}
         onChange={(e) => onMergeAssigneeChange(e.target.value)}
       />
+      </>
+      )}
     </div>
   );
 }
