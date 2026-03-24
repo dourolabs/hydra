@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { Panel, Spinner, Button } from "@hydra/ui";
+import { Panel, Button } from "@hydra/ui";
 import type { RepositoryRecord } from "@hydra/api";
 import { useRepositories } from "../../hooks/useRepositories";
+import { LoadingState } from "../../components/LoadingState/LoadingState";
+import { ErrorState } from "../../components/ErrorState/ErrorState";
+import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { RepositoryRow } from "./RepositoryRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
@@ -9,21 +12,20 @@ import { RepositoryDeleteModal } from "./RepositoryDeleteModal";
 import styles from "./RepositoriesSection.module.css";
 
 export function RepositoriesSection() {
-  const { data: repositories, isLoading, error } = useRepositories();
+  const { data: repositories, isLoading, error, refetch } = useRepositories();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RepositoryRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RepositoryRecord | null>(null);
 
   return (
     <>
-      {isLoading && (
-        <div className={styles.center}>
-          <Spinner size="md" />
-        </div>
-      )}
+      {isLoading && <LoadingState />}
 
       {error && (
-        <p className={styles.error}>Failed to load repositories: {(error as Error).message}</p>
+        <ErrorState
+          message={`Failed to load repositories: ${(error as Error).message}`}
+          onRetry={() => refetch()}
+        />
       )}
 
       <Panel
@@ -37,7 +39,7 @@ export function RepositoriesSection() {
         }
       >
         {repositories && repositories.length === 0 && (
-          <p className={styles.empty}>No repositories configured.</p>
+          <EmptyState message="No repositories configured." />
         )}
         {repositories && repositories.length > 0 && (
           <div className={styles.repoList}>
