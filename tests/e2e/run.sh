@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
 SERVER_URL="http://localhost:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
-HYDRA_BIN="${REPO_ROOT}/target/release/hydra"
+HYDRA_SP="${REPO_ROOT}/target/release/hydra-sp"
 SERVER_PID=""
 
 # --------------------------------------------------------------------------
@@ -91,16 +91,18 @@ fi
 # --------------------------------------------------------------------------
 echo "==> Building hydra-single-player (release)..."
 (cd "${REPO_ROOT}" && cargo build -p hydra-single-player --release)
-echo "    Binary: ${HYDRA_BIN}"
+ln -sf hydra-single-player "${REPO_ROOT}/target/release/hydra-sp"
+ln -sf hydra-single-player "${REPO_ROOT}/target/release/hydra"
+echo "    Binary: ${HYDRA_SP}"
 
 # --------------------------------------------------------------------------
 # 5. Initialize and start server
 # --------------------------------------------------------------------------
 echo "==> Initializing server with test config..."
-"${HYDRA_BIN}" server init --config "${CONFIG_PATH}"
+"${HYDRA_SP}" server init --config "${CONFIG_PATH}"
 
 echo "==> Starting server..."
-"${HYDRA_BIN}" server start &
+"${HYDRA_SP}" server start &
 SERVER_PID=$!
 
 echo "    Server PID: ${SERVER_PID}"
@@ -122,7 +124,7 @@ echo "    Server is healthy (waited ${WAITED}s)."
 # 6. Pre-register test fixture repository
 # --------------------------------------------------------------------------
 echo "==> Registering dourolabs/hydra-test-fixture repository..."
-"${HYDRA_BIN}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
+HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
 echo "    Repository registered."
 
 # --------------------------------------------------------------------------
