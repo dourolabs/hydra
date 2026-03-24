@@ -125,7 +125,7 @@ impl AppState {
                         },
                         StoreError::DocumentPathConflict(path) => {
                             UpsertDocumentError::PathConflict {
-                                path,
+                                path: path.unwrap_or_default(),
                                 existing_id: None,
                             }
                         }
@@ -144,7 +144,7 @@ impl AppState {
                     .map_err(|source| match source {
                         StoreError::DocumentPathConflict(path) => {
                             UpsertDocumentError::PathConflict {
-                                path,
+                                path: path.unwrap_or_default(),
                                 existing_id: None,
                             }
                         }

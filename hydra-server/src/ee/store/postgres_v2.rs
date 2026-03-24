@@ -1828,7 +1828,7 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
                     .and_then(|s| s.split(')').next())
                     .unwrap_or("unknown")
                     .to_string();
-                return StoreError::DocumentPathConflict(path);
+                return StoreError::DocumentPathConflict(Some(path));
             }
         }
     }

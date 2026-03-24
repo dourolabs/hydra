@@ -1841,7 +1841,7 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
             let msg = db_err.message();
             if msg.contains("documents_v2.path") {
                 // Message format: "UNIQUE constraint failed: documents_v2.path"
-                return StoreError::DocumentPathConflict(String::new());
+                return StoreError::DocumentPathConflict(None);
             }
         }
     }
