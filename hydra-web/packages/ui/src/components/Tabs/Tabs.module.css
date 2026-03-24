@@ -18,7 +18,7 @@
 
 .tabs::-webkit-scrollbar-thumb {
   background-color: var(--color-border);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .tab {
