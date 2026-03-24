@@ -10,6 +10,7 @@ interface DeleteConfirmModalProps {
   onConfirm: () => void;
   isPending: boolean;
   actionLabel?: string;
+  buttonLabel?: string;
   pendingLabel?: string;
   description?: ReactNode;
 }
@@ -22,6 +23,7 @@ export function DeleteConfirmModal({
   onConfirm,
   isPending,
   actionLabel = "Delete",
+  buttonLabel,
   pendingLabel = "Deleting...",
   description,
 }: DeleteConfirmModalProps) {
@@ -54,7 +56,7 @@ export function DeleteConfirmModal({
             onClick={onConfirm}
             disabled={isPending}
           >
-            {isPending ? pendingLabel : actionLabel}
+            {isPending ? pendingLabel : (buttonLabel ?? actionLabel)}
           </Button>
         </div>
       </div>

@@ -163,6 +163,7 @@ export function SessionLogPage() {
             onConfirm={handleKillConfirm}
             isPending={killMutation.isPending}
             actionLabel="Kill"
+            buttonLabel="Kill Session"
             pendingLabel="Killing..."
             description="This will terminate the running session and cannot be undone."
           />
