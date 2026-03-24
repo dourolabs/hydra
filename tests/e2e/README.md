@@ -18,7 +18,7 @@ tests/e2e/
 │   └── test-config.yaml   # Server init config for test runs
 └── scenarios/
     ├── server-init.md           # P0: Server initialization and dashboard load
-    ├── add-github-repo.md       # P0: Add a GitHub repo via dashboard issue
+    ├── add-github-repo.md       # P0: Verify pre-registered GitHub repo
     ├── basic-issue-lifecycle.md  # P0: Issue creation through closure
     ├── dashboard-navigation.md   # P0: Verify all dashboard pages load
     ├── pm-agent-breakdown.md     # P1: PM agent decomposes a high-level issue
@@ -96,6 +96,7 @@ The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra insta
 1. **Validates prerequisites** -- checks for required env vars, the `hydra` binary, and `npx`
 2. **Cleans previous state** -- removes `~/.hydra/server/` for a fresh run
 3. **Starts the server** -- runs `hydra server init` with the test config, starts `hydra server run`, and waits for the health check
+4. **Registers test fixture repo** -- runs `hydra repos create` to pre-register `dourolabs/hydra-test-fixture`
 
 The script keeps the server running in the foreground and cleans up on exit (Ctrl+C).
 
