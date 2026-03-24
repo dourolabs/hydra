@@ -1,6 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { LoadingState } from "../components/LoadingState/LoadingState";
 import {
   usePaginatedIssues,
   useIssueCount,
@@ -294,10 +293,6 @@ export function DashboardPage() {
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  if (isLoading && !issues.length) {
-    return <LoadingState size="lg" />;
-  }
 
   return (
     <div className={styles.page}>

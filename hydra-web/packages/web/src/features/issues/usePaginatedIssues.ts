@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { SearchIssuesQuery, ListIssuesResponse } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -41,6 +41,7 @@ export function usePaginatedIssues(filters: IssueFilters, enabled = true) {
       apiClient.listIssues(buildQuery(filters, pageParam as string | undefined)),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    placeholderData: keepPreviousData,
     enabled,
   });
 }
