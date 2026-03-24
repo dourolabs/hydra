@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type { Issue, IssueStatus, IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./IssueUpdateModal.module.css";
 
@@ -25,7 +25,6 @@ interface IssueUpdateModalProps {
 }
 
 export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateModalProps) {
-  const { addToast } = useToast();
   const queryClient = useQueryClient();
 
   const [status, setStatus] = useState<IssueStatus>(issue.status);
@@ -39,8 +38,12 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
     }
   }, [open, issue.status, issue.progress]);
 
-  const mutation = useMutation({
-    mutationFn: (params: { status: IssueStatus; progress: string }) =>
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
+    { status: IssueStatus; progress: string },
+    unknown,
+    { previous?: IssueVersionRecord }
+  >({
+    mutationFn: (params) =>
       apiClient.updateIssue(issueId, {
         issue: {
           ...issue,
@@ -49,6 +52,11 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
         },
         session_id: null,
       }),
+    invalidateKeys: [["issue", issueId], ["issues"]],
+    successMessage: "Issue updated",
+    onSuccess: () => {
+      onClose();
+    },
     onMutate: async (params) => {
       await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
       const previous = queryClient.getQueryData<IssueVersionRecord>(["issue", issueId]);
@@ -64,19 +72,10 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
       }
       return { previous };
     },
-    onSuccess: () => {
-      addToast("Issue updated", "success");
-      onClose();
-    },
-    onError: (err, _variables, context) => {
+    onError: (_err, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["issue", issueId], context.previous);
       }
-      addToast(err instanceof Error ? err.message : "Failed to update issue", "error");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
-      queryClient.invalidateQueries({ queryKey: ["issues"] });
     },
   });
 
@@ -84,30 +83,14 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
     mutation.mutate({ status, progress });
   }, [status, progress, mutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      onClose();
-    }
-  }, [mutation.isPending, onClose]);
-
   return (
     <Modal
       open={open}
-      onClose={handleClose}
+      onClose={() => handleClose(onClose)}
       title="Update Issue"
       className={largeModalStyles.largeModal}
     >
-      <div className={styles.form} onKeyDown={handleKeyDown}>
+      <div className={styles.form} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Select
           label="Status"
           options={statusOptions}
@@ -128,16 +111,16 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
             {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit
           </span>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={handleClose}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(onClose)}>
               Cancel
             </Button>
             <Button
               variant="primary"
               size="md"
               onClick={handleSubmit}
-              disabled={mutation.isPending}
+              disabled={isPending}
             >
-              {mutation.isPending ? "Saving..." : "Save"}
+              {isPending ? "Saving..." : "Save"}
             </Button>
           </div>
         </div>

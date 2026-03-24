@@ -1,13 +1,12 @@
 import { useCallback, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Input, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type { IssueType, RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
+import { useFormModal } from "../../hooks/useFormModal";
 import { useAuth } from "../auth/useAuth";
-import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
 import { LabelPicker } from "../labels/LabelPicker";
 import largeModalStyles from "../../components/LargeModal.module.css";
@@ -38,8 +37,6 @@ interface IssueCreateModalProps {
 
 export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
   const { user } = useAuth();
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
   const { data: repos } = useRepositories();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
@@ -97,8 +94,8 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     clearLabelNamesDraft,
   ]);
 
-  const mutation = useMutation({
-    mutationFn: (params: {
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
+    {
       title: string;
       description: string;
       creator: string;
@@ -106,7 +103,10 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
       assignee?: string;
       repoName?: string;
       labelNames?: string[];
-    }) =>
+    },
+    { issue_id: string }
+  >({
+    mutationFn: (params) =>
       apiClient.createIssue({
         issue: {
           type: params.type,
@@ -128,14 +128,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
             label_names: params.labelNames,
           }),
       }),
-    onSuccess: (data) => {
+    invalidateKeys: [["issues"]],
+    successMessage: (data) => `Issue ${data.issue_id} created`,
+    onSuccess: () => {
       resetForm();
-      queryClient.invalidateQueries({ queryKey: ["issues"] });
-      addToast(`Issue ${data.issue_id} created`, "success");
       onClose();
-    },
-    onError: (err) => {
-      addToast(err instanceof Error ? err.message : "Failed to create issue", "error");
     },
   });
 
@@ -153,23 +150,10 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     });
   }, [title, description, currentUsername, issueType, assignee, repoName, labelNames, mutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      resetForm();
-      setShowMoreOptions(false);
-      onClose();
-    }
-  }, [mutation.isPending, resetForm, onClose]);
+  const resetAll = useCallback(() => {
+    resetForm();
+    setShowMoreOptions(false);
+  }, [resetForm]);
 
   const assigneeOptions: SelectOption[] = [
     { value: "", label: "Unassigned" },
@@ -179,11 +163,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   return (
     <Modal
       open={open}
-      onClose={handleClose}
+      onClose={() => handleClose(onClose, resetAll)}
       title="Create Issue"
       className={largeModalStyles.largeModal}
     >
-      <div className={styles.form} onKeyDown={handleKeyDown}>
+      <div className={styles.form} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Title"
           placeholder="Short summary (optional)"
@@ -236,16 +220,16 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
             </span>
           </div>
           <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={handleClose}>
+            <Button variant="secondary" size="md" onClick={() => handleClose(onClose, resetAll)}>
               Cancel
             </Button>
             <Button
               variant="primary"
               size="md"
               onClick={handleSubmit}
-              disabled={!description.trim() || mutation.isPending}
+              disabled={!description.trim() || isPending}
             >
-              {mutation.isPending ? "Creating..." : "Create Issue"}
+              {isPending ? "Creating..." : "Create Issue"}
             </Button>
           </div>
         </div>

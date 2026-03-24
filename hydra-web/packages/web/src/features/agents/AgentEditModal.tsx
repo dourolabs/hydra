@@ -1,9 +1,8 @@
 import { useState, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Input, Textarea } from "@hydra/ui";
 import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
 import styles from "./AgentsSection.module.css";
 
@@ -20,9 +19,6 @@ export function AgentEditModal({
   onClose,
   agents,
 }: AgentEditModalProps) {
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
-
   const [prompt, setPrompt] = useState(agent.prompt);
   const [mcpConfigPath, setMcpConfigPath] = useState(agent.mcp_config_path ?? "");
   const [maxTries, setMaxTries] = useState(String(agent.max_tries));
@@ -36,19 +32,12 @@ export function AgentEditModal({
     agent.secrets ?? [],
   );
 
-  const mutation = useMutation({
-    mutationFn: (params: UpsertAgentRequest) =>
-      apiClient.updateAgent(agent.name, params),
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpsertAgentRequest, unknown>({
+    mutationFn: (params) => apiClient.updateAgent(agent.name, params),
+    invalidateKeys: [["agents"]],
+    successMessage: "Agent updated",
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      addToast("Agent updated", "success");
       onClose();
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to update agent",
-        "error",
-      );
     },
   });
 
@@ -75,25 +64,9 @@ export function AgentEditModal({
     });
   }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      onClose();
-    }
-  }, [mutation.isPending, onClose]);
-
   return (
-    <Modal open={open} onClose={handleClose} title={`Edit ${agent.name}`}>
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+    <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
+      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Textarea
           label="Prompt"
           placeholder="Enter the agent prompt..."
@@ -144,8 +117,8 @@ export function AgentEditModal({
           <Button
             variant="secondary"
             size="md"
-            onClick={handleClose}
-            disabled={mutation.isPending}
+            onClick={() => handleClose(onClose)}
+            disabled={isPending}
           >
             Cancel
           </Button>
@@ -153,9 +126,9 @@ export function AgentEditModal({
             variant="primary"
             size="md"
             onClick={handleSubmit}
-            disabled={!isValid || mutation.isPending}
+            disabled={!isValid || isPending}
           >
-            {mutation.isPending ? "Saving..." : "Save Changes"}
+            {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </div>
       </div>

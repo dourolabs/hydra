@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Input } from "@hydra/ui";
 import type {
   RepositoryRecord,
@@ -7,7 +6,7 @@ import type {
   RepoWorkflowConfig,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import { PatchWorkflowSection } from "./PatchWorkflowSection";
 import styles from "./RepositoriesSection.module.css";
 
@@ -18,9 +17,6 @@ interface RepositoryEditModalProps {
 }
 
 export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) {
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
-
   const [remoteUrl, setRemoteUrl] = useState(repo.repository.remote_url);
   const [defaultBranch, setDefaultBranch] = useState(
     repo.repository.default_branch ?? "",
@@ -36,19 +32,12 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
     repo.repository.patch_workflow?.merge_request?.assignee ?? "",
   );
 
-  const mutation = useMutation({
-    mutationFn: (params: UpdateRepositoryRequest) =>
-      apiClient.updateRepository(repo.name, params),
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpdateRepositoryRequest, unknown>({
+    mutationFn: (params) => apiClient.updateRepository(repo.name, params),
+    invalidateKeys: [["repositories"]],
+    successMessage: "Repository updated",
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      addToast("Repository updated", "success");
       onClose();
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to update repository",
-        "error",
-      );
     },
   });
 
@@ -86,25 +75,9 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
     mutation,
   ]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      onClose();
-    }
-  }, [mutation.isPending, onClose]);
-
   return (
-    <Modal open={open} onClose={handleClose} title={`Edit ${repo.name}`}>
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+    <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${repo.name}`}>
+      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Remote URL"
           placeholder="https://github.com/org/repo.git"
@@ -134,8 +107,8 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           <Button
             variant="secondary"
             size="md"
-            onClick={handleClose}
-            disabled={mutation.isPending}
+            onClick={() => handleClose(onClose)}
+            disabled={isPending}
           >
             Cancel
           </Button>
@@ -143,9 +116,9 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
             variant="primary"
             size="md"
             onClick={handleSubmit}
-            disabled={!isValid || mutation.isPending}
+            disabled={!isValid || isPending}
           >
-            {mutation.isPending ? "Saving..." : "Save Changes"}
+            {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </div>
       </div>

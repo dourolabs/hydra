@@ -1,12 +1,11 @@
 import { useState, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Input } from "@hydra/ui";
 import type {
   CreateRepositoryRequest,
   RepoWorkflowConfig,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import { useToast } from "../toast/useToast";
+import { useFormModal } from "../../hooks/useFormModal";
 import { PatchWorkflowSection } from "./PatchWorkflowSection";
 import styles from "./RepositoriesSection.module.css";
 
@@ -16,9 +15,6 @@ interface RepositoryCreateModalProps {
 }
 
 export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalProps) {
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
-
   const [name, setName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("");
@@ -35,20 +31,13 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
     setMergeAssignee("");
   }, []);
 
-  const mutation = useMutation({
-    mutationFn: (params: CreateRepositoryRequest) =>
-      apiClient.createRepository(params),
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<CreateRepositoryRequest, unknown>({
+    mutationFn: (params) => apiClient.createRepository(params),
+    invalidateKeys: [["repositories"]],
+    successMessage: "Repository created",
     onSuccess: () => {
       resetForm();
-      queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      addToast("Repository created", "success");
       onClose();
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to create repository",
-        "error",
-      );
     },
   });
 
@@ -93,26 +82,9 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
     mutation,
   ]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleClose = useCallback(() => {
-    if (!mutation.isPending) {
-      resetForm();
-      onClose();
-    }
-  }, [mutation.isPending, resetForm, onClose]);
-
   return (
-    <Modal open={open} onClose={handleClose} title="Add Repository">
-      <div className={styles.formFields} onKeyDown={handleKeyDown}>
+    <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Repository">
+      <div className={styles.formFields} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
         <Input
           label="Name"
           placeholder="org/repo"
@@ -152,8 +124,8 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
           <Button
             variant="secondary"
             size="md"
-            onClick={handleClose}
-            disabled={mutation.isPending}
+            onClick={() => handleClose(onClose, resetForm)}
+            disabled={isPending}
           >
             Cancel
           </Button>
@@ -161,9 +133,9 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
             variant="primary"
             size="md"
             onClick={handleSubmit}
-            disabled={!isValid || mutation.isPending}
+            disabled={!isValid || isPending}
           >
-            {mutation.isPending ? "Creating..." : "Add Repository"}
+            {isPending ? "Creating..." : "Add Repository"}
           </Button>
         </div>
       </div>
