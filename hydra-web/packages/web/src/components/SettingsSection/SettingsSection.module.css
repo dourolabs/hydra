@@ -1,15 +1,5 @@
 /* Shared styles for settings sections (Agents, Repositories, etc.) */
 
-.center {
-  composes: center from "../../pages/page.module.css";
-}
-.error {
-  composes: error from "../../pages/page.module.css";
-}
-.empty {
-  composes: empty from "../../pages/page.module.css";
-}
-
 .panelHeaderRow {
   display: flex;
   align-items: center;
