@@ -18,9 +18,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
 SERVER_URL="http://localhost:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
+HYDRA_BIN="${REPO_ROOT}/target/release/hydra-single-player"
 SERVER_PID=""
 
 # --------------------------------------------------------------------------
@@ -53,8 +55,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
-if ! command -v hydra &>/dev/null; then
-  echo "ERROR: 'hydra' binary not found. Build it with: cargo build -p hydra" >&2
+if ! command -v cargo &>/dev/null; then
+  echo "ERROR: 'cargo' not found. Install Rust to build hydra-single-player." >&2
   exit 1
 fi
 
@@ -79,13 +81,20 @@ if [[ -d "${HYDRA_STATE_DIR}" ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# 3. Initialize and start server
+# 3. Build hydra-single-player
+# --------------------------------------------------------------------------
+echo "==> Building hydra-single-player (release)..."
+(cd "${REPO_ROOT}" && cargo build -p hydra-single-player --release)
+echo "    Binary: ${HYDRA_BIN}"
+
+# --------------------------------------------------------------------------
+# 4. Initialize and start server
 # --------------------------------------------------------------------------
 echo "==> Initializing server with test config..."
-hydra server init --config "${CONFIG_PATH}"
+"${HYDRA_BIN}" server init --config "${CONFIG_PATH}"
 
 echo "==> Starting server..."
-hydra server run &
+"${HYDRA_BIN}" server start &
 SERVER_PID=$!
 
 echo "    Server PID: ${SERVER_PID}"
