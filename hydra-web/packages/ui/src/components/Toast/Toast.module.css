@@ -10,24 +10,24 @@
   border: 1px solid;
   pointer-events: auto;
   max-width: 420px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px var(--color-shadow);
 }
 
 .success {
-  background-color: #0d1f14;
-  border-color: rgba(0, 204, 102, 0.4);
-  color: #00cc66;
+  background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-primary));
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  color: var(--color-accent);
 }
 
 .error {
-  background-color: #1f0d0d;
-  border-color: rgba(255, 68, 68, 0.4);
-  color: #ff4444;
+  background-color: color-mix(in srgb, var(--color-status-failed) 8%, var(--color-bg-primary));
+  border-color: color-mix(in srgb, var(--color-status-failed) 40%, transparent);
+  color: var(--color-status-failed);
 }
 
 .info {
-  background-color: #161616;
-  border-color: rgba(136, 136, 136, 0.4);
+  background-color: color-mix(in srgb, var(--color-text-secondary) 8%, var(--color-bg-primary));
+  border-color: color-mix(in srgb, var(--color-text-secondary) 40%, transparent);
   color: var(--color-text-secondary);
 }
 

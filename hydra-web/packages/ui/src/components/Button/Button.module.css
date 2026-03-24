@@ -32,8 +32,8 @@
   background-color: var(--color-accent-bright);
   border-color: var(--color-accent-bright);
   box-shadow:
-    0 0 16px rgba(0, 204, 102, 0.3),
-    0 0 4px rgba(0, 204, 102, 0.2);
+    0 0 16px color-mix(in srgb, var(--color-accent) 30%, transparent),
+    0 0 4px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .secondary {
