@@ -556,12 +556,7 @@ pub async fn setup_local_auth(
     }
 
     // Store CLAUDE_CODE_OAUTH_TOKEN from config into the encrypted secret store.
-    if let Some(oauth_token) = config
-        .hydra
-        .claude_code_oauth_token
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(oauth_token) = config.hydra.claude_code_oauth_token.as_deref() {
         let encrypted = secret_manager
             .encrypt(oauth_token)
             .context("failed to encrypt CLAUDE_CODE_OAUTH_TOKEN")?;
