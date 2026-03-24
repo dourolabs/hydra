@@ -1,0 +1,33 @@
+prompt: |
+  # Design Document Review
+
+  Please review the design document linked in the issue description.
+  Read the document carefully and provide your feedback below.
+
+fields:
+  - key: review_comment
+    label: Review Comment
+    description: Your feedback on the design document. This will be recorded in the issue activity log for the planning agent to read.
+    input:
+      type: textarea
+      placeholder: "Enter your review feedback..."
+      rows: 8
+
+actions:
+  - id: approve
+    label: Approve
+    style: primary
+    requires:
+      - review_comment
+    effect:
+      type: update_issue
+      status: closed
+
+  - id: request_changes
+    label: Request Changes
+    style: danger
+    requires:
+      - review_comment
+    effect:
+      type: update_issue
+      status: failed
