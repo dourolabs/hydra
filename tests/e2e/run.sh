@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
 SERVER_URL="http://localhost:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
-HYDRA_BIN="${REPO_ROOT}/target/release/hydra-single-player"
+HYDRA_BIN="${REPO_ROOT}/target/release/hydra"
 SERVER_PID=""
 
 # --------------------------------------------------------------------------
@@ -73,7 +73,13 @@ fi
 echo "    All prerequisites met."
 
 # --------------------------------------------------------------------------
-# 2. Clean previous state
+# 2. Create directories for test-specific paths
+# --------------------------------------------------------------------------
+echo "==> Creating directories for test paths..."
+mkdir -p /tmp/hydra-e2e
+
+# --------------------------------------------------------------------------
+# 3. Clean previous state
 # --------------------------------------------------------------------------
 if [[ -d "${HYDRA_STATE_DIR}" ]]; then
   echo "==> Removing previous server state at ${HYDRA_STATE_DIR}..."
@@ -81,14 +87,14 @@ if [[ -d "${HYDRA_STATE_DIR}" ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# 3. Build hydra-single-player
+# 4. Build hydra-single-player
 # --------------------------------------------------------------------------
 echo "==> Building hydra-single-player (release)..."
 (cd "${REPO_ROOT}" && cargo build -p hydra-single-player --release)
 echo "    Binary: ${HYDRA_BIN}"
 
 # --------------------------------------------------------------------------
-# 4. Initialize and start server
+# 5. Initialize and start server
 # --------------------------------------------------------------------------
 echo "==> Initializing server with test config..."
 "${HYDRA_BIN}" server init --config "${CONFIG_PATH}"
