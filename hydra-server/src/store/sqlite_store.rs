@@ -421,9 +421,20 @@ impl SqliteStore {
                 StoreError::Internal(format!("failed to serialize patch_workflow: {e}"))
             })?;
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query("UPDATE repositories_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
         )
         .bind(id)
         .bind(version_number)
@@ -433,9 +444,11 @@ impl SqliteStore {
         .bind(repo.deleted)
         .bind(&patch_workflow_json)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -479,9 +492,20 @@ impl SqliteStore {
 
         let creator_str = actor.creator.to_string();
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query("UPDATE actors_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO actors_v2 (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            "INSERT INTO actors_v2 (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
         )
         .bind(id)
         .bind(version_number)
@@ -490,9 +514,11 @@ impl SqliteStore {
         .bind(&actor_id_json)
         .bind(&creator_str)
         .bind(acting_as)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -522,9 +548,20 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for user '{id}'"))
         })?;
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query("UPDATE users_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO users_v2 (id, version_number, username, github_user_id, deleted, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO users_v2 (id, version_number, username, github_user_id, deleted, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
         )
         .bind(id)
         .bind(version_number)
@@ -532,9 +569,11 @@ impl SqliteStore {
         .bind(user.github_user_id.map(|id| id as i64))
         .bind(user.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -613,8 +652,8 @@ impl SqliteStore {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -740,10 +779,23 @@ impl SqliteStore {
             })
             .transpose()?;
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_PATCHES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, is_latest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
             )
         )
         .bind(id.as_ref())
@@ -763,9 +815,11 @@ impl SqliteStore {
         .bind(&github_json)
         .bind(patch.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -948,11 +1002,24 @@ impl SqliteStore {
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
         let end_time_str = session.end_time.map(|t| t.to_rfc3339());
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_TASKS_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -977,14 +1044,14 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1008,10 +1075,12 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         }
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -1447,10 +1516,23 @@ impl SqliteStore {
         let sender_name = message.sender.as_ref().map(|s| s.to_string());
         let recipient_name = message.recipient.to_string();
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_MESSAGES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(&format!(
             "INSERT INTO {TABLE_MESSAGES_V2} \
-             (id, version_number, sender, recipient, body, is_read, deleted, actor) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+             (id, version_number, sender, recipient, body, is_read, deleted, actor, is_latest) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
@@ -1460,9 +1542,11 @@ impl SqliteStore {
         .bind(message.is_read)
         .bind(message.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -3683,6 +3767,14 @@ impl Store for SqliteStore {
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Clear is_latest on any previous version (no-op for new entities)
+        sqlx::query(&format!(
+            "UPDATE {TABLE_ISSUES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
         Self::insert_issue_in_tx(&mut *tx, &id, 1, &issue, Some(&actor_json)).await?;
         Self::sync_issue_relationships_in_tx(&mut tx, &id, &issue).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
@@ -3710,6 +3802,14 @@ impl Store for SqliteStore {
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_ISSUES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
         Self::insert_issue_in_tx(&mut *tx, id, next_version, &issue, Some(&actor_json)).await?;
         Self::sync_issue_relationships_in_tx(&mut tx, id, &issue).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
@@ -7852,5 +7952,177 @@ mod tests {
         // doc2 should still have version 1 as latest
         let flags2 = get_is_latest_flags(&store, &doc2).await;
         assert_eq!(flags2, vec![(1, 1)]);
+    }
+
+    // ---- is_latest tests for issues ----
+
+    /// Helper to query is_latest values for a given issue id, ordered by version_number.
+    async fn get_issue_is_latest_flags(store: &SqliteStore, issue_id: &IssueId) -> Vec<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT version_number, is_latest FROM issues_v2 WHERE id = ?1 ORDER BY version_number",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn is_latest_set_on_new_issue() {
+        let store = create_test_store().await;
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_issue_is_latest_flags(&store, &issue_id).await;
+        assert_eq!(flags, vec![(1, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_updated_on_issue_update() {
+        let store = create_test_store().await;
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "50%".to_string();
+        store
+            .update_issue(&issue_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_issue_is_latest_flags(&store, &issue_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+
+        // A third update should only keep the newest as latest
+        updated.progress = "100%".to_string();
+        store
+            .update_issue(&issue_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_issue_is_latest_flags(&store, &issue_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_maintained_on_issue_delete() {
+        let store = create_test_store().await;
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_issue_is_latest_flags(&store, &issue_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+    }
+
+    // ---- is_latest tests for tasks ----
+
+    /// Helper to query is_latest values for a given task id, ordered by version_number.
+    async fn get_task_is_latest_flags(store: &SqliteStore, task_id: &SessionId) -> Vec<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT version_number, is_latest FROM tasks_v2 WHERE id = ?1 ORDER BY version_number",
+        )
+        .bind(task_id.as_ref())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn is_latest_set_on_new_task() {
+        let store = create_test_store().await;
+        let (task_id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_task_is_latest_flags(&store, &task_id).await;
+        assert_eq!(flags, vec![(1, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_updated_on_task_update() {
+        let store = create_test_store().await;
+        let (task_id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = spawn_task();
+        updated.status = Status::Running;
+        store
+            .update_session(&task_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_task_is_latest_flags(&store, &task_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+
+        // A third update should only keep the newest as latest
+        updated.status = Status::Complete;
+        store
+            .update_session(&task_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_task_is_latest_flags(&store, &task_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
+    }
+
+    // ---- is_latest tests for messages ----
+
+    /// Helper to query is_latest values for a given message id, ordered by version_number.
+    async fn get_message_is_latest_flags(
+        store: &SqliteStore,
+        msg_id: &MessageId,
+    ) -> Vec<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT version_number, is_latest FROM messages_v2 WHERE id = ?1 ORDER BY version_number",
+        )
+        .bind(msg_id.as_ref())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn is_latest_set_on_new_message() {
+        let store = create_test_store().await;
+        let (msg_id, _) = store
+            .add_message(sample_message(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_message_is_latest_flags(&store, &msg_id).await;
+        assert_eq!(flags, vec![(1, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_updated_on_message_update() {
+        let store = create_test_store().await;
+        let (msg_id, _) = store
+            .add_message(sample_message(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated_msg = sample_message();
+        updated_msg.is_read = true;
+        store
+            .update_message(&msg_id, updated_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_message_is_latest_flags(&store, &msg_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
     }
 }
