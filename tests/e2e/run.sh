@@ -119,6 +119,13 @@ done
 echo "    Server is healthy (waited ${WAITED}s)."
 
 # --------------------------------------------------------------------------
+# 6. Pre-register test fixture repository
+# --------------------------------------------------------------------------
+echo "==> Registering dourolabs/hydra-test-fixture repository..."
+"${HYDRA_BIN}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
+echo "    Repository registered."
+
+# --------------------------------------------------------------------------
 # Print connection info
 # --------------------------------------------------------------------------
 echo ""
