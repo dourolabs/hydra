@@ -151,13 +151,22 @@ export function IssueDetail({ record }: IssueDetailProps) {
         )}
       </div>
 
-      {/* Form */}
-      {issue.form && (
-        <FormPanel
-          issueId={record.issue_id}
-          form={issue.form}
-          formResponse={issue.form_response}
-        />
+      {/* Progress */}
+      {issue.progress && (
+        <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
+          <div className={styles.progressBody}>
+            <MarkdownViewer content={issue.progress} />
+          </div>
+        </Panel>
+      )}
+
+      {/* Feedback */}
+      {issue.feedback && (
+        <Panel header={<span className={styles.sectionTitle}>Feedback</span>}>
+          <div className={styles.feedbackBody}>
+            <MarkdownViewer content={issue.feedback} />
+          </div>
+        </Panel>
       )}
 
       {/* Patch Preview */}
@@ -173,22 +182,13 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <DocumentPreview paths={documentPaths} />
       )}
 
-      {/* Feedback */}
-      {issue.feedback && (
-        <Panel header={<span className={styles.sectionTitle}>Feedback</span>}>
-          <div className={styles.feedbackBody}>
-            <MarkdownViewer content={issue.feedback} />
-          </div>
-        </Panel>
-      )}
-
-      {/* Progress */}
-      {issue.progress && (
-        <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
-          <div className={styles.progressBody}>
-            <MarkdownViewer content={issue.progress} />
-          </div>
-        </Panel>
+      {/* Form */}
+      {issue.form && (
+        <FormPanel
+          issueId={record.issue_id}
+          form={issue.form}
+          formResponse={issue.form_response}
+        />
       )}
 
       {/* Tabbed sections: Related Issues, Sessions, Patches, Activity, Metadata */}
