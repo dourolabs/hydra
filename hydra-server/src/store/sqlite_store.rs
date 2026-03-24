@@ -835,10 +835,23 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
 
+        // Use a transaction to atomically clear the old is_latest and set the new one
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on the previous latest version
+        sqlx::query(&format!(
+            "UPDATE {TABLE_DOCUMENTS_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor, is_latest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
             )
         )
         .bind(id.as_ref())
@@ -849,9 +862,11 @@ impl SqliteStore {
         .bind(document.created_by.as_ref().map(|t| t.as_ref()))
         .bind(document.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -2368,9 +2383,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
-             WHERE id = ?1
-             ORDER BY version_number DESC
-             LIMIT 1"
+             WHERE id = ?1 AND is_latest = 1"
         ))
         .bind(id.as_ref())
         .fetch_optional(&self.pool)
@@ -2458,8 +2471,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
              FROM {TABLE_DOCUMENTS_V2} d
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
-             ON d.id = latest.id AND d.version_number = latest.max_vn"
+             WHERE d.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_documents_predicates_sqlite(query);
@@ -2518,10 +2530,9 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
         let subquery = format!(
-            "SELECT d.id, d.title, d.body_markdown, d.path, d.created_by, d.deleted
-             FROM {TABLE_DOCUMENTS_V2} d
-             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
-             ON d.id = latest.id AND d.version_number = latest.max_vn"
+            "SELECT id, title, body_markdown, path, created_by, deleted
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE is_latest = 1"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
         let (predicates, bindings) = build_documents_predicates_sqlite(query);
@@ -2549,13 +2560,8 @@ impl ReadOnlyStore for SqliteStore {
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
         let row = sqlx::query_as::<_, (String,)>(&format!(
-            "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
-                 INNER JOIN (
-                     SELECT id, MAX(version_number) AS max_ver
-                     FROM {TABLE_DOCUMENTS_V2}
-                     GROUP BY id
-                 ) latest ON d.id = latest.id AND d.version_number = latest.max_ver
-                 WHERE d.path = ?1 AND COALESCE(d.deleted, 0) = 0
+            "SELECT id FROM {TABLE_DOCUMENTS_V2}
+                 WHERE path = ?1 AND is_latest = 1 AND COALESCE(deleted, 0) = 0
                  LIMIT 1"
         ))
         .bind(path)
@@ -7731,5 +7737,120 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(found, None);
+    }
+
+    /// Helper to query is_latest values for a given document id, ordered by version_number.
+    async fn get_is_latest_flags(store: &SqliteStore, doc_id: &DocumentId) -> Vec<(i64, i64)> {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT version_number, is_latest FROM documents_v2 WHERE id = ?1 ORDER BY version_number",
+        )
+        .bind(doc_id.as_ref())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn is_latest_set_on_new_document() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        assert_eq!(flags, vec![(1, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_updated_on_document_update() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let mut updated = sample_document(Some("docs/test.md"), None);
+        updated.body_markdown = "Updated body".to_string();
+        store
+            .update_document(&doc_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        // Version 1 should have is_latest = 0, version 2 should have is_latest = 1
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+
+        // A third update should only keep the newest as latest
+        updated.body_markdown = "Third version".to_string();
+        store
+            .update_document(&doc_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_maintained_on_delete() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/test.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let flags = get_is_latest_flags(&store, &doc_id).await;
+        // Version 1 is the original, version 2 is the soft-delete; only version 2 should be latest
+        assert_eq!(flags, vec![(1, 0), (2, 1)]);
+    }
+
+    #[tokio::test]
+    async fn is_latest_independent_across_documents() {
+        let store = create_test_store().await;
+        let (doc1, _) = store
+            .add_document(
+                sample_document(Some("docs/one.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (doc2, _) = store
+            .add_document(
+                sample_document(Some("docs/two.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Update doc1 only
+        let mut updated = sample_document(Some("docs/one.md"), None);
+        updated.body_markdown = "Updated".to_string();
+        store
+            .update_document(&doc1, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // doc1 should have version 1 not latest, version 2 latest
+        let flags1 = get_is_latest_flags(&store, &doc1).await;
+        assert_eq!(flags1, vec![(1, 0), (2, 1)]);
+
+        // doc2 should still have version 1 as latest
+        let flags2 = get_is_latest_flags(&store, &doc2).await;
+        assert_eq!(flags2, vec![(1, 1)]);
     }
 }
