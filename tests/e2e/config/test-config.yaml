@@ -1,5 +1,5 @@
 # Hydra E2E test configuration
-# Usage: hydra server init --config tests/e2e/config/test-config.yaml
+# Usage: hydra-single-player server init --config tests/e2e/config/test-config.yaml
 #
 # Required environment variables:
 #   CLAUDE_CODE_OAUTH_TOKEN - OAuth token for Claude Code
@@ -15,12 +15,9 @@ job:
   default_model: "opus"
 
 storage_backend: "sqlite"
-sqlite_path: "~/.hydra/server/hydra.db"
 
 job_engine: "local"
-log_dir: "~/.hydra/server/job-logs"
 
 auth_mode: "local"
 github_token: "${GH_TOKEN}"
 username: "test-agent"
-auth_token_file: "~/.hydra/server/auth-token"
