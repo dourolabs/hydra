@@ -1835,6 +1835,16 @@ fn parse_sqlite_timestamp(s: &str) -> Result<DateTime<Utc>, StoreError> {
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
+    if let sqlx::Error::Database(ref db_err) = err {
+        // SQLite unique constraint violation (SQLITE_CONSTRAINT_UNIQUE = 2067)
+        if db_err.code().as_deref() == Some("2067") {
+            let msg = db_err.message();
+            if msg.contains("documents_v2.path") {
+                // Message format: "UNIQUE constraint failed: documents_v2.path"
+                return StoreError::DocumentPathConflict(String::new());
+            }
+        }
+    }
     StoreError::Internal(err.to_string())
 }
 

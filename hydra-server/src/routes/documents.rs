@@ -337,10 +337,18 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
         }
         UpsertDocumentError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
         UpsertDocumentError::PathConflict { path, existing_id } => {
-            error!(path = %path, existing_id = %existing_id, "document path conflict");
-            ApiError::conflict(format!(
-                "a document already exists at path '{path}' (existing document: {existing_id})"
-            ))
+            if let Some(ref id) = existing_id {
+                error!(path = %path, existing_id = %id, "document path conflict");
+            } else {
+                error!(path = %path, "document path conflict");
+            }
+            let detail = match existing_id {
+                Some(id) => {
+                    format!("a document already exists at path '{path}' (existing document: {id})")
+                }
+                None => format!("a document already exists at path '{path}'"),
+            };
+            ApiError::conflict(detail)
         }
     }
 }

@@ -1809,17 +1809,27 @@ fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<St
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
     if let sqlx::Error::Database(ref db_err) = err {
-        if db_err.code().as_deref() == Some("23505")
-            && db_err.constraint() == Some("labels_name_idx")
-        {
-            let name = db_err
-                .message()
-                .split("=(")
-                .nth(1)
-                .and_then(|s| s.split(')').next())
-                .unwrap_or("unknown")
-                .to_string();
-            return StoreError::LabelAlreadyExists(name);
+        if db_err.code().as_deref() == Some("23505") {
+            if db_err.constraint() == Some("labels_name_idx") {
+                let name = db_err
+                    .message()
+                    .split("=(")
+                    .nth(1)
+                    .and_then(|s| s.split(')').next())
+                    .unwrap_or("unknown")
+                    .to_string();
+                return StoreError::LabelAlreadyExists(name);
+            }
+            if db_err.constraint() == Some("documents_v2_path_unique_active_idx") {
+                let path = db_err
+                    .message()
+                    .split("=(")
+                    .nth(1)
+                    .and_then(|s| s.split(')').next())
+                    .unwrap_or("unknown")
+                    .to_string();
+                return StoreError::DocumentPathConflict(path);
+            }
         }
     }
     StoreError::Internal(err.to_string())

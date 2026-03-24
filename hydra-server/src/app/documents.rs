@@ -45,7 +45,7 @@ pub enum UpsertDocumentError {
     #[error("a document already exists at path '{path}'")]
     PathConflict {
         path: String,
-        existing_id: DocumentId,
+        existing_id: Option<DocumentId>,
     },
 }
 
@@ -102,7 +102,7 @@ impl AppState {
                 if let Some(existing_id) = existing_id {
                     return Err(UpsertDocumentError::PathConflict {
                         path: path.to_string(),
-                        existing_id,
+                        existing_id: Some(existing_id),
                     });
                 }
             }
@@ -123,6 +123,12 @@ impl AppState {
                             document_id: id.clone(),
                             source,
                         },
+                        StoreError::DocumentPathConflict(path) => {
+                            UpsertDocumentError::PathConflict {
+                                path,
+                                existing_id: None,
+                            }
+                        }
                         other => UpsertDocumentError::Store { source: other },
                     })?;
 
@@ -135,7 +141,15 @@ impl AppState {
                     .store
                     .add_document_with_actor(document, actor)
                     .await
-                    .map_err(|source| UpsertDocumentError::Store { source })?;
+                    .map_err(|source| match source {
+                        StoreError::DocumentPathConflict(path) => {
+                            UpsertDocumentError::PathConflict {
+                                path,
+                                existing_id: None,
+                            }
+                        }
+                        other => UpsertDocumentError::Store { source: other },
+                    })?;
 
                 info!(
                     document_id = %document_id,
@@ -260,7 +274,7 @@ mod tests {
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         match result {
             Err(super::UpsertDocumentError::PathConflict { existing_id, .. }) => {
-                assert_eq!(existing_id, first_id);
+                assert_eq!(existing_id, Some(first_id));
             }
             other => panic!("expected PathConflict, got {other:?}"),
         }
