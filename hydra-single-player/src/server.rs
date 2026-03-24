@@ -129,8 +129,8 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
     // Auto-populate default agents and their prompts.
     create_default_agents(&auth_token)?;
 
-    // Upload default playbooks to the document store.
-    upload_default_playbooks(&auth_token)?;
+    // Upload default documents to the document store.
+    upload_default_documents(&auth_token)?;
 
     let engine_label = if job_engine == "docker" {
         "Docker"
@@ -329,11 +329,11 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     Ok(())
 }
 
-/// Upload default playbooks to the server's document store.
-fn upload_default_playbooks(auth_token: &str) -> Result<()> {
+/// Upload default documents to the server's document store.
+fn upload_default_documents(auth_token: &str) -> Result<()> {
     use hydra_common::api::v1::documents::{Document, UpsertDocumentRequest};
 
-    let playbooks = [
+    let documents = [
         (
             "Add new repo to hydra",
             PLAYBOOK_ADD_NEW_REPO,
@@ -359,7 +359,7 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
     let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    for (title, body, path) in playbooks {
+    for (title, body, path) in documents {
         let document = Document::new(
             title.to_string(),
             body.to_string(),
