@@ -12,8 +12,8 @@
   cursor: pointer;
   flex-shrink: 0;
   transition:
-    color 0.15s,
-    background-color 0.15s;
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .copyButton:hover {
