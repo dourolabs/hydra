@@ -413,13 +413,27 @@ fn find_repo_root() -> Option<std::path::PathBuf> {
 /// the function prints a warning with manual build instructions. The config
 /// always references `hydra-worker:latest` regardless of build outcome.
 fn build_worker_image() -> bool {
+    let repo_root = find_repo_root();
+
     // Skip if already present.
     if docker_image_exists(HYDRA_WORKER_IMAGE) {
         eprintln!("Docker image '{HYDRA_WORKER_IMAGE}' already exists, skipping build.");
+        if let Some(root) = &repo_root {
+            eprintln!(
+                "To rebuild, run: \
+                 cd {} && docker build -t {HYDRA_WORKER_IMAGE} -f images/hydra-worker.Dockerfile .",
+                root.display()
+            );
+        } else {
+            eprintln!(
+                "To rebuild, run: \
+                 docker build -t {HYDRA_WORKER_IMAGE} -f images/hydra-worker.Dockerfile ."
+            );
+        }
         return true;
     }
 
-    let repo_root = match find_repo_root() {
+    let repo_root = match repo_root {
         Some(root) => root,
         None => {
             eprintln!(
