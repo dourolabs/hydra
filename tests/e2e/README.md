@@ -70,10 +70,10 @@ navigate to pages, click buttons, fill forms, wait for state changes.>
 
 | Requirement | Details |
 |---|---|
-| Hydra binary | Built from source (`cargo build -p hydra`) |
+| Hydra binary | Built from source (`cargo build -p hydra-single-player --release`) |
 | API key | `CLAUDE_CODE_OAUTH_TOKEN` environment variable |
 | GitHub PAT | `GH_TOKEN` environment variable |
-| Playwright MCP | `npx @anthropic-ai/mcp-playwright` |
+| Playwright MCP | `npx @playwright/mcp` |
 | Test repo | `dourolabs/hydra-test-fixture` |
 
 ## Running Tests
@@ -91,12 +91,17 @@ export GH_TOKEN="your-github-pat"
 
 ### What the Runner Does
 
-The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra instance for testing:
+The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra single-player instance for testing:
 
-1. **Validates prerequisites** -- checks for required env vars, the `hydra` binary, and `npx`
-2. **Cleans previous state** -- removes `~/.hydra/server/` for a fresh run
-3. **Starts the server** -- runs `hydra server init` with the test config, starts `hydra server run`, and waits for the health check
-4. **Registers test fixture repo** -- runs `hydra repos create` to pre-register `dourolabs/hydra-test-fixture`
+1. **Validates prerequisites** -- checks for required env vars (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`), `cargo`, `npx`, and the test config file
+2. **Creates directories** -- sets up test paths (`/tmp/hydra-e2e`)
+3. **Cleans previous state** -- removes `~/.hydra/server/` for a fresh run
+4. **Builds the binary** -- runs `cargo build -p hydra-single-player --release` and creates a `hydra-sp` symlink in `target/release/`
+5. **Initializes the server** -- runs `hydra-sp server init` with the test config
+6. **Starts the server** -- runs `hydra-sp server start` in the background and waits for the health check at `http://localhost:8080/health`
+7. **Registers test fixture repo** -- runs `hydra-sp repos create` with explicit `HYDRA_SERVER_URL` to pre-register `dourolabs/hydra-test-fixture`
+
+The `hydra-sp` symlink points to the `hydra` binary and exists to avoid conflicting with a production `hydra` CLI when testing Hydra-in-Hydra. The `HYDRA_SERVER_URL` env var is set explicitly on repo registration to target the local test instance.
 
 The script keeps the server running in the foreground and cleans up on exit (Ctrl+C).
 
