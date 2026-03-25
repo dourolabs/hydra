@@ -31,7 +31,6 @@ for agent in "${AGENTS[@]}"; do
   EXTRA_FLAGS=()
   if [[ "$agent" == "pm" ]]; then
     EXTRA_FLAGS+=("--is-assignment-agent")
-    EXTRA_FLAGS+=("--secrets" "GH_TOKEN")
   fi
 
   create_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
