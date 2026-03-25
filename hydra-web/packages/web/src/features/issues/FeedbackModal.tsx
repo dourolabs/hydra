@@ -23,7 +23,11 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
     }
   }, [open]);
 
-  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<string, unknown, { previous?: IssueVersionRecord }>({
+  const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
+    string,
+    unknown,
+    { previous?: IssueVersionRecord }
+  >({
     mutationFn: (text) => apiClient.submitFeedback(issueId, text),
     invalidateKeys: [["issue", issueId], ["issues"]],
     successMessage: "Feedback submitted",
@@ -65,13 +69,15 @@ export function FeedbackModal({ open, onClose, issueId }: FeedbackModalProps) {
       className={largeModalStyles.largeModal}
     >
       <div className={styles.form} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
-        <Textarea
-          label="Feedback"
-          placeholder="Describe what you'd like the agent to change..."
-          value={feedback}
-          onChange={(e) => setFeedback(e.target.value)}
-          className={styles.feedbackTextarea}
-        />
+        <div className={styles.feedbackWrapper}>
+          <Textarea
+            label="Feedback"
+            placeholder="Describe what you'd like the agent to change..."
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            className={styles.feedbackTextarea}
+          />
+        </div>
         <div className={styles.footer}>
           <span className={styles.hint}>
             {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to submit
