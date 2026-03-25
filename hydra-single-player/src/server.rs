@@ -592,20 +592,20 @@ enum ModelProvider {
 fn prompt_model_choice() -> Result<(ModelProvider, String)> {
     eprintln!();
     eprintln!("Hydra runs either the Codex or Claude Code CLI. Which would you prefer by default:");
-    eprintln!("  1) Codex (OpenAI gpt-4o)");
-    eprintln!("  2) Claude (Anthropic opus)");
-    eprint!("Choice [2]: ");
+    eprintln!("  1) Claude (Anthropic opus)");
+    eprintln!("  2) Codex (OpenAI gpt-4o)");
+    eprint!("Choice [1]: ");
     io::stderr().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     let input = input.trim();
 
-    let choice = if input.is_empty() { "2" } else { input };
+    let choice = if input.is_empty() { "1" } else { input };
 
     match choice {
-        "1" => Ok((ModelProvider::Codex, "gpt-4o".to_string())),
-        "2" => Ok((ModelProvider::Claude, "opus".to_string())),
+        "1" => Ok((ModelProvider::Claude, "opus".to_string())),
+        "2" => Ok((ModelProvider::Codex, "gpt-4o".to_string())),
         _ => {
             eprintln!("Invalid choice '{choice}', defaulting to Claude.");
             Ok((ModelProvider::Claude, "opus".to_string()))
