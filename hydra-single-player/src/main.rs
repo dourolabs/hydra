@@ -89,7 +89,7 @@ mod tests {
         .expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { config },
+                command: ServerCommand::Init { config, .. },
             }) => {
                 assert_eq!(
                     config,
@@ -105,7 +105,7 @@ mod tests {
         let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "server", "init"]).expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { config },
+                command: ServerCommand::Init { config, .. },
             }) => {
                 assert_eq!(config, None);
             }
