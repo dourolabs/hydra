@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{bail, ensure, Context, Result};
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 use hydra::client::HydraClient;
 use hydra::config::{self, expand_path};
@@ -27,6 +27,28 @@ const SERVER_DB_PATH: &str = "~/.hydra/server/hydra.db";
 
 const LOCAL_SERVER_URL: &str = "http://127.0.0.1:8080";
 
+/// Log verbosity level for the hydra server.
+#[derive(Debug, Clone, ValueEnum)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogLevel::Error => write!(f, "error"),
+            LogLevel::Warn => write!(f, "warn"),
+            LogLevel::Info => write!(f, "info"),
+            LogLevel::Debug => write!(f, "debug"),
+            LogLevel::Trace => write!(f, "trace"),
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
     /// Initialize the local hydra server (create config, start server, configure CLI).
@@ -36,9 +58,18 @@ pub enum ServerCommand {
         /// Environment variables in the config are substituted (e.g., $CLAUDE_CODE_OAUTH_TOKEN).
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Set the server log verbosity level. Overrides the RUST_LOG environment
+        /// variable. Defaults to info when neither this flag nor RUST_LOG is set.
+        #[arg(long)]
+        log_level: Option<LogLevel>,
     },
     /// Start the local hydra server as a background daemon.
-    Start,
+    Start {
+        /// Set the server log verbosity level. Overrides the RUST_LOG environment
+        /// variable. Defaults to info when neither this flag nor RUST_LOG is set.
+        #[arg(long)]
+        log_level: Option<LogLevel>,
+    },
     /// Stop the local hydra server.
     Stop,
     /// Show the status of the local hydra server.
@@ -53,17 +84,22 @@ pub enum ServerCommand {
         follow: bool,
     },
     /// Restart the local hydra server (stop + start).
-    Restart,
+    Restart {
+        /// Set the server log verbosity level. Overrides the RUST_LOG environment
+        /// variable. Defaults to info when neither this flag nor RUST_LOG is set.
+        #[arg(long)]
+        log_level: Option<LogLevel>,
+    },
 }
 
 pub fn run(command: ServerCommand) -> Result<()> {
     match command {
-        ServerCommand::Init { config } => cmd_init(config),
-        ServerCommand::Start => cmd_start(),
+        ServerCommand::Init { config, log_level } => cmd_init(config, log_level),
+        ServerCommand::Start { log_level } => cmd_start(log_level),
         ServerCommand::Stop => cmd_stop(),
         ServerCommand::Status => cmd_status(),
         ServerCommand::Logs { lines, follow } => cmd_logs(lines, follow),
-        ServerCommand::Restart => cmd_restart(),
+        ServerCommand::Restart { log_level } => cmd_restart(log_level),
     }
 }
 
@@ -71,7 +107,7 @@ pub fn run(command: ServerCommand) -> Result<()> {
 // init
 // ---------------------------------------------------------------------------
 
-fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
+fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>) -> Result<()> {
     let server_dir = expand_path(SERVER_DIR);
     let config_path = expand_path(SERVER_CONFIG_PATH);
 
@@ -108,7 +144,7 @@ fn cmd_init(config_file: Option<PathBuf>) -> Result<()> {
 
     // Start the server in-process so it creates the local user and auth token.
     println!("Starting server...");
-    start_server_in_process()?;
+    start_server_in_process(log_level)?;
 
     // Poll /health to verify the server is actually running before continuing.
     wait_for_server_healthy()?;
@@ -817,7 +853,7 @@ fn wait_for_server_healthy() -> Result<()> {
 // start
 // ---------------------------------------------------------------------------
 
-fn cmd_start() -> Result<()> {
+fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
     ensure_initialized()?;
 
     if is_server_running()? {
@@ -826,7 +862,7 @@ fn cmd_start() -> Result<()> {
         return Ok(());
     }
 
-    start_server_in_process()?;
+    start_server_in_process(log_level)?;
     println!("Server started.");
     print_running_status();
     Ok(())
@@ -835,7 +871,7 @@ fn cmd_start() -> Result<()> {
 /// Start the server in-process by forking the current process and running
 /// `hydra_server::run()` in the child. The child's PID is written to the
 /// PID file so that `hydra server stop` can find it.
-fn start_server_in_process() -> Result<()> {
+fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
     let config_path = expand_path(SERVER_CONFIG_PATH);
     let log_file = expand_path(LOG_FILE_PATH);
     let pid_file = expand_path(PID_FILE_PATH);
@@ -850,6 +886,17 @@ fn start_server_in_process() -> Result<()> {
     // (no other threads exist yet).
     unsafe {
         std::env::set_var("HYDRA_CONFIG", &config_path);
+    }
+
+    // Set RUST_LOG so the server's tracing_subscriber picks up the desired level.
+    // --log-level flag takes priority; otherwise respect existing RUST_LOG; fall
+    // back to "info" if neither is set.
+    unsafe {
+        if let Some(level) = &log_level {
+            std::env::set_var("RUST_LOG", level.to_string());
+        } else if std::env::var("RUST_LOG").is_err() {
+            std::env::set_var("RUST_LOG", "info");
+        }
     }
 
     // Fork the process. The child runs the server; the parent records
@@ -1114,11 +1161,11 @@ fn cmd_logs(lines: usize, follow: bool) -> Result<()> {
 // restart
 // ---------------------------------------------------------------------------
 
-fn cmd_restart() -> Result<()> {
+fn cmd_restart(log_level: Option<LogLevel>) -> Result<()> {
     cmd_stop()?;
     // Brief pause to allow the port to be released.
     thread::sleep(Duration::from_secs(1));
-    cmd_start()
+    cmd_start(log_level)
 }
 
 // ---------------------------------------------------------------------------
