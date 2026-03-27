@@ -1018,6 +1018,111 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// signal handlers for crash diagnostics
+// ---------------------------------------------------------------------------
+
+/// Async-signal-safe signal handler that writes diagnostic info to stderr.
+///
+/// SAFETY: This handler only calls `libc::write` (async-signal-safe) with static
+/// byte slices, then re-raises the signal with the default handler. No heap
+/// allocation, no Rust formatting, no locks.
+///
+/// NOTE on backtraces: `std::backtrace::Backtrace::force_capture()` is NOT
+/// async-signal-safe — it allocates, acquires locks, and calls into libunwind.
+/// Calling it from a signal handler risks deadlock or double-fault. We therefore
+/// intentionally skip backtrace capture here and rely on the signal number + dmesg
+/// for post-mortem diagnosis.
+extern "C" fn crash_signal_handler(sig: libc::c_int) {
+    // All strings are static byte slices — no allocation.
+    let (name, msg): (&[u8], &[u8]) = match sig {
+        libc::SIGSEGV => (b"SIGSEGV", b"FATAL SIGNAL: SIGSEGV (11)\n"),
+        libc::SIGABRT => (b"SIGABRT", b"FATAL SIGNAL: SIGABRT (6)\n"),
+        libc::SIGBUS => (b"SIGBUS", b"FATAL SIGNAL: SIGBUS (7)\n"),
+        _ => (b"UNKNOWN", b"FATAL SIGNAL: UNKNOWN\n"),
+    };
+    let _ = name; // used for documentation clarity; the message includes the name
+
+    unsafe {
+        libc::write(
+            libc::STDERR_FILENO,
+            msg.as_ptr() as *const libc::c_void,
+            msg.len(),
+        );
+        let hint = b"Check dmesg for OOM killer messages: dmesg | grep -i oom\n";
+        libc::write(
+            libc::STDERR_FILENO,
+            hint.as_ptr() as *const libc::c_void,
+            hint.len(),
+        );
+
+        // Re-raise with default handler so the process terminates with the correct
+        // signal and exit status (important for the parent's waitpid).
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&mut sa.sa_mask);
+        sa.sa_flags = 0;
+        libc::sigaction(sig, &sa, std::ptr::null_mut());
+        libc::raise(sig);
+    }
+}
+
+/// Signal handler for SIGTERM — log and exit gracefully.
+extern "C" fn sigterm_handler(_sig: libc::c_int) {
+    let msg = b"Received SIGTERM, shutting down\n";
+    unsafe {
+        libc::write(
+            libc::STDERR_FILENO,
+            msg.as_ptr() as *const libc::c_void,
+            msg.len(),
+        );
+        // Exit cleanly rather than re-raising, so the process shuts down without
+        // generating a core dump.
+        libc::_exit(128 + libc::SIGTERM);
+    }
+}
+
+/// Install signal handlers for SIGSEGV, SIGABRT, SIGBUS, and SIGTERM.
+fn install_signal_handlers() {
+    let crash_signals = [libc::SIGSEGV, libc::SIGABRT, libc::SIGBUS];
+
+    for &sig in &crash_signals {
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = crash_signal_handler as usize;
+            libc::sigemptyset(&mut sa.sa_mask);
+            // SA_RESETHAND: auto-reset to SIG_DFL after the handler fires once,
+            // as a safety net against infinite signal loops.
+            sa.sa_flags = libc::SA_RESETHAND;
+            if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
+                // Best-effort: if sigaction fails, log to stderr and continue.
+                let err = b"WARNING: failed to install signal handler\n";
+                libc::write(
+                    libc::STDERR_FILENO,
+                    err.as_ptr() as *const libc::c_void,
+                    err.len(),
+                );
+            }
+        }
+    }
+
+    // SIGTERM: graceful shutdown
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = sigterm_handler as usize;
+        libc::sigemptyset(&mut sa.sa_mask);
+        sa.sa_flags = 0;
+        if libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut()) != 0 {
+            let err = b"WARNING: failed to install SIGTERM handler\n";
+            libc::write(
+                libc::STDERR_FILENO,
+                err.as_ptr() as *const libc::c_void,
+                err.len(),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // run server with BFF
 // ---------------------------------------------------------------------------
 
@@ -1040,6 +1145,13 @@ async fn run_server_with_bff() -> Result<()> {
         tracing::error!("PANIC: {info}\n{backtrace}");
         default_hook(info);
     }));
+
+    // Install signal handlers for crash diagnostics.
+    // Since the panic hook does NOT fire during observed crashes, the termination
+    // must be from a signal (SIGSEGV, SIGABRT, SIGBUS) or OOM kill. These handlers
+    // write diagnostic info to stderr (which is dup'd to the log file) using only
+    // async-signal-safe functions.
+    install_signal_handlers();
 
     let config_path = hydra_server::config_path();
     let app_config = hydra_server::config::AppConfig::load(&config_path)?;
