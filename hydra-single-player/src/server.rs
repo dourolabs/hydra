@@ -890,95 +890,123 @@ fn signal_name(sig: i32) -> &'static str {
     }
 }
 
-/// Spawn a detached thread that waits for the child server process to exit
-/// and records its exit status to the last-exit-status file and the log.
+/// Record the exit status of the server child process to the
+/// last-exit-status file and the log. Called from the monitor process
+/// after waitpid() returns.
 #[cfg(unix)]
-fn spawn_exit_monitor(child_pid: i32, log_file: &Path) {
-    let exit_status_path = expand_path(LAST_EXIT_STATUS_PATH);
-    let log_path = log_file.to_path_buf();
+fn record_exit_status(
+    child_pid: i32,
+    status: i32,
+    oom_score: Option<i32>,
+    log_path: &Path,
+    exit_status_path: &Path,
+) {
+    let timestamp = unix_timestamp();
+    let mut lines = Vec::new();
 
-    // Read OOM score before waitpid (it won't be available after the process exits).
+    if libc::WIFEXITED(status) {
+        let code = libc::WEXITSTATUS(status);
+        lines.push(format!(
+            "[{timestamp}] Server process {child_pid} exited with code {code}"
+        ));
+    } else if libc::WIFSIGNALED(status) {
+        let sig = libc::WTERMSIG(status);
+        let name = signal_name(sig);
+        lines.push(format!(
+            "[{timestamp}] Server process {child_pid} killed by signal {name} ({sig})"
+        ));
+
+        #[cfg(not(target_os = "macos"))]
+        if libc::WCOREDUMP(status) {
+            lines.push(format!("[{timestamp}] Core dump was produced"));
+        }
+    } else {
+        lines.push(format!(
+            "[{timestamp}] Server process {child_pid} exited with unknown status 0x{status:x}"
+        ));
+    }
+
+    if let Some(score) = oom_score {
+        lines.push(format!("[{timestamp}] OOM score at fork time: {score}"));
+    }
+
+    let output = lines.join("\n") + "\n";
+    let _ = append_to_file(log_path, &output);
+    let _ = fs::write(exit_status_path, &output);
+}
+
+/// Run the exit-status monitor loop. This function is called in a forked
+/// monitor process that is the parent of the server child. It blocks on
+/// waitpid() and then records the result. It never returns — it calls
+/// `_exit()` when done.
+#[cfg(unix)]
+fn run_exit_monitor(child_pid: i32, log_path: &Path, exit_status_path: &Path) -> ! {
+    // Read OOM score while the child is still alive.
     let oom_score = fs::read_to_string(format!("/proc/{child_pid}/oom_score"))
         .ok()
         .and_then(|s| s.trim().parse::<i32>().ok());
 
-    thread::spawn(move || {
-        let mut status: i32 = 0;
-        let ret = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+    let mut status: i32 = 0;
+    let ret = unsafe { libc::waitpid(child_pid, &mut status, 0) };
 
-        if ret == -1 {
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::ECHILD) {
-                // Child already reaped — nothing we can do.
-                let msg = format!(
-                    "[{}] Monitor: child {} already reaped (ECHILD)\n",
-                    chrono_timestamp(),
-                    child_pid
-                );
-                let _ = append_to_file(&log_path, &msg);
-                let _ = fs::write(&exit_status_path, &msg);
-                return;
-            }
-            let msg = format!(
-                "[{}] Monitor: waitpid({}) failed: {}\n",
-                chrono_timestamp(),
-                child_pid,
-                err
-            );
-            let _ = append_to_file(&log_path, &msg);
-            let _ = fs::write(&exit_status_path, &msg);
-            return;
-        }
-
-        let timestamp = chrono_timestamp();
-        let mut lines = Vec::new();
-
-        if libc::WIFEXITED(status) {
-            let code = libc::WEXITSTATUS(status);
-            lines.push(format!(
-                "[{timestamp}] Server process {child_pid} exited with code {code}"
-            ));
-        } else if libc::WIFSIGNALED(status) {
-            let sig = libc::WTERMSIG(status);
-            let name = signal_name(sig);
-            lines.push(format!(
-                "[{timestamp}] Server process {child_pid} killed by signal {name} ({sig})"
-            ));
-
-            #[cfg(not(target_os = "macos"))]
-            if libc::WCOREDUMP(status) {
-                lines.push(format!("[{timestamp}] Core dump was produced"));
-            }
+    if ret == -1 {
+        let err = io::Error::last_os_error();
+        let label = if err.raw_os_error() == Some(libc::ECHILD) {
+            "already reaped (ECHILD)"
         } else {
-            lines.push(format!(
-                "[{timestamp}] Server process {child_pid} exited with unknown status 0x{status:x}"
-            ));
-        }
+            "waitpid failed"
+        };
+        let msg = format!(
+            "[{}] Monitor: child {} {}: {}\n",
+            unix_timestamp(),
+            child_pid,
+            label,
+            err,
+        );
+        let _ = append_to_file(log_path, &msg);
+        let _ = fs::write(exit_status_path, &msg);
+        unsafe { libc::_exit(1) };
+    }
 
-        if let Some(score) = oom_score {
-            lines.push(format!("[{timestamp}] OOM score at fork time: {score}"));
-        }
-
-        let output = lines.join("\n") + "\n";
-        let _ = append_to_file(&log_path, &output);
-        let _ = fs::write(&exit_status_path, &output);
-    });
+    record_exit_status(child_pid, status, oom_score, log_path, exit_status_path);
+    unsafe { libc::_exit(0) };
 }
 
-/// Simple timestamp without pulling in the chrono crate.
-fn chrono_timestamp() -> String {
-    // Use std::time for a basic UTC timestamp.
+/// Format the current time as a basic UTC timestamp string.
+#[cfg(unix)]
+fn unix_timestamp() -> String {
     let now = std::time::SystemTime::now();
     let dur = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = dur.as_secs();
-    // Format as seconds since epoch — good enough for diagnostics.
-    // A full ISO timestamp would need chrono, but we keep deps minimal.
-    format!("{secs}")
+    let total_secs = dur.as_secs();
+
+    // Break epoch seconds into date/time components (UTC).
+    let secs_per_day: u64 = 86400;
+    let days = total_secs / secs_per_day;
+    let day_secs = total_secs % secs_per_day;
+    let h = day_secs / 3600;
+    let m = (day_secs % 3600) / 60;
+    let s = day_secs % 60;
+
+    // Days since Unix epoch → year/month/day using a civil-calendar algorithm.
+    // Algorithm from Howard Hinnant (public domain).
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097) as u64; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mon = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mon <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{mon:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
 }
 
 /// Append text to a file, creating it if needed.
+#[cfg(unix)]
 fn append_to_file(path: &Path, text: &str) -> io::Result<()> {
     use std::io::Write as _;
     let mut f = fs::OpenOptions::new()
@@ -1019,8 +1047,10 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
         }
     }
 
-    // Fork the process. The child runs the server; the parent records
-    // the child PID and returns.
+    // Fork a monitor process, which in turn forks the actual server child.
+    // The monitor is the parent of the server, so it can call waitpid() to
+    // capture the exit status. A pipe carries the server PID back to the CLI
+    // so we can write the PID file before returning.
     #[cfg(unix)]
     {
         use std::os::unix::io::IntoRawFd;
@@ -1033,6 +1063,14 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
             .with_context(|| format!("failed to open log file {}", log_file.display()))?;
         let log_fd = log_handle.into_raw_fd();
 
+        // Create a pipe so the monitor can send the server PID to the CLI.
+        let mut pipe_fds = [0i32; 2];
+        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } == -1 {
+            bail!("pipe() failed: {}", io::Error::last_os_error());
+        }
+        let pipe_read_fd = pipe_fds[0];
+        let pipe_write_fd = pipe_fds[1];
+
         // Safety: fork() is called before the tokio runtime is created.
         // main() handles the server subcommand synchronously before calling
         // tokio::runtime::Runtime::new(), so no worker threads exist yet.
@@ -1040,92 +1078,158 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
         match fork_result {
             -1 => bail!("fork() failed: {}", io::Error::last_os_error()),
             0 => {
-                // Helper to exit the child process with an error message.
-                // After fork, we cannot unwind or use anyhow::bail, so we
-                // write directly and call _exit to avoid running destructors.
-                let child_exit_err = |msg: &str| -> ! {
-                    let full = format!("{msg}\n");
-                    // Best-effort write — stderr may not be set up yet.
-                    unsafe {
-                        libc::write(
-                            libc::STDERR_FILENO,
-                            full.as_ptr() as *const libc::c_void,
-                            full.len(),
-                        );
-                    }
-                    unsafe { libc::_exit(1) };
-                };
+                // ---- Monitor process ----
+                // Close the read end of the pipe (we only write).
+                unsafe { libc::close(pipe_read_fd) };
 
-                // Child process — become a new session leader (detach from terminal).
-                unsafe {
-                    libc::setsid();
+                // Become a new session leader so we survive the CLI parent exiting.
+                unsafe { libc::setsid() };
+
+                // Fork again to create the actual server child.
+                let server_fork = unsafe { libc::fork() };
+                match server_fork {
+                    -1 => {
+                        let msg = b"fork() for server child failed\n";
+                        unsafe {
+                            libc::write(
+                                libc::STDERR_FILENO,
+                                msg.as_ptr() as *const libc::c_void,
+                                msg.len(),
+                            );
+                            // Signal failure to the CLI via a closed pipe.
+                            libc::close(pipe_write_fd);
+                            libc::_exit(1);
+                        }
+                    }
+                    0 => {
+                        // ---- Server child process ----
+                        // Close the pipe write end (not needed in server).
+                        unsafe { libc::close(pipe_write_fd) };
+
+                        // Helper to exit the child process with an error message.
+                        let child_exit_err = |msg: &str| -> ! {
+                            let full = format!("{msg}\n");
+                            unsafe {
+                                libc::write(
+                                    libc::STDERR_FILENO,
+                                    full.as_ptr() as *const libc::c_void,
+                                    full.len(),
+                                );
+                            }
+                            unsafe { libc::_exit(1) };
+                        };
+
+                        // Redirect stdout and stderr to the log file.
+                        unsafe {
+                            if libc::dup2(log_fd, libc::STDOUT_FILENO) == -1 {
+                                child_exit_err(&format!(
+                                    "dup2(log_fd, STDOUT) failed: {}",
+                                    io::Error::last_os_error()
+                                ));
+                            }
+                            if libc::dup2(log_fd, libc::STDERR_FILENO) == -1 {
+                                child_exit_err(&format!(
+                                    "dup2(log_fd, STDERR) failed: {}",
+                                    io::Error::last_os_error()
+                                ));
+                            }
+                            libc::close(log_fd);
+                        }
+
+                        eprintln!("hydra-server child process starting");
+
+                        // Redirect stdin to /dev/null.
+                        unsafe {
+                            let dev_null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+                            if dev_null < 0 {
+                                child_exit_err(&format!(
+                                    "open(/dev/null) failed: {}",
+                                    io::Error::last_os_error()
+                                ));
+                            }
+                            if libc::dup2(dev_null, libc::STDIN_FILENO) == -1 {
+                                child_exit_err(&format!(
+                                    "dup2(dev_null, STDIN) failed: {}",
+                                    io::Error::last_os_error()
+                                ));
+                            }
+                            libc::close(dev_null);
+                        }
+
+                        // Build a new tokio runtime and run the server with BFF.
+                        let rt = match tokio::runtime::Runtime::new() {
+                            Ok(rt) => rt,
+                            Err(e) => {
+                                child_exit_err(&format!(
+                                    "failed to create tokio runtime for in-process server: {e}"
+                                ));
+                            }
+                        };
+                        let result = rt.block_on(run_server_with_bff());
+                        if let Err(e) = result {
+                            eprintln!("hydra-server exited with error: {e:#}");
+                            unsafe { libc::_exit(1) };
+                        }
+                        unsafe { libc::_exit(0) };
+                    }
+                    server_pid => {
+                        // ---- Monitor process (parent of server child) ----
+                        unsafe { libc::close(log_fd) };
+
+                        // Send the server PID to the CLI parent through the pipe.
+                        let pid_bytes = server_pid.to_string();
+                        let pid_buf = pid_bytes.as_bytes();
+                        unsafe {
+                            libc::write(
+                                pipe_write_fd,
+                                pid_buf.as_ptr() as *const libc::c_void,
+                                pid_buf.len(),
+                            );
+                            libc::close(pipe_write_fd);
+                        }
+
+                        // Redirect monitor's own stdio to /dev/null.
+                        unsafe {
+                            let dev_null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                            if dev_null >= 0 {
+                                libc::dup2(dev_null, libc::STDOUT_FILENO);
+                                libc::dup2(dev_null, libc::STDERR_FILENO);
+                                libc::dup2(dev_null, libc::STDIN_FILENO);
+                                libc::close(dev_null);
+                            }
+                        }
+
+                        let exit_status_path = expand_path(LAST_EXIT_STATUS_PATH);
+                        run_exit_monitor(server_pid, &log_file, &exit_status_path);
+                        // run_exit_monitor never returns (calls _exit).
+                    }
                 }
-
-                // Redirect stdout and stderr to the log file.
-                unsafe {
-                    if libc::dup2(log_fd, libc::STDOUT_FILENO) == -1 {
-                        child_exit_err(&format!(
-                            "dup2(log_fd, STDOUT) failed: {}",
-                            io::Error::last_os_error()
-                        ));
-                    }
-                    if libc::dup2(log_fd, libc::STDERR_FILENO) == -1 {
-                        child_exit_err(&format!(
-                            "dup2(log_fd, STDERR) failed: {}",
-                            io::Error::last_os_error()
-                        ));
-                    }
-                    libc::close(log_fd);
-                }
-
-                eprintln!("hydra-server child process starting");
-
-                // Redirect stdin to /dev/null so the background server doesn't
-                // consume terminal input meant for the user's shell.
-                unsafe {
-                    let dev_null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
-                    if dev_null < 0 {
-                        child_exit_err(&format!(
-                            "open(/dev/null) failed: {}",
-                            io::Error::last_os_error()
-                        ));
-                    }
-                    if libc::dup2(dev_null, libc::STDIN_FILENO) == -1 {
-                        child_exit_err(&format!(
-                            "dup2(dev_null, STDIN) failed: {}",
-                            io::Error::last_os_error()
-                        ));
-                    }
-                    libc::close(dev_null);
-                }
-
-                // Build a new tokio runtime and run the server with BFF.
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        child_exit_err(&format!(
-                            "failed to create tokio runtime for in-process server: {e}"
-                        ));
-                    }
-                };
-                let result = rt.block_on(run_server_with_bff());
-                if let Err(e) = result {
-                    eprintln!("hydra-server exited with error: {e:#}");
-                    unsafe { libc::_exit(1) };
-                }
-                unsafe { libc::_exit(0) };
             }
-            child_pid => {
-                // Parent process — record the child PID.
+            _monitor_pid => {
+                // ---- CLI parent process ----
                 unsafe {
                     libc::close(log_fd);
+                    libc::close(pipe_write_fd);
                 }
-                fs::write(&pid_file, child_pid.to_string())
-                    .with_context(|| format!("failed to write PID file {}", pid_file.display()))?;
 
-                // Spawn a detached background thread that waitpid()s on the
-                // child and records its exit status for later diagnosis.
-                spawn_exit_monitor(child_pid, &log_file);
+                // Read the server PID from the pipe.
+                let mut buf = [0u8; 32];
+                let n = unsafe {
+                    libc::read(
+                        pipe_read_fd,
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                    )
+                };
+                unsafe { libc::close(pipe_read_fd) };
+
+                if n <= 0 {
+                    bail!("failed to read server PID from monitor process (pipe returned {n})");
+                }
+                let pid_str = std::str::from_utf8(&buf[..n as usize])
+                    .context("invalid UTF-8 in server PID from monitor")?;
+                fs::write(&pid_file, pid_str)
+                    .with_context(|| format!("failed to write PID file {}", pid_file.display()))?;
             }
         }
     }
