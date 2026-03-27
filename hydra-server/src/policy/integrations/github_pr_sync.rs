@@ -128,6 +128,26 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         }
 
+        // Skip non-GitHub repos — local filesystem repos don't have GitHub PRs.
+        let repository = ctx
+            .app_state
+            .repository_from_store(&new.service_repo_name)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "github_pr_sync: failed to load repository '{}': {e}",
+                    new.service_repo_name
+                ))
+            })?;
+        if !repository.is_github() {
+            info!(
+                patch_id = %patch_id,
+                repo = %new.service_repo_name,
+                "github_pr_sync: skipping non-GitHub repository"
+            );
+            return Ok(());
+        }
+
         // Resolve actor identity from the event payload.
         let actor_ref = ctx.actor();
         let actor_name = actor_ref.display_name();
@@ -256,10 +276,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         let mut patch = new.clone();
         let (owner, repo) = match patch.github.as_ref() {
             Some(github) => (github.owner.clone(), github.repo.clone()),
-            None => (
-                patch.service_repo_name.organization.clone(),
-                patch.service_repo_name.repo.clone(),
-            ),
+            None => {
+                // Use the repository's remote URL to extract the GitHub owner/repo.
+                // The is_github() check above guarantees this will succeed.
+                repository.github_owner_repo().unwrap()
+            }
         };
 
         if let Some(existing) = patch.github.as_ref() {
@@ -312,28 +333,16 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                         .filter(|value| !value.is_empty())
                 }) {
                 Some(base_ref) => base_ref,
-                None => {
-                    let repository = ctx
-                        .app_state
-                        .repository_from_store(&patch.service_repo_name)
-                        .await
-                        .map_err(|e| {
-                            AutomationError::Other(anyhow::anyhow!(
-                                "github_pr_sync: failed to load repository '{}': {e}",
-                                patch.service_repo_name
-                            ))
-                        })?;
-                    repository
-                        .default_branch
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| {
-                            AutomationError::Other(anyhow::anyhow!(
-                                "github_pr_sync: no base ref available for '{}'",
-                                patch.service_repo_name
-                            ))
-                        })?
-                }
+                None => repository
+                    .default_branch
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        AutomationError::Other(anyhow::anyhow!(
+                            "github_pr_sync: no base ref available for '{}'",
+                            patch.service_repo_name
+                        ))
+                    })?,
             };
 
             // Create a new PR.
@@ -411,6 +420,7 @@ mod tests {
     use crate::domain::users::Username;
     use crate::policy::Automation;
     use hydra_common::RepoName;
+    use hydra_common::api::v1::repositories::Repository;
 
     #[test]
     fn automation_name_and_filter() {
@@ -545,5 +555,29 @@ mod tests {
         old_no_gh.github = None;
         new_no_gh.github = None;
         assert_ne!(old_no_gh, new_no_gh);
+    }
+
+    #[test]
+    fn skips_pr_sync_for_non_github_repo() {
+        // A repo with a file:// remote URL should not be considered a GitHub repo,
+        // which means github_pr_sync::execute() will return early without API calls.
+        let local_repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        assert!(!local_repo.is_github());
+        assert!(local_repo.is_local());
+        assert_eq!(local_repo.github_owner_repo(), None);
+
+        // A GitHub repo should be recognized and have owner/repo extracted.
+        let github_repo = Repository::new(
+            "https://github.com/dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert!(github_repo.is_github());
+        assert!(!github_repo.is_local());
+        assert_eq!(
+            github_repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
     }
 }
