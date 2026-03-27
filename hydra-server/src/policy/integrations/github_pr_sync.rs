@@ -12,6 +12,57 @@ use tracing::{error, info, warn};
 
 const AUTOMATION_NAME: &str = "github_pr_sync";
 
+/// Runs a GitHub API future with a 30-second timeout and catch_unwind protection,
+/// mapping errors to `AutomationError` with operation-specific context.
+async fn run_github_api_call<T>(
+    fut: impl std::future::Future<Output = Result<T, octocrab::Error>>,
+    patch_id: &str,
+    context: &str,
+) -> Result<T, AutomationError> {
+    let result = AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), fut))
+        .catch_unwind()
+        .await;
+
+    match result {
+        Ok(Ok(Ok(value))) => Ok(value),
+        Ok(Ok(Err(e))) => {
+            warn!(
+                patch_id = %patch_id,
+                error = %e,
+                error_debug = ?e,
+                "github_pr_sync: GitHub API error {context}"
+            );
+            Err(AutomationError::Other(anyhow::anyhow!(
+                "github_pr_sync: failed to {context}: {e}"
+            )))
+        }
+        Ok(Err(_elapsed)) => {
+            warn!(
+                patch_id = %patch_id,
+                "github_pr_sync: timeout (30s) {context}"
+            );
+            Err(AutomationError::Other(anyhow::anyhow!(
+                "github_pr_sync: timeout {context}"
+            )))
+        }
+        Err(panic_payload) => {
+            let msg = panic_payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            error!(
+                patch_id = %patch_id,
+                panic = %msg,
+                "github_pr_sync: octocrab panicked during {context}"
+            );
+            Err(AutomationError::Other(anyhow::anyhow!(
+                "github_pr_sync: octocrab panicked during {context}: {msg}"
+            )))
+        }
+    }
+}
+
 /// Automation that creates or updates a GitHub pull request when a patch
 /// is created or updated with `branch_name` set.
 ///
@@ -211,49 +262,9 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 .send();
 
             let pr_number = existing.number;
-            let result =
-                AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), update_fut))
-                    .catch_unwind()
-                    .await;
-
-            let pr = match result {
-                Ok(Ok(Ok(pr))) => pr,
-                Ok(Ok(Err(e))) => {
-                    warn!(
-                        patch_id = %patch_id,
-                        error = %e,
-                        error_debug = ?e,
-                        "github_pr_sync: GitHub API error updating PR '{owner}/{repo}#{pr_number}'"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: failed to update PR '{owner}/{repo}#{pr_number}': {e}"
-                    )));
-                }
-                Ok(Err(_elapsed)) => {
-                    warn!(
-                        patch_id = %patch_id,
-                        "github_pr_sync: timeout (30s) updating PR '{owner}/{repo}#{pr_number}'"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: timeout updating PR '{owner}/{repo}#{pr_number}'"
-                    )));
-                }
-                Err(panic_payload) => {
-                    let msg = panic_payload
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
-                    error!(
-                        patch_id = %patch_id,
-                        panic = %msg,
-                        "github_pr_sync: octocrab panicked during PR update"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: octocrab panicked during PR update: {msg}"
-                    )));
-                }
-            };
+            let update_context = format!("updating PR '{owner}/{repo}#{pr_number}'");
+            let pr =
+                run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
 
             info!(
                 patch_id = %patch_id,
@@ -324,49 +335,9 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 .body(patch.description.clone())
                 .send();
 
-            let result =
-                AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), create_fut))
-                    .catch_unwind()
-                    .await;
-
-            let pr = match result {
-                Ok(Ok(Ok(pr))) => pr,
-                Ok(Ok(Err(e))) => {
-                    warn!(
-                        patch_id = %patch_id,
-                        error = %e,
-                        error_debug = ?e,
-                        "github_pr_sync: GitHub API error creating PR for '{owner}/{repo}'"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: failed to create PR for '{owner}/{repo}': {e}"
-                    )));
-                }
-                Ok(Err(_elapsed)) => {
-                    warn!(
-                        patch_id = %patch_id,
-                        "github_pr_sync: timeout (30s) creating PR for '{owner}/{repo}'"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: timeout creating PR for '{owner}/{repo}'"
-                    )));
-                }
-                Err(panic_payload) => {
-                    let msg = panic_payload
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
-                    error!(
-                        patch_id = %patch_id,
-                        panic = %msg,
-                        "github_pr_sync: octocrab panicked during PR create"
-                    );
-                    return Err(AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: octocrab panicked during PR create: {msg}"
-                    )));
-                }
-            };
+            let create_context = format!("creating PR for '{owner}/{repo}'");
+            let pr =
+                run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
 
             info!(
                 patch_id = %patch_id,
