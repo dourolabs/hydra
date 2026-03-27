@@ -159,25 +159,51 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 ))
             })?;
 
+        let base_url = ctx.app_state.config.github_api_base_url().to_string();
         info!(
             patch_id = %patch_id,
+            base_url = %base_url,
+            token_len = token.github_token.len(),
             "github_pr_sync: building octocrab client"
         );
 
-        let client = Octocrab::builder()
-            .base_uri(ctx.app_state.config.github_api_base_url().to_string())
-            .map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
+        let build_token = token.github_token.clone();
+        let build_url = base_url.clone();
+        let client = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            Octocrab::builder()
+                .base_uri(build_url)
+                .map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: failed to build octocrab client: {e}"
+                    ))
+                })
+                .map(|b| b.personal_token(build_token).build())
+        })) {
+            Ok(Ok(Ok(client))) => client,
+            Ok(Ok(Err(e))) => {
+                return Err(AutomationError::Other(anyhow::anyhow!(
                     "github_pr_sync: failed to build octocrab client: {e}"
-                ))
-            })?
-            .personal_token(token.github_token)
-            .build()
-            .map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
-                    "github_pr_sync: failed to build octocrab client: {e}"
-                ))
-            })?;
+                )));
+            }
+            Ok(Err(e)) => return Err(e),
+            Err(panic_payload) => {
+                let msg = panic_payload
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                error!(
+                    patch_id = %patch_id,
+                    panic = %msg,
+                    base_url = %base_url,
+                    token_len = token.github_token.len(),
+                    "github_pr_sync: panic during octocrab client construction"
+                );
+                return Err(AutomationError::Other(anyhow::anyhow!(
+                    "github_pr_sync: panic during octocrab client construction: {msg}"
+                )));
+            }
+        };
 
         info!(
             patch_id = %patch_id,
