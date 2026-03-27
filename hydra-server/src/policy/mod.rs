@@ -9,7 +9,9 @@ pub mod runner;
 use crate::app::event_bus::{EventType, ServerEvent};
 use async_trait::async_trait;
 use context::{AutomationContext, RestrictionContext};
+use futures::FutureExt;
 use std::fmt;
+use std::panic::AssertUnwindSafe;
 
 /// A structured error returned when a restriction rejects a proposed mutation.
 ///
@@ -133,12 +135,31 @@ impl PolicyEngine {
         // have a per-repo scope.
         for automation in &self.automations {
             if automation.event_filter().matches(ctx.event) {
-                if let Err(e) = automation.execute(ctx).await {
-                    tracing::error!(
-                        automation = automation.name(),
-                        error = %e,
-                        "automation failed"
-                    );
+                let name = automation.name().to_owned();
+                match AssertUnwindSafe(automation.execute(ctx))
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(Err(e)) => {
+                        tracing::error!(
+                            automation = %name,
+                            error = %e,
+                            "automation failed"
+                        );
+                    }
+                    Err(panic_payload) => {
+                        let msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(|s| s.as_str())
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("unknown panic");
+                        tracing::error!(
+                            automation = %name,
+                            panic = %msg,
+                            "automation panicked"
+                        );
+                    }
+                    Ok(Ok(())) => {}
                 }
             }
         }
