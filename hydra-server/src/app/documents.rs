@@ -106,7 +106,13 @@ impl AppState {
             Some(id) => {
                 let mut document = document;
                 // old_document is Some in update path
-                document.created_by = old_document.unwrap().created_by;
+                document.created_by = old_document
+                    .ok_or_else(|| UpsertDocumentError::Store {
+                        source: StoreError::Internal(
+                            "old_document missing in update path".to_string(),
+                        ),
+                    })?
+                    .created_by;
 
                 let version = self
                     .store

@@ -716,9 +716,13 @@ impl StoreWithEvents {
             .ok()
             .map(|v| v.item)
             .or_else(|| old_issue.clone());
+        let Some(new_issue) = new_issue else {
+            tracing::warn!(issue_id = %id, "entity not found after delete; skipping event emission");
+            return Ok(version);
+        };
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
-            new: new_issue.expect("entity must exist after successful delete"),
+            new: new_issue,
             actor,
         });
         self.event_bus
@@ -776,9 +780,13 @@ impl StoreWithEvents {
             .ok()
             .map(|v| v.item)
             .or_else(|| old_patch.clone());
+        let Some(new_patch) = new_patch else {
+            tracing::warn!(patch_id = %id, "entity not found after delete; skipping event emission");
+            return Ok(version);
+        };
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
-            new: new_patch.expect("entity must exist after successful delete"),
+            new: new_patch,
             actor,
         });
         self.event_bus
@@ -846,9 +854,13 @@ impl StoreWithEvents {
             .ok()
             .map(|v| v.item)
             .or_else(|| old_document.clone());
+        let Some(new_document) = new_document else {
+            tracing::warn!(document_id = %id, "entity not found after delete; skipping event emission");
+            return Ok(version);
+        };
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
-            new: new_document.expect("entity must exist after successful delete"),
+            new: new_document,
             actor,
         });
         self.event_bus
@@ -1101,9 +1113,10 @@ impl StoreWithEvents {
         self.inner.delete_label(id).await?;
         // After soft-delete, get_label returns NotFound, so construct the
         // deleted version from the old label.
-        let mut deleted_label = old_label
-            .clone()
-            .expect("entity must exist after successful delete");
+        let Some(mut deleted_label) = old_label.clone() else {
+            tracing::warn!(label_id = %id, "entity not found before delete; skipping event emission");
+            return Ok(());
+        };
         deleted_label.deleted = true;
         let payload = Arc::new(MutationPayload::Label {
             old: old_label,
