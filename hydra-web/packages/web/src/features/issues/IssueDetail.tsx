@@ -81,9 +81,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <h1 className={styles.issueTitle}>
             {issue.title || record.issue_id}
           </h1>
-          <div className={styles.subtitle}>
-            <span className={styles.type}>{issue.type}</span>
-          </div>
         </div>
         <div className={styles.headerActions}>
           <Button
@@ -136,11 +133,14 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </div>
       )}
 
-      {/* Labels */}
-      <IssueLabelEditor
-        issueId={record.issue_id}
-        labels={record.labels ?? []}
-      />
+      {/* Type + Labels */}
+      <div className={styles.typeAndLabels}>
+        <span className={styles.type}>{issue.type}</span>
+        <IssueLabelEditor
+          issueId={record.issue_id}
+          labels={record.labels ?? []}
+        />
+      </div>
 
       {/* Description */}
       <div className={styles.description}>
