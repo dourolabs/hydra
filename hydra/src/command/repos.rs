@@ -11,7 +11,7 @@ use hydra_common::repositories::{
 };
 use hydra_common::RepoName;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum ReposCommand {
@@ -270,7 +270,7 @@ async fn clone_repository(
 
 fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryRequest> {
     let mut repo = build_repository_config(
-        parse_required(&args.remote_url, "remote URL")?,
+        resolve_remote_url(&args.remote_url)?,
         &args.default_branch,
         args.clear_default_branch,
         &args.default_image,
@@ -287,7 +287,7 @@ async fn build_update_request(
     let current = fetch_current_repository(client, &args.name).await?;
 
     let remote_url = match &args.remote_url {
-        Some(url) => parse_required(url, "remote URL")?,
+        Some(url) => resolve_remote_url(url)?,
         None => current.remote_url,
     };
 
@@ -396,13 +396,50 @@ fn build_patch_workflow(
     })
 }
 
-fn parse_required(value: &str, field: &str) -> Result<String> {
-    let trimmed = value.trim();
+/// Detects whether `remote_url` looks like a filesystem path (starts with `/` or `.`)
+/// and converts it to a `file://` URL. Validates that the path exists and is a git
+/// repository. Non-path values (e.g. `https://`, `git@`) are returned unchanged.
+fn resolve_remote_url(remote_url: &str) -> Result<String> {
+    let trimmed = remote_url.trim();
     if trimmed.is_empty() {
-        bail!("{field} must not be empty");
+        bail!("remote URL must not be empty");
     }
 
-    Ok(trimmed.to_string())
+    if !trimmed.starts_with('/') && !trimmed.starts_with('.') {
+        return Ok(trimmed.to_string());
+    }
+
+    let path = Path::new(trimmed);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to determine current directory")?
+            .join(path)
+    };
+
+    let canonical = absolute
+        .canonicalize()
+        .with_context(|| format!("path '{trimmed}' does not exist"))?;
+
+    if !is_git_repository(&canonical) {
+        bail!(
+            "path '{}' exists but is not a git repository (no .git directory found and not a bare repo)",
+            canonical.display()
+        );
+    }
+
+    Ok(format!("file://{}", canonical.display()))
+}
+
+/// Returns true if `path` looks like a git repository — either it contains a `.git`
+/// directory/file, or it is a bare repo (has a `HEAD` file and `objects` directory).
+fn is_git_repository(path: &Path) -> bool {
+    if path.join(".git").exists() {
+        return true;
+    }
+    // Bare repo check: HEAD file + objects dir
+    path.join("HEAD").exists() && path.join("objects").exists()
 }
 
 fn parse_optional(
@@ -1143,5 +1180,101 @@ mod tests {
 
         assert!(!output.contains("reviewers:"));
         assert!(!output.contains("merger:"));
+    }
+
+    #[test]
+    fn resolve_remote_url_passes_through_https_url() {
+        let url = resolve_remote_url("https://github.com/org/repo.git").unwrap();
+        assert_eq!(url, "https://github.com/org/repo.git");
+    }
+
+    #[test]
+    fn resolve_remote_url_passes_through_git_ssh_url() {
+        let url = resolve_remote_url("git@github.com:org/repo.git").unwrap();
+        assert_eq!(url, "git@github.com:org/repo.git");
+    }
+
+    #[test]
+    fn resolve_remote_url_passes_through_file_url() {
+        let url = resolve_remote_url("file:///tmp/my-repo").unwrap();
+        assert_eq!(url, "file:///tmp/my-repo");
+    }
+
+    #[test]
+    fn resolve_remote_url_rejects_empty() {
+        let err = resolve_remote_url("   ").unwrap_err();
+        assert!(
+            err.to_string().contains("remote URL must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_url_rejects_nonexistent_path() {
+        let err = resolve_remote_url("/nonexistent/path/to/repo").unwrap_err();
+        assert!(
+            err.to_string().contains("does not exist"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_url_rejects_non_git_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = resolve_remote_url(dir.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            err.to_string().contains("not a git repository"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_url_converts_absolute_git_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let url = resolve_remote_url(dir.path().to_str().unwrap()).unwrap();
+        assert!(
+            url.starts_with("file://"),
+            "should start with file://: {url}"
+        );
+        assert!(
+            url.contains(dir.path().to_str().unwrap()),
+            "should contain original path: {url}"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_url_converts_bare_repo_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir(dir.path().join("objects")).unwrap();
+        let url = resolve_remote_url(dir.path().to_str().unwrap()).unwrap();
+        assert!(
+            url.starts_with("file://"),
+            "should recognize bare repo: {url}"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_url_trims_whitespace() {
+        let url = resolve_remote_url("  https://github.com/org/repo.git  ").unwrap();
+        assert_eq!(url, "https://github.com/org/repo.git");
+    }
+
+    #[test]
+    fn is_git_repository_detects_dotgit_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_git_repository(dir.path()));
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(is_git_repository(dir.path()));
+    }
+
+    #[test]
+    fn is_git_repository_detects_bare_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_git_repository(dir.path()));
+        std::fs::write(dir.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir(dir.path().join("objects")).unwrap();
+        assert!(is_git_repository(dir.path()));
     }
 }
