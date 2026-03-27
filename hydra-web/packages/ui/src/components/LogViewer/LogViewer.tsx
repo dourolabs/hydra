@@ -61,7 +61,12 @@ export function LogViewer({
   const htmlCacheRef = useRef<string[]>([]);
 
   const getHtml = useCallback((index: number): string => {
-    const cache = htmlCacheRef.current;
+    let cache = htmlCacheRef.current;
+    // Trim cache synchronously if lines were trimmed (e.g., line cap)
+    if (cache.length > lines.length) {
+      cache = cache.slice(cache.length - lines.length);
+      htmlCacheRef.current = cache;
+    }
     if (index < cache.length && cache[index] !== undefined) {
       return cache[index];
     }
@@ -71,15 +76,6 @@ export function LogViewer({
     }
     return cache[index];
   }, [lines]);
-
-  // When lines shrink (e.g., line cap trimming), trim the cache from the front
-  useEffect(() => {
-    if (htmlCacheRef.current.length > lines.length) {
-      htmlCacheRef.current = htmlCacheRef.current.slice(
-        htmlCacheRef.current.length - lines.length
-      );
-    }
-  }, [lines.length]);
 
   // Line number width based on total lines
   const lineNumberWidth = lines.length > 0
