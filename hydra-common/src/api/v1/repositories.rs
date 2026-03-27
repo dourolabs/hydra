@@ -68,6 +68,10 @@ impl Repository {
     /// Supports HTTPS (`https://github.com/owner/repo[.git]`) and
     /// SSH (`git@github.com:owner/repo[.git]`) formats.
     /// Returns `None` for non-GitHub URLs.
+    ///
+    /// All code that needs to determine whether a repository is hosted on GitHub
+    /// (or extract owner/repo info) should use this method or [`is_github`](Self::is_github)
+    /// rather than ad-hoc string matching on the remote URL.
     pub fn github_owner_repo(&self) -> Option<(String, String)> {
         let remote_url = &self.remote_url;
 
