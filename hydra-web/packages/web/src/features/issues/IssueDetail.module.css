@@ -164,3 +164,10 @@
   flex-direction: column;
   gap: var(--space-4);
 }
+
+.sessionTimer {
+  color: var(--color-status-in-progress);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

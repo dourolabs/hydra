@@ -17,6 +17,8 @@ import { extractDocumentPaths } from "../../utils/documentPaths";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import { FormPanel } from "./FormPanel";
+import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
+import { useSessionDuration } from "../dashboard/useSessionDuration";
 import styles from "./IssueDetail.module.css";
 
 function BlockingIssueLink({ issueId }: { issueId: string }) {
@@ -53,6 +55,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const { issue } = record;
+
+  const { data: sessions } = useSessionsByIssue(record.issue_id);
+  const { durationText, isRunning } = useSessionDuration(sessions);
 
   const blockedOnIds = useMemo(
     () =>
@@ -106,6 +111,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
               </svg>
             </span>
           </button>
+          {isRunning && (
+            <span className={styles.sessionTimer}>{durationText}</span>
+          )}
         </div>
       </div>
 
