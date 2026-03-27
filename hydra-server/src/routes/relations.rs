@@ -176,15 +176,15 @@ pub async fn list_relations(
             )
         } else {
             (
-                vec![query
-                    .target_id
-                    .as_ref()
-                    .ok_or_else(|| {
-                        ApiError::internal(
-                            "expected target_id for transitive query",
-                        )
-                    })?
-                    .clone()],
+                vec![
+                    query
+                        .target_id
+                        .as_ref()
+                        .ok_or_else(|| {
+                            ApiError::internal("expected target_id for transitive query")
+                        })?
+                        .clone(),
+                ],
                 crate::store::TransitiveDirection::Backward,
             )
         };
@@ -192,9 +192,8 @@ pub async fn list_relations(
             .get_relationships_transitive(
                 &ids,
                 direction,
-                rel_type.ok_or_else(|| {
-                    ApiError::internal("expected rel_type for transitive query")
-                })?,
+                rel_type
+                    .ok_or_else(|| ApiError::internal("expected rel_type for transitive query"))?,
             )
             .await
             .map_err(map_store_error)?;
