@@ -846,7 +846,7 @@ fn validate_field_value(input: &Input, value: &Value) -> Option<String> {
             }
             if let Some(pat) = pattern {
                 let re = {
-                    let mut cache = REGEX_CACHE.lock().unwrap();
+                    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(re) = cache.get(pat) {
                         re.clone()
                     } else {
