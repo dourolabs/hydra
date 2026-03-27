@@ -367,20 +367,10 @@ mod tests {
 
     #[test]
     fn github_owner_repo_empty_segments() {
-        let repo = Repository::new(
-            "https://github.com//repo.git".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("https://github.com//repo.git".to_string(), None, None, None);
         assert_eq!(repo.github_owner_repo(), None);
 
-        let repo2 = Repository::new(
-            "https://github.com/owner/".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo2 = Repository::new("https://github.com/owner/".to_string(), None, None, None);
         assert_eq!(repo2.github_owner_repo(), None);
     }
 
