@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::task_status as api_task_status;
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
