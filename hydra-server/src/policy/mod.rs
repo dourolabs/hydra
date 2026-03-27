@@ -10,8 +10,18 @@ use crate::app::event_bus::{EventType, ServerEvent};
 use async_trait::async_trait;
 use context::{AutomationContext, RestrictionContext};
 use futures::FutureExt;
+use std::any::Any;
 use std::fmt;
 use std::panic::AssertUnwindSafe;
+
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+pub fn panic_message(payload: &Box<dyn Any + Send>) -> &str {
+    payload
+        .downcast_ref::<String>()
+        .map(|s| s.as_str())
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic")
+}
 
 /// A structured error returned when a restriction rejects a proposed mutation.
 ///
@@ -148,11 +158,7 @@ impl PolicyEngine {
                         );
                     }
                     Err(panic_payload) => {
-                        let msg = panic_payload
-                            .downcast_ref::<String>()
-                            .map(|s| s.as_str())
-                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                            .unwrap_or("unknown panic");
+                        let msg = panic_message(&panic_payload);
                         tracing::error!(
                             automation = %name,
                             panic = %msg,

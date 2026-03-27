@@ -2,7 +2,7 @@ use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::{ActorId, ActorRef, get_github_token_for_user};
 use crate::domain::patches::GithubPr;
 use crate::policy::context::AutomationContext;
-use crate::policy::{AutomationError, EventFilter};
+use crate::policy::{AutomationError, EventFilter, panic_message};
 use async_trait::async_trait;
 use futures::FutureExt;
 use octocrab::Octocrab;
@@ -46,11 +46,7 @@ async fn run_github_api_call<T>(
             )))
         }
         Err(panic_payload) => {
-            let msg = panic_payload
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-                .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
+            let msg = panic_message(&panic_payload);
             error!(
                 patch_id = %patch_id,
                 panic = %msg,
@@ -238,11 +234,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
             Ok(Err(e)) => return Err(e),
             Err(panic_payload) => {
-                let msg = panic_payload
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                    .unwrap_or("unknown panic");
+                let msg = panic_message(&panic_payload);
                 error!(
                     patch_id = %patch_id,
                     panic = %msg,
