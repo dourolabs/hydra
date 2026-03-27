@@ -23,7 +23,7 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use crate::domain::actors::Actor;
-use crate::job_engine::{HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use crate::job_engine::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -488,6 +488,7 @@ impl JobEngine for KubernetesJobEngine {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
+        _bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("hydra-worker-{hydra_id}");
 
