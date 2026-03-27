@@ -263,8 +263,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
             let pr_number = existing.number;
             let update_context = format!("updating PR '{owner}/{repo}#{pr_number}'");
-            let pr =
-                run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
+            let pr = run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
 
             info!(
                 patch_id = %patch_id,
@@ -336,8 +335,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 .send();
 
             let create_context = format!("creating PR for '{owner}/{repo}'");
-            let pr =
-                run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
+            let pr = run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
 
             info!(
                 patch_id = %patch_id,
