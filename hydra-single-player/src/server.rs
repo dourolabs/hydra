@@ -24,6 +24,7 @@ const LOG_DIR: &str = "~/.hydra/server/logs";
 const LOG_FILE_PATH: &str = "~/.hydra/server/logs/hydra-server.log";
 const JOB_LOG_DIR: &str = "~/.hydra/server/job-logs";
 const SERVER_DB_PATH: &str = "~/.hydra/server/hydra.db";
+const LAST_EXIT_STATUS_PATH: &str = "~/.hydra/server/last-exit-status";
 
 const LOCAL_SERVER_URL: &str = "http://127.0.0.1:8080";
 
@@ -868,6 +869,125 @@ fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
     Ok(())
 }
 
+/// Return a human-readable name for a Unix signal number.
+#[cfg(unix)]
+fn signal_name(sig: i32) -> &'static str {
+    match sig {
+        libc::SIGHUP => "SIGHUP",
+        libc::SIGINT => "SIGINT",
+        libc::SIGQUIT => "SIGQUIT",
+        libc::SIGILL => "SIGILL",
+        libc::SIGTRAP => "SIGTRAP",
+        libc::SIGABRT => "SIGABRT",
+        libc::SIGBUS => "SIGBUS",
+        libc::SIGFPE => "SIGFPE",
+        libc::SIGKILL => "SIGKILL",
+        libc::SIGSEGV => "SIGSEGV",
+        libc::SIGPIPE => "SIGPIPE",
+        libc::SIGALRM => "SIGALRM",
+        libc::SIGTERM => "SIGTERM",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Spawn a detached thread that waits for the child server process to exit
+/// and records its exit status to the last-exit-status file and the log.
+#[cfg(unix)]
+fn spawn_exit_monitor(child_pid: i32, log_file: &Path) {
+    let exit_status_path = expand_path(LAST_EXIT_STATUS_PATH);
+    let log_path = log_file.to_path_buf();
+
+    // Read OOM score before waitpid (it won't be available after the process exits).
+    let oom_score = fs::read_to_string(format!("/proc/{child_pid}/oom_score"))
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok());
+
+    thread::spawn(move || {
+        let mut status: i32 = 0;
+        let ret = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+
+        if ret == -1 {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::ECHILD) {
+                // Child already reaped — nothing we can do.
+                let msg = format!(
+                    "[{}] Monitor: child {} already reaped (ECHILD)\n",
+                    chrono_timestamp(),
+                    child_pid
+                );
+                let _ = append_to_file(&log_path, &msg);
+                let _ = fs::write(&exit_status_path, &msg);
+                return;
+            }
+            let msg = format!(
+                "[{}] Monitor: waitpid({}) failed: {}\n",
+                chrono_timestamp(),
+                child_pid,
+                err
+            );
+            let _ = append_to_file(&log_path, &msg);
+            let _ = fs::write(&exit_status_path, &msg);
+            return;
+        }
+
+        let timestamp = chrono_timestamp();
+        let mut lines = Vec::new();
+
+        if libc::WIFEXITED(status) {
+            let code = libc::WEXITSTATUS(status);
+            lines.push(format!(
+                "[{timestamp}] Server process {child_pid} exited with code {code}"
+            ));
+        } else if libc::WIFSIGNALED(status) {
+            let sig = libc::WTERMSIG(status);
+            let name = signal_name(sig);
+            lines.push(format!(
+                "[{timestamp}] Server process {child_pid} killed by signal {name} ({sig})"
+            ));
+
+            #[cfg(not(target_os = "macos"))]
+            if libc::WCOREDUMP(status) {
+                lines.push(format!("[{timestamp}] Core dump was produced"));
+            }
+        } else {
+            lines.push(format!(
+                "[{timestamp}] Server process {child_pid} exited with unknown status 0x{status:x}"
+            ));
+        }
+
+        if let Some(score) = oom_score {
+            lines.push(format!("[{timestamp}] OOM score at fork time: {score}"));
+        }
+
+        let output = lines.join("\n") + "\n";
+        let _ = append_to_file(&log_path, &output);
+        let _ = fs::write(&exit_status_path, &output);
+    });
+}
+
+/// Simple timestamp without pulling in the chrono crate.
+fn chrono_timestamp() -> String {
+    // Use std::time for a basic UTC timestamp.
+    let now = std::time::SystemTime::now();
+    let dur = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    // Format as seconds since epoch — good enough for diagnostics.
+    // A full ISO timestamp would need chrono, but we keep deps minimal.
+    format!("{secs}")
+}
+
+/// Append text to a file, creating it if needed.
+fn append_to_file(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write as _;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    f.write_all(text.as_bytes())
+}
+
 /// Start the server in-process by forking the current process and running
 /// `hydra_server::run()` in the child. The child's PID is written to the
 /// PID file so that `hydra server stop` can find it.
@@ -1002,6 +1122,10 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
                 }
                 fs::write(&pid_file, child_pid.to_string())
                     .with_context(|| format!("failed to write PID file {}", pid_file.display()))?;
+
+                // Spawn a detached background thread that waitpid()s on the
+                // child and records its exit status for later diagnosis.
+                spawn_exit_monitor(child_pid, &log_file);
             }
         }
     }
@@ -1138,6 +1262,7 @@ fn cmd_status() -> Result<()> {
         print_running_status();
     } else {
         println!("Server is stopped.");
+        print_last_exit_status();
         println!("  Run `hydra server start` to start it.");
     }
 
@@ -1152,6 +1277,20 @@ fn print_running_status() {
     println!("  URL: {LOCAL_SERVER_URL}");
     println!("  Config: {}", expand_path(SERVER_CONFIG_PATH).display());
     println!("  Logs: {}", expand_path(LOG_FILE_PATH).display());
+}
+
+/// Print last exit status info when the server is not running.
+fn print_last_exit_status() {
+    let path = expand_path(LAST_EXIT_STATUS_PATH);
+    if let Ok(contents) = fs::read_to_string(&path) {
+        let contents = contents.trim();
+        if !contents.is_empty() {
+            println!("  Last exit status:");
+            for line in contents.lines() {
+                println!("    {line}");
+            }
+        }
+    }
 }
 
 fn is_server_running() -> Result<bool> {
