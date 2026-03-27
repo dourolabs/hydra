@@ -486,6 +486,11 @@ fn build_upload_url(
     Ok(base)
 }
 
+/// Derive the GitHub upload URL from the configured API base URL.
+///
+/// Note: This checks the *API base URL* host (e.g. `api.github.com`), not a repository
+/// remote URL. This is API endpoint rewriting, not repository detection, so the
+/// `Repository::is_github()` / `Repository::github_owner_repo()` helpers don't apply here.
 fn github_upload_base_url(api_base_url: &str) -> Result<reqwest::Url, ApiError> {
     let mut url = reqwest::Url::parse(api_base_url).map_err(|err| {
         ApiError::internal(format!(
