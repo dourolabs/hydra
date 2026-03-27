@@ -920,6 +920,22 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
         match fork_result {
             -1 => bail!("fork() failed: {}", io::Error::last_os_error()),
             0 => {
+                // Helper to exit the child process with an error message.
+                // After fork, we cannot unwind or use anyhow::bail, so we
+                // write directly and call _exit to avoid running destructors.
+                let child_exit_err = |msg: &str| -> ! {
+                    let full = format!("{msg}\n");
+                    // Best-effort write — stderr may not be set up yet.
+                    unsafe {
+                        libc::write(
+                            libc::STDERR_FILENO,
+                            full.as_ptr() as *const libc::c_void,
+                            full.len(),
+                        );
+                    }
+                    std::process::exit(1);
+                };
+
                 // Child process — become a new session leader (detach from terminal).
                 unsafe {
                     libc::setsid();
@@ -927,24 +943,51 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
 
                 // Redirect stdout and stderr to the log file.
                 unsafe {
-                    libc::dup2(log_fd, libc::STDOUT_FILENO);
-                    libc::dup2(log_fd, libc::STDERR_FILENO);
+                    if libc::dup2(log_fd, libc::STDOUT_FILENO) == -1 {
+                        child_exit_err(&format!(
+                            "dup2(log_fd, STDOUT) failed: {}",
+                            io::Error::last_os_error()
+                        ));
+                    }
+                    if libc::dup2(log_fd, libc::STDERR_FILENO) == -1 {
+                        child_exit_err(&format!(
+                            "dup2(log_fd, STDERR) failed: {}",
+                            io::Error::last_os_error()
+                        ));
+                    }
                     libc::close(log_fd);
                 }
+
+                eprintln!("hydra-server child process starting");
 
                 // Redirect stdin to /dev/null so the background server doesn't
                 // consume terminal input meant for the user's shell.
                 unsafe {
                     let dev_null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
-                    if dev_null >= 0 {
-                        libc::dup2(dev_null, libc::STDIN_FILENO);
-                        libc::close(dev_null);
+                    if dev_null < 0 {
+                        child_exit_err(&format!(
+                            "open(/dev/null) failed: {}",
+                            io::Error::last_os_error()
+                        ));
                     }
+                    if libc::dup2(dev_null, libc::STDIN_FILENO) == -1 {
+                        child_exit_err(&format!(
+                            "dup2(dev_null, STDIN) failed: {}",
+                            io::Error::last_os_error()
+                        ));
+                    }
+                    libc::close(dev_null);
                 }
 
                 // Build a new tokio runtime and run the server with BFF.
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("failed to create tokio runtime for in-process server");
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        child_exit_err(&format!(
+                            "failed to create tokio runtime for in-process server: {e}"
+                        ));
+                    }
+                };
                 let result = rt.block_on(run_server_with_bff());
                 if let Err(e) = result {
                     eprintln!("hydra-server exited with error: {e:#}");
