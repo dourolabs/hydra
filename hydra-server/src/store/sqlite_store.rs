@@ -1850,9 +1850,9 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         let status_strings: Vec<String> = query
             .status
             .iter()
-            .map(|s| {
-                let server_status: Status = (*s).into();
-                super::status_to_db_str(server_status).to_string()
+            .filter_map(|s| {
+                let server_status: Status = (*s).try_into().ok()?;
+                Some(super::status_to_db_str(server_status).to_string())
             })
             .collect();
         let placeholders: Vec<String> = status_strings

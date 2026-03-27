@@ -1767,9 +1767,9 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         let status_strings: Vec<String> = query
             .status
             .iter()
-            .map(|s| {
-                let server_status: Status = (*s).into();
-                status_to_db_str(server_status).to_string()
+            .filter_map(|s| {
+                let server_status: Status = (*s).try_into().ok()?;
+                Some(status_to_db_str(server_status).to_string())
             })
             .collect();
         let placeholders: Vec<String> = status_strings
