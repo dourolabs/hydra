@@ -4,8 +4,11 @@ use crate::domain::patches::GithubPr;
 use crate::policy::context::AutomationContext;
 use crate::policy::{AutomationError, EventFilter};
 use async_trait::async_trait;
+use futures::FutureExt;
 use octocrab::Octocrab;
-use tracing::{info, warn};
+use std::panic::AssertUnwindSafe;
+use std::time::Duration;
+use tracing::{error, info, warn};
 
 const AUTOMATION_NAME: &str = "github_pr_sync";
 
@@ -103,6 +106,12 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
+        info!(
+            patch_id = %patch_id,
+            actor = %actor_name,
+            "github_pr_sync: resolved actor identity"
+        );
+
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
             ActorId::Username(username) => username.clone().into(),
@@ -136,6 +145,12 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
+        info!(
+            patch_id = %patch_id,
+            creator = %creator,
+            "github_pr_sync: resolved creator username"
+        );
+
         let token = get_github_token_for_user(ctx.app_state, &creator)
             .await
             .map_err(|e| {
@@ -143,6 +158,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     "github_pr_sync: failed to get github token for actor '{actor_name}': {e:?}"
                 ))
             })?;
+
+        info!(
+            patch_id = %patch_id,
+            "github_pr_sync: building octocrab client"
+        );
 
         let client = Octocrab::builder()
             .base_uri(ctx.app_state.config.github_api_base_url().to_string())
@@ -159,6 +179,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 ))
             })?;
 
+        info!(
+            patch_id = %patch_id,
+            "github_pr_sync: octocrab client built successfully"
+        );
+
         let mut patch = new.clone();
         let (owner, repo) = match patch.github.as_ref() {
             Some(github) => (github.owner.clone(), github.repo.clone()),
@@ -170,19 +195,71 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         if let Some(existing) = patch.github.as_ref() {
             // Update existing PR.
-            let pr = client
-                .pulls(&owner, &repo)
+            info!(
+                patch_id = %patch_id,
+                owner = %owner,
+                repo = %repo,
+                pr_number = existing.number,
+                "github_pr_sync: updating existing PR via GitHub API"
+            );
+
+            let pulls_handler = client.pulls(&owner, &repo);
+            let update_fut = pulls_handler
                 .update(existing.number)
                 .title(patch.title.clone())
                 .body(patch.description.clone())
-                .send()
-                .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: failed to update PR '{owner}/{repo}#{}': {e}",
-                        existing.number
-                    ))
-                })?;
+                .send();
+
+            let pr_number = existing.number;
+            let result =
+                AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), update_fut))
+                    .catch_unwind()
+                    .await;
+
+            let pr = match result {
+                Ok(Ok(Ok(pr))) => pr,
+                Ok(Ok(Err(e))) => {
+                    warn!(
+                        patch_id = %patch_id,
+                        error = %e,
+                        error_debug = ?e,
+                        "github_pr_sync: GitHub API error updating PR '{owner}/{repo}#{pr_number}'"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: failed to update PR '{owner}/{repo}#{pr_number}': {e}"
+                    )));
+                }
+                Ok(Err(_elapsed)) => {
+                    warn!(
+                        patch_id = %patch_id,
+                        "github_pr_sync: timeout (30s) updating PR '{owner}/{repo}#{pr_number}'"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: timeout updating PR '{owner}/{repo}#{pr_number}'"
+                    )));
+                }
+                Err(panic_payload) => {
+                    let msg = panic_payload
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    error!(
+                        patch_id = %patch_id,
+                        panic = %msg,
+                        "github_pr_sync: octocrab panicked during PR update"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: octocrab panicked during PR update: {msg}"
+                    )));
+                }
+            };
+
+            info!(
+                patch_id = %patch_id,
+                pr_number = pr_number,
+                "github_pr_sync: GitHub API call completed (update PR)"
+            );
 
             let mut updated = existing.clone();
             updated.head_ref = Some(pr.head.ref_field.clone());
@@ -232,17 +309,70 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             };
 
             // Create a new PR.
-            let pr = client
-                .pulls(&owner, &repo)
+            info!(
+                patch_id = %patch_id,
+                owner = %owner,
+                repo = %repo,
+                head_ref = %head_ref,
+                base_ref = %base_ref,
+                "github_pr_sync: creating new PR via GitHub API"
+            );
+
+            let pulls_handler = client.pulls(&owner, &repo);
+            let create_fut = pulls_handler
                 .create(patch.title.clone(), &head_ref, base_ref)
                 .body(patch.description.clone())
-                .send()
-                .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
+                .send();
+
+            let result =
+                AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), create_fut))
+                    .catch_unwind()
+                    .await;
+
+            let pr = match result {
+                Ok(Ok(Ok(pr))) => pr,
+                Ok(Ok(Err(e))) => {
+                    warn!(
+                        patch_id = %patch_id,
+                        error = %e,
+                        error_debug = ?e,
+                        "github_pr_sync: GitHub API error creating PR for '{owner}/{repo}'"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
                         "github_pr_sync: failed to create PR for '{owner}/{repo}': {e}"
-                    ))
-                })?;
+                    )));
+                }
+                Ok(Err(_elapsed)) => {
+                    warn!(
+                        patch_id = %patch_id,
+                        "github_pr_sync: timeout (30s) creating PR for '{owner}/{repo}'"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: timeout creating PR for '{owner}/{repo}'"
+                    )));
+                }
+                Err(panic_payload) => {
+                    let msg = panic_payload
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    error!(
+                        patch_id = %patch_id,
+                        panic = %msg,
+                        "github_pr_sync: octocrab panicked during PR create"
+                    );
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: octocrab panicked during PR create: {msg}"
+                    )));
+                }
+            };
+
+            info!(
+                patch_id = %patch_id,
+                pr_number = pr.number,
+                "github_pr_sync: GitHub API call completed (create PR)"
+            );
 
             patch.github = Some(GithubPr::new(
                 owner,
@@ -257,6 +387,10 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Persist the updated GitHub metadata via AppState (store is read-only
         // in the automation context, so we must go through AppState for writes).
+        info!(
+            patch_id = %patch_id,
+            "github_pr_sync: persisting updated GitHub metadata"
+        );
         let request = hydra_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
         ctx.app_state
             .upsert_patch(
@@ -276,7 +410,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         info!(
             patch_id = %patch_id,
-            "github_pr_sync: successfully synced patch with github"
+            "github_pr_sync: GitHub metadata persisted successfully"
         );
 
         Ok(())
