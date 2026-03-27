@@ -258,7 +258,9 @@ impl AgentQueue {
                     })?,
             );
         }
-        let prompt = cached_prompt.as_deref().unwrap();
+        let prompt = cached_prompt
+            .as_deref()
+            .context("prompt cache unexpectedly empty after fetch")?;
 
         // Resolve MCP config (lazily cached across calls).
         if cached_mcp_config.is_none() {
@@ -277,7 +279,10 @@ impl AgentQueue {
             };
             *cached_mcp_config = Some(mcp_config);
         }
-        let mcp_config = cached_mcp_config.as_ref().unwrap().clone();
+        let mcp_config = cached_mcp_config
+            .as_ref()
+            .context("MCP config cache unexpectedly empty after fetch")?
+            .clone();
 
         let maybe_task = self
             .build_task(state, issue_id, issue, prompt, mcp_config)
