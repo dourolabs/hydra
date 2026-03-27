@@ -373,8 +373,12 @@ impl MemoryStore {
             }
 
             if !query.status.is_empty() {
-                let status_filter: Vec<Status> =
-                    query.status.iter().copied().map(Into::into).collect();
+                let status_filter: Vec<Status> = query
+                    .status
+                    .iter()
+                    .copied()
+                    .filter_map(|s| s.try_into().ok())
+                    .collect();
                 if !status_filter.contains(&latest.item.status) {
                     return None;
                 }

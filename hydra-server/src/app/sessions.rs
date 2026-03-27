@@ -205,7 +205,11 @@ impl AppState {
 
             self.transition_task_to_completion(
                 &session_id,
-                status.to_result().map_err(TaskError::from),
+                status.to_result().map_err(|e| {
+                    TaskError::try_from(e).unwrap_or_else(|err| TaskError::JobEngineError {
+                        reason: format!("unknown task error: {err}"),
+                    })
+                }),
                 status.last_message(),
                 actor,
             )

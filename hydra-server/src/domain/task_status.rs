@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::task_status as api_task_status;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,15 +114,33 @@ impl TaskStatusLog {
     }
 }
 
-impl From<api_task_status::Status> for Status {
-    fn from(value: api_task_status::Status) -> Self {
+/// Error returned when an API task status or error variant cannot be mapped to a domain type.
+#[derive(Debug, Clone)]
+pub struct UnsupportedVariantError {
+    pub variant: String,
+}
+
+impl fmt::Display for UnsupportedVariantError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unsupported variant: {}", self.variant)
+    }
+}
+
+impl std::error::Error for UnsupportedVariantError {}
+
+impl TryFrom<api_task_status::Status> for Status {
+    type Error = UnsupportedVariantError;
+
+    fn try_from(value: api_task_status::Status) -> Result<Self, Self::Error> {
         match value {
-            api_task_status::Status::Created => Status::Created,
-            api_task_status::Status::Pending => Status::Pending,
-            api_task_status::Status::Running => Status::Running,
-            api_task_status::Status::Complete => Status::Complete,
-            api_task_status::Status::Failed => Status::Failed,
-            other => panic!("unsupported task status variant: {other:?}"),
+            api_task_status::Status::Created => Ok(Status::Created),
+            api_task_status::Status::Pending => Ok(Status::Pending),
+            api_task_status::Status::Running => Ok(Status::Running),
+            api_task_status::Status::Complete => Ok(Status::Complete),
+            api_task_status::Status::Failed => Ok(Status::Failed),
+            other => Err(UnsupportedVariantError {
+                variant: format!("{other:?}"),
+            }),
         }
     }
 }
@@ -137,13 +157,17 @@ impl From<Status> for api_task_status::Status {
     }
 }
 
-impl From<api_task_status::TaskError> for TaskError {
-    fn from(value: api_task_status::TaskError) -> Self {
+impl TryFrom<api_task_status::TaskError> for TaskError {
+    type Error = UnsupportedVariantError;
+
+    fn try_from(value: api_task_status::TaskError) -> Result<Self, Self::Error> {
         match value {
             api_task_status::TaskError::JobEngineError { reason } => {
-                TaskError::JobEngineError { reason }
+                Ok(TaskError::JobEngineError { reason })
             }
-            other => panic!("unsupported task error variant: {other:?}"),
+            other => Err(UnsupportedVariantError {
+                variant: format!("{other:?}"),
+            }),
         }
     }
 }

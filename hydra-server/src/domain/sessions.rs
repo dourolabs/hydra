@@ -185,9 +185,11 @@ impl From<Bundle> for api::sessions::Bundle {
     }
 }
 
-impl From<api::sessions::Session> for Session {
-    fn from(value: api::sessions::Session) -> Self {
-        Session {
+impl TryFrom<api::sessions::Session> for Session {
+    type Error = crate::domain::task_status::UnsupportedVariantError;
+
+    fn try_from(value: api::sessions::Session) -> Result<Self, Self::Error> {
+        Ok(Session {
             prompt: value.prompt,
             context: value.context.into(),
             spawned_from: value.spawned_from,
@@ -199,14 +201,14 @@ impl From<api::sessions::Session> for Session {
             memory_limit: value.memory_limit,
             secrets: value.secrets,
             mcp_config: value.mcp_config,
-            status: value.status.into(),
+            status: value.status.try_into()?,
             last_message: value.last_message,
-            error: value.error.map(Into::into),
+            error: value.error.map(TryInto::try_into).transpose()?,
             deleted: value.deleted,
             creation_time: value.creation_time,
             start_time: value.start_time,
             end_time: value.end_time,
-        }
+        })
     }
 }
 
@@ -280,7 +282,7 @@ mod tests {
         );
 
         let api_session: api::sessions::Session = domain_session.clone().into();
-        let round_trip: Session = api_session.into();
+        let round_trip: Session = api_session.try_into().unwrap();
 
         assert_eq!(round_trip.secrets, secrets);
         assert_eq!(round_trip.prompt, domain_session.prompt);
@@ -308,7 +310,7 @@ mod tests {
         );
 
         let api_session: api::sessions::Session = domain_session.clone().into();
-        let round_trip: Session = api_session.into();
+        let round_trip: Session = api_session.try_into().unwrap();
 
         assert_eq!(round_trip.secrets, None);
     }
