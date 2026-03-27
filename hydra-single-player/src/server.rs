@@ -933,7 +933,7 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
                             full.len(),
                         );
                     }
-                    std::process::exit(1);
+                    unsafe { libc::_exit(1) };
                 };
 
                 // Child process — become a new session leader (detach from terminal).
@@ -991,9 +991,9 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
                 let result = rt.block_on(run_server_with_bff());
                 if let Err(e) = result {
                     eprintln!("hydra-server exited with error: {e:#}");
-                    std::process::exit(1);
+                    unsafe { libc::_exit(1) };
                 }
-                std::process::exit(0);
+                unsafe { libc::_exit(0) };
             }
             child_pid => {
                 // Parent process — record the child PID.
