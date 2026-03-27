@@ -61,7 +61,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
             }
 
             let repo = &repo_versioned.item;
-            let Some((owner, repo_short)) = parse_github_owner_repo(&repo.remote_url) else {
+            let Some((owner, repo_short)) = repo.github_owner_repo() else {
                 debug!(
                     repo = %repo_name,
                     url = %repo.remote_url,
@@ -227,37 +227,6 @@ struct GitRef {
     ref_field: String,
 }
 
-/// Parse a GitHub remote URL to extract owner and repo name.
-///
-/// Supports HTTPS (https://github.com/owner/repo.git) and
-/// SSH (git@github.com:owner/repo.git) formats.
-fn parse_github_owner_repo(remote_url: &str) -> Option<(String, String)> {
-    // HTTPS: https://github.com/owner/repo.git or https://github.com/owner/repo
-    if let Some(path) = remote_url
-        .strip_prefix("https://github.com/")
-        .or_else(|| remote_url.strip_prefix("http://github.com/"))
-    {
-        let path = path.trim_end_matches('/').trim_end_matches(".git");
-        let (owner, repo) = path.split_once('/')?;
-        if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-            return None;
-        }
-        return Some((owner.to_string(), repo.to_string()));
-    }
-
-    // SSH: git@github.com:owner/repo.git
-    if let Some(path) = remote_url.strip_prefix("git@github.com:") {
-        let path = path.trim_end_matches('/').trim_end_matches(".git");
-        let (owner, repo) = path.split_once('/')?;
-        if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-            return None;
-        }
-        return Some((owner.to_string(), repo.to_string()));
-    }
-
-    None
-}
-
 /// Parse a Git ref string like "refs/heads/hydra/i-abcdef/head" into a HydraBranch.
 fn parse_hydra_branch(ref_name: &str) -> Option<HydraBranch> {
     let branch_path = ref_name.strip_prefix("refs/heads/")?;
@@ -356,41 +325,6 @@ mod tests {
     use crate::domain::users::Username;
     use httpmock::prelude::*;
     use serde_json::json;
-
-    #[test]
-    fn parse_github_owner_repo_https_with_git_suffix() {
-        let result = parse_github_owner_repo("https://github.com/dourolabs/hydra.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
-    }
-
-    #[test]
-    fn parse_github_owner_repo_https_without_git_suffix() {
-        let result = parse_github_owner_repo("https://github.com/dourolabs/hydra");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
-    }
-
-    #[test]
-    fn parse_github_owner_repo_ssh() {
-        let result = parse_github_owner_repo("git@github.com:dourolabs/hydra.git");
-        assert_eq!(result, Some(("dourolabs".to_string(), "hydra".to_string())));
-    }
-
-    #[test]
-    fn parse_github_owner_repo_non_github() {
-        assert_eq!(
-            parse_github_owner_repo("https://gitlab.com/org/repo.git"),
-            None
-        );
-    }
-
-    #[test]
-    fn parse_github_owner_repo_empty_segments() {
-        assert_eq!(
-            parse_github_owner_repo("https://github.com//repo.git"),
-            None
-        );
-        assert_eq!(parse_github_owner_repo("https://github.com/owner/"), None);
-    }
 
     #[test]
     fn parse_hydra_branch_issue_head() {

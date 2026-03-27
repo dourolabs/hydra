@@ -62,6 +62,52 @@ impl Repository {
             patch_workflow,
         }
     }
+
+    /// Parse a GitHub remote URL to extract owner and repo name.
+    ///
+    /// Supports HTTPS (`https://github.com/owner/repo[.git]`) and
+    /// SSH (`git@github.com:owner/repo[.git]`) formats.
+    /// Returns `None` for non-GitHub URLs.
+    pub fn github_owner_repo(&self) -> Option<(String, String)> {
+        let remote_url = &self.remote_url;
+
+        // HTTPS: https://github.com/owner/repo.git or https://github.com/owner/repo
+        if let Some(path) = remote_url
+            .strip_prefix("https://github.com/")
+            .or_else(|| remote_url.strip_prefix("http://github.com/"))
+        {
+            let path = path.trim_end_matches('/').trim_end_matches(".git");
+            let (owner, repo) = path.split_once('/')?;
+            if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+                return None;
+            }
+            return Some((owner.to_string(), repo.to_string()));
+        }
+
+        // SSH: git@github.com:owner/repo.git
+        if let Some(path) = remote_url.strip_prefix("git@github.com:") {
+            let path = path.trim_end_matches('/').trim_end_matches(".git");
+            let (owner, repo) = path.split_once('/')?;
+            if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+                return None;
+            }
+            return Some((owner.to_string(), repo.to_string()));
+        }
+
+        None
+    }
+
+    /// Returns `true` if this repository is hosted on GitHub.
+    pub fn is_github(&self) -> bool {
+        self.github_owner_repo().is_some()
+    }
+
+    /// Returns `true` if this repository is a local filesystem path.
+    ///
+    /// Detects `file://` URLs and absolute paths starting with `/`.
+    pub fn is_local(&self) -> bool {
+        self.remote_url.starts_with("file://") || self.remote_url.starts_with('/')
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +290,133 @@ mod tests {
         let config: RepoWorkflowConfig = serde_json::from_value(json!({})).unwrap();
         assert!(config.review_requests.is_empty());
         assert_eq!(config.merge_request, None);
+    }
+
+    #[test]
+    fn github_owner_repo_https_with_git_suffix() {
+        let repo = Repository::new(
+            "https://github.com/dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_https_without_git_suffix() {
+        let repo = Repository::new(
+            "https://github.com/dourolabs/hydra".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_ssh() {
+        let repo = Repository::new(
+            "git@github.com:dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_ssh_without_git_suffix() {
+        let repo = Repository::new(
+            "git@github.com:dourolabs/hydra".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_non_github() {
+        let repo = Repository::new(
+            "https://gitlab.com/org/repo.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(repo.github_owner_repo(), None);
+    }
+
+    #[test]
+    fn github_owner_repo_file_url() {
+        let repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        assert_eq!(repo.github_owner_repo(), None);
+    }
+
+    #[test]
+    fn github_owner_repo_empty_segments() {
+        let repo = Repository::new("https://github.com//repo.git".to_string(), None, None, None);
+        assert_eq!(repo.github_owner_repo(), None);
+
+        let repo2 = Repository::new("https://github.com/owner/".to_string(), None, None, None);
+        assert_eq!(repo2.github_owner_repo(), None);
+    }
+
+    #[test]
+    fn is_github_returns_true_for_github_url() {
+        let repo = Repository::new(
+            "https://github.com/dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert!(repo.is_github());
+    }
+
+    #[test]
+    fn is_github_returns_false_for_non_github_url() {
+        let repo = Repository::new(
+            "https://gitlab.com/org/repo.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert!(!repo.is_github());
+    }
+
+    #[test]
+    fn is_local_file_url() {
+        let repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        assert!(repo.is_local());
+    }
+
+    #[test]
+    fn is_local_absolute_path() {
+        let repo = Repository::new("/home/user/repo".to_string(), None, None, None);
+        assert!(repo.is_local());
+    }
+
+    #[test]
+    fn is_local_returns_false_for_github() {
+        let repo = Repository::new(
+            "https://github.com/dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert!(!repo.is_local());
     }
 
     #[test]
