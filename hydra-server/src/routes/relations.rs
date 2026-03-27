@@ -145,12 +145,20 @@ pub async fn list_relations(
                 (ids.as_slice(), crate::store::TransitiveDirection::Forward)
             } else {
                 (
-                    target_ids.as_deref().unwrap_or(&[]),
+                    target_ids.as_deref().ok_or_else(|| {
+                        ApiError::internal("expected target_ids for transitive backward query")
+                    })?,
                     crate::store::TransitiveDirection::Backward,
                 )
             };
             relations = store
-                .get_relationships_transitive(ids, direction, rel_type.expect("validated above"))
+                .get_relationships_transitive(
+                    ids,
+                    direction,
+                    rel_type.ok_or_else(|| {
+                        ApiError::internal("expected rel_type for transitive query")
+                    })?,
+                )
                 .await
                 .map_err(map_store_error)?;
         } else {
@@ -167,14 +175,27 @@ pub async fn list_relations(
                 crate::store::TransitiveDirection::Forward,
             )
         } else {
-            // target_id must be Some (validated by XOR check above)
             (
-                vec![query.target_id.as_ref().unwrap().clone()],
+                vec![query
+                    .target_id
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ApiError::internal(
+                            "expected target_id for transitive query",
+                        )
+                    })?
+                    .clone()],
                 crate::store::TransitiveDirection::Backward,
             )
         };
         relations = store
-            .get_relationships_transitive(&ids, direction, rel_type.expect("validated above"))
+            .get_relationships_transitive(
+                &ids,
+                direction,
+                rel_type.ok_or_else(|| {
+                    ApiError::internal("expected rel_type for transitive query")
+                })?,
+            )
             .await
             .map_err(map_store_error)?;
     } else {
