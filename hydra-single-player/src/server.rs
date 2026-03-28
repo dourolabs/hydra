@@ -865,13 +865,8 @@ fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
         return Ok(());
     }
 
-    start_server_in_process(log_level)?;
-
-    // Verify the server is healthy after fork (same as cmd_init).
-    wait_for_server_healthy()?;
-
-    // Refresh the CLI auth token. setup_local_auth regenerates the token on
-    // every server start, so the CLI config must be updated to match.
+    // Resolve the token path before starting the server so we can delete any
+    // stale token file and reuse the path for wait_for_auth_token later.
     let server_config_path = expand_path(SERVER_CONFIG_PATH);
     let server_config = hydra_server::config::AppConfig::load(&server_config_path)?;
     let token_path = server_config
@@ -879,6 +874,18 @@ fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
         .auth_token_file()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| expand_path(AUTH_TOKEN_PATH));
+
+    // Delete any stale auth-token file from a previous run so that
+    // wait_for_auth_token() only returns once the server has written a fresh one.
+    let _ = fs::remove_file(&token_path);
+
+    start_server_in_process(log_level)?;
+
+    // Verify the server is healthy after fork (same as cmd_init).
+    wait_for_server_healthy()?;
+
+    // Refresh the CLI auth token. setup_local_auth regenerates the token on
+    // every server start, so the CLI config must be updated to match.
     let auth_token = wait_for_auth_token(&token_path)?;
 
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
