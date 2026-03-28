@@ -15,8 +15,8 @@ Verify that after an SWE agent creates a patch for an issue, the reviewer agent 
 1. Navigate to the issues page at `http://localhost:8080`
 2. Click the "Create issue" button
 3. Fill in the issue creation form:
-   - Title: "Add a .gitignore file to hydra-test-fixture"
-   - Description: "Create a .gitignore file in the dourolabs/hydra-test-fixture repo with common entries for Node.js and Python projects."
+   - Title: "Add Rust and IDE entries to the .gitignore in hydra-test-fixture"
+   - Description: "Update the .gitignore file in the dourolabs/hydra-test-fixture repo to add Rust build artifacts (target/) and IDE config entries (.idea/, .vscode/)."
    - Repository: dourolabs/hydra-test-fixture
    - Assignee: swe
 4. Submit the issue form

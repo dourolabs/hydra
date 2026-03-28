@@ -16,7 +16,7 @@ Create a high-level issue in the dashboard and verify that the PM agent picks it
 2. Click the "Create issue" button
 3. Fill in the issue creation form:
    - Title: "Improve documentation for hydra-test-fixture"
-   - Description: "The hydra-test-fixture repo needs better documentation. Please add a README with setup instructions, a CONTRIBUTING.md with contribution guidelines, and a LICENSE file."
+   - Description: "The hydra-test-fixture repo needs documentation improvements. Please update the README to add a Troubleshooting section, add a Code of Conduct section to CONTRIBUTING.md, and create a CHANGELOG.md file."
 4. Submit the issue form (do not assign to a specific agent -- let PM handle it)
 5. Click on the newly created issue to open the issue detail page
 6. Wait for the PM agent to pick up the issue (poll the issue detail page for session activity)
