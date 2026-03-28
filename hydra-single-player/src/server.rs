@@ -880,6 +880,7 @@ fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| expand_path(AUTH_TOKEN_PATH));
     let auth_token = wait_for_auth_token(&token_path)?;
+    verify_auth_token(&auth_token)?;
 
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
     config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
