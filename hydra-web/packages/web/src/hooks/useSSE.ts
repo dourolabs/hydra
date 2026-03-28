@@ -58,7 +58,7 @@ export function upsertInList<TResp, TItem extends VersionedRecord>(
     const arr = getItems(old);
     const idx = arr.findIndex((a) => getId(a) === entityId);
     if (idx >= 0) {
-      if (arr[idx].version >= record.version) return old;
+      if (arr[idx].version > record.version) return old;
       const updated = [...arr];
       updated[idx] = record;
       return wrapItems(updated);

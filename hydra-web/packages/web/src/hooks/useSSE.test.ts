@@ -38,13 +38,10 @@ describe("upsertInList", () => {
     expect(data?.items).toEqual([{ id: "a", version: 2, name: "new" }]);
   });
 
-  it("does not allocate when the incoming version equals the cached version", () => {
-    const initial: TestResponse = {
+  it("updates when the incoming version equals the cached version", () => {
+    const qc = makeQueryClient({
       items: [{ id: "a", version: 3, name: "current" }],
-    };
-    const qc = makeQueryClient(initial);
-
-    const setQueriesDataSpy = vi.spyOn(qc, "setQueriesData");
+    });
 
     upsertInList(qc, ["test"], getItems, wrapItems, getId, "a", {
       id: "a",
@@ -52,10 +49,9 @@ describe("upsertInList", () => {
       name: "same-version",
     });
 
-    // The updater should return the old value unchanged (referential identity)
+    // Equal-version events must still update the cache
     const data = qc.getQueryData<TestResponse>(["test"]);
-    expect(data?.items[0].name).toBe("current");
-    expect(setQueriesDataSpy).toHaveBeenCalled();
+    expect(data?.items[0].name).toBe("same-version");
   });
 
   it("does not update when the incoming version is older", () => {
