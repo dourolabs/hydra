@@ -1054,21 +1054,7 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
 /// embedded frontend, auto-login). This replaces the plain `hydra_server::run()`
 /// to add the single-player-specific features.
 async fn run_server_with_bff() -> Result<()> {
-    // Enable backtraces for panic diagnostics
-    if std::env::var_os("RUST_BACKTRACE").is_none() {
-        // SAFETY: called before any other threads are spawned in this process.
-        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
-    }
-
     tracing_subscriber::fmt::init();
-
-    // Install panic hook that logs via tracing (goes to the log file)
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let backtrace = std::backtrace::Backtrace::force_capture();
-        tracing::error!("PANIC: {info}\n{backtrace}");
-        default_hook(info);
-    }));
 
     let config_path = hydra_server::config_path();
     let app_config = hydra_server::config::AppConfig::load(&config_path)?;
