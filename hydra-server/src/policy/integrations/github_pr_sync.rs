@@ -8,7 +8,7 @@ use futures::FutureExt;
 use octocrab::Octocrab;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 const AUTOMATION_NAME: &str = "github_pr_sync";
 
@@ -140,11 +140,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 ))
             })?;
         if !repository.is_github() {
-            info!(
-                patch_id = %patch_id,
-                repo = %new.service_repo_name,
-                "github_pr_sync: skipping non-GitHub repository"
-            );
             return Ok(());
         }
 
@@ -172,12 +167,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 return Ok(());
             }
         };
-
-        info!(
-            patch_id = %patch_id,
-            actor = %actor_name,
-            "github_pr_sync: resolved actor identity"
-        );
 
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
@@ -212,12 +201,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        info!(
-            patch_id = %patch_id,
-            creator = %creator,
-            "github_pr_sync: resolved creator username"
-        );
-
         let token = get_github_token_for_user(ctx.app_state, &creator)
             .await
             .map_err(|e| {
@@ -227,12 +210,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             })?;
 
         let base_url = ctx.app_state.config.github_api_base_url().to_string();
-        info!(
-            patch_id = %patch_id,
-            base_url = %base_url,
-            token_len = token.github_token.len(),
-            "github_pr_sync: building octocrab client"
-        );
 
         let build_token = token.github_token.clone();
         let build_url = base_url.clone();
@@ -268,11 +245,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: octocrab client built successfully"
-        );
-
         let mut patch = new.clone();
         let (owner, repo) = match patch.github.as_ref() {
             Some(github) => (github.owner.clone(), github.repo.clone()),
@@ -285,14 +257,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         if let Some(existing) = patch.github.as_ref() {
             // Update existing PR.
-            info!(
-                patch_id = %patch_id,
-                owner = %owner,
-                repo = %repo,
-                pr_number = existing.number,
-                "github_pr_sync: updating existing PR via GitHub API"
-            );
-
             let pulls_handler = client.pulls(&owner, &repo);
             let update_fut = pulls_handler
                 .update(existing.number)
@@ -303,12 +267,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             let pr_number = existing.number;
             let update_context = format!("updating PR '{owner}/{repo}#{pr_number}'");
             let pr = run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
-
-            info!(
-                patch_id = %patch_id,
-                pr_number = pr_number,
-                "github_pr_sync: GitHub API call completed (update PR)"
-            );
 
             let mut updated = existing.clone();
             updated.head_ref = Some(pr.head.ref_field.clone());
@@ -346,15 +304,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             };
 
             // Create a new PR.
-            info!(
-                patch_id = %patch_id,
-                owner = %owner,
-                repo = %repo,
-                head_ref = %head_ref,
-                base_ref = %base_ref,
-                "github_pr_sync: creating new PR via GitHub API"
-            );
-
             let pulls_handler = client.pulls(&owner, &repo);
             let create_fut = pulls_handler
                 .create(patch.title.clone(), &head_ref, base_ref)
@@ -363,12 +312,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
             let create_context = format!("creating PR for '{owner}/{repo}'");
             let pr = run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
-
-            info!(
-                patch_id = %patch_id,
-                pr_number = pr.number,
-                "github_pr_sync: GitHub API call completed (create PR)"
-            );
 
             patch.github = Some(GithubPr::new(
                 owner,
@@ -383,10 +326,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Persist the updated GitHub metadata via AppState (store is read-only
         // in the automation context, so we must go through AppState for writes).
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: persisting updated GitHub metadata"
-        );
         let request = hydra_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
         ctx.app_state
             .upsert_patch(
@@ -403,11 +342,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     "github_pr_sync: failed to persist github metadata for patch '{patch_id}': {e}"
                 ))
             })?;
-
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: GitHub metadata persisted successfully"
-        );
 
         Ok(())
     }
