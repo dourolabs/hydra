@@ -334,13 +334,33 @@ impl JobEngine for LocalDockerJobEngine {
         );
 
         // Start the container.
-        self.docker
+        if let Err(e) = self
+            .docker
             .start_container(&response.id, None::<StartContainerOptions<String>>)
             .await
-            .map_err(|e| {
-                error!(hydra_id = %hydra_id, container_id = %response.id, error = %e, "failed to start Docker container");
-                JobEngineError::Internal(format!("Docker start container error: {e}"))
-            })?;
+        {
+            error!(hydra_id = %hydra_id, container_id = %response.id, error = %e, "failed to start Docker container");
+
+            // Remove from tracking so find_job_by_hydra_id won't find this failed container.
+            self.containers.remove(hydra_id);
+
+            // Best-effort removal of the orphaned Docker container.
+            let remove_opts = RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            };
+            if let Err(remove_err) = self
+                .docker
+                .remove_container(&response.id, Some(remove_opts))
+                .await
+            {
+                warn!(hydra_id = %hydra_id, container_id = %response.id, error = %remove_err, "failed to remove container after start failure");
+            }
+
+            return Err(JobEngineError::Internal(format!(
+                "Docker start container error: {e}"
+            )));
+        }
 
         info!(
             hydra_id = %hydra_id,
@@ -813,6 +833,53 @@ mod tests {
         wait_for_container_exit(&engine, &hydra_id).await;
 
         cleanup_container(&engine, &hydra_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_start_failure_removes_container_from_tracking() {
+        let engine = make_docker_engine().await;
+        let docker = Docker::connect_with_local_defaults().unwrap();
+
+        ensure_image_pulled(&docker).await;
+
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        // Use an image with a nonexistent entrypoint to trigger a start_container failure.
+        // First, create a container config that will fail on start by using an invalid command.
+        // We'll create the job using alpine but with the engine's default entrypoint ("hydra")
+        // which doesn't exist in alpine, causing an OCI runtime error on start.
+        let result = engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                TEST_IMAGE,
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await;
+
+        // The entrypoint "hydra" doesn't exist in alpine, so start_container should fail.
+        // If it somehow succeeds (e.g., alpine has a shell that handles it), clean up and skip.
+        if result.is_ok() {
+            // Container started successfully — the entrypoint didn't cause a start failure.
+            // Clean up and skip the assertion (this depends on Docker runtime behavior).
+            cleanup_container(&engine, &hydra_id).await;
+            eprintln!("SKIP: container started successfully; start failure not triggered");
+            return;
+        }
+
+        // After start failure, find_job_by_hydra_id should return NotFound.
+        let find_result = engine.find_job_by_hydra_id(&hydra_id).await;
+        assert!(
+            matches!(find_result, Err(JobEngineError::NotFound(_))),
+            "find_job_by_hydra_id should return NotFound after start failure, got: {find_result:?}"
+        );
     }
 
     #[tokio::test]
