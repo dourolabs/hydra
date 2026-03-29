@@ -6,7 +6,9 @@ export interface AuthState {
   loading: boolean;
   error: string | null;
   login: (token: string) => Promise<void>;
+  loginWithDevice: () => Promise<void>;
   logout: () => Promise<void>;
+  githubAuthAvailable: boolean | null;
 }
 
 export const AuthContext = createContext<AuthState | null>(null);
