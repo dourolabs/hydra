@@ -255,10 +255,19 @@ impl JobEngine for LocalDockerJobEngine {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        warn!(hydra_id = %hydra_id, error = %e, "image pull warning");
+                        return Err(JobEngineError::Internal(format!(
+                            "Failed to pull image '{image}': {e}"
+                        )));
                     }
                 }
             }
+
+            // Verify image is available locally after pull.
+            self.docker.inspect_image(image).await.map_err(|e| {
+                JobEngineError::Internal(format!(
+                    "Image '{image}' not found after pull attempt: {e}"
+                ))
+            })?;
         }
 
         let container_name = Self::container_name(hydra_id);
@@ -794,5 +803,38 @@ mod tests {
         wait_for_container_exit(&engine, &hydra_id).await;
 
         cleanup_container(&engine, &hydra_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_create_job_fails_for_nonexistent_image() {
+        let engine = make_docker_engine().await;
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        let result = engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                "nonexistent-image-xxxxx:latest",
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "create_job should fail for a nonexistent image"
+        );
+        let err = result.unwrap_err();
+        let err_msg = format!("{err}");
+        assert!(
+            err_msg.contains("nonexistent-image-xxxxx"),
+            "error should mention the image name, got: {err_msg}"
+        );
     }
 }
