@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "hydra"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-bff"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-build-cache"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "async-trait",
  "aws-credential-types",
@@ -2216,7 +2216,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-common"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2236,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-s3"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-server"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "hydra-single-player"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "axum",
