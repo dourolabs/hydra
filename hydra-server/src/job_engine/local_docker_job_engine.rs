@@ -236,22 +236,27 @@ impl JobEngine for LocalDockerJobEngine {
             return Err(JobEngineError::AlreadyExists(hydra_id.clone()));
         }
 
-        info!(hydra_id = %hydra_id, image = %image, "pulling Docker image");
+        // Only pull the image if it doesn't already exist locally (IfNotPresent policy).
+        let image_exists_locally = self.docker.inspect_image(image).await.is_ok();
 
-        // Pull the image (best-effort; it may already exist locally).
-        let mut pull_stream = self.docker.create_image(
-            Some(CreateImageOptions {
-                from_image: image,
-                ..Default::default()
-            }),
-            None,
-            None,
-        );
-        while let Some(result) = pull_stream.next().await {
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!(hydra_id = %hydra_id, error = %e, "image pull warning (may already exist locally)");
+        if image_exists_locally {
+            info!(hydra_id = %hydra_id, image = %image, "image exists locally, skipping pull");
+        } else {
+            info!(hydra_id = %hydra_id, image = %image, "image not found locally, pulling");
+            let mut pull_stream = self.docker.create_image(
+                Some(CreateImageOptions {
+                    from_image: image,
+                    ..Default::default()
+                }),
+                None,
+                None,
+            );
+            while let Some(result) = pull_stream.next().await {
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!(hydra_id = %hydra_id, error = %e, "image pull warning");
+                    }
                 }
             }
         }
