@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use bollard::{
     Docker,
@@ -236,23 +238,43 @@ impl JobEngine for LocalDockerJobEngine {
             return Err(JobEngineError::AlreadyExists(hydra_id.clone()));
         }
 
-        info!(hydra_id = %hydra_id, image = %image, "pulling Docker image");
+        // Check if the image exists locally before attempting a pull.
+        let image_exists_locally = self.docker.inspect_image(image).await.is_ok();
 
-        // Pull the image (best-effort; it may already exist locally).
-        let mut pull_stream = self.docker.create_image(
-            Some(CreateImageOptions {
-                from_image: image,
-                ..Default::default()
-            }),
-            None,
-            None,
-        );
-        while let Some(result) = pull_stream.next().await {
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!(hydra_id = %hydra_id, error = %e, "image pull warning (may already exist locally)");
+        if image_exists_locally {
+            info!(hydra_id = %hydra_id, image = %image, "image found locally, skipping pull");
+        } else {
+            info!(hydra_id = %hydra_id, image = %image, "image not found locally, pulling");
+
+            let pull_future = async {
+                let mut pull_stream = self.docker.create_image(
+                    Some(CreateImageOptions {
+                        from_image: image,
+                        ..Default::default()
+                    }),
+                    None,
+                    None,
+                );
+                while let Some(result) = pull_stream.next().await {
+                    match result {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!(hydra_id = %hydra_id, error = %e, "image pull warning");
+                        }
+                    }
                 }
+            };
+
+            const IMAGE_PULL_TIMEOUT: Duration = Duration::from_secs(300);
+            if tokio::time::timeout(IMAGE_PULL_TIMEOUT, pull_future)
+                .await
+                .is_err()
+            {
+                return Err(JobEngineError::Internal(format!(
+                    "Image pull for '{image}' timed out after {} seconds. \
+                     Verify the image name is correct and the registry is reachable.",
+                    IMAGE_PULL_TIMEOUT.as_secs()
+                )));
             }
         }
 
