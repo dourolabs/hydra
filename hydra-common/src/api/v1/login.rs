@@ -44,8 +44,8 @@ pub struct DeviceStartResponse {
     pub device_session_id: String,
     pub user_code: String,
     pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
+    pub expires_in: u32,
+    pub interval: u32,
 }
 
 impl DeviceStartResponse {
@@ -53,8 +53,8 @@ impl DeviceStartResponse {
         device_session_id: String,
         user_code: String,
         verification_uri: String,
-        expires_in: u64,
-        interval: u64,
+        expires_in: u32,
+        interval: u32,
     ) -> Self {
         Self {
             device_session_id,

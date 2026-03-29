@@ -43,8 +43,8 @@ struct GithubDeviceCodeResponse {
     device_code: String,
     user_code: String,
     verification_uri: String,
-    expires_in: u64,
-    interval: u64,
+    expires_in: u32,
+    interval: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,9 +98,9 @@ pub async fn device_start(
         device_code: github_response.device_code,
         github_client_id: client_id,
         oauth_base_url,
-        expires_at: Instant::now() + Duration::from_secs(github_response.expires_in),
-        poll_interval: Duration::from_secs(interval),
-        last_poll: Instant::now() - Duration::from_secs(interval), // allow immediate first poll
+        expires_at: Instant::now() + Duration::from_secs(github_response.expires_in.into()),
+        poll_interval: Duration::from_secs(interval.into()),
+        last_poll: Instant::now() - Duration::from_secs(interval.into()), // allow immediate first poll
     };
 
     state
