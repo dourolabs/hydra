@@ -255,6 +255,7 @@ impl JobEngine for LocalDockerJobEngine {
                 match result {
                     Ok(_) => {}
                     Err(e) => {
+                        error!(hydra_id = %hydra_id, image = %image, error = %e, "failed to pull Docker image");
                         return Err(JobEngineError::Internal(format!(
                             "Failed to pull image '{image}': {e}"
                         )));
@@ -262,8 +263,11 @@ impl JobEngine for LocalDockerJobEngine {
                 }
             }
 
+            info!(hydra_id = %hydra_id, image = %image, "image pull completed successfully");
+
             // Verify image is available locally after pull.
             self.docker.inspect_image(image).await.map_err(|e| {
+                error!(hydra_id = %hydra_id, image = %image, error = %e, "image not found after pull attempt");
                 JobEngineError::Internal(format!(
                     "Image '{image}' not found after pull attempt: {e}"
                 ))
@@ -314,7 +318,10 @@ impl JobEngine for LocalDockerJobEngine {
                 bollard::errors::Error::DockerResponseServerError {
                     status_code: 409, ..
                 } => JobEngineError::AlreadyExists(hydra_id.clone()),
-                _ => JobEngineError::Internal(format!("Docker create container error: {e}")),
+                _ => {
+                    error!(hydra_id = %hydra_id, image = %image, error = %e, "failed to create Docker container");
+                    JobEngineError::Internal(format!("Docker create container error: {e}"))
+                }
             })?;
 
         let creation_time = Utc::now();
@@ -330,7 +337,10 @@ impl JobEngine for LocalDockerJobEngine {
         self.docker
             .start_container(&response.id, None::<StartContainerOptions<String>>)
             .await
-            .map_err(|e| JobEngineError::Internal(format!("Docker start container error: {e}")))?;
+            .map_err(|e| {
+                error!(hydra_id = %hydra_id, container_id = %response.id, error = %e, "failed to start Docker container");
+                JobEngineError::Internal(format!("Docker start container error: {e}"))
+            })?;
 
         info!(
             hydra_id = %hydra_id,
