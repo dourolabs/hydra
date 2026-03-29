@@ -220,6 +220,8 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         .route("/health", get(health_check))
         .route("/v1/version", get(routes::version::get_version))
         .route("/v1/login", post(routes::login::login))
+        .route("/v1/login/device/start", post(routes::login::device_start))
+        .route("/v1/login/device/poll", post(routes::login::device_poll))
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),
