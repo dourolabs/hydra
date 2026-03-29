@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
-import type { WhoAmIResponse } from "@hydra/api";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import type { WhoAmIResponse, DeviceStartResponse } from "@hydra/api";
 import {
   fetchMe,
   login as apiLogin,
@@ -15,6 +15,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [githubAuthAvailable, setGithubAuthAvailable] = useState<boolean | null>(null);
+  const [deviceFlowInfo, setDeviceFlowInfo] = useState<DeviceStartResponse | null>(null);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     fetchMe()
@@ -39,44 +41,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const cancelDeviceFlow = useCallback(() => {
+    cancelledRef.current = true;
+    setDeviceFlowInfo(null);
+  }, []);
+
   const loginWithDevice = useCallback(async () => {
     setError(null);
+    cancelledRef.current = false;
     try {
       const startResp = await deviceStart();
-      // Dispatch a custom event so the LoginForm can show the user code
-      window.dispatchEvent(
-        new CustomEvent("hydra:device-flow-started", { detail: startResp }),
-      );
+      if (cancelledRef.current) return;
+      setDeviceFlowInfo(startResp);
 
-      // Poll until complete or error
-      const pollUntilDone = async (): Promise<void> => {
-        const interval = startResp.interval * 1000;
-        const expiresAt = Date.now() + startResp.expires_in * 1000;
+      const interval = startResp.interval * 1000;
+      const expiresAt = Date.now() + startResp.expires_in * 1000;
 
-        while (Date.now() < expiresAt) {
-          await new Promise((r) => setTimeout(r, interval));
-          const pollResp = await devicePoll(startResp.device_session_id);
+      while (Date.now() < expiresAt) {
+        await new Promise((r) => setTimeout(r, interval));
+        if (cancelledRef.current) return;
 
-          if (pollResp.status === "complete") {
-            // BFF sets the cookie on successful poll; fetch user info
-            const u = await fetchMe();
-            setUser(u);
-            return;
-          }
+        const pollResp = await devicePoll(startResp.device_session_id);
+        if (cancelledRef.current) return;
 
-          if (pollResp.status === "error") {
-            throw new Error(pollResp.error ?? "Device flow failed");
-          }
-          // status === "pending" — keep polling
+        if (pollResp.status === "complete") {
+          const u = await fetchMe();
+          setUser(u);
+          setDeviceFlowInfo(null);
+          return;
         }
 
-        throw new Error("Device code expired. Please try again.");
-      };
+        if (pollResp.status === "error") {
+          throw new Error(pollResp.error ?? "Device flow failed");
+        }
+        // status === "pending" — keep polling
+      }
 
-      await pollUntilDone();
+      throw new Error("Device code expired. Please try again.");
     } catch (err) {
+      if (cancelledRef.current) return;
       const msg = err instanceof Error ? err.message : "Login failed";
       setError(msg);
+      setDeviceFlowInfo(null);
       throw err;
     }
   }, []);
@@ -87,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, loginWithDevice, logout, githubAuthAvailable }}>
+    <AuthContext.Provider value={{ user, loading, error, login, loginWithDevice, cancelDeviceFlow, logout, githubAuthAvailable, deviceFlowInfo }}>
       {children}
     </AuthContext.Provider>
   );

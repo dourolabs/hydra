@@ -1,39 +1,55 @@
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useCallback, type FormEvent, type ReactNode } from "react";
 import { Button, Input } from "@hydra/ui";
-import type { DeviceStartResponse } from "@hydra/api";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
 
-type LoginMode = "default" | "device-pending" | "token";
+type LoginMode = "default" | "token";
+
+function TokenForm({
+  onSubmit,
+  token,
+  setToken,
+  error,
+  submitting,
+  footer,
+}: {
+  onSubmit: (e: FormEvent) => void;
+  token: string;
+  setToken: (v: string) => void;
+  error: string | null;
+  submitting: boolean;
+  footer?: ReactNode;
+}) {
+  return (
+    <form className={styles.form} onSubmit={onSubmit}>
+      <Input
+        data-testid="token-input"
+        label="Hydra Token"
+        type="password"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        placeholder="Enter your hydra token"
+        error={error ?? undefined}
+        autoFocus
+      />
+      <Button data-testid="login-button" type="submit" variant="primary" disabled={submitting || !token.trim()}>
+        {submitting ? "Logging in\u2026" : "Log in"}
+      </Button>
+      {footer}
+    </form>
+  );
+}
 
 export function LoginForm() {
-  const { login, loginWithDevice, error: authError, githubAuthAvailable } = useAuth();
+  const { login, loginWithDevice, cancelDeviceFlow, error: authError, githubAuthAvailable, deviceFlowInfo } = useAuth();
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<LoginMode>("default");
-  const [deviceInfo, setDeviceInfo] = useState<DeviceStartResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Listen for device flow start event from AuthContext
-  useEffect(() => {
-    function handleDeviceStarted(e: Event) {
-      const detail = (e as CustomEvent<DeviceStartResponse>).detail;
-      setDeviceInfo(detail);
-      setMode("device-pending");
-    }
-    window.addEventListener("hydra:device-flow-started", handleDeviceStarted);
-    return () => window.removeEventListener("hydra:device-flow-started", handleDeviceStarted);
-  }, []);
-
-  // Sync auth errors
-  useEffect(() => {
-    if (authError) {
-      setError(authError);
-      setSubmitting(false);
-      setMode("default");
-    }
-  }, [authError]);
+  // Derive effective error from local + auth context
+  const displayError = error ?? authError;
 
   const handleDeviceLogin = useCallback(async () => {
     setSubmitting(true);
@@ -42,7 +58,6 @@ export function LoginForm() {
       await loginWithDevice();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-      setMode("default");
     } finally {
       setSubmitting(false);
     }
@@ -64,9 +79,9 @@ export function LoginForm() {
   }
 
   async function handleCopyCode() {
-    if (!deviceInfo) return;
+    if (!deviceFlowInfo) return;
     try {
-      await navigator.clipboard.writeText(deviceInfo.user_code);
+      await navigator.clipboard.writeText(deviceFlowInfo.user_code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -82,33 +97,25 @@ export function LoginForm() {
   // Token-only mode (local auth, no GitHub)
   if (!githubAuthAvailable) {
     return (
-      <form className={styles.form} onSubmit={handleTokenSubmit}>
-        <Input
-          data-testid="token-input"
-          label="Hydra Token"
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="Enter your hydra token"
-          error={error ?? undefined}
-          autoFocus
-        />
-        <Button data-testid="login-button" type="submit" variant="primary" disabled={submitting || !token.trim()}>
-          {submitting ? "Logging in\u2026" : "Log in"}
-        </Button>
-      </form>
+      <TokenForm
+        onSubmit={handleTokenSubmit}
+        token={token}
+        setToken={setToken}
+        error={displayError}
+        submitting={submitting}
+      />
     );
   }
 
   // Device flow pending — show user code
-  if (mode === "device-pending" && deviceInfo) {
+  if (deviceFlowInfo) {
     return (
       <div className={styles.form}>
         <p className={styles.instructions}>
           Enter this code at GitHub to sign in:
         </p>
         <div className={styles.codeContainer}>
-          <code className={styles.userCode}>{deviceInfo.user_code}</code>
+          <code className={styles.userCode}>{deviceFlowInfo.user_code}</code>
           <Button
             data-testid="copy-code-button"
             variant="secondary"
@@ -118,7 +125,7 @@ export function LoginForm() {
           </Button>
         </div>
         <a
-          href={deviceInfo.verification_uri}
+          href={deviceFlowInfo.verification_uri}
           target="_blank"
           rel="noopener noreferrer"
           className={styles.verificationLink}
@@ -126,12 +133,11 @@ export function LoginForm() {
           Open GitHub verification page
         </a>
         <p className={styles.waitingText}>Waiting for authorization…</p>
-        {error && <p className={styles.error}>{error}</p>}
+        {displayError && <p className={styles.error}>{displayError}</p>}
         <Button
           variant="secondary"
           onClick={() => {
-            setMode("default");
-            setDeviceInfo(null);
+            cancelDeviceFlow();
             setError(null);
           }}
         >
@@ -144,31 +150,25 @@ export function LoginForm() {
   // Token input mode
   if (mode === "token") {
     return (
-      <form className={styles.form} onSubmit={handleTokenSubmit}>
-        <Input
-          data-testid="token-input"
-          label="Hydra Token"
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="Enter your hydra token"
-          error={error ?? undefined}
-          autoFocus
-        />
-        <Button data-testid="login-button" type="submit" variant="primary" disabled={submitting || !token.trim()}>
-          {submitting ? "Logging in\u2026" : "Log in"}
-        </Button>
-        <button
-          type="button"
-          className={styles.switchLink}
-          onClick={() => {
-            setMode("default");
-            setError(null);
-          }}
-        >
-          Sign in with GitHub instead
-        </button>
-      </form>
+      <TokenForm
+        onSubmit={handleTokenSubmit}
+        token={token}
+        setToken={setToken}
+        error={displayError}
+        submitting={submitting}
+        footer={
+          <button
+            type="button"
+            className={styles.switchLink}
+            onClick={() => {
+              setMode("default");
+              setError(null);
+            }}
+          >
+            Sign in with GitHub instead
+          </button>
+        }
+      />
     );
   }
 
@@ -183,7 +183,7 @@ export function LoginForm() {
       >
         {submitting ? "Starting…" : "Sign in with GitHub"}
       </Button>
-      {error && <p className={styles.error}>{error}</p>}
+      {displayError && <p className={styles.error}>{displayError}</p>}
       <button
         type="button"
         className={styles.switchLink}
