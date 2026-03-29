@@ -74,6 +74,12 @@ pub struct DevicePollRequest {
     pub device_session_id: String,
 }
 
+impl DevicePollRequest {
+    pub fn new(device_session_id: String) -> Self {
+        Self { device_session_id }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

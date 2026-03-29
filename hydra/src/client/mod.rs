@@ -11,7 +11,9 @@ use hydra_common::{
     api::v1::labels::{
         ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
     },
-    api::v1::login::{LoginRequest, LoginResponse},
+    api::v1::login::{
+        DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
+    },
     api::v1::messages::{
         ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest,
         SendMessageResponse,
@@ -404,6 +406,44 @@ impl HydraClientUnauthenticated {
             .json::<GithubAppClientIdResponse>()
             .await
             .context("failed to decode GitHub app client id response")
+    }
+
+    /// Call `POST /v1/login/device/start` to initiate a server-side GitHub device flow.
+    pub async fn device_start(&self) -> Result<DeviceStartResponse> {
+        let url = self.endpoint("/v1/login/device/start")?;
+        let response = self
+            .http
+            .post(url)
+            .send()
+            .await
+            .context("failed to start device flow")?
+            .error_for_status_with_body("hydra-server rejected device start request")
+            .await?;
+
+        response
+            .json::<DeviceStartResponse>()
+            .await
+            .context("failed to decode device start response")
+    }
+
+    /// Call `POST /v1/login/device/poll` to check device flow authorization status.
+    pub async fn device_poll(&self, device_session_id: &str) -> Result<DevicePollResponse> {
+        let url = self.endpoint("/v1/login/device/poll")?;
+        let request = DevicePollRequest::new(device_session_id.to_string());
+        let response = self
+            .http
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .context("failed to poll device flow")?
+            .error_for_status_with_body("hydra-server rejected device poll request")
+            .await?;
+
+        response
+            .json::<DevicePollResponse>()
+            .await
+            .context("failed to decode device poll response")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
