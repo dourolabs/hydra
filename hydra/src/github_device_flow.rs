@@ -1,10 +1,10 @@
-use anyhow::{anyhow, bail, Context, Result};
-use hydra_common::{api::v1::login::LoginRequest, whoami::ActorIdentity};
+use anyhow::{bail, Context, Result};
+use hydra_common::api::v1::login::DevicePollStatus;
+use hydra_common::whoami::ActorIdentity;
 use owo_colors::OwoColorize;
-use reqwest::header::{ACCEPT, USER_AGENT};
-use serde::Deserialize;
 use std::io::IsTerminal;
-use std::{path::Path, time::Duration};
+use std::path::Path;
+use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
 use crate::{
@@ -12,58 +12,56 @@ use crate::{
     config,
 };
 
-const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
-const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
-const GITHUB_SCOPE: &str = "read:user";
-const USER_AGENT_VALUE: &str = "hydra-cli";
-
-#[derive(Debug, Deserialize)]
-struct DeviceFlowResponse {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    expires_in: u64,
-    interval: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenPollResponse {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-#[derive(Debug)]
-struct DeviceFlowToken {
-    access_token: String,
-    refresh_token: String,
-}
-
-enum TokenPollState {
-    Pending,
-    SlowDown,
-    Token(DeviceFlowToken),
-}
-
 pub async fn login_with_github_device_flow(
     client: &HydraClientUnauthenticated,
     config_path: &Path,
     server_url: &str,
 ) -> Result<HydraClient> {
-    let client_id = fetch_github_client_id(client)
+    let device_flow = client
+        .device_start()
         .await
-        .context("failed to fetch GitHub client id from server")?;
-    let http = reqwest::Client::new();
-    let device_flow = start_device_flow(&http, &client_id).await?;
+        .context("failed to start device flow via server")?;
 
     print_login_banner();
     print_login_instructions(&device_flow.verification_uri, &device_flow.user_code);
 
-    let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let auth_token = exchange_and_store_token(client, config_path, server_url, &token).await?;
-    let auth_client = HydraClient::new(client.base_url().as_str(), auth_token.clone())
+    let expires_at = Instant::now() + Duration::from_secs(device_flow.expires_in as u64);
+    let interval = Duration::from_secs((device_flow.interval as u64).max(1));
+
+    let login_token = loop {
+        if Instant::now() >= expires_at {
+            bail!("Device flow code expired. Run `hydra login` again.");
+        }
+
+        sleep(interval).await;
+
+        let poll_response = client
+            .device_poll(&device_flow.device_session_id)
+            .await
+            .context("failed to poll device flow via server")?;
+
+        match poll_response.status {
+            DevicePollStatus::Complete => {
+                let token = poll_response.login_token.ok_or_else(|| {
+                    anyhow::anyhow!("server returned complete status without login_token")
+                })?;
+                break token;
+            }
+            DevicePollStatus::Pending => {
+                // Continue polling
+            }
+            DevicePollStatus::Error => {
+                let error_msg = poll_response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string());
+                bail!("Device flow failed: {error_msg}");
+            }
+        }
+    };
+
+    config::store_auth_token(config_path, server_url, &login_token)?;
+
+    let auth_client = HydraClient::new(client.base_url().as_str(), login_token)
         .context("failed to create authenticated client")?;
     let whoami = auth_client
         .whoami()
@@ -156,136 +154,6 @@ fn supports_color() -> bool {
     std::io::stdout().is_terminal()
 }
 
-async fn fetch_github_client_id(client: &HydraClientUnauthenticated) -> Result<String> {
-    let response = client
-        .get_github_app_client_id()
-        .await
-        .context("github client id request failed")?;
-    Ok(response.client_id)
-}
-
-async fn start_device_flow(http: &reqwest::Client, client_id: &str) -> Result<DeviceFlowResponse> {
-    let response = http
-        .post(DEVICE_CODE_URL)
-        .header(ACCEPT, "application/json")
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
-        .send()
-        .await
-        .context("failed to contact GitHub device flow endpoint")?
-        .error_for_status()
-        .context("GitHub device flow returned an error status")?;
-
-    response
-        .json::<DeviceFlowResponse>()
-        .await
-        .context("failed to decode GitHub device flow response")
-}
-
-async fn poll_for_token(
-    http: &reqwest::Client,
-    client_id: &str,
-    device_flow: &DeviceFlowResponse,
-) -> Result<DeviceFlowToken> {
-    let expires_at = Instant::now() + Duration::from_secs(device_flow.expires_in);
-    let mut interval = Duration::from_secs(device_flow.interval.max(1));
-
-    loop {
-        if Instant::now() >= expires_at {
-            bail!("GitHub device flow code expired. Run `hydra users login` again.");
-        }
-
-        let response = http
-            .post(ACCESS_TOKEN_URL)
-            .header(ACCEPT, "application/json")
-            .header(USER_AGENT, USER_AGENT_VALUE)
-            .form(&[
-                ("client_id", client_id),
-                ("device_code", device_flow.device_code.as_str()),
-                ("grant_type", DEVICE_GRANT_TYPE),
-            ])
-            .send()
-            .await
-            .context("failed to poll GitHub device flow token")?
-            .error_for_status()
-            .context("GitHub token endpoint returned an error status")?;
-
-        let payload = response
-            .json::<TokenPollResponse>()
-            .await
-            .context("failed to decode GitHub token response")?;
-
-        match interpret_token_response(payload)? {
-            TokenPollState::Token(token) => return Ok(token),
-            TokenPollState::Pending => {
-                sleep(interval).await;
-            }
-            TokenPollState::SlowDown => {
-                interval += Duration::from_secs(5);
-                sleep(interval).await;
-            }
-        }
-    }
-}
-
-fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState> {
-    if let Some(token) = payload.access_token {
-        return Ok(TokenPollState::Token(DeviceFlowToken {
-            access_token: token,
-            refresh_token: payload
-                .refresh_token
-                .ok_or_else(|| anyhow!("GitHub device flow response missing refresh token"))?,
-        }));
-    }
-
-    match payload.error.as_deref() {
-        Some("authorization_pending") => Ok(TokenPollState::Pending),
-        Some("slow_down") => Ok(TokenPollState::SlowDown),
-        Some("expired_token") => {
-            bail!("GitHub device flow expired. Run `hydra users login` again.")
-        }
-        Some("access_denied") => bail!("GitHub device flow denied authorization."),
-        Some(other) => {
-            let description = payload
-                .error_description
-                .unwrap_or_else(|| "Unknown GitHub device flow error".to_string());
-            bail!("GitHub device flow error ({other}): {description}")
-        }
-        None => Err(anyhow!(
-            "GitHub device flow response did not include an access token"
-        )),
-    }
-}
-
-async fn login_with_github_token(
-    client: &HydraClientUnauthenticated,
-    token: &str,
-    refresh_token: &str,
-) -> Result<String> {
-    let request = LoginRequest::new(token.to_string(), refresh_token.to_string());
-    let (auth_token, _client) = client
-        .login(&request)
-        .await
-        .context("failed to exchange GitHub token for Hydra login token")?;
-    Ok(auth_token)
-}
-
-async fn exchange_and_store_token(
-    client: &HydraClientUnauthenticated,
-    config_path: &Path,
-    server_url: &str,
-    github_token: &DeviceFlowToken,
-) -> Result<String> {
-    let auth_token = login_with_github_token(
-        client,
-        &github_token.access_token,
-        &github_token.refresh_token,
-    )
-    .await?;
-    config::store_auth_token(config_path, server_url, &auth_token)?;
-    Ok(auth_token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,41 +164,37 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    #[test]
-    fn interpret_token_response_handles_pending_states() {
-        let pending = interpret_token_response(TokenPollResponse {
-            access_token: None,
-            refresh_token: None,
-            error: Some("authorization_pending".to_string()),
-            error_description: None,
-        })
-        .unwrap();
-        assert!(matches!(pending, TokenPollState::Pending));
-
-        let slow_down = interpret_token_response(TokenPollResponse {
-            access_token: None,
-            refresh_token: None,
-            error: Some("slow_down".to_string()),
-            error_description: None,
-        })
-        .unwrap();
-        assert!(matches!(slow_down, TokenPollState::SlowDown));
-    }
-
     #[tokio::test]
-    async fn exchange_and_store_token_uses_login_response_token() {
+    async fn login_with_device_flow_stores_token_on_success() {
         let server = MockServer::start();
-        let login_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/login").json_body(json!({
-                "github_token": "gh-token",
-                "github_refresh_token": "refresh-token"
-            }));
+
+        let start_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/login/device/start");
             then.status(200).json_body(json!({
-                "login_token": "api-token",
+                "device_session_id": "ds-test-123",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 900,
+                "interval": 1
+            }));
+        });
+
+        let poll_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/login/device/poll");
+            then.status(200).json_body(json!({
+                "status": "complete",
+                "login_token": "hydra-token-abc",
                 "user": {
                     "username": "octo",
                     "github_user_id": 42
                 }
+            }));
+        });
+
+        let whoami_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body(json!({
+                "actor": {"type": "user", "username": "octo"}
             }));
         });
 
@@ -341,25 +205,67 @@ mod tests {
         let config_path = temp.path().join("config.toml");
         let server_url = server.base_url();
 
-        let auth_token = exchange_and_store_token(
-            &client,
-            &config_path,
-            &server_url,
-            &DeviceFlowToken {
-                access_token: "gh-token".to_string(),
-                refresh_token: "refresh-token".to_string(),
-            },
-        )
-        .await
-        .expect("exchange");
+        let _auth_client = login_with_github_device_flow(&client, &config_path, &server_url)
+            .await
+            .expect("login");
 
-        login_mock.assert();
-        assert_eq!(auth_token, "api-token");
+        start_mock.assert();
+        poll_mock.assert();
+        whoami_mock.assert();
 
         let stored_config = AppConfig::load(&config_path).expect("load config");
         let stored_token = stored_config
             .auth_token_for_url(&server_url)
             .expect("lookup token");
-        assert_eq!(stored_token, Some("api-token"));
+        assert_eq!(stored_token, Some("hydra-token-abc"));
+    }
+
+    #[tokio::test]
+    async fn device_start_client_method_calls_correct_endpoint() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/login/device/start");
+            then.status(200).json_body(json!({
+                "device_session_id": "ds-abc",
+                "user_code": "TEST-CODE",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 600,
+                "interval": 5
+            }));
+        });
+
+        let client =
+            HydraClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())
+                .expect("client");
+
+        let response = client.device_start().await.expect("device_start");
+
+        mock.assert();
+        assert_eq!(response.device_session_id, "ds-abc");
+        assert_eq!(response.user_code, "TEST-CODE");
+        assert_eq!(response.interval, 5);
+    }
+
+    #[tokio::test]
+    async fn device_poll_client_method_calls_correct_endpoint() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/login/device/poll")
+                .json_body(json!({"device_session_id": "ds-xyz"}));
+            then.status(200).json_body(json!({"status": "pending"}));
+        });
+
+        let client =
+            HydraClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())
+                .expect("client");
+
+        let response = client.device_poll("ds-xyz").await.expect("device_poll");
+
+        mock.assert();
+        assert_eq!(response.status, DevicePollStatus::Pending);
+        assert!(response.login_token.is_none());
     }
 }
