@@ -6,6 +6,8 @@ import type {
   UserSummary,
   GithubTokenResponse,
   LoginResponse,
+  DeviceStartResponse,
+  DevicePollResponse,
 } from "@hydra/api";
 
 const COOKIE_NAME = "hydra_token";
@@ -41,6 +43,11 @@ export function createAuthRoutes(): Hono {
       github_user_id: DEV_GITHUB_USER_ID,
     };
     return c.json(resp);
+  });
+
+  // GET /v1/github/app/client-id — returns mock client ID (no auth required)
+  app.get("/v1/github/app/client-id", (c) => {
+    return c.json({ client_id: "mock-github-client-id" });
   });
 
   // GET /v1/github/token
@@ -96,6 +103,41 @@ export function createBffAuthRoutes(): Hono {
 
     const resp: WhoAmIResponse = {
       actor: { type: "user", username: DEV_USERNAME },
+    };
+    return c.json(resp);
+  });
+
+  // POST /auth/login/device/start — mock device flow start (instant)
+  app.post("/login/device/start", (c) => {
+    const resp: DeviceStartResponse = {
+      device_session_id: "mock-device-session-001",
+      user_code: "MOCK-1234",
+      verification_uri: "https://github.com/login/device",
+      expires_in: 900,
+      interval: 1,
+    };
+    return c.json(resp);
+  });
+
+  // POST /auth/login/device/poll — mock device flow poll (instant completion)
+  app.post("/login/device/poll", async (c) => {
+    const body = await c.req.json<{ device_session_id?: string }>();
+    if (!body.device_session_id) {
+      return c.json({ error: "device_session_id is required" }, 400);
+    }
+
+    // Set auth cookie so the user is logged in after device flow completes
+    setCookie(c, COOKIE_NAME, DEV_TOKEN, {
+      httpOnly: true,
+      sameSite: "Strict",
+      path: "/",
+    });
+
+    const resp: DevicePollResponse = {
+      status: "complete",
+      login_token: DEV_TOKEN,
+      user: { username: DEV_USERNAME, github_user_id: DEV_GITHUB_USER_ID },
+      error: null,
     };
     return c.json(resp);
   });

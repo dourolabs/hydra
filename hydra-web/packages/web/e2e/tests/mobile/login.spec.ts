@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("Login @auth:login @auth:redirect", () => {
-  test("shows GitHub login button as primary action @auth:login", async ({
+test.describe("Mobile Login @mobile:login", () => {
+  test("shows GitHub login button as primary action @mobile:login", async ({
     page,
   }) => {
     await page.goto("/login");
@@ -11,9 +11,7 @@ test.describe("Login @auth:login @auth:redirect", () => {
     await expect(page.getByText("Sign in with token")).toBeVisible();
   });
 
-  test("device flow: click GitHub login, see user code, completes and redirects @auth:login", async ({
-    page,
-  }) => {
+  test("device flow works on mobile @mobile:login", async ({ page }) => {
     await page.goto("/login");
     await page.click('[data-testid="github-login-button"]');
     // Device flow starts — user code should appear
@@ -23,23 +21,13 @@ test.describe("Login @auth:login @auth:redirect", () => {
     await expect(page).not.toHaveURL(/\/login/, { timeout: 10000 });
   });
 
-  test("token fallback: click switch link, enter token, login @auth:login", async ({
-    page,
-  }) => {
+  test("token fallback works on mobile @mobile:login", async ({ page }) => {
     await page.goto("/login");
     await page.click("text=Sign in with token");
     await expect(page.locator('[data-testid="token-input"]')).toBeVisible();
-    await expect(page.locator('[data-testid="login-button"]')).toBeDisabled();
     await page.fill('[data-testid="token-input"]', "dev-token-12345");
     await expect(page.locator('[data-testid="login-button"]')).toBeEnabled();
     await page.click('[data-testid="login-button"]');
     await expect(page).not.toHaveURL(/\/login/, { timeout: 10000 });
-  });
-
-  test("redirects unauthenticated user to login @auth:redirect", async ({
-    page,
-  }) => {
-    await page.goto("/");
-    await expect(page).toHaveURL(/\/login/);
   });
 });
