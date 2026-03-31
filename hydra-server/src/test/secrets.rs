@@ -366,7 +366,7 @@ async fn list_secrets_excludes_internal_secrets() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn set_secret_rejects_internal_secret() -> anyhow::Result<()> {
+async fn set_secret_succeeds_when_internal_version_exists() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let secret_manager = test_secret_manager();
     let username = Username::from(TEST_USERNAME);
@@ -382,7 +382,7 @@ async fn set_secret_rejects_internal_secret() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_user_client();
 
-    // Attempt to overwrite the internal secret via API
+    // Setting external version should succeed even when internal exists
     let response = client
         .put(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets/GITHUB_TOKEN",
@@ -392,13 +392,13 @@ async fn set_secret_rejects_internal_secret() -> anyhow::Result<()> {
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::OK);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn delete_secret_rejects_internal_secret() -> anyhow::Result<()> {
+async fn delete_external_secret_preserves_internal() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let secret_manager = test_secret_manager();
     let username = Username::from(TEST_USERNAME);
@@ -411,10 +411,20 @@ async fn delete_secret_rejects_internal_secret() -> anyhow::Result<()> {
         .await
         .unwrap();
 
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    // Set external version via API
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_user_client();
 
-    // Attempt to delete the internal secret via API
+    client
+        .put(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/GITHUB_TOKEN",
+            server.base_url()
+        ))
+        .json(&json!({ "value": "external-value" }))
+        .send()
+        .await?;
+
+    // Delete external version via API
     let response = client
         .delete(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets/GITHUB_TOKEN",
@@ -422,8 +432,18 @@ async fn delete_secret_rejects_internal_secret() -> anyhow::Result<()> {
         ))
         .send()
         .await?;
+    assert_eq!(response.status(), StatusCode::OK);
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // Internal version should still exist in the store
+    let fetched = handles
+        .store
+        .get_user_secret(&username, "GITHUB_TOKEN")
+        .await
+        .unwrap();
+    assert!(
+        fetched.is_some(),
+        "internal version should be preserved after deleting external"
+    );
 
     Ok(())
 }
