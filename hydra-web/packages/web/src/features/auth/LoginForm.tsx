@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent, type ReactNode } from "react";
+import { useState, useCallback, useRef, useEffect, type FormEvent, type ReactNode } from "react";
 import { Button, Input, fallbackCopyText } from "@hydra/ui";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
@@ -47,6 +47,11 @@ export function LoginForm() {
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<LoginMode>("default");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
 
   // Derive effective error from local + auth context
   const displayError = error ?? authError;
@@ -94,7 +99,14 @@ export function LoginForm() {
     }
 
     setCopyState(success ? "copied" : "failed");
-    setTimeout(() => setCopyState("idle"), 2000);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+    copyTimerRef.current = setTimeout(() => {
+      setCopyState("idle");
+      copyTimerRef.current = null;
+    }, 2000);
   }
 
   // Loading state while checking auth mode
