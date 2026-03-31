@@ -1,5 +1,5 @@
 import { useState, useCallback, type FormEvent, type ReactNode } from "react";
-import { Button, Input } from "@hydra/ui";
+import { Button, Input, fallbackCopyText } from "@hydra/ui";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
 
@@ -46,7 +46,7 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<LoginMode>("default");
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   // Derive effective error from local + auth context
   const displayError = error ?? authError;
@@ -80,13 +80,21 @@ export function LoginForm() {
 
   async function handleCopyCode() {
     if (!deviceFlowInfo) return;
+
+    let success = false;
     try {
-      await navigator.clipboard.writeText(deviceFlowInfo.user_code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(deviceFlowInfo.user_code);
+        success = true;
+      } else {
+        success = fallbackCopyText(deviceFlowInfo.user_code);
+      }
     } catch {
-      // Fallback: select text for manual copy
+      success = fallbackCopyText(deviceFlowInfo.user_code);
     }
+
+    setCopyState(success ? "copied" : "failed");
+    setTimeout(() => setCopyState("idle"), 2000);
   }
 
   // Loading state while checking auth mode
@@ -121,7 +129,7 @@ export function LoginForm() {
             variant="secondary"
             onClick={handleCopyCode}
           >
-            {copied ? "Copied!" : "Copy"}
+            {copyState === "copied" ? "Copied!" : copyState === "failed" ? "Failed to copy" : "Copy"}
           </Button>
         </div>
         <a
