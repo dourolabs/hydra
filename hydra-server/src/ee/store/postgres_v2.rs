@@ -3568,7 +3568,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let sql = format!(
-            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2"
+            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2 ORDER BY internal ASC LIMIT 1"
         );
         let row = sqlx::query_scalar::<_, Vec<u8>>(&sql)
             .bind(username.as_str())
@@ -3584,7 +3584,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         username: &Username,
     ) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
-            "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = $1 ORDER BY secret_name"
+            "SELECT secret_name, MIN(internal::int)::bool as internal FROM {TABLE_USER_SECRETS} WHERE username = $1 GROUP BY secret_name ORDER BY secret_name"
         );
         let rows = sqlx::query_as::<_, (String, bool)>(&sql)
             .bind(username.as_str())
@@ -3595,23 +3595,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .into_iter()
             .map(|(name, internal)| SecretRef { name, internal })
             .collect())
-    }
-
-    async fn is_secret_internal(
-        &self,
-        username: &Username,
-        secret_name: &str,
-    ) -> Result<bool, StoreError> {
-        let sql = format!(
-            "SELECT internal FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2"
-        );
-        let row = sqlx::query_scalar::<_, bool>(&sql)
-            .bind(username.as_str())
-            .bind(secret_name)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        Ok(row.unwrap_or(false))
     }
 }
 
@@ -4513,8 +4496,8 @@ impl Store for PostgresStoreV2 {
         let sql = format!(
             "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, internal, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $5) \
-             ON CONFLICT (username, secret_name) \
-             DO UPDATE SET encrypted_value = $3, internal = $4, updated_at = $5"
+             ON CONFLICT (username, secret_name, internal) \
+             DO UPDATE SET encrypted_value = $3, updated_at = $5"
         );
         let now = chrono::Utc::now();
         sqlx::query(&sql)
@@ -4534,8 +4517,9 @@ impl Store for PostgresStoreV2 {
         username: &Username,
         secret_name: &str,
     ) -> Result<(), StoreError> {
-        let sql =
-            format!("DELETE FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2");
+        let sql = format!(
+            "DELETE FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2 AND internal = FALSE"
+        );
         sqlx::query(&sql)
             .bind(username.as_str())
             .bind(secret_name)
