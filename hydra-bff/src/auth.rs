@@ -238,7 +238,8 @@ pub fn build_auth_cookie(token: &str, secure: bool) -> Cookie<'static> {
     let mut builder = Cookie::build((COOKIE_NAME, token.to_string()))
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
-        .path("/");
+        .path("/")
+        .max_age(time::Duration::days(30));
     if secure {
         builder = builder.secure(true);
     }
