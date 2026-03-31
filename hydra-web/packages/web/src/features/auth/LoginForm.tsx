@@ -1,26 +1,7 @@
 import { useState, useCallback, type FormEvent, type ReactNode } from "react";
-import { Button, Input } from "@hydra/ui";
+import { Button, Input, fallbackCopyText } from "@hydra/ui";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
-
-function fallbackCopyText(text: string): boolean {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  let success = false;
-  try {
-    success = document.execCommand("copy");
-  } catch {
-    success = false;
-  }
-  document.body.removeChild(textarea);
-  return success;
-}
 
 type LoginMode = "default" | "token";
 
