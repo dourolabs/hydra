@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
+time = "0.3"
 http = "1"
 hydra-common = { path = "../hydra-common" }
 mime_guess = "2"
