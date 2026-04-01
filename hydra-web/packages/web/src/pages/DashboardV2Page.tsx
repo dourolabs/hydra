@@ -7,7 +7,7 @@ import {
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard-v2/IssueFilterSidebar";
+import { IssueFilterSidebar } from "../features/dashboard-v2/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard-v2/HeterogeneousItemList";
 import type { WorkItem } from "../features/dashboard-v2/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard-v2/usePageIssueTrees";
@@ -33,16 +33,12 @@ function buildServerFilters(
     filters.q = searchQuery;
   }
 
-  if (filterRootId === "inbox") {
+  if (filterRootId === "your-issues") {
     if (inboxLabelId) filters.labels = inboxLabelId;
     if (username) filters.creator = username;
-  } else if (filterRootId === "my-issues") {
-    if (username) filters.creator = username;
-  } else if (filterRootId?.startsWith(LABEL_FILTER_PREFIX)) {
-    const labelId = filterRootId.slice(LABEL_FILTER_PREFIX.length);
-    filters.labels = labelId;
+  } else if (filterRootId === "assigned") {
+    if (username) filters.assignee = username;
   }
-  // For "everything" (null), no extra server filters
 
   return filters;
 }
@@ -69,7 +65,9 @@ export function DashboardV2Page() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
   const [filterRootId, setFilterRootId] = useState<string | null>(
-    selectedParam === "everything" ? null : (selectedParam ?? "inbox"),
+    selectedParam === "your-issues" || selectedParam === "assigned"
+      ? selectedParam
+      : "your-issues",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -78,7 +76,7 @@ export function DashboardV2Page() {
   const { data: inboxLabel } = useInboxLabel();
   const inboxLabelId = inboxLabel?.label_id;
 
-  const isInboxFilter = filterRootId === "inbox";
+  const isInboxFilter = filterRootId === "your-issues";
 
   // Build server-side filters for the paginated query
   const serverFilters = useMemo(
@@ -101,24 +99,23 @@ export function DashboardV2Page() {
 
   const isLoading = paginatedLoading;
 
-  // Badge count queries (count-only, no issue data fetched).
-  // Uses multi-status filter to get open + in-progress counts in a single call
-  // per category, excluding terminal statuses (closed, failed, dropped, rejected).
-  const inboxCountFilters = useMemo<IssueFilters>(() => {
+  // Badge count queries for "Your Issues" (inbox issues created by user)
+  const yourIssuesCountFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
     return { labels: inboxLabelId, creator: username, status: "open,in-progress" };
   }, [inboxLabelId, username]);
 
-  const myIssuesCountFilters = useMemo<IssueFilters>(() => {
+  // Badge count queries for "Assigned to You"
+  const assignedCountFilters = useMemo<IssueFilters>(() => {
     if (!username) return {};
-    return { creator: username, status: "open,in-progress" };
+    return { assignee: username, status: "open,in-progress" };
   }, [username]);
 
-  const inboxEnabled = !!inboxLabelId && !!username;
-  const { data: inboxTotalCount = 0 } = useIssueCount(inboxCountFilters, inboxEnabled);
+  const yourIssuesEnabled = !!inboxLabelId && !!username;
+  const { data: yourIssuesTotalCount = 0 } = useIssueCount(yourIssuesCountFilters, yourIssuesEnabled);
 
-  const myIssuesEnabled = !!username;
-  const { data: myIssuesTotalCount = 0 } = useIssueCount(myIssuesCountFilters, myIssuesEnabled);
+  const assignedEnabled = !!username;
+  const { data: assignedTotalCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
 
   // Fetch active session IDs to exclude from badge counts.
   // Issues with running/pending sessions should not count toward badges.
@@ -129,8 +126,7 @@ export function DashboardV2Page() {
   );
 
   // Count how many active-session issues match each badge filter so we can subtract them.
-  // Uses multi-status filter to match the total queries above.
-  const inboxActiveFilters = useMemo<IssueFilters>(() => {
+  const yourIssuesActiveFilters = useMemo<IssueFilters>(() => {
     if (!activeIdsParam || !inboxLabelId || !username) return {};
     return {
       labels: inboxLabelId,
@@ -140,23 +136,23 @@ export function DashboardV2Page() {
     };
   }, [activeIdsParam, inboxLabelId, username]);
 
-  const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
+  const assignedActiveFilters = useMemo<IssueFilters>(() => {
     if (!activeIdsParam || !username) return {};
-    return { creator: username, ids: activeIdsParam, status: "open,in-progress" };
+    return { assignee: username, ids: activeIdsParam, status: "open,in-progress" };
   }, [activeIdsParam, username]);
 
   const activeCountEnabled = !!activeIdsParam;
-  const { data: inboxActiveCount = 0 } = useIssueCount(
-    inboxActiveFilters,
-    activeCountEnabled && inboxEnabled,
+  const { data: yourIssuesActiveCount = 0 } = useIssueCount(
+    yourIssuesActiveFilters,
+    activeCountEnabled && yourIssuesEnabled,
   );
-  const { data: myIssuesActiveCount = 0 } = useIssueCount(
-    myIssuesActiveFilters,
-    activeCountEnabled && myIssuesEnabled,
+  const { data: assignedActiveCount = 0 } = useIssueCount(
+    assignedActiveFilters,
+    activeCountEnabled && assignedEnabled,
   );
 
-  const inboxCount = Math.max(0, inboxTotalCount - inboxActiveCount);
-  const myIssuesCount = Math.max(0, myIssuesTotalCount - myIssuesActiveCount);
+  const yourIssuesCount = Math.max(0, yourIssuesTotalCount - yourIssuesActiveCount);
+  const assignedCount = Math.max(0, assignedTotalCount - assignedActiveCount);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
@@ -252,7 +248,7 @@ export function DashboardV2Page() {
     if (!searchParams.has("selected")) {
       setSearchParams(
         (prev) => {
-          prev.set("selected", "inbox");
+          prev.set("selected", "your-issues");
           return prev;
         },
         { replace: true },
@@ -265,7 +261,7 @@ export function DashboardV2Page() {
       setFilterRootId(rootId);
       setSearchParams(
         (prev) => {
-          prev.set("selected", rootId ?? "everything");
+          prev.set("selected", rootId ?? "your-issues");
           return prev;
         },
         { replace: true },
@@ -303,10 +299,9 @@ export function DashboardV2Page() {
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
-          isActiveMap={isActiveMap}
           username={username}
-          inboxCount={inboxCount}
-          myIssuesCount={myIssuesCount}
+          yourIssuesCount={yourIssuesCount}
+          assignedCount={assignedCount}
         />
         <HeterogeneousItemList
           items={allWorkItems}
