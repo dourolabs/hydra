@@ -24,6 +24,17 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "v2",
+        lazy: () =>
+          import("./pages/DashboardV2Page").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.DashboardV2Page />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "issues/:issueId",
         lazy: () =>
           import("./pages/IssueDetailPage").then((m) => ({
