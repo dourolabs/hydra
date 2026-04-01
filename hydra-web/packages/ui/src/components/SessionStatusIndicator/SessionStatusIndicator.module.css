@@ -6,7 +6,7 @@
 
 .countPrefix {
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   color: var(--color-text-tertiary);
   margin-right: 2px;
 }
@@ -78,7 +78,7 @@
 
 .elapsed {
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   color: var(--color-status-in-progress);
   white-space: nowrap;
 }

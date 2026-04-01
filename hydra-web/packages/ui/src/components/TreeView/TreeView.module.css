@@ -3,7 +3,7 @@
   list-style: none;
   padding: 0;
   margin: 0;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   overflow: hidden;
 }
 

@@ -18,7 +18,7 @@
 }
 
 .sessionId {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--color-accent);
@@ -53,7 +53,7 @@
   font-size: var(--font-size-sm);
   color: var(--color-accent-dim);
   text-decoration: none;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
 }
 
 .metaLink:hover {

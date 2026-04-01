@@ -3,7 +3,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-weight: 600;
   flex-shrink: 0;
   user-select: none;

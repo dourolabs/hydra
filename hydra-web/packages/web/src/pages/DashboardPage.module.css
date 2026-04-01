@@ -25,7 +25,7 @@
   border: 1px solid var(--color-accent-dim);
   border-radius: var(--radius-md);
   color: var(--color-accent);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-sm);
   cursor: pointer;
   flex-shrink: 0;
