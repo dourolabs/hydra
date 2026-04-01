@@ -30,10 +30,7 @@ export function RepositoriesSection() {
       setDeleteTarget(null);
     },
     onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to delete repository",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to delete repository", "error");
     },
   });
 
@@ -85,7 +82,7 @@ export function RepositoriesSection() {
                 >
                   <div className={sharedStyles.detailRow}>
                     <span className={sharedStyles.detailLabel}>Remote URL</span>
-                    <span className={sharedStyles.detailValueMono}>
+                    <span className={sharedStyles.detailValueTerminal}>
                       {repo.repository.remote_url}
                     </span>
                   </div>
@@ -99,7 +96,7 @@ export function RepositoriesSection() {
                   </div>
                   <div className={sharedStyles.detailRow}>
                     <span className={sharedStyles.detailLabel}>Default Image</span>
-                    <span className={sharedStyles.detailValueMono}>
+                    <span className={sharedStyles.detailValueTerminal}>
                       {repo.repository.default_image ?? (
                         <span className={sharedStyles.dimText}>—</span>
                       )}
