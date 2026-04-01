@@ -377,7 +377,7 @@ impl ClaudeCommands {
         #[cfg(unix)]
         command.process_group(0);
 
-        eprintln!("Claude CLI args: {:?}", args);
+        eprintln!("Claude CLI args: {args:?}");
 
         let mut child = command
             .stdout(Stdio::piped())
