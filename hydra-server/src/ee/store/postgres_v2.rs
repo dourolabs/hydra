@@ -7037,6 +7037,48 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn auth_token_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // GET — empty for unknown actor
+        let hashes = store.get_auth_token_hashes("u-nobody").await.unwrap();
+        assert!(hashes.is_empty());
+
+        // ADD — two tokens for alice
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash2").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
+
+        // ADD — duplicate insert is idempotent
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
+
+        // ADD — token for a different actor
+        store.add_auth_token("u-bob", "hash3").await.unwrap();
+        let bob_hashes = store.get_auth_token_hashes("u-bob").await.unwrap();
+        assert_eq!(bob_hashes, vec!["hash3".to_string()]);
+
+        // DELETE — remove all tokens for alice
+        store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert!(hashes.is_empty());
+
+        // Bob's tokens are unaffected
+        let bob_hashes = store.get_auth_token_hashes("u-bob").await.unwrap();
+        assert_eq!(bob_hashes, vec!["hash3".to_string()]);
+
+        // DELETE — non-existent actor should not error
+        store
+            .delete_auth_tokens_for_actor("u-nobody")
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn secret_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
 

@@ -2076,10 +2076,11 @@ impl Store for MemoryStore {
     // ---- Auth token mutations ----
 
     async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
-        self.auth_tokens
-            .entry(actor_name.to_string())
-            .or_default()
-            .push(token_hash.to_string());
+        let mut entry = self.auth_tokens.entry(actor_name.to_string()).or_default();
+        let hash = token_hash.to_string();
+        if !entry.contains(&hash) {
+            entry.push(hash);
+        }
         Ok(())
     }
 
@@ -4025,6 +4026,16 @@ mod tests {
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert!(hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_duplicate_insert_is_idempotent() {
+        let store = MemoryStore::new();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string()]);
     }
 
     #[tokio::test]
