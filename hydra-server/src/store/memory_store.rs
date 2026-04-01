@@ -66,8 +66,8 @@ pub struct MemoryStore {
     object_labels: DashMap<HydraId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<HydraId>>,
-    /// Maps (username, secret_name) to (encrypted_value, internal)
-    user_secrets: DashMap<(Username, String), (Vec<u8>, bool)>,
+    /// Maps (username, secret_name, internal) to encrypted_value
+    user_secrets: DashMap<(Username, String, bool), Vec<u8>>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
     object_relationships:
         DashMap<(HydraId, super::RelationshipType, HydraId), super::ObjectRelationship>,
@@ -1403,34 +1403,42 @@ impl ReadOnlyStore for MemoryStore {
         username: &Username,
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        let key = (username.clone(), secret_name.to_string());
-        Ok(self.user_secrets.get(&key).map(|v| v.value().0.clone()))
+        // Prefer external (internal=false) over internal (internal=true)
+        let external_key = (username.clone(), secret_name.to_string(), false);
+        if let Some(v) = self.user_secrets.get(&external_key) {
+            return Ok(Some(v.value().clone()));
+        }
+        let internal_key = (username.clone(), secret_name.to_string(), true);
+        Ok(self
+            .user_secrets
+            .get(&internal_key)
+            .map(|v| v.value().clone()))
     }
 
     async fn list_user_secret_names(
         &self,
         username: &Username,
     ) -> Result<Vec<SecretRef>, StoreError> {
-        let mut refs: Vec<SecretRef> = self
-            .user_secrets
-            .iter()
-            .filter(|entry| &entry.key().0 == username)
-            .map(|entry| SecretRef {
-                name: entry.key().1.clone(),
-                internal: entry.value().1,
-            })
+        use std::collections::HashMap;
+        // Deduplicate: if both internal and external exist, report internal=false
+        let mut map: HashMap<String, bool> = HashMap::new();
+        for entry in self.user_secrets.iter() {
+            if &entry.key().0 == username {
+                let name = entry.key().1.clone();
+                let internal = entry.key().2;
+                let existing = map.entry(name).or_insert(internal);
+                // false (external) wins over true (internal)
+                if !internal {
+                    *existing = false;
+                }
+            }
+        }
+        let mut refs: Vec<SecretRef> = map
+            .into_iter()
+            .map(|(name, internal)| SecretRef { name, internal })
             .collect();
         refs.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(refs)
-    }
-
-    async fn is_secret_internal(
-        &self,
-        username: &Username,
-        secret_name: &str,
-    ) -> Result<bool, StoreError> {
-        let key = (username.clone(), secret_name.to_string());
-        Ok(self.user_secrets.get(&key).map_or(false, |v| v.value().1))
     }
 }
 
@@ -2069,9 +2077,8 @@ impl Store for MemoryStore {
         encrypted_value: &[u8],
         internal: bool,
     ) -> Result<(), StoreError> {
-        let key = (username.clone(), secret_name.to_string());
-        self.user_secrets
-            .insert(key, (encrypted_value.to_vec(), internal));
+        let key = (username.clone(), secret_name.to_string(), internal);
+        self.user_secrets.insert(key, encrypted_value.to_vec());
         Ok(())
     }
 
@@ -2080,7 +2087,8 @@ impl Store for MemoryStore {
         username: &Username,
         secret_name: &str,
     ) -> Result<(), StoreError> {
-        let key = (username.clone(), secret_name.to_string());
+        // Only delete the external version
+        let key = (username.clone(), secret_name.to_string(), false);
         self.user_secrets.remove(&key);
         Ok(())
     }

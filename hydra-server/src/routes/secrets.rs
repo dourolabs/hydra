@@ -88,21 +88,6 @@ pub async fn set_secret(
 
     info!(username = %username, secret_name = %name, "set_secret invoked");
 
-    // Reject if the secret is already stored as internal
-    let is_internal = state
-        .store
-        .is_secret_internal(&username, &name)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = %err, "failed to check secret internality");
-            ApiError::internal(format!("failed to check secret: {err}"))
-        })?;
-    if is_internal {
-        return Err(ApiError::forbidden(
-            "cannot modify an internal secret via the API",
-        ));
-    }
-
     let encrypted = state
         .secret_manager
         .encrypt(&payload.value)
@@ -140,21 +125,6 @@ pub async fn delete_secret(
     }
 
     info!(username = %username, secret_name = %name, "delete_secret invoked");
-
-    // Reject if the secret is internal
-    let is_internal = state
-        .store
-        .is_secret_internal(&username, &name)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = %err, "failed to check secret internality");
-            ApiError::internal(format!("failed to check secret: {err}"))
-        })?;
-    if is_internal {
-        return Err(ApiError::forbidden(
-            "cannot modify an internal secret via the API",
-        ));
-    }
 
     state
         .store
