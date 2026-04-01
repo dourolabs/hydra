@@ -26,7 +26,7 @@
 }
 
 .title {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -53,7 +53,7 @@
   gap: var(--space-2);
   padding: var(--space-3) var(--space-2);
   cursor: pointer;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   border-left: 2px solid transparent;
@@ -127,7 +127,7 @@
   padding: var(--space-1) var(--space-2);
   border-top: 1px solid var(--color-border);
   margin-top: var(--space-1);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-xxs);
   font-weight: 600;
   color: var(--color-text-tertiary);

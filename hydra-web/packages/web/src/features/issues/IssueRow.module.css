@@ -92,7 +92,7 @@
 .issueId {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
 }
 
 .timestamp {

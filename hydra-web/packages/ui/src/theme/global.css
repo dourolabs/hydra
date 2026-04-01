@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Share+Tech&display=swap");
 @import "./tokens.css";
 
 *,
@@ -16,7 +16,7 @@ html {
 }
 
 body {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
   color: var(--color-text-primary);

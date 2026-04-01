@@ -63,13 +63,13 @@
 .timestamp {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
 }
 
 .version {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
 }
 
 .changes {
@@ -134,7 +134,7 @@
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   color: var(--color-text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
@@ -173,7 +173,7 @@
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   color: var(--color-text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
