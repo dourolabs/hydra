@@ -1,0 +1,321 @@
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
+  min-width: 0;
+}
+
+.row:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDotOpen {
+  background: transparent;
+  border: 1.5px solid var(--color-text-tertiary);
+  box-sizing: border-box;
+}
+
+.statusDotInProgress {
+  background-color: var(--color-text-tertiary);
+}
+
+.statusDotClosed {
+  background-color: var(--color-status-closed);
+}
+
+.statusDotIssueClosed {
+  background-color: var(--color-status-issue-closed);
+}
+
+.statusDotFailed {
+  background-color: var(--color-status-failed);
+}
+
+.statusDotDropped {
+  background-color: var(--color-status-dropped);
+}
+
+.statusDotBlocked {
+  background-color: var(--color-status-blocked);
+}
+
+.statusDotRejected {
+  background-color: var(--color-status-rejected);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.statusDotPulsing {
+  background-color: var(--color-status-in-progress);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.statusDotAttention {
+  background-color: var(--color-status-attention);
+}
+
+.rowAttention {
+  border-left: 3px solid var(--color-status-attention);
+  padding-left: calc(var(--space-3) - 3px);
+}
+
+.rowAttention.rowSwipeable {
+  padding-left: 0;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.typeIcon {
+  display: block;
+}
+
+.titleGroup {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressLine {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labels {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.prLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.prLink:hover {
+  color: var(--color-accent);
+}
+
+.externalLinkIcon {
+  display: block;
+}
+
+.archiveButton {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--color-bg-primary);
+  box-shadow: 0 0 0 12px var(--color-bg-primary), -24px 0 32px var(--color-bg-primary);
+  padding: 6px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: opacity var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.archiveButton:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-tertiary);
+}
+
+.row:hover .archiveButton {
+  opacity: 1;
+  pointer-events: auto;
+  background: var(--color-bg-tertiary);
+  box-shadow: 0 0 0 12px var(--color-bg-tertiary), -24px 0 32px var(--color-bg-tertiary);
+}
+
+.rightColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.timestamp {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-terminal);
+  white-space: nowrap;
+}
+
+.timerRunning {
+  color: var(--color-status-in-progress);
+}
+
+/* Archive reveal background */
+.archiveReveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 1px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--space-4);
+  gap: var(--space-2);
+  background: var(--color-archive-bg);
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  pointer-events: none;
+  user-select: none;
+  visibility: hidden;
+}
+
+/* Show archive reveal only during active swipe or commit animation */
+.rowSwipeable:has(.swiping) .archiveReveal,
+.rowSwipeable:has(.swipeCommit) .archiveReveal,
+.rowSwipeable:has(.swipeSnapBack) .archiveReveal {
+  visibility: visible;
+}
+
+.archiveRevealIcon {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Swipe content wrapper */
+.swipeContent {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-primary);
+  min-width: 0;
+  flex: 1;
+}
+
+.row:hover .swipeContent {
+  background: var(--color-bg-tertiary);
+}
+
+/* When swipeContent is present, row padding is handled by the content wrapper */
+.rowSwipeable {
+  padding: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+/* Swipe-to-archive states */
+.swiping {
+  transition: none !important;
+  transform: translateX(var(--swipe-x, 0));
+}
+
+.swipeCommit {
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.swipeSnapBack {
+  transition: transform 200ms ease-out;
+  transform: translateX(0);
+}
+
+@media (max-width: 768px) {
+  .row {
+    padding: var(--space-2);
+  }
+
+  .swipeContent {
+    padding: var(--space-2);
+  }
+
+  .rowAttention {
+    padding-left: calc(var(--space-2) - 3px);
+  }
+
+  .rowAttention.rowSwipeable {
+    padding-left: 0;
+  }
+
+  .labels {
+    display: none;
+  }
+
+  .title {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
+
+  .assignee {
+    display: none;
+  }
+
+  .archiveButton {
+    display: none;
+  }
+}
