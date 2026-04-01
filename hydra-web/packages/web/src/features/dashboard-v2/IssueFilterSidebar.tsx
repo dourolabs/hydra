@@ -28,7 +28,6 @@ interface IssueFilterSidebarProps {
   collapsed: boolean;
   drawerOpen: boolean;
   onDrawerClose: () => void;
-  username: string;
   yourIssuesCount: number;
   assignedCount: number;
 }

@@ -299,7 +299,6 @@ export function DashboardV2Page() {
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
-          username={username}
           yourIssuesCount={yourIssuesCount}
           assignedCount={assignedCount}
         />

@@ -34,7 +34,6 @@ function renderSidebar(overrides: Partial<Parameters<typeof IssueFilterSidebar>[
     collapsed: false,
     drawerOpen: false,
     onDrawerClose: vi.fn(),
-    username: "testuser",
     yourIssuesCount: 3,
     assignedCount: 2,
   };
