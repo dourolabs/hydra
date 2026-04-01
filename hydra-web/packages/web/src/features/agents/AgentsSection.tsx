@@ -31,10 +31,7 @@ export function AgentsSection() {
       setAgentDeleteTarget(null);
     },
     onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to delete agent",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to delete agent", "error");
     },
   });
 
@@ -76,13 +73,13 @@ export function AgentsSection() {
               >
                 <div className={sharedStyles.detailRow}>
                   <span className={sharedStyles.detailLabel}>Prompt Path</span>
-                  <span className={sharedStyles.detailValueMono}>
+                  <span className={sharedStyles.detailValueTerminal}>
                     {agent.prompt_path || <span className={sharedStyles.dimText}>—</span>}
                   </span>
                 </div>
                 <div className={sharedStyles.detailRow}>
                   <span className={sharedStyles.detailLabel}>MCP Config Path</span>
-                  <span className={sharedStyles.detailValueMono}>
+                  <span className={sharedStyles.detailValueTerminal}>
                     {agent.mcp_config_path || <span className={sharedStyles.dimText}>—</span>}
                   </span>
                 </div>
@@ -92,9 +89,7 @@ export function AgentsSection() {
                 </div>
                 <div className={sharedStyles.detailRow}>
                   <span className={sharedStyles.detailLabel}>Max Simultaneous</span>
-                  <span className={sharedStyles.detailValue}>
-                    {agent.max_simultaneous}
-                  </span>
+                  <span className={sharedStyles.detailValue}>{agent.max_simultaneous}</span>
                 </div>
                 <div className={sharedStyles.detailRow}>
                   <span className={sharedStyles.detailLabel}>Assignment Agent</span>

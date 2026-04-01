@@ -99,7 +99,7 @@
   word-break: break-all;
 }
 
-.detailValueMono {
+.detailValueTerminal {
   color: var(--color-text-secondary);
   font-family: var(--font-family-terminal);
   word-break: break-all;
