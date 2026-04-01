@@ -15,8 +15,6 @@ import type { ChildStatus } from "./computeIssueProgress";
 export interface IssueTreeData {
   childStatuses: ChildStatus[];
   isActive: boolean;
-  patchIds: string[];
-  documentIds: string[];
 }
 
 /** The complete collected set of data for building issue trees. */
@@ -25,8 +23,6 @@ interface CollectedSet {
   childRelations: RelationResponse[];
   issueMap: Map<string, IssueSummaryRecord>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
-  patchRelations: RelationResponse[];
-  documentRelations: RelationResponse[];
   username: string;
 }
 
@@ -60,30 +56,7 @@ function useExpandedChildRelations(pageIssueIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 (Artifacts): Collect patches and documents for expanded set
-// ---------------------------------------------------------------------------
-
-function useArtifactRelations(
-  allIssueIds: string[],
-  relType: "has-patch" | "has-document",
-) {
-  const sourceIds = allIssueIds.join(",");
-  return useQuery({
-    queryKey: ["relations", relType, sourceIds],
-    queryFn: () =>
-      apiClient.listRelations({
-        source_ids: sourceIds,
-        rel_type: relType,
-      }),
-    enabled: allIssueIds.length > 0,
-    staleTime: 30_000,
-    placeholderData: keepPreviousData,
-    select: (data) => data.relations,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Step 4 (Sessions): Collect sessions for expanded set
+// Step 3 (Sessions): Collect sessions for expanded set
 // ---------------------------------------------------------------------------
 
 function useSessions(allIssueIds: string[]) {
@@ -175,27 +148,9 @@ function buildIssueTrees(set: CollectedSet): {
       });
     }
 
-    // Patches linked directly to this page issue (not descendants)
-    const patchIds: string[] = [];
-    for (const rel of set.patchRelations) {
-      if (rel.source_id === pageIssueId) {
-        patchIds.push(rel.target_id);
-      }
-    }
-
-    // Documents linked directly to this page issue (not descendants)
-    const documentIds: string[] = [];
-    for (const rel of set.documentRelations) {
-      if (rel.source_id === pageIssueId) {
-        documentIds.push(rel.target_id);
-      }
-    }
-
     treeDataMap.set(pageIssueId, {
       childStatuses,
       isActive: isActive(pageIssueId),
-      patchIds,
-      documentIds,
     });
   }
 
@@ -265,15 +220,10 @@ export function usePageIssueTrees(
     [pageIssueIds, allDescendantIds],
   );
 
-  // Step 3: Artifacts — collect patches and documents for page-level issues only
-  // (not transitive descendants) to keep the dashboard Artifacts section scoped
-  const { data: patchRelations } = useArtifactRelations(pageIssueIds, "has-patch");
-  const { data: documentRelations } = useArtifactRelations(pageIssueIds, "has-document");
-
-  // Step 4: Sessions — collect sessions for expanded set
+  // Step 3: Sessions — collect sessions for expanded set
   const { data: sessions } = useSessions(allIssueIds);
 
-  // Step 5: Summary records — fetch issue summaries for descendants
+  // Step 4: Summary records — fetch issue summaries for descendants
   const { data: descendantIssues } = useIssueSummaries(allDescendantIds);
 
   // Build lookup maps
@@ -295,7 +245,7 @@ export function usePageIssueTrees(
     [sessions],
   );
 
-  // Step 6: Build trees — pure function of the collected set
+  // Step 5: Build trees — pure function of the collected set
   const { treeDataMap, isActiveMap, childStatusMap } = useMemo(
     () =>
       buildIssueTrees({
@@ -303,8 +253,6 @@ export function usePageIssueTrees(
         childRelations: childRelations ?? [],
         issueMap,
         sessionsByIssue,
-        patchRelations: patchRelations ?? [],
-        documentRelations: documentRelations ?? [],
         username,
       }),
     [
@@ -312,8 +260,6 @@ export function usePageIssueTrees(
       childRelations,
       issueMap,
       sessionsByIssue,
-      patchRelations,
-      documentRelations,
       username,
     ],
   );
@@ -324,8 +270,6 @@ export function usePageIssueTrees(
   // avoid flashing the shimmer animation.
   const isLoading =
     (pageIssueIds.length > 0 && childRelations === undefined) ||
-    (allIssueIds.length > 0 && patchRelations === undefined) ||
-    (allIssueIds.length > 0 && documentRelations === undefined) ||
     (allIssueIds.length > 0 && sessions === undefined) ||
     (allDescendantIds.length > 0 && descendantIssues === undefined);
 
