@@ -67,7 +67,7 @@ export function IssueFilterSidebar({
         className={styles.item}
       >
         <span className={styles.itemLabel}>Your Issues</span>
-        {yourIssuesCount > 0 && <span className={styles.inboxCount}>{yourIssuesCount}</span>}
+        {yourIssuesCount > 0 && <span className={styles.badgeCount}>{yourIssuesCount}</span>}
       </FilterItem>
       <FilterItem
         isActive={activeFilter === "assigned"}
@@ -75,7 +75,7 @@ export function IssueFilterSidebar({
         className={styles.item}
       >
         <span className={styles.itemLabel}>Assigned to You</span>
-        {assignedCount > 0 && <span className={styles.inboxCount}>{assignedCount}</span>}
+        {assignedCount > 0 && <span className={styles.badgeCount}>{assignedCount}</span>}
       </FilterItem>
     </ul>
   );

@@ -97,7 +97,7 @@
   color: var(--color-text-tertiary);
 }
 
-.inboxCount {
+.badgeCount {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -112,7 +112,7 @@
   min-width: 18px;
 }
 
-.item.active .inboxCount {
+.item.active .badgeCount {
   color: var(--color-status-blocked);
   background: var(--color-status-blocked-bg);
 }
