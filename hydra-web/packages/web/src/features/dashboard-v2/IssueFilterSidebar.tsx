@@ -1,46 +1,6 @@
-import { useCallback, useMemo } from "react";
-import type { IssueSummaryRecord } from "@hydra/api";
+import { useCallback } from "react";
 import { useKeyboardClick } from "@hydra/ui";
-import { useLabels } from "../labels/useLabels";
-import { useIssueCount } from "../issues/usePaginatedIssues";
-import type { ChildStatus } from "./computeIssueProgress";
-import { StatusBoxes } from "./StatusBoxes";
-import { useLabelIssues } from "./useLabelIssues";
 import styles from "./IssueFilterSidebar.module.css";
-
-/** Label filter prefix used in activeFilter to distinguish label filters from issue filters. */
-export const LABEL_FILTER_PREFIX = "label:";
-
-interface LabelProgress {
-  labelId: string;
-  name: string;
-  color: string;
-  children: ChildStatus[];
-}
-
-function buildLabelProgress(
-  labelId: string,
-  name: string,
-  color: string,
-  labelIssues: IssueSummaryRecord[],
-  isActiveMap: Map<string, boolean>,
-  username: string,
-): LabelProgress {
-  const children: ChildStatus[] = [];
-
-  for (const issue of labelIssues) {
-    const assignedToUser = !!(username && issue.issue.assignee === username);
-
-    children.push({
-      id: issue.issue_id,
-      status: issue.issue.status,
-      hasActiveTask: isActiveMap.get(issue.issue_id) ?? false,
-      assignedToUser,
-    });
-  }
-
-  return { labelId, name, color, children };
-}
 
 interface FilterItemProps {
   isActive: boolean;
@@ -62,56 +22,14 @@ function FilterItem({ isActive, onClick, className, children }: FilterItemProps)
   );
 }
 
-interface LabelFilterItemProps {
-  lp: LabelProgress;
-  isActive: boolean;
-  onSelect: (filterId: string | null) => void;
-}
-
-function LabelFilterItem({ lp, isActive, onSelect }: LabelFilterItemProps) {
-  const filterId = `${LABEL_FILTER_PREFIX}${lp.labelId}`;
-  const handleClick = useCallback(
-    () => onSelect(isActive ? null : filterId),
-    [onSelect, isActive, filterId],
-  );
-  const keyboardClickProps = useKeyboardClick(handleClick);
-
-  const { data: totalCount } = useIssueCount({ labels: lp.labelId });
-  const { data: closedCount } = useIssueCount({ labels: lp.labelId, status: "closed" });
-
-  const closed = closedCount ?? 0;
-  const total = totalCount ?? 0;
-
-  return (
-    <li
-      className={`${styles.item} ${isActive ? styles.active : ""}`}
-      onClick={handleClick}
-      {...keyboardClickProps}
-    >
-      <span className={styles.itemLeft}>
-        <span className={styles.itemLabel}>
-          <span className={styles.labelDot} style={{ background: lp.color }} />
-          {lp.name}
-        </span>
-        <span className={styles.itemStats}>
-          <StatusBoxes children={lp.children} />
-          {closed}/{total}
-        </span>
-      </span>
-    </li>
-  );
-}
-
 interface IssueFilterSidebarProps {
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
   drawerOpen: boolean;
   onDrawerClose: () => void;
-  isActiveMap: Map<string, boolean>;
-  username: string;
-  inboxCount: number;
-  myIssuesCount: number;
+  yourIssuesCount: number;
+  assignedCount: number;
 }
 
 export function IssueFilterSidebar({
@@ -120,10 +38,8 @@ export function IssueFilterSidebar({
   collapsed,
   drawerOpen,
   onDrawerClose,
-  isActiveMap,
-  username,
-  inboxCount,
-  myIssuesCount,
+  yourIssuesCount,
+  assignedCount,
 }: IssueFilterSidebarProps) {
   /** On mobile, selecting an issue should also close the drawer. */
   const handleFilterChange = useCallback(
@@ -134,62 +50,33 @@ export function IssueFilterSidebar({
     [onFilterChange, onDrawerClose],
   );
 
-  const handleInboxClick = useCallback(() => handleFilterChange("inbox"), [handleFilterChange]);
-  const handleMyIssuesClick = useCallback(
-    () => handleFilterChange("my-issues"),
+  const handleYourIssuesClick = useCallback(
+    () => handleFilterChange("your-issues"),
     [handleFilterChange],
   );
-  const handleEverythingClick = useCallback(() => handleFilterChange(null), [handleFilterChange]);
-
-  const { data: labels } = useLabels();
-  const issuesByLabel = useLabelIssues(labels);
-
-  const labelProgressList = useMemo(() => {
-    if (!labels || labels.length === 0) return [];
-    return labels.map((label) => {
-      const labelIssues = issuesByLabel.get(label.label_id) ?? [];
-      return buildLabelProgress(label.label_id, label.name, label.color, labelIssues, isActiveMap, username);
-    });
-  }, [labels, issuesByLabel, isActiveMap, username]);
+  const handleAssignedClick = useCallback(
+    () => handleFilterChange("assigned"),
+    [handleFilterChange],
+  );
 
   const renderIssueList = (hideWhenCollapsed: boolean) => (
     <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
       <FilterItem
-        isActive={activeFilter === "inbox"}
-        onClick={handleInboxClick}
+        isActive={activeFilter === "your-issues"}
+        onClick={handleYourIssuesClick}
         className={styles.item}
       >
-        <span className={styles.itemLabel}>Inbox</span>
-        {inboxCount > 0 && <span className={styles.inboxCount}>{inboxCount}</span>}
+        <span className={styles.itemLabel}>Your Issues</span>
+        {yourIssuesCount > 0 && <span className={styles.inboxCount}>{yourIssuesCount}</span>}
       </FilterItem>
       <FilterItem
-        isActive={activeFilter === "my-issues"}
-        onClick={handleMyIssuesClick}
+        isActive={activeFilter === "assigned"}
+        onClick={handleAssignedClick}
         className={styles.item}
       >
-        <span className={styles.itemLabel}>My Issues</span>
-        {myIssuesCount > 0 && <span className={styles.inboxCount}>{myIssuesCount}</span>}
+        <span className={styles.itemLabel}>Assigned to You</span>
+        {assignedCount > 0 && <span className={styles.inboxCount}>{assignedCount}</span>}
       </FilterItem>
-      <FilterItem
-        isActive={activeFilter === null}
-        onClick={handleEverythingClick}
-        className={styles.item}
-      >
-        <span className={styles.itemLabel}>Everything</span>
-      </FilterItem>
-      {labelProgressList.length > 0 && (
-        <>
-          <li className={styles.labelSectionHeader}>Labels</li>
-          {labelProgressList.map((lp) => (
-            <LabelFilterItem
-              key={lp.labelId}
-              lp={lp}
-              isActive={activeFilter === `${LABEL_FILTER_PREFIX}${lp.labelId}`}
-              onSelect={handleFilterChange}
-            />
-          ))}
-        </>
-      )}
     </ul>
   );
 
