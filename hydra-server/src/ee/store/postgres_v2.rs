@@ -107,6 +107,7 @@ const TABLE_NOTIFICATIONS: &str = "metis.notifications";
 const TABLE_AGENTS: &str = "metis.agents";
 const TABLE_LABELS: &str = "metis.labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
+const TABLE_AUTH_TOKENS: &str = "metis.auth_tokens";
 const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 
@@ -3560,6 +3561,20 @@ impl ReadOnlyStore for PostgresStoreV2 {
         rows.into_iter().map(parse_relationship_row).collect()
     }
 
+    // ---- Auth tokens (read-only) ----
+
+    async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError> {
+        let sql = format!(
+            "SELECT token_hash FROM {TABLE_AUTH_TOKENS} WHERE actor_name = $1 ORDER BY created_at"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(actor_name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows)
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
@@ -4499,6 +4514,33 @@ impl Store for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ---- Auth token mutations ----
+
+    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+        let sql = format!(
+            "INSERT INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash) \
+             VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING"
+        );
+        sqlx::query(&sql)
+            .bind(actor_name)
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError> {
+        let sql = format!("DELETE FROM {TABLE_AUTH_TOKENS} WHERE actor_name = $1");
+        sqlx::query(&sql)
+            .bind(actor_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     // ---- User secret mutations ----

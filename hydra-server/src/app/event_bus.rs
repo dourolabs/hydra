@@ -1597,6 +1597,12 @@ impl ReadOnlyStore for StoreWithEvents {
             .await
     }
 
+    // ---- Auth tokens (read-only) ----
+
+    async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError> {
+        self.inner.get_auth_token_hashes(actor_name).await
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(

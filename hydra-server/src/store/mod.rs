@@ -612,6 +612,11 @@ pub trait ReadOnlyStore: Send + Sync {
         rel_type: RelationshipType,
     ) -> Result<Vec<ObjectRelationship>, StoreError>;
 
+    // ---- Auth tokens (read-only) ----
+
+    /// Returns all token hashes for the given actor.
+    async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError>;
+
     // ---- User secrets (read-only) ----
 
     /// Returns the encrypted value of a user secret, or None if not set.
@@ -961,6 +966,14 @@ pub trait Store: ReadOnlyStore {
         target_id: &HydraId,
         rel_type: RelationshipType,
     ) -> Result<bool, StoreError>;
+
+    // ---- Auth token mutations ----
+
+    /// Adds a token hash for the given actor.
+    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError>;
+
+    /// Deletes all auth tokens for the given actor.
+    async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError>;
 
     // ---- User secret mutations ----
 
