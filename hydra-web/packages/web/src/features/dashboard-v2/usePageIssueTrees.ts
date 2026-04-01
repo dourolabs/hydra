@@ -73,7 +73,7 @@ function useSessions(allIssueIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5 (Summary records): Fetch issue summaries for all descendants
+// Step 4 (Summary records): Fetch issue summaries for all descendants
 // ---------------------------------------------------------------------------
 
 function useIssueSummaries(descendantIds: string[]) {
@@ -89,7 +89,7 @@ function useIssueSummaries(descendantIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 6 (Build trees): Pure function that builds tree data from collected set
+// Step 5 (Build trees): Pure function that builds tree data from collected set
 // ---------------------------------------------------------------------------
 
 function buildIssueTrees(set: CollectedSet): {
