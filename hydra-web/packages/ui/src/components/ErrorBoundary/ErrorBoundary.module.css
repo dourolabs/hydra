@@ -32,7 +32,7 @@
 }
 
 .button {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-sm);
   color: var(--color-accent);
   background: transparent;

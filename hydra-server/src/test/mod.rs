@@ -1,6 +1,7 @@
 pub(crate) mod agents;
 mod auth;
 pub(crate) mod common;
+mod device_flow;
 mod documents;
 mod events;
 mod github_app;

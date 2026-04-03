@@ -33,10 +33,12 @@ pub struct LocalDockerJobEngine {
     server_url: String,
     /// Maps hydra_id → container info for tracking.
     containers: DashMap<SessionId, ContainerInfo>,
+    /// The entrypoint command for containers created by this engine.
+    entrypoint: Vec<String>,
 }
 
 impl LocalDockerJobEngine {
-    pub async fn new(server_url: String) -> Result<Self, JobEngineError> {
+    pub async fn new(server_url: String, entrypoint: Vec<String>) -> Result<Self, JobEngineError> {
         let docker = Docker::connect_with_local_defaults().map_err(|e| {
             JobEngineError::Internal(format!("Failed to connect to Docker daemon: {e}"))
         })?;
@@ -44,6 +46,7 @@ impl LocalDockerJobEngine {
             docker,
             server_url,
             containers: DashMap::new(),
+            entrypoint,
         };
         engine.recover_containers().await?;
         Ok(engine)
@@ -241,24 +244,42 @@ impl JobEngine for LocalDockerJobEngine {
             return Err(JobEngineError::AlreadyExists(hydra_id.clone()));
         }
 
-        info!(hydra_id = %hydra_id, image = %image, "pulling Docker image");
+        // Only pull the image if it doesn't already exist locally (IfNotPresent policy).
+        let image_exists_locally = self.docker.inspect_image(image).await.is_ok();
 
-        // Pull the image (best-effort; it may already exist locally).
-        let mut pull_stream = self.docker.create_image(
-            Some(CreateImageOptions {
-                from_image: image,
-                ..Default::default()
-            }),
-            None,
-            None,
-        );
-        while let Some(result) = pull_stream.next().await {
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!(hydra_id = %hydra_id, error = %e, "image pull warning (may already exist locally)");
+        if image_exists_locally {
+            info!(hydra_id = %hydra_id, image = %image, "image exists locally, skipping pull");
+        } else {
+            info!(hydra_id = %hydra_id, image = %image, "image not found locally, pulling");
+            let mut pull_stream = self.docker.create_image(
+                Some(CreateImageOptions {
+                    from_image: image,
+                    ..Default::default()
+                }),
+                None,
+                None,
+            );
+            while let Some(result) = pull_stream.next().await {
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(hydra_id = %hydra_id, image = %image, error = %e, "failed to pull Docker image");
+                        return Err(JobEngineError::Internal(format!(
+                            "Failed to pull image '{image}': {e}"
+                        )));
+                    }
                 }
             }
+
+            info!(hydra_id = %hydra_id, image = %image, "image pull completed successfully");
+
+            // Verify image is available locally after pull.
+            self.docker.inspect_image(image).await.map_err(|e| {
+                error!(hydra_id = %hydra_id, image = %image, error = %e, "image not found after pull attempt");
+                JobEngineError::Internal(format!(
+                    "Image '{image}' not found after pull attempt: {e}"
+                ))
+            })?;
         }
 
         let container_name = Self::container_name(hydra_id);
@@ -288,7 +309,7 @@ impl JobEngine for LocalDockerJobEngine {
         let config = Config {
             image: Some(image.to_string()),
             env: Some(env),
-            entrypoint: Some(vec!["hydra".to_string()]),
+            entrypoint: Some(self.entrypoint.clone()),
             cmd: Some(vec![
                 "sessions".to_string(),
                 "worker-run".to_string(),
@@ -317,7 +338,10 @@ impl JobEngine for LocalDockerJobEngine {
                 bollard::errors::Error::DockerResponseServerError {
                     status_code: 409, ..
                 } => JobEngineError::AlreadyExists(hydra_id.clone()),
-                _ => JobEngineError::Internal(format!("Docker create container error: {e}")),
+                _ => {
+                    error!(hydra_id = %hydra_id, image = %image, error = %e, "failed to create Docker container");
+                    JobEngineError::Internal(format!("Docker create container error: {e}"))
+                }
             })?;
 
         let creation_time = Utc::now();
@@ -330,10 +354,33 @@ impl JobEngine for LocalDockerJobEngine {
         );
 
         // Start the container.
-        self.docker
+        if let Err(e) = self
+            .docker
             .start_container(&response.id, None::<StartContainerOptions<String>>)
             .await
-            .map_err(|e| JobEngineError::Internal(format!("Docker start container error: {e}")))?;
+        {
+            error!(hydra_id = %hydra_id, container_id = %response.id, error = %e, "failed to start Docker container");
+
+            // Remove from tracking so find_job_by_hydra_id won't find this failed container.
+            self.containers.remove(hydra_id);
+
+            // Best-effort removal of the orphaned Docker container.
+            let remove_opts = RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            };
+            if let Err(remove_err) = self
+                .docker
+                .remove_container(&response.id, Some(remove_opts))
+                .await
+            {
+                warn!(hydra_id = %hydra_id, container_id = %response.id, error = %remove_err, "failed to remove container after start failure");
+            }
+
+            return Err(JobEngineError::Internal(format!(
+                "Docker start container error: {e}"
+            )));
+        }
 
         info!(
             hydra_id = %hydra_id,
@@ -637,5 +684,263 @@ mod tests {
     fn extract_session_id_from_names_none() {
         let result = extract_session_id_from_names(None);
         assert!(result.is_none());
+    }
+
+    // ── Integration tests requiring a Docker daemon ──────────────────
+
+    use crate::domain::actors::Actor;
+    use crate::domain::users::Username;
+
+    const TEST_IMAGE: &str = "alpine:latest";
+    fn make_actor() -> (Actor, String) {
+        Actor::new_for_session(SessionId::new(), Username::from("test-user"))
+    }
+
+    fn dummy_env() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    /// Create a `LocalDockerJobEngine` connected to the local Docker daemon.
+    async fn make_docker_engine() -> LocalDockerJobEngine {
+        LocalDockerJobEngine::new(
+            "http://localhost:0".to_string(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 5".to_string(),
+            ],
+        )
+        .await
+        .expect("Docker daemon must be available for integration tests")
+    }
+
+    /// Wait until the container tracked by `hydra_id` is no longer running.
+    async fn wait_for_container_exit(engine: &LocalDockerJobEngine, hydra_id: &SessionId) {
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
+        loop {
+            let job = engine.find_job_by_hydra_id(hydra_id).await.unwrap();
+            if job.status != JobStatus::Running && job.status != JobStatus::Pending {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("timed out waiting for container to exit");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    /// Ensure the test image is available locally by pulling it.
+    async fn ensure_image_pulled(docker: &Docker) {
+        let mut stream = docker.create_image(
+            Some(CreateImageOptions {
+                from_image: TEST_IMAGE,
+                ..Default::default()
+            }),
+            None,
+            None,
+        );
+        while let Some(result) = stream.next().await {
+            result.expect("failed to pull test image");
+        }
+    }
+
+    /// Remove the test image locally (best-effort; ignores errors if image is in use).
+    async fn remove_image_if_exists(docker: &Docker) {
+        let _ = docker
+            .remove_image(
+                TEST_IMAGE,
+                Some(bollard::image::RemoveImageOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+                None,
+            )
+            .await;
+    }
+
+    /// Clean up the container created during a test.
+    async fn cleanup_container(engine: &LocalDockerJobEngine, hydra_id: &SessionId) {
+        let _ = engine.kill_job(hydra_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_create_job_skips_pull_when_image_exists_locally() {
+        let engine = make_docker_engine().await;
+        let docker = Docker::connect_with_local_defaults().unwrap();
+
+        // Pre-pull the image so it exists locally.
+        ensure_image_pulled(&docker).await;
+
+        // Verify the image is present.
+        assert!(
+            docker.inspect_image(TEST_IMAGE).await.is_ok(),
+            "image should be present locally after pull"
+        );
+
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        // create_job should succeed using the locally-available image without a remote pull.
+        engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                TEST_IMAGE,
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await
+            .expect("create_job should succeed with locally available image");
+
+        // The container should have been created and started.
+        let job = engine.find_job_by_hydra_id(&hydra_id).await.unwrap();
+        assert_eq!(job.id, hydra_id);
+        assert!(job.creation_time.is_some());
+
+        // Wait for the container to finish (alpine with no entrypoint match will exit quickly).
+        wait_for_container_exit(&engine, &hydra_id).await;
+
+        cleanup_container(&engine, &hydra_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_create_job_pulls_image_when_not_present_locally() {
+        let engine = make_docker_engine().await;
+        let docker = Docker::connect_with_local_defaults().unwrap();
+
+        // Remove the image to ensure it's not present locally.
+        remove_image_if_exists(&docker).await;
+
+        // Verify the image is absent (best-effort; may still be present if in use).
+        let image_absent = docker.inspect_image(TEST_IMAGE).await.is_err();
+        if !image_absent {
+            // If we couldn't remove the image (e.g., in use by another container),
+            // skip this test rather than fail.
+            eprintln!("SKIP: could not remove test image; it may be in use");
+            return;
+        }
+
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        // create_job should pull the image and succeed.
+        engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                TEST_IMAGE,
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await
+            .expect("create_job should succeed after pulling missing image");
+
+        // Verify the image is now present locally (pulled by create_job).
+        assert!(
+            docker.inspect_image(TEST_IMAGE).await.is_ok(),
+            "image should be present after create_job pulled it"
+        );
+
+        // The container should exist.
+        let job = engine.find_job_by_hydra_id(&hydra_id).await.unwrap();
+        assert_eq!(job.id, hydra_id);
+        assert!(job.creation_time.is_some());
+
+        // Wait for the container to finish.
+        wait_for_container_exit(&engine, &hydra_id).await;
+
+        cleanup_container(&engine, &hydra_id).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_start_failure_removes_container_from_tracking() {
+        // Create an engine with a nonexistent entrypoint to trigger a start failure.
+        let engine = LocalDockerJobEngine::new(
+            "http://localhost:0".to_string(),
+            vec!["nonexistent-binary".to_string()],
+        )
+        .await
+        .expect("Docker daemon must be available for integration tests");
+        let docker = Docker::connect_with_local_defaults().unwrap();
+
+        ensure_image_pulled(&docker).await;
+
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        let result = engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                TEST_IMAGE,
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await;
+
+        // The entrypoint "hydra" doesn't exist in alpine, so start_container should fail.
+        // If it somehow succeeds (e.g., alpine has a shell that handles it), clean up and skip.
+        if result.is_ok() {
+            // Container started successfully — the entrypoint didn't cause a start failure.
+            // Clean up and skip the assertion (this depends on Docker runtime behavior).
+            cleanup_container(&engine, &hydra_id).await;
+            eprintln!("SKIP: container started successfully; start failure not triggered");
+            return;
+        }
+
+        // After start failure, find_job_by_hydra_id should return NotFound.
+        let find_result = engine.find_job_by_hydra_id(&hydra_id).await;
+        assert!(
+            matches!(find_result, Err(JobEngineError::NotFound(_))),
+            "find_job_by_hydra_id should return NotFound after start failure, got: {find_result:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires a running Docker daemon
+    async fn docker_create_job_fails_for_nonexistent_image() {
+        let engine = make_docker_engine().await;
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        let result = engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                "nonexistent-image-xxxxx:latest",
+                &dummy_env(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+                "500m".to_string(),
+                "512Mi".to_string(),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "create_job should fail for a nonexistent image"
+        );
+        let err = result.unwrap_err();
+        let err_msg = format!("{err}");
+        assert!(
+            err_msg.contains("nonexistent-image-xxxxx"),
+            "error should mention the image name, got: {err_msg}"
+        );
     }
 }

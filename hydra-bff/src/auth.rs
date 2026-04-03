@@ -7,6 +7,7 @@ use axum::{
     Router,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use hydra_common::api::v1::login::{DevicePollResponse, DevicePollStatus};
 use serde::Deserialize;
 use tracing::{error, info};
 
@@ -19,6 +20,8 @@ pub const COOKIE_NAME: &str = "hydra_token";
 pub fn router<U: Upstream>() -> Router<BffState<U>> {
     Router::new()
         .route("/login", post(auth_login::<U>))
+        .route("/login/device/start", post(device_start::<U>))
+        .route("/login/device/poll", post(device_poll::<U>))
         .route("/logout", post(auth_logout::<U>))
         .route("/me", get(auth_me::<U>))
 }
@@ -175,11 +178,68 @@ async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) ->
     axum::Json(user).into_response()
 }
 
+async fn device_start<U: Upstream>(
+    State(bff): State<BffState<U>>,
+    request: http::Request<Body>,
+) -> impl IntoResponse {
+    info!(
+        bff_path = "/auth/login/device/start",
+        upstream_path = "/v1/login/device/start",
+        "proxying device flow start to upstream"
+    );
+    crate::proxy::forward_to_upstream(&bff, "/v1/login/device/start", None, request).await
+}
+
+async fn device_poll<U: Upstream>(
+    State(bff): State<BffState<U>>,
+    jar: CookieJar,
+    request: http::Request<Body>,
+) -> impl IntoResponse {
+    info!(
+        bff_path = "/auth/login/device/poll",
+        upstream_path = "/v1/login/device/poll",
+        "proxying device flow poll to upstream"
+    );
+
+    let response =
+        crate::proxy::forward_to_upstream(&bff, "/v1/login/device/poll", None, request).await;
+
+    if !response.status().is_success() {
+        return response;
+    }
+
+    // Read the response body to check if login completed.
+    let (parts, body) = response.into_parts();
+    let body_bytes = axum::body::to_bytes(body, 1024 * 64)
+        .await
+        .unwrap_or_default();
+
+    // Try to parse the response to check for a login_token.
+    if let Ok(poll_response) = serde_json::from_slice::<DevicePollResponse>(&body_bytes) {
+        if poll_response.status == DevicePollStatus::Complete {
+            if let Some(ref login_token) = poll_response.login_token {
+                info!("device flow login complete, setting auth cookie");
+                let cookie = build_auth_cookie(login_token, bff.config.cookie_secure);
+                let jar = jar.add(cookie);
+                return (
+                    jar,
+                    axum::response::Response::from_parts(parts, Body::from(body_bytes)),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Return the response as-is (pending or error status).
+    axum::response::Response::from_parts(parts, Body::from(body_bytes))
+}
+
 pub fn build_auth_cookie(token: &str, secure: bool) -> Cookie<'static> {
     let mut builder = Cookie::build((COOKIE_NAME, token.to_string()))
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::Strict)
-        .path("/");
+        .path("/")
+        .max_age(time::Duration::days(30));
     if secure {
         builder = builder.secure(true);
     }

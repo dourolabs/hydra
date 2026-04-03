@@ -96,12 +96,8 @@ pub enum PatchesCommand {
         force: bool,
 
         /// Base ref for computing the commit range (defaults to origin/main).
-        #[arg(
-            long = "base-ref",
-            value_name = "BASE_REF",
-            default_value = "origin/main"
-        )]
-        base_ref: String,
+        #[arg(long = "base-ref", value_name = "BASE_REF")]
+        base_ref: Option<String>,
     },
 
     /// Apply a patch to the current git repository.
@@ -156,13 +152,17 @@ pub enum PatchesCommand {
         #[arg(long = "force")]
         force: bool,
 
-        /// Base ref for computing the commit range (defaults to origin/main).
+        /// Associate the patch update with an existing issue id.
         #[arg(
-            long = "base-ref",
-            value_name = "BASE_REF",
-            default_value = "origin/main"
+            long = "issue-id",
+            value_name = "ISSUE_ID",
+            env = ENV_HYDRA_ISSUE_ID
         )]
-        base_ref: String,
+        issue_id: Option<IssueId>,
+
+        /// Base ref for computing the commit range (defaults to origin/main).
+        #[arg(long = "base-ref", value_name = "BASE_REF")]
+        base_ref: Option<String>,
     },
 
     /// Merge a patch by squash-merging onto a base branch and pushing.
@@ -238,6 +238,7 @@ pub async fn run(
             force,
             base_ref,
         } => {
+            let base_ref = resolve_base_ref(client, base_ref, Some(&issue_id)).await?;
             let patch = create_patch(
                 client,
                 title,
@@ -267,8 +268,10 @@ pub async fn run(
             description,
             status,
             force,
+            issue_id,
             base_ref,
         } => {
+            let base_ref = resolve_base_ref(client, base_ref, issue_id.as_ref()).await?;
             let patch =
                 update_patch(client, id, title, description, status, force, &base_ref).await?;
             write_patch_output(context.output_format, &patch)?;
@@ -470,6 +473,38 @@ async fn fetch_patches(
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)
+}
+
+/// Resolve the effective base ref for a patch.
+///
+/// When `base_ref` is explicitly provided by the caller, it is returned as-is.
+/// Otherwise, if an `issue_id` is given, the issue's `session_settings.branch`
+/// is used (prefixed with `origin/`). Falls back to `"origin/main"`.
+async fn resolve_base_ref(
+    client: &dyn HydraClientInterface,
+    base_ref: Option<String>,
+    issue_id: Option<&IssueId>,
+) -> Result<String> {
+    if let Some(base_ref) = base_ref {
+        return Ok(base_ref);
+    }
+
+    if let Some(issue_id) = issue_id {
+        match client.get_issue(issue_id, false).await {
+            Ok(issue_record) => {
+                if let Some(branch) = &issue_record.issue.session_settings.branch {
+                    return Ok(format!("origin/{branch}"));
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to fetch issue '{issue_id}' for base-ref resolution: {e}"
+                );
+            }
+        }
+    }
+
+    Ok("origin/main".to_string())
 }
 
 async fn create_patch(
@@ -1147,7 +1182,9 @@ mod tests {
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
     use hydra_common::{
-        issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, UpsertIssueResponse},
+        issues::{
+            Issue, IssueStatus, IssueType, IssueVersionRecord, SessionSettings, UpsertIssueResponse,
+        },
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
             ListPatchesResponse, Patch, PatchVersionRecord, Review, UpsertPatchResponse,
@@ -2447,6 +2484,87 @@ mod tests {
             "expected stale review error, got: {error}"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_base_ref_uses_issue_branch_when_no_explicit_base_ref() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-branch");
+
+        let issue_record = IssueVersionRecord::new(
+            id.clone(),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Test".to_string(),
+                "test".to_string(),
+                Username::from("creator"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some({
+                    let mut ss = SessionSettings::default();
+                    ss.branch = Some("feature-branch".to_string());
+                    ss
+                }),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+        let get_issue_mock = mock_get_issue(&server, issue_record);
+
+        let result = resolve_base_ref(&client, None, Some(&id)).await?;
+        assert_eq!(result, "origin/feature-branch");
+        get_issue_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_base_ref_prefers_explicit_base_ref() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-explicit");
+
+        let result =
+            resolve_base_ref(&client, Some("origin/custom".to_string()), Some(&id)).await?;
+        assert_eq!(result, "origin/custom");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_base_ref_defaults_to_origin_main() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-default");
+
+        // Issue has no branch set.
+        let issue_record = sample_issue_record(&id, Vec::new());
+        let get_issue_mock = mock_get_issue(&server, issue_record);
+
+        let result = resolve_base_ref(&client, None, Some(&id)).await?;
+        assert_eq!(result, "origin/main");
+        get_issue_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_base_ref_defaults_to_origin_main_without_issue() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+
+        let result = resolve_base_ref(&client, None, None).await?;
+        assert_eq!(result, "origin/main");
         Ok(())
     }
 }

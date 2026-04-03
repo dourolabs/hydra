@@ -24,7 +24,7 @@
 }
 
 .patchIdLink {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-xs);
   color: var(--color-accent);
   font-weight: 600;

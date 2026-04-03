@@ -47,7 +47,7 @@ async function captureScreenshot(
 base.describe("Visual Audit - Login", () => {
   base("capture login page at desktop and mobile viewports", async ({ page }) => {
     await page.goto("/login");
-    await page.waitForSelector('[data-testid="token-input"]');
+    await page.waitForSelector('[data-testid="github-login-button"]');
 
     await captureScreenshot(page, "login", DESKTOP_VIEWPORT, "desktop");
     await captureScreenshot(page, "login", MOBILE_VIEWPORT, "mobile");

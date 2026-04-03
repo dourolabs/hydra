@@ -46,6 +46,10 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
     }
 
+    pub fn too_many_requests(message: impl Display) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, message)
+    }
+
     pub fn internal(message: impl Display) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }

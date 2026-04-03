@@ -143,7 +143,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 let rewritten = rewrite_localhost_for_docker(hostname);
                 format!("http://{rewritten}")
             };
-            match LocalDockerJobEngine::new(server_url).await {
+            match LocalDockerJobEngine::new(server_url, vec!["hydra".to_string()]).await {
                 Ok(engine) => {
                     info!("using local Docker job engine");
                     Arc::new(engine)
@@ -220,6 +220,8 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         .route("/health", get(health_check))
         .route("/v1/version", get(routes::version::get_version))
         .route("/v1/login", post(routes::login::login))
+        .route("/v1/login/device/start", post(routes::login::device_start))
+        .route("/v1/login/device/poll", post(routes::login::device_poll))
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),

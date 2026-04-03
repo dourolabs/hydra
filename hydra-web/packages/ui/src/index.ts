@@ -55,7 +55,7 @@ export type { SessionStatusIndicatorProps, SessionSummary, SessionStatus } from 
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";
 
-export { CopyButton } from "./components/CopyButton";
+export { CopyButton, fallbackCopyText } from "./components/CopyButton";
 export type { CopyButtonProps } from "./components/CopyButton";
 
 // Hooks

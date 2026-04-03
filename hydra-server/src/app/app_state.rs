@@ -4,8 +4,10 @@ use crate::{
     job_engine::JobEngine,
     store::{ReadOnlyStore, Store},
 };
+use dashmap::DashMap;
 use octocrab::Octocrab;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
@@ -44,6 +46,17 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
     }
 }
 
+/// A pending GitHub device flow session, stored in memory while the user
+/// completes authorization on github.com.
+pub struct DeviceSession {
+    pub device_code: String,
+    pub github_client_id: String,
+    pub oauth_base_url: String,
+    pub expires_at: Instant,
+    pub poll_interval: Duration,
+    pub last_poll: Instant,
+}
+
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
 pub struct AppState {
@@ -54,6 +67,7 @@ pub struct AppState {
     pub job_engine: Arc<dyn JobEngine>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
     pub secret_manager: Arc<SecretManager>,
+    pub device_sessions: Arc<DashMap<String, DeviceSession>>,
 }
 
 impl AppState {
@@ -75,6 +89,7 @@ impl AppState {
             job_engine,
             policy_engine: Arc::new(policy_engine),
             secret_manager,
+            device_sessions: Arc::new(DashMap::new()),
         }
     }
 

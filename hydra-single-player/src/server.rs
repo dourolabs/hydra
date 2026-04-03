@@ -856,13 +856,42 @@ fn wait_for_server_healthy() -> Result<()> {
 fn cmd_start(log_level: Option<LogLevel>) -> Result<()> {
     ensure_initialized()?;
 
-    if is_server_running()? {
+    // Use PID-based check instead of HTTP health check to avoid initializing
+    // TLS state before fork(). Pre-fork TLS initialization corrupts the child
+    // process's TLS globals, causing native crashes in github_pr_sync.
+    if is_server_process_alive() {
         println!("Server is already running.");
         print_running_status();
         return Ok(());
     }
 
+    // Resolve the token path before starting the server so we can delete any
+    // stale token file and reuse the path for wait_for_auth_token later.
+    let server_config_path = expand_path(SERVER_CONFIG_PATH);
+    let server_config = hydra_server::config::AppConfig::load(&server_config_path)?;
+    let token_path = server_config
+        .auth
+        .auth_token_file()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| expand_path(AUTH_TOKEN_PATH));
+
+    // Delete any stale auth-token file from a previous run so that
+    // wait_for_auth_token() only returns once the server has written a fresh one.
+    let _ = fs::remove_file(&token_path);
+
     start_server_in_process(log_level)?;
+
+    // Verify the server is healthy after fork (same as cmd_init).
+    wait_for_server_healthy()?;
+
+    // Refresh the CLI auth token. setup_local_auth regenerates the token on
+    // every server start, so the CLI config must be updated to match.
+    let auth_token = wait_for_auth_token(&token_path)?;
+    verify_auth_token(&auth_token)?;
+
+    let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
+    config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
+
     println!("Server started.");
     print_running_status();
     Ok(())
@@ -1025,21 +1054,7 @@ fn start_server_in_process(log_level: Option<LogLevel>) -> Result<()> {
 /// embedded frontend, auto-login). This replaces the plain `hydra_server::run()`
 /// to add the single-player-specific features.
 async fn run_server_with_bff() -> Result<()> {
-    // Enable backtraces for panic diagnostics
-    if std::env::var_os("RUST_BACKTRACE").is_none() {
-        // SAFETY: called before any other threads are spawned in this process.
-        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
-    }
-
     tracing_subscriber::fmt::init();
-
-    // Install panic hook that logs via tracing (goes to the log file)
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let backtrace = std::backtrace::Backtrace::force_capture();
-        tracing::error!("PANIC: {info}\n{backtrace}");
-        default_hook(info);
-    }));
 
     let config_path = hydra_server::config_path();
     let app_config = hydra_server::config::AppConfig::load(&config_path)?;
@@ -1171,6 +1186,22 @@ fn read_pid() -> Option<i32> {
     fs::read_to_string(pid_file)
         .ok()
         .and_then(|s| s.trim().parse().ok())
+}
+
+/// Check whether the server process is alive using the PID file and `kill(pid, 0)`.
+///
+/// Unlike `is_server_running()`, this does NOT create any HTTP client or initialize
+/// TLS state, making it safe to call before `fork()`.
+#[cfg(unix)]
+fn is_server_process_alive() -> bool {
+    match read_pid() {
+        Some(pid) => {
+            // Signal 0 checks process existence without sending a signal.
+            let ret = unsafe { libc::kill(pid, 0) };
+            ret == 0
+        }
+        None => false,
+    }
 }
 
 // ---------------------------------------------------------------------------

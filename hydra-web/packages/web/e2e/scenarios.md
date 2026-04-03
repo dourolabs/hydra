@@ -64,4 +64,4 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:dashboard` — Dashboard is usable on mobile viewport
 - `@mobile:issue-detail` — Issue detail page is usable on mobile viewport
 - `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
-- `@mobile:login` — Login page is usable on mobile viewport (planned)
+- `@mobile:login` — Login page is usable on mobile viewport

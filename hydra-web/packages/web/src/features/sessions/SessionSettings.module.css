@@ -24,7 +24,7 @@
 
 .value {
   color: var(--color-text-primary);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   margin: 0;
 }
 

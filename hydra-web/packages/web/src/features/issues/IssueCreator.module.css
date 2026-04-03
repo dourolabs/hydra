@@ -28,7 +28,7 @@
   background: none;
   border: none;
   color: var(--color-text-secondary);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-sm);
   cursor: pointer;
   padding: 0;

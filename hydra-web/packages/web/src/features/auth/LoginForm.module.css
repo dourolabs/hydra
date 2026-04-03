@@ -5,3 +5,61 @@
   width: 100%;
   max-width: 360px;
 }
+
+.instructions {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.codeContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.userCode {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--color-text-primary);
+}
+
+.verificationLink {
+  text-align: center;
+  color: var(--color-link);
+  font-size: var(--font-size-sm);
+}
+
+.verificationLink:hover {
+  text-decoration: underline;
+}
+
+.waitingText {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.switchLink {
+  all: unset;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.switchLink:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+}

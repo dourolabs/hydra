@@ -51,7 +51,9 @@ app.route("", createAuthRoutes());
 // BFF proxy rewrite: /api/v1/* -> /v1/* with cookie-to-Bearer conversion
 app.all("/api/v1/*", async (c) => {
   const token = getCookie(c, "hydra_token");
-  if (!token) {
+  // Allow unauthenticated access to the GitHub client-id endpoint
+  // (called before user is logged in to determine if GitHub auth is available)
+  if (!token && c.req.path !== "/api/v1/github/app/client-id") {
     return c.json({ error: "not authenticated" }, 401);
   }
 
@@ -78,10 +80,15 @@ app.all("/api/v1/*", async (c) => {
   return app.fetch(newRequest);
 });
 
-// Auth middleware for all /v1/* routes except /v1/login
+// Auth middleware for all /v1/* routes except /v1/login and /v1/github/app/client-id
 app.use("/v1/*", async (c, next) => {
   // Skip auth for login
   if (c.req.path === "/v1/login" && c.req.method === "POST") {
+    await next();
+    return;
+  }
+  // Skip auth for GitHub client-id check (called before user is logged in)
+  if (c.req.path === "/v1/github/app/client-id" && c.req.method === "GET") {
     await next();
     return;
   }

@@ -21,7 +21,7 @@
   gap: 2px;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
 }
 
 .ghLink {
@@ -48,7 +48,7 @@
 .issueLink {
   color: var(--color-accent);
   text-decoration: none;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   font-size: var(--font-size-sm);
   font-weight: 600;
 }
@@ -91,7 +91,7 @@
 .reviewTime {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   margin-left: auto;
 }
 

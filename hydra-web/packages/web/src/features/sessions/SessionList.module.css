@@ -36,7 +36,7 @@
 .sessionId {
   color: var(--color-accent);
   font-weight: 600;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-terminal);
   text-decoration: none;
 }
 

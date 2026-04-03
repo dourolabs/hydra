@@ -6,7 +6,7 @@ export interface CopyButtonProps {
   onCopied?: () => void;
 }
 
-function fallbackCopyText(text: string): boolean {
+export function fallbackCopyText(text: string): boolean {
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.style.position = "fixed";

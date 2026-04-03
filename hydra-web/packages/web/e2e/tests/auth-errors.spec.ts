@@ -14,6 +14,7 @@ test.describe("Auth Errors @auth:invalid-token @auth:logout", () => {
     });
 
     await page.goto("/login");
+    await page.click("text=Sign in with token");
     await page.fill('[data-testid="token-input"]', "invalid-token-99999");
     await page.click('[data-testid="login-button"]');
 
@@ -33,6 +34,7 @@ test.describe("Auth Errors @auth:invalid-token @auth:logout", () => {
       headers: { Authorization: "Bearer dev-token-12345" },
     });
     await page.goto("/login");
+    await page.click("text=Sign in with token");
     await page.waitForSelector('[data-testid="token-input"]');
     await page.fill('[data-testid="token-input"]', "dev-token-12345");
     await page.click('[data-testid="login-button"]');

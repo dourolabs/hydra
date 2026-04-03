@@ -13,6 +13,9 @@ export const test = base.extend<AuthFixtures>({
       headers: { Authorization: "Bearer dev-token-12345" },
     });
     await page.goto("/login");
+    // GitHub auth is now available, so click "Sign in with token" to access token form
+    await page.waitForSelector('[data-testid="github-login-button"]');
+    await page.click("text=Sign in with token");
     await page.waitForSelector('[data-testid="token-input"]');
     await page.fill('[data-testid="token-input"]', "dev-token-12345");
     await page.click('[data-testid="login-button"]');

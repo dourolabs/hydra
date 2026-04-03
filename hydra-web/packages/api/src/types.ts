@@ -24,6 +24,10 @@ export type { CreatePatchAssetResponse } from "./generated/CreatePatchAssetRespo
 export type { CreateRepositoryRequest } from "./generated/CreateRepositoryRequest";
 export type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
 export type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
+export type { DevicePollRequest } from "./generated/DevicePollRequest";
+export type { DevicePollResponse } from "./generated/DevicePollResponse";
+export type { DevicePollStatus } from "./generated/DevicePollStatus";
+export type { DeviceStartResponse } from "./generated/DeviceStartResponse";
 export type { Document } from "./generated/Document";
 export type { DocumentId } from "./generated/DocumentId";
 export type { DocumentPath } from "./generated/DocumentPath";

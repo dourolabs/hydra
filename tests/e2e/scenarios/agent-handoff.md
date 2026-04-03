@@ -15,8 +15,8 @@ Test the full agent coordination flow through the dashboard: create a high-level
 1. Navigate to the issues page at `http://localhost:8080`
 2. Click the "Create issue" button
 3. Fill in the issue creation form:
-   - Title: "Add CI configuration to hydra-test-fixture"
-   - Description: "Set up a basic GitHub Actions CI workflow for the dourolabs/hydra-test-fixture repo. The workflow should run linting and tests on pull requests."
+   - Title: "Add CI workflow and update README with CI badge in hydra-test-fixture"
+   - Description: "Add a GitHub Actions CI workflow file to the dourolabs/hydra-test-fixture repo that runs linting and tests on pull requests, and update the README to include a CI status badge."
 4. Submit the issue form (do not assign to a specific agent -- let PM handle it)
 5. Click on the newly created issue to open the issue detail page
 

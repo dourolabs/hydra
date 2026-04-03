@@ -8,7 +8,7 @@ use futures::FutureExt;
 use octocrab::Octocrab;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 const AUTOMATION_NAME: &str = "github_pr_sync";
 
@@ -128,6 +128,21 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         }
 
+        // Skip non-GitHub repos — local filesystem repos don't have GitHub PRs.
+        let repository = ctx
+            .app_state
+            .repository_from_store(&new.service_repo_name)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "github_pr_sync: failed to load repository '{}': {e}",
+                    new.service_repo_name
+                ))
+            })?;
+        if !repository.is_github() {
+            return Ok(());
+        }
+
         // Resolve actor identity from the event payload.
         let actor_ref = ctx.actor();
         let actor_name = actor_ref.display_name();
@@ -152,12 +167,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 return Ok(());
             }
         };
-
-        info!(
-            patch_id = %patch_id,
-            actor = %actor_name,
-            "github_pr_sync: resolved actor identity"
-        );
 
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
@@ -192,12 +201,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        info!(
-            patch_id = %patch_id,
-            creator = %creator,
-            "github_pr_sync: resolved creator username"
-        );
-
         let token = get_github_token_for_user(ctx.app_state, &creator)
             .await
             .map_err(|e| {
@@ -207,12 +210,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             })?;
 
         let base_url = ctx.app_state.config.github_api_base_url().to_string();
-        info!(
-            patch_id = %patch_id,
-            base_url = %base_url,
-            token_len = token.github_token.len(),
-            "github_pr_sync: building octocrab client"
-        );
 
         let build_token = token.github_token.clone();
         let build_url = base_url.clone();
@@ -248,30 +245,18 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: octocrab client built successfully"
-        );
-
         let mut patch = new.clone();
         let (owner, repo) = match patch.github.as_ref() {
             Some(github) => (github.owner.clone(), github.repo.clone()),
-            None => (
-                patch.service_repo_name.organization.clone(),
-                patch.service_repo_name.repo.clone(),
-            ),
+            None => {
+                // Use the repository's remote URL to extract the GitHub owner/repo.
+                // The is_github() check above guarantees this will succeed.
+                repository.github_owner_repo().unwrap()
+            }
         };
 
         if let Some(existing) = patch.github.as_ref() {
             // Update existing PR.
-            info!(
-                patch_id = %patch_id,
-                owner = %owner,
-                repo = %repo,
-                pr_number = existing.number,
-                "github_pr_sync: updating existing PR via GitHub API"
-            );
-
             let pulls_handler = client.pulls(&owner, &repo);
             let update_fut = pulls_handler
                 .update(existing.number)
@@ -282,12 +267,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             let pr_number = existing.number;
             let update_context = format!("updating PR '{owner}/{repo}#{pr_number}'");
             let pr = run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
-
-            info!(
-                patch_id = %patch_id,
-                pr_number = pr_number,
-                "github_pr_sync: GitHub API call completed (update PR)"
-            );
 
             let mut updated = existing.clone();
             updated.head_ref = Some(pr.head.ref_field.clone());
@@ -312,40 +291,19 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                         .filter(|value| !value.is_empty())
                 }) {
                 Some(base_ref) => base_ref,
-                None => {
-                    let repository = ctx
-                        .app_state
-                        .repository_from_store(&patch.service_repo_name)
-                        .await
-                        .map_err(|e| {
-                            AutomationError::Other(anyhow::anyhow!(
-                                "github_pr_sync: failed to load repository '{}': {e}",
-                                patch.service_repo_name
-                            ))
-                        })?;
-                    repository
-                        .default_branch
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| {
-                            AutomationError::Other(anyhow::anyhow!(
-                                "github_pr_sync: no base ref available for '{}'",
-                                patch.service_repo_name
-                            ))
-                        })?
-                }
+                None => repository
+                    .default_branch
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        AutomationError::Other(anyhow::anyhow!(
+                            "github_pr_sync: no base ref available for '{}'",
+                            patch.service_repo_name
+                        ))
+                    })?,
             };
 
             // Create a new PR.
-            info!(
-                patch_id = %patch_id,
-                owner = %owner,
-                repo = %repo,
-                head_ref = %head_ref,
-                base_ref = %base_ref,
-                "github_pr_sync: creating new PR via GitHub API"
-            );
-
             let pulls_handler = client.pulls(&owner, &repo);
             let create_fut = pulls_handler
                 .create(patch.title.clone(), &head_ref, base_ref)
@@ -354,12 +312,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
             let create_context = format!("creating PR for '{owner}/{repo}'");
             let pr = run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
-
-            info!(
-                patch_id = %patch_id,
-                pr_number = pr.number,
-                "github_pr_sync: GitHub API call completed (create PR)"
-            );
 
             patch.github = Some(GithubPr::new(
                 owner,
@@ -374,10 +326,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Persist the updated GitHub metadata via AppState (store is read-only
         // in the automation context, so we must go through AppState for writes).
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: persisting updated GitHub metadata"
-        );
         let request = hydra_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
         ctx.app_state
             .upsert_patch(
@@ -395,11 +343,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 ))
             })?;
 
-        info!(
-            patch_id = %patch_id,
-            "github_pr_sync: GitHub metadata persisted successfully"
-        );
-
         Ok(())
     }
 }
@@ -411,6 +354,7 @@ mod tests {
     use crate::domain::users::Username;
     use crate::policy::Automation;
     use hydra_common::RepoName;
+    use hydra_common::api::v1::repositories::Repository;
 
     #[test]
     fn automation_name_and_filter() {
@@ -545,5 +489,29 @@ mod tests {
         old_no_gh.github = None;
         new_no_gh.github = None;
         assert_ne!(old_no_gh, new_no_gh);
+    }
+
+    #[test]
+    fn skips_pr_sync_for_non_github_repo() {
+        // A repo with a file:// remote URL should not be considered a GitHub repo,
+        // which means github_pr_sync::execute() will return early without API calls.
+        let local_repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        assert!(!local_repo.is_github());
+        assert!(local_repo.is_local());
+        assert_eq!(local_repo.github_owner_repo(), None);
+
+        // A GitHub repo should be recognized and have owner/repo extracted.
+        let github_repo = Repository::new(
+            "https://github.com/dourolabs/hydra.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        assert!(github_repo.is_github());
+        assert!(!github_repo.is_local());
+        assert_eq!(
+            github_repo.github_owner_repo(),
+            Some(("dourolabs".to_string(), "hydra".to_string()))
+        );
     }
 }

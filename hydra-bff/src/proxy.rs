@@ -12,6 +12,10 @@ use http::Request;
 use crate::state::BffState;
 use crate::upstream::Upstream;
 
+/// Paths under `/api/v1/` that are public (do not require authentication).
+/// When no cookie is present, these are forwarded without a Bearer token.
+const PUBLIC_API_PATHS: &[&str] = &["github/app/client-id"];
+
 /// Build the `/api/v1` sub-router (cookie-to-Bearer translation).
 pub fn api_router<U: Upstream>() -> Router<BffState<U>> {
     Router::new()
@@ -32,8 +36,10 @@ async fn api_proxy<U: Upstream>(
     axum::extract::Path(path): axum::extract::Path<String>,
     request: Request<Body>,
 ) -> impl IntoResponse {
+    let is_public = PUBLIC_API_PATHS.iter().any(|p| *p == path);
     let token = match bff.resolve_token(&jar) {
-        Some(t) => t,
+        Some(t) => Some(t),
+        None if is_public => None,
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -42,7 +48,7 @@ async fn api_proxy<U: Upstream>(
                 .into_response();
         }
     };
-    forward_to_upstream(&bff, &format!("/v1/{path}"), Some(token), request).await
+    forward_to_upstream(&bff, &format!("/v1/{path}"), token, request).await
 }
 
 async fn api_proxy_root<U: Upstream>(
@@ -144,5 +150,71 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BffConfig, BffState, FrontendAssets, InProcessUpstream};
+    use tower::ServiceExt;
+
+    /// Build a multi-player BFF (no auto_login_token) backed by an in-process
+    /// hydra-server so we can test cookie-to-Bearer translation and public routes.
+    fn test_bff_multiplayer() -> Router {
+        let handles = hydra_server::test_utils::test_state_handles();
+        let inner_app = hydra_server::build_router(&handles.state).with_state(handles.state);
+        let upstream = InProcessUpstream::new(inner_app);
+        let config = BffConfig {
+            cookie_secure: false,
+            frontend_assets: FrontendAssets::None,
+        };
+        let bff_state = BffState::new(upstream, config, None);
+        crate::build_bff_router(bff_state)
+    }
+
+    #[tokio::test]
+    async fn github_client_id_accessible_without_cookie() {
+        let app = test_bff_multiplayer();
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/github/app/client-id")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/v1/github/app/client-id should succeed without a cookie"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(
+            body.get("client_id").is_some(),
+            "response should contain client_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn other_api_routes_still_require_cookie() {
+        let app = test_bff_multiplayer();
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/whoami")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET /api/v1/whoami should return 401 without a cookie"
+        );
     }
 }

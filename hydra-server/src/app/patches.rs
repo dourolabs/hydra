@@ -248,6 +248,17 @@ mod tests {
             .add_actor(actor.clone(), &ActorRef::test())
             .await?;
         let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://github.com/octo/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+                None,
+            ),
+        )
+        .await?;
         let existing_patch = Patch::new(
             "Original".to_string(),
             "Original description".to_string(),
@@ -377,7 +388,7 @@ mod tests {
             &handles.state,
             repo_name.clone(),
             crate::app::Repository::new(
-                "https://example.com/repo.git".to_string(),
+                "https://github.com/octo/repo.git".to_string(),
                 Some("main".to_string()),
                 None,
                 None,

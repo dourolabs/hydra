@@ -17,6 +17,8 @@ import { extractDocumentPaths } from "../../utils/documentPaths";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import { FormPanel } from "./FormPanel";
+import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
+import { useSessionDuration } from "../dashboard/useSessionDuration";
 import styles from "./IssueDetail.module.css";
 
 function BlockingIssueLink({ issueId }: { issueId: string }) {
@@ -54,6 +56,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const { issue } = record;
 
+  const { data: sessions } = useSessionsByIssue(record.issue_id);
+  const { durationText, isRunning } = useSessionDuration(sessions);
+
   const blockedOnIds = useMemo(
     () =>
       issue.dependencies
@@ -81,9 +86,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <h1 className={styles.issueTitle}>
             {issue.title || record.issue_id}
           </h1>
-          <div className={styles.subtitle}>
-            <span className={styles.type}>{issue.type}</span>
-          </div>
         </div>
         <div className={styles.headerActions}>
           <Button
@@ -106,6 +108,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
               </svg>
             </span>
           </button>
+          {isRunning && (
+            <span className={styles.sessionTimer}>{durationText}</span>
+          )}
         </div>
       </div>
 
@@ -136,11 +141,14 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </div>
       )}
 
-      {/* Labels */}
-      <IssueLabelEditor
-        issueId={record.issue_id}
-        labels={record.labels ?? []}
-      />
+      {/* Type + Labels */}
+      <div className={styles.typeAndLabels}>
+        <span className={styles.type}>{issue.type}</span>
+        <IssueLabelEditor
+          issueId={record.issue_id}
+          labels={record.labels ?? []}
+        />
+      </div>
 
       {/* Description */}
       <div className={styles.description}>

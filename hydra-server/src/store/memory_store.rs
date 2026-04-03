@@ -66,6 +66,8 @@ pub struct MemoryStore {
     object_labels: DashMap<HydraId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<HydraId>>,
+    /// Maps actor_name to list of token hashes
+    auth_tokens: DashMap<String, Vec<String>>,
     /// Maps (username, secret_name) to (encrypted_value, internal)
     user_secrets: DashMap<(Username, String), (Vec<u8>, bool)>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
@@ -92,6 +94,7 @@ impl MemoryStore {
             labels: DashMap::new(),
             object_labels: DashMap::new(),
             label_objects: DashMap::new(),
+            auth_tokens: DashMap::new(),
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
         }
@@ -1396,6 +1399,16 @@ impl ReadOnlyStore for MemoryStore {
         Ok(result)
     }
 
+    // ---- Auth tokens (read-only) ----
+
+    async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError> {
+        Ok(self
+            .auth_tokens
+            .get(actor_name)
+            .map(|v| v.value().clone())
+            .unwrap_or_default())
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
@@ -2058,6 +2071,22 @@ impl Store for MemoryStore {
     ) -> Result<bool, StoreError> {
         let key = (source_id.clone(), rel_type, target_id.clone());
         Ok(self.object_relationships.remove(&key).is_some())
+    }
+
+    // ---- Auth token mutations ----
+
+    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+        let mut entry = self.auth_tokens.entry(actor_name.to_string()).or_default();
+        let hash = token_hash.to_string();
+        if !entry.contains(&hash) {
+            entry.push(hash);
+        }
+        Ok(())
+    }
+
+    async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError> {
+        self.auth_tokens.remove(actor_name);
+        Ok(())
     }
 
     // ---- User secret mutations ----
@@ -3969,6 +3998,44 @@ mod tests {
             err,
             StoreError::InvalidActorName(name) if name == "u-"
         ));
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_add_and_get() {
+        let store = MemoryStore::new();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash2").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_get_empty() {
+        let store = MemoryStore::new();
+        let hashes = store.get_auth_token_hashes("u-nobody").await.unwrap();
+        assert!(hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_delete_for_actor() {
+        let store = MemoryStore::new();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert!(hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_duplicate_insert_is_idempotent() {
+        let store = MemoryStore::new();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string()]);
     }
 
     #[tokio::test]
