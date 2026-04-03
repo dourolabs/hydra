@@ -95,7 +95,7 @@ export function HeterogeneousItemList({
         <SearchBox
           value={searchValue}
           onChange={onSearchChange}
-          placeholder="Search issues..."
+          placeholder="Search..."
           leftElement={hamburgerButton}
         />
       </div>
