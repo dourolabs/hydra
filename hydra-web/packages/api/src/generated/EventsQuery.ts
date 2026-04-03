@@ -27,11 +27,7 @@ label_ids: string | null,
 /**
  * Comma-separated document IDs to filter.
  */
-document_ids: string | null, 
-/**
- * Comma-separated message IDs to filter.
- */
-message_ids: string | null, 
+document_ids: string | null,
 /**
  * Comma-separated notification IDs to filter.
  */

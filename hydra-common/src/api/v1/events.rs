@@ -33,10 +33,6 @@ pub struct EventsQuery {
     #[serde(default)]
     pub document_ids: Option<String>,
 
-    /// Comma-separated message IDs to filter.
-    #[serde(default)]
-    pub message_ids: Option<String>,
-
     /// Comma-separated notification IDs to filter.
     #[serde(default)]
     pub notification_ids: Option<String>,
@@ -63,9 +59,6 @@ impl EventsQuery {
         }
         if let Some(ref ids) = self.document_ids {
             params.push(("document_ids", ids.clone()));
-        }
-        if let Some(ref ids) = self.message_ids {
-            params.push(("message_ids", ids.clone()));
         }
         if let Some(ref ids) = self.notification_ids {
             params.push(("notification_ids", ids.clone()));
@@ -94,8 +87,6 @@ pub enum SseEventType {
     LabelCreated,
     LabelUpdated,
     LabelDeleted,
-    MessageCreated,
-    MessageUpdated,
     NotificationCreated,
     Connected,
     Resync,
@@ -119,8 +110,6 @@ impl SseEventType {
             Self::LabelCreated => "label_created",
             Self::LabelUpdated => "label_updated",
             Self::LabelDeleted => "label_deleted",
-            Self::MessageCreated => "message_created",
-            Self::MessageUpdated => "message_updated",
             Self::NotificationCreated => "notification_created",
             Self::Connected => "connected",
             Self::Resync => "resync",
@@ -148,8 +137,6 @@ impl std::str::FromStr for SseEventType {
             "label_created" => Ok(Self::LabelCreated),
             "label_updated" => Ok(Self::LabelUpdated),
             "label_deleted" => Ok(Self::LabelDeleted),
-            "message_created" => Ok(Self::MessageCreated),
-            "message_updated" => Ok(Self::MessageUpdated),
             "notification_created" => Ok(Self::NotificationCreated),
             "connected" => Ok(Self::Connected),
             "snapshot" => Ok(Self::Connected),

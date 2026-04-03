@@ -100,8 +100,6 @@ export class HydraEventSource {
       "label_created",
       "label_updated",
       "label_deleted",
-      "message_created",
-      "message_updated",
       "connected",
       "resync",
       "heartbeat",
