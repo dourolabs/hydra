@@ -12,11 +12,6 @@ import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
 import styles from "./DocumentsPage.module.css";
 
-/** Mutable counter passed through the tree to assign flat row indices. */
-interface RowCounter {
-  value: number;
-}
-
 function useDocumentPaths(prefix: string | null, enabled: boolean) {
   return useQuery<ListDocumentPathsResponse, Error>({
     queryKey: ["documentPaths", prefix],
@@ -47,7 +42,6 @@ function useUncategorizedDocuments() {
 interface LeafNodeProps {
   entry: PathChildEntry;
   depth: number;
-  counter: RowCounter;
 }
 
 interface FolderNodeProps {
@@ -55,15 +49,14 @@ interface FolderNodeProps {
   depth: number;
   expandedPaths: Set<string>;
   onToggle: (path: string) => void;
-  counter: RowCounter;
 }
 
-function DocumentLeafNode({ entry, depth, counter }: LeafNodeProps) {
+function DocumentLeafNode({ entry, depth }: LeafNodeProps) {
   const { data: docs, isLoading } = useDocumentsAtPath(entry.full_path, true);
 
   if (isLoading) {
     return (
-      <li className={styles.treeNode}>
+      <li className={styles.loadingRow}>
         <div style={{ paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }}>
           <Spinner size="sm" />
         </div>
@@ -74,17 +67,16 @@ function DocumentLeafNode({ entry, depth, counter }: LeafNodeProps) {
   const doc = docs?.documents.find((d) => !d.document.deleted);
   if (!doc) return null;
 
-  const rowIndex = counter.value++;
-  return <DocumentRow key={doc.document_id} doc={doc} depth={depth} rowIndex={rowIndex} />;
+  return <DocumentRow key={doc.document_id} doc={doc} depth={depth} />;
 }
 
-function FolderNode({ entry, depth, expandedPaths, onToggle, counter }: FolderNodeProps) {
+function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) {
   const isDocOnly = entry.is_document && Number(entry.child_count) === 1;
   const isDocAndFolder = entry.is_document && Number(entry.child_count) > 1;
 
   // If entry is purely a document (not also a folder prefix), render directly
   if (isDocOnly) {
-    return <DocumentLeafNode entry={entry} depth={depth} counter={counter} />;
+    return <DocumentLeafNode entry={entry} depth={depth} />;
   }
 
   return (
@@ -94,7 +86,6 @@ function FolderNode({ entry, depth, expandedPaths, onToggle, counter }: FolderNo
       expandedPaths={expandedPaths}
       onToggle={onToggle}
       isDocAndFolder={isDocAndFolder}
-      counter={counter}
     />
   );
 }
@@ -105,7 +96,6 @@ function ExpandableFolderNode({
   expandedPaths,
   onToggle,
   isDocAndFolder,
-  counter,
 }: FolderNodeProps & { isDocAndFolder: boolean }) {
   const expanded = expandedPaths.has(entry.full_path);
 
@@ -125,36 +115,28 @@ function ExpandableFolderNode({
 
   const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
 
-  // Inline doc row (if this entry is both document and folder)
-  let inlineRowIndex: number | undefined;
-  if (isDocAndFolder && inlineDoc) {
-    inlineRowIndex = counter.value++;
-  }
-
-  // Folder row itself
-  const folderRowIndex = counter.value++;
-
   return (
-    <li className={styles.treeNode}>
+    <>
       {isDocAndFolder && inlineDoc && (
-        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} depth={depth} rowIndex={inlineRowIndex!} />
+        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} depth={depth} />
       )}
-      <button
-        className={styles.folderRow}
-        style={{
-          paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
-          backgroundColor: folderRowIndex % 2 === 0 ? "var(--color-bg-secondary)" : undefined,
-        }}
-        onClick={toggle}
-        aria-expanded={expanded}
-      >
-        <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
-        <FolderIcon className={styles.folderIcon} />
-        <span className={styles.folderName}>{entry.name}</span>
-        <span className={styles.childCount}>{Number(entry.child_count)}</span>
-      </button>
+      <li>
+        <button
+          className={styles.folderRow}
+          style={{
+            paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
+          }}
+          onClick={toggle}
+          aria-expanded={expanded}
+        >
+          <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
+          <FolderIcon className={styles.folderIcon} />
+          <span className={styles.folderName}>{entry.name}</span>
+          <span className={styles.childCount}>{Number(entry.child_count)}</span>
+        </button>
+      </li>
       {expanded && (
-        <ul className={styles.treeChildren}>
+        <>
           {(loadingPaths || loadingDocs) && (
             <li className={styles.loadingRow}>
               <Spinner size="sm" />
@@ -168,19 +150,15 @@ function ExpandableFolderNode({
                 depth={depth + 1}
                 expandedPaths={expandedPaths}
                 onToggle={onToggle}
-                counter={counter}
               />
             ))}
           {isLeaf &&
             leafDocs?.documents
               .filter((d) => !d.document.deleted)
-              .map((doc) => {
-                const rowIndex = counter.value++;
-                return <DocumentRow key={doc.document_id} doc={doc} depth={depth + 1} rowIndex={rowIndex} />;
-              })}
-        </ul>
+              .map((doc) => <DocumentRow key={doc.document_id} doc={doc} depth={depth + 1} />)}
+        </>
       )}
-    </li>
+    </>
   );
 }
 
@@ -201,10 +179,6 @@ export function DocumentsPage() {
   const hasTopLevel = topLevel && topLevel.children.length > 0;
   const hasUncategorized = uncategorized && uncategorized.documents.length > 0;
   const isEmpty = !isLoading && !loadingUncategorized && !hasTopLevel && !hasUncategorized;
-
-  // Create a fresh counter each render so row indices are recomputed
-  const treeCounter: RowCounter = { value: 0 };
-  const uncategorizedCounter: RowCounter = { value: 0 };
 
   return (
     <div className={styles.page}>
@@ -236,7 +210,6 @@ export function DocumentsPage() {
                 depth={0}
                 expandedPaths={expandedPaths}
                 onToggle={onToggle}
-                counter={treeCounter}
               />
             ))}
           </ul>
@@ -247,10 +220,9 @@ export function DocumentsPage() {
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>Uncategorized</h2>
           <ul className={styles.docList}>
-            {uncategorized.documents.map((doc) => {
-              const rowIndex = uncategorizedCounter.value++;
-              return <DocumentRow key={doc.document_id} doc={doc} rowIndex={rowIndex} />;
-            })}
+            {uncategorized.documents.map((doc) => (
+              <DocumentRow key={doc.document_id} doc={doc} />
+            ))}
           </ul>
         </section>
       )}

@@ -39,16 +39,6 @@
   padding: 0;
 }
 
-.treeNode {
-  list-style: none;
-}
-
-.treeChildren {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
 .folderRow {
   display: flex;
   align-items: center;
@@ -98,5 +88,10 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-2) var(--space-4);
+}
+
+.treeRoot > :where(:nth-child(odd)),
+.docList > :where(:nth-child(odd)) {
+  background-color: var(--color-bg-secondary);
 }
 

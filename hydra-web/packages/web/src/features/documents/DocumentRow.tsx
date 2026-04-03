@@ -14,10 +14,9 @@ import styles from "./DocumentRow.module.css";
 interface DocumentRowProps {
   doc: DocumentSummaryRecord;
   depth?: number;
-  rowIndex?: number;
 }
 
-export function DocumentRow({ doc, depth, rowIndex }: DocumentRowProps) {
+export function DocumentRow({ doc, depth }: DocumentRowProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const { addToast } = useToast();
   const queryClient = useQueryClient();
@@ -37,20 +36,14 @@ export function DocumentRow({ doc, depth, rowIndex }: DocumentRowProps) {
     },
   });
 
-  const zebraBackground =
-    rowIndex !== undefined && rowIndex % 2 === 0
-      ? "var(--color-bg-secondary)"
-      : undefined;
-
   return (
     <li
       className={styles.docRow}
-      style={{
-        ...(depth !== undefined
+      style={
+        depth !== undefined
           ? { paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }
-          : undefined),
-        backgroundColor: zebraBackground,
-      }}
+          : undefined
+      }
     >
       <Link to={`/documents/${doc.document_id}`} className={styles.docRowLink}>
         <DocumentIcon className={styles.docIcon} />
