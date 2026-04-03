@@ -317,6 +317,10 @@ impl MemoryStore {
                 .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
         }
 
+        if let Some(has_path) = query.has_path {
+            documents.retain(|(_, versioned)| versioned.item.path.is_some() == has_path);
+        }
+
         if let Some(search_term) = query
             .q
             .as_ref()

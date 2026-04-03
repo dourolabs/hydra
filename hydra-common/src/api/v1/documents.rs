@@ -100,6 +100,9 @@ pub struct SearchDocumentsQuery {
     /// When true, include `total_count` in the response.
     #[serde(default)]
     pub count: Option<bool>,
+    /// Filter by whether a path is set. `true` = only docs with a path, `false` = only docs without.
+    #[serde(default)]
+    pub has_path: Option<bool>,
 }
 
 impl SearchDocumentsQuery {
@@ -119,6 +122,7 @@ impl SearchDocumentsQuery {
             limit: None,
             cursor: None,
             count: None,
+            has_path: None,
         }
     }
 
@@ -361,6 +365,7 @@ mod tests {
             limit: None,
             cursor: None,
             count: None,
+            has_path: None,
         };
 
         let params = serialize_query_params(&query)

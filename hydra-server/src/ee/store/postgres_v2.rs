@@ -1714,6 +1714,14 @@ fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, 
         bindings.push(pattern);
     }
 
+    if let Some(has_path) = query.has_path {
+        if has_path {
+            predicates.push("path IS NOT NULL".to_string());
+        } else {
+            predicates.push("path IS NULL".to_string());
+        }
+    }
+
     if !query.include_deleted.unwrap_or(false) {
         predicates.push("deleted = false".to_string());
     }
