@@ -319,6 +319,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_auth_token_hashes(&self, _actor_name: &str) -> Result<Vec<String>, StoreError> {
+        fail()
+    }
+
     async fn get_user_secret(
         &self,
         _username: &Username,
@@ -587,6 +591,14 @@ impl Store for FailingStore {
         _target_id: &HydraId,
         _rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
+        fail()
+    }
+
+    async fn add_auth_token(&self, _actor_name: &str, _token_hash: &str) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_auth_tokens_for_actor(&self, _actor_name: &str) -> Result<(), StoreError> {
         fail()
     }
 

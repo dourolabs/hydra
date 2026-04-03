@@ -48,6 +48,7 @@ const TABLE_LABELS: &str = "labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 const TABLE_NOTIFICATIONS: &str = "notifications";
 const TABLE_MESSAGES_V2: &str = "messages_v2";
+const TABLE_AUTH_TOKENS: &str = "auth_tokens";
 const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
 
@@ -3643,6 +3644,18 @@ impl ReadOnlyStore for SqliteStore {
         rows.into_iter().map(parse_relationship_row).collect()
     }
 
+    async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError> {
+        let sql = format!(
+            "SELECT token_hash FROM {TABLE_AUTH_TOKENS} WHERE actor_name = ?1 ORDER BY created_at"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(actor_name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows)
+    }
+
     async fn get_user_secret(
         &self,
         username: &Username,
@@ -4486,6 +4499,34 @@ impl Store for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ---- Auth token mutations ----
+
+    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+        let now = Utc::now().to_rfc3339();
+        let sql = format!(
+            "INSERT OR IGNORE INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, created_at) \
+             VALUES (?1, ?2, ?3)"
+        );
+        sqlx::query(&sql)
+            .bind(actor_name)
+            .bind(token_hash)
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError> {
+        let sql = format!("DELETE FROM {TABLE_AUTH_TOKENS} WHERE actor_name = ?1");
+        sqlx::query(&sql)
+            .bind(actor_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     // ---- User secret mutations ----
@@ -7275,6 +7316,46 @@ mod tests {
         query.include_deleted = Some(true);
         let results_with_deleted = store.list_messages(&query).await.unwrap();
         assert_eq!(results_with_deleted.len(), 1);
+    }
+
+    // ---- Auth token tests ----
+
+    #[tokio::test]
+    async fn auth_tokens_add_and_get() {
+        let store = create_test_store().await;
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash2").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_get_empty() {
+        let store = create_test_store().await;
+        let hashes = store.get_auth_token_hashes("u-nobody").await.unwrap();
+        assert!(hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_delete_for_actor() {
+        let store = create_test_store().await;
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert!(hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_duplicate_insert_is_idempotent() {
+        let store = create_test_store().await;
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store.add_auth_token("u-alice", "hash1").await.unwrap();
+
+        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        assert_eq!(hashes, vec!["hash1".to_string()]);
     }
 
     // ---- User secret tests ----
