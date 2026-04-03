@@ -2677,6 +2677,52 @@ impl ReadOnlyStore for SqliteStore {
         .await
     }
 
+    async fn list_document_path_children(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+        // Normalize prefix: ensure it ends with '/'
+        let prefix = if prefix.ends_with('/') {
+            prefix.to_string()
+        } else {
+            format!("{prefix}/")
+        };
+        let prefix_len = prefix.len() as i64;
+
+        let sql = format!(
+            "SELECT
+                CASE
+                    WHEN INSTR(SUBSTR(path, ?1 + 1), '/') > 0
+                    THEN SUBSTR(path, ?1 + 1, INSTR(SUBSTR(path, ?1 + 1), '/') - 1)
+                    ELSE SUBSTR(path, ?1 + 1)
+                END AS segment,
+                COUNT(*) AS child_count
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE is_latest = 1
+               AND COALESCE(deleted, 0) = 0
+               AND path IS NOT NULL
+               AND path LIKE ?2
+               AND LENGTH(path) > ?1
+             GROUP BY segment
+             ORDER BY segment"
+        );
+
+        let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+            .bind(prefix_len)
+            .bind(format!("{prefix}%"))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(segment, count)| {
+                let full_path = format!("{prefix}{segment}");
+                (segment, full_path, count as u64)
+            })
+            .collect())
+    }
+
     async fn get_session(
         &self,
         id: &SessionId,

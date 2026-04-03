@@ -883,6 +883,50 @@ impl ReadOnlyStore for MemoryStore {
         Ok(documents)
     }
 
+    async fn list_document_path_children(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+        let prefix = if prefix.ends_with('/') {
+            prefix.to_string()
+        } else {
+            format!("{prefix}/")
+        };
+
+        let mut segment_counts: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+
+        for entry in self.documents.iter() {
+            let versions = entry.value();
+            if let Some(latest) = Self::latest_versioned(versions) {
+                if latest.item.deleted {
+                    continue;
+                }
+                if let Some(ref path) = latest.item.path {
+                    let path_str: &str = path.as_ref();
+                    if let Some(rest) = path_str.strip_prefix(prefix.as_str()) {
+                        if rest.is_empty() {
+                            continue;
+                        }
+                        let segment = match rest.find('/') {
+                            Some(idx) => &rest[..idx],
+                            None => rest,
+                        };
+                        *segment_counts.entry(segment.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(segment_counts
+            .into_iter()
+            .map(|(segment, count)| {
+                let full_path = format!("{prefix}{segment}");
+                (segment, full_path, count)
+            })
+            .collect())
+    }
+
     async fn get_session(
         &self,
         id: &SessionId,

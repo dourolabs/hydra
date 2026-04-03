@@ -8,6 +8,8 @@ import type {
   DocumentVersionRecord,
   ListDocumentsResponse,
   ListDocumentVersionsResponse,
+  ListDocumentPathsResponse,
+  PathChildEntry,
   DocumentSummaryRecord,
   DocumentSummary,
 } from "@hydra/api";
@@ -106,6 +108,35 @@ export function createDocumentRoutes(store: Store): Hono {
     return c.json(
       toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime),
     );
+  });
+
+  // GET /v1/documents/paths
+  app.get("/v1/documents/paths", (c) => {
+    const prefix = c.req.query("prefix") || "/";
+    const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    const items = store.list<Document>(COLLECTION, false);
+
+    const segmentCounts = new Map<string, number>();
+    for (const { entry } of items) {
+      const docPath = entry.data.path;
+      if (!docPath || !docPath.startsWith(normalizedPrefix)) continue;
+      const rest = docPath.slice(normalizedPrefix.length);
+      if (!rest) continue;
+      const slashIdx = rest.indexOf("/");
+      const segment = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
+      segmentCounts.set(segment, (segmentCounts.get(segment) || 0) + 1);
+    }
+
+    const children: PathChildEntry[] = Array.from(segmentCounts.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, child_count]) => ({
+        name,
+        full_path: `${normalizedPrefix}${name}`,
+        child_count: BigInt(child_count),
+      }));
+
+    const resp: ListDocumentPathsResponse = { children };
+    return c.json(resp);
   });
 
   // GET /v1/documents

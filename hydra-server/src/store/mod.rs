@@ -400,6 +400,13 @@ pub trait ReadOnlyStore: Send + Sync {
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
 
+    /// Returns the unique next-level path segments under the given prefix,
+    /// along with the count of (non-deleted) documents under each segment.
+    async fn list_document_path_children(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, String, u64)>, StoreError>;
+
     /// Gets a session by its SessionId.
     ///
     /// # Arguments

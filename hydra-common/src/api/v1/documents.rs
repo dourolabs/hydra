@@ -289,6 +289,46 @@ impl ListDocumentVersionsResponse {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ListDocumentPathsQuery {
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct PathChildEntry {
+    pub name: String,
+    pub full_path: String,
+    pub child_count: u64,
+}
+
+impl PathChildEntry {
+    pub fn new(name: String, full_path: String, child_count: u64) -> Self {
+        Self {
+            name,
+            full_path,
+            child_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ListDocumentPathsResponse {
+    pub children: Vec<PathChildEntry>,
+}
+
+impl ListDocumentPathsResponse {
+    pub fn new(children: Vec<PathChildEntry>) -> Self {
+        Self { children }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -293,6 +293,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
         .route(
+            "/v1/documents/paths",
+            get(routes::documents::list_document_paths),
+        )
+        .route(
             "/v1/documents/:document_id",
             get(routes::documents::get_document)
                 .put(routes::documents::update_document)
