@@ -10,12 +10,10 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await expect(page.getByText("research")).toBeVisible();
     await expect(page.getByText("docs")).toBeVisible();
 
-    // Top-level folders are expanded by default, so sub-entries should already be visible
-    await expect(page.getByText("adr-001-oauth2-migration")).toBeVisible();
-
-    // Expand a leaf entry to see the document
-    await page.getByText("adr-001-oauth2-migration").click();
-    await expect(page.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
+    // Top-level folders are expanded by default, and leaf documents render directly as DocumentRows
+    await expect(
+      page.getByText("ADR-001: OAuth2 Migration Strategy")
+    ).toBeVisible();
   });
 
   test("can navigate to a document detail page @documents:view-detail", async ({
@@ -23,9 +21,7 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
-    // Top-level folders are expanded by default; click the leaf entry directly
-    await page.getByText("adr-001-oauth2-migration").click();
-
+    // Top-level folders are expanded by default; leaf documents render directly as DocumentRows
     await expect(page.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
 
     // Click on the document link to navigate to its detail page
