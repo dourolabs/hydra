@@ -10,14 +10,8 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await expect(page.getByText("research")).toBeVisible();
     await expect(page.getByText("docs")).toBeVisible();
 
-    // Expand the "research" folder to see sub-entries
+    // Expand the "research" folder — leaf documents render directly as DocumentRows
     await page.getByText("research").click();
-    await expect(
-      page.getByText("adr-001-oauth2-migration")
-    ).toBeVisible();
-
-    // Expand a leaf entry to see the document
-    await page.getByText("adr-001-oauth2-migration").click();
     await expect(
       page.getByText("ADR-001: OAuth2 Migration Strategy")
     ).toBeVisible();
@@ -28,9 +22,8 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
-    // Expand the "research" folder, then the leaf entry
+    // Expand the "research" folder — leaf documents render directly as DocumentRows
     await page.getByText("research").click();
-    await page.getByText("adr-001-oauth2-migration").click();
 
     await expect(
       page.getByText("ADR-001: OAuth2 Migration Strategy")
