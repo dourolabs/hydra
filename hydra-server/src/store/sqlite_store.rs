@@ -5922,6 +5922,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_document_path_children_returns_segments() {
+        let store = create_test_store().await;
+
+        // Create documents under various paths
+        store
+            .add_document(
+                sample_document(Some("agents/swe/memory.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("agents/swe/plan.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("agents/pm/notes.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("docs/readme.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Top-level segments at prefix "/"
+        let children = store.list_document_path_children("/").await.unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].0, "agents");
+        assert_eq!(children[0].1, "/agents");
+        assert_eq!(children[0].2, 3); // 3 docs under /agents/
+        assert_eq!(children[1].0, "docs");
+        assert_eq!(children[1].1, "/docs");
+        assert_eq!(children[1].2, 1);
+
+        // Nested prefix "/agents/" returns child segments
+        let children = store.list_document_path_children("/agents/").await.unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].0, "pm");
+        assert_eq!(children[0].1, "/agents/pm");
+        assert_eq!(children[0].2, 1);
+        assert_eq!(children[1].0, "swe");
+        assert_eq!(children[1].1, "/agents/swe");
+        assert_eq!(children[1].2, 2);
+
+        // Prefix without trailing slash works the same
+        let children = store.list_document_path_children("/agents").await.unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].0, "pm");
+        assert_eq!(children[1].0, "swe");
+
+        // Prefix with no matching documents returns empty
+        let children = store
+            .list_document_path_children("/nonexistent/")
+            .await
+            .unwrap();
+        assert!(children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_document_path_children_excludes_deleted() {
+        let store = create_test_store().await;
+
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("agents/swe/memory.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("agents/pm/notes.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Delete one document
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Only the non-deleted document's segment should appear
+        let children = store.list_document_path_children("/agents/").await.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0, "pm");
+        assert_eq!(children[0].2, 1);
+    }
+
+    #[tokio::test]
     async fn document_filters_apply_query() {
         let store = create_test_store().await;
         let task_id = SessionId::new();
