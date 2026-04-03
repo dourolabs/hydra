@@ -14,7 +14,6 @@ use hydra_common::{
     SessionId, Versioned,
     api::v1 as api,
     api::v1::sessions::SearchSessionsQuery,
-    constants::ENV_HYDRA_GIT_REMOTE_URL,
     issues::IssueId,
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
 };
@@ -493,8 +492,8 @@ impl AppState {
         };
 
         // Detect file:// URLs and construct bind mounts for Docker containers.
-        let bind_mounts =
-            build_bind_mounts_for_local_repo(&resolved.context.bundle, &mut resolved.env_vars);
+        // Rewrites the bundle URL in-place to the container-side mount path.
+        let bind_mounts = build_bind_mounts_for_local_repo(&mut resolved.context.bundle);
 
         match self
             .job_engine
@@ -1010,32 +1009,17 @@ impl AppState {
 const CONTAINER_REPO_MOUNT_PREFIX: &str = "/mnt/repos";
 
 /// Inspects the resolved bundle for a `file://` URL and, if found, constructs a
-/// bind mount mapping the host path into the container. Also injects the
-/// `HYDRA_GIT_REMOTE_URL` env var with the rewritten container-side `file://` URL.
+/// bind mount mapping the host path into the container. The bundle URL is
+/// rewritten in-place to the container-side `file://` path so that all
+/// downstream consumers (including the worker context endpoint) automatically
+/// receive the correct URL.
 ///
 /// Returns an empty `Vec` when the bundle is not a local `file://` repo.
-fn build_bind_mounts_for_local_repo(
-    bundle: &Bundle,
-    env_vars: &mut HashMap<String, String>,
-) -> Vec<BindMount> {
-    let url = match bundle {
-        Bundle::GitRepository { url, .. } => url,
-        _ => return Vec::new(),
+pub(crate) fn build_bind_mounts_for_local_repo(bundle: &mut Bundle) -> Vec<BindMount> {
+    let (host_path, container_path) = match rewrite_local_bundle_url(bundle) {
+        Some(paths) => paths,
+        None => return Vec::new(),
     };
-
-    let host_path = match url.strip_prefix("file://") {
-        Some(path) if !path.is_empty() => path,
-        _ => return Vec::new(),
-    };
-
-    // Derive a stable mount name from the last path component.
-    let repo_name = std::path::Path::new(host_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
-
-    let container_path = format!("{CONTAINER_REPO_MOUNT_PREFIX}/{repo_name}");
-    let container_url = format!("file://{container_path}");
 
     info!(
         host_path = host_path,
@@ -1043,12 +1027,41 @@ fn build_bind_mounts_for_local_repo(
         "mounting local repo into container"
     );
 
-    env_vars.insert(ENV_HYDRA_GIT_REMOTE_URL.to_string(), container_url);
-
     vec![BindMount {
-        host_path: host_path.to_string(),
+        host_path,
         container_path,
     }]
+}
+
+/// If `bundle` is a `GitRepository` with a `file://` URL, rewrites the URL to
+/// a container-side mount path and returns `(host_path, container_path)`.
+/// Returns `None` when no rewriting is needed.
+pub(crate) fn rewrite_local_bundle_url(bundle: &mut Bundle) -> Option<(String, String)> {
+    let url = match bundle {
+        &mut Bundle::GitRepository { ref url, .. } => url.clone(),
+        _ => return None,
+    };
+
+    let host_path = match url.strip_prefix("file://") {
+        Some(path) if !path.is_empty() => path.to_string(),
+        _ => return None,
+    };
+
+    // Derive a stable mount name from the last path component.
+    let repo_name = std::path::Path::new(&host_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+
+    let container_path = format!("{CONTAINER_REPO_MOUNT_PREFIX}/{repo_name}");
+    let container_url = format!("file://{container_path}");
+
+    // Rewrite the bundle URL in-place.
+    if let Bundle::GitRepository { url, .. } = bundle {
+        *url = container_url;
+    }
+
+    Some((host_path, container_path))
 }
 
 #[cfg(test)]
@@ -1525,65 +1538,71 @@ mod tests {
         use crate::domain::sessions::Bundle;
 
         #[test]
-        fn file_url_creates_bind_mount_and_env_var() {
-            let bundle = Bundle::GitRepository {
+        fn file_url_creates_bind_mount_and_rewrites_bundle() {
+            let mut bundle = Bundle::GitRepository {
                 url: "file:///home/user/my-repo.git".to_string(),
                 rev: "main".to_string(),
             };
-            let mut env_vars = HashMap::new();
 
-            let mounts = build_bind_mounts_for_local_repo(&bundle, &mut env_vars);
+            let mounts = build_bind_mounts_for_local_repo(&mut bundle);
 
             assert_eq!(mounts.len(), 1);
             assert_eq!(mounts[0].host_path, "/home/user/my-repo.git");
             assert_eq!(mounts[0].container_path, "/mnt/repos/my-repo.git");
-            assert_eq!(
-                env_vars.get(ENV_HYDRA_GIT_REMOTE_URL).unwrap(),
-                "file:///mnt/repos/my-repo.git"
-            );
+            match &bundle {
+                Bundle::GitRepository { url, .. } => {
+                    assert_eq!(url, "file:///mnt/repos/my-repo.git");
+                }
+                _ => panic!("expected GitRepository bundle"),
+            }
         }
 
         #[test]
         fn https_url_returns_no_bind_mounts() {
-            let bundle = Bundle::GitRepository {
+            let mut bundle = Bundle::GitRepository {
                 url: "https://github.com/owner/repo.git".to_string(),
                 rev: "main".to_string(),
             };
-            let mut env_vars = HashMap::new();
 
-            let mounts = build_bind_mounts_for_local_repo(&bundle, &mut env_vars);
+            let mounts = build_bind_mounts_for_local_repo(&mut bundle);
 
             assert!(mounts.is_empty());
-            assert!(!env_vars.contains_key(ENV_HYDRA_GIT_REMOTE_URL));
+            // URL should be unchanged.
+            match &bundle {
+                Bundle::GitRepository { url, .. } => {
+                    assert_eq!(url, "https://github.com/owner/repo.git");
+                }
+                _ => panic!("expected GitRepository bundle"),
+            }
         }
 
         #[test]
         fn none_bundle_returns_no_bind_mounts() {
-            let bundle = Bundle::None;
-            let mut env_vars = HashMap::new();
+            let mut bundle = Bundle::None;
 
-            let mounts = build_bind_mounts_for_local_repo(&bundle, &mut env_vars);
+            let mounts = build_bind_mounts_for_local_repo(&mut bundle);
 
             assert!(mounts.is_empty());
         }
 
         #[test]
         fn file_url_with_nested_path() {
-            let bundle = Bundle::GitRepository {
+            let mut bundle = Bundle::GitRepository {
                 url: "file:///srv/git/projects/my-project".to_string(),
                 rev: "develop".to_string(),
             };
-            let mut env_vars = HashMap::new();
 
-            let mounts = build_bind_mounts_for_local_repo(&bundle, &mut env_vars);
+            let mounts = build_bind_mounts_for_local_repo(&mut bundle);
 
             assert_eq!(mounts.len(), 1);
             assert_eq!(mounts[0].host_path, "/srv/git/projects/my-project");
             assert_eq!(mounts[0].container_path, "/mnt/repos/my-project");
-            assert_eq!(
-                env_vars.get(ENV_HYDRA_GIT_REMOTE_URL).unwrap(),
-                "file:///mnt/repos/my-project"
-            );
+            match &bundle {
+                Bundle::GitRepository { url, .. } => {
+                    assert_eq!(url, "file:///mnt/repos/my-project");
+                }
+                _ => panic!("expected GitRepository bundle"),
+            }
         }
     }
 }

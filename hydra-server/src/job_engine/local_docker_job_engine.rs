@@ -220,6 +220,10 @@ fn parse_docker_time(s: &str) -> Option<DateTime<Utc>> {
 
 #[async_trait]
 impl JobEngine for LocalDockerJobEngine {
+    fn is_containerized(&self) -> bool {
+        true
+    }
+
     async fn create_job(
         &self,
         hydra_id: &SessionId,

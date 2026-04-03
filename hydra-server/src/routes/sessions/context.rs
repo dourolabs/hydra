@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, rewrite_local_bundle_url},
     routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
@@ -17,7 +17,13 @@ pub async fn get_session_context(
         ApiError::not_found(format!("Session '{session_id}' not found"))
     })?;
 
-    let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
+    let mut resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
+
+    // When running in a containerized engine (e.g. Docker), rewrite file:// URLs
+    // to the container-side mount path so workers receive the correct URL.
+    if state.job_engine.is_containerized() {
+        rewrite_local_bundle_url(&mut resolved.context.bundle);
+    }
 
     let mut env_vars = resolved.env_vars;
     state

@@ -126,6 +126,12 @@ pub trait JobEngine: Send + Sync {
         bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError>;
 
+    /// Returns `true` when workers run inside containers and need host paths
+    /// rewritten to container-side mount points (e.g. Docker engine).
+    fn is_containerized(&self) -> bool {
+        false
+    }
+
     /// Lists all jobs matching the given label selector.
     ///
     /// # Returns
