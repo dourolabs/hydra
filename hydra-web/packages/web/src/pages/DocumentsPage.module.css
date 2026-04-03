@@ -5,9 +5,10 @@
   composes: center from "./page.module.css";
 }
 
-.pageHeader {
+.panelHeaderRow {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: var(--space-4);
 }
 
@@ -21,7 +22,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin: 0 0 var(--space-2) 0;
+  margin: 0;
 }
 
 .docList {
@@ -60,7 +61,6 @@
   font-size: var(--font-size-sm);
   cursor: pointer;
   text-align: left;
-  border-radius: 4px;
   transition: background 120ms ease;
 }
 
@@ -87,9 +87,22 @@
   margin-left: auto;
 }
 
+.folderIcon {
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+  width: 1.2em;
+  text-align: center;
+}
+
 .loadingRow {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--space-2) var(--space-4);
+}
+
+.treeRoot > :nth-child(odd),
+.treeChildren > :nth-child(odd),
+.docList > :nth-child(odd) {
+  background-color: var(--color-bg-secondary);
 }

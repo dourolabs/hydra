@@ -3,12 +3,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
   transition: background-color var(--transition-subtle);
-}
-
-.docRow:last-child {
-  border-bottom: none;
 }
 
 .docRow:hover {
@@ -34,6 +29,13 @@
 
 .docRow:hover .deleteButton {
   opacity: 1;
+}
+
+.docIcon {
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+  width: 1.2em;
+  text-align: center;
 }
 
 .docTitle {
