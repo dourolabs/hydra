@@ -195,7 +195,7 @@ impl AppState {
     pub async fn list_document_path_children(
         &self,
         prefix: &str,
-    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+    ) -> Result<Vec<(String, String, u64, bool)>, StoreError> {
         let store = self.store.as_ref();
         store.list_document_path_children(prefix).await
     }

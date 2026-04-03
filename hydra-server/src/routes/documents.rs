@@ -221,8 +221,8 @@ pub async fn list_document_paths(
 
     let entries = children
         .into_iter()
-        .map(|(name, full_path, child_count)| {
-            v1::documents::PathChildEntry::new(name, full_path, child_count)
+        .map(|(name, full_path, child_count, is_document)| {
+            v1::documents::PathChildEntry::new(name, full_path, child_count, is_document)
         })
         .collect();
 
