@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { SessionSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./workItemTypes";
@@ -23,6 +23,7 @@ interface HeterogeneousItemListProps {
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   onLoadMore?: () => void;
+  filterBar?: ReactNode;
 }
 
 function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
@@ -46,6 +47,7 @@ export function HeterogeneousItemList({
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
+  filterBar,
 }: HeterogeneousItemListProps) {
   const sortedItems = useMemo(
     () => [...items].sort(sortByLastUpdated),
@@ -99,6 +101,8 @@ export function HeterogeneousItemList({
           leftElement={hamburgerButton}
         />
       </div>
+
+      {filterBar}
 
       <div className={styles.listScroll}>
         {isLoading && items.length === 0 && (
