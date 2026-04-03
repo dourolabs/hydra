@@ -335,6 +335,79 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn documents_filter_by_has_path() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create a document with a path
+    let with_path = Document::new(
+        "With Path".to_string(),
+        "has a path".to_string(),
+        Some("docs/file.md".to_string()),
+        None,
+        false,
+    )
+    .unwrap();
+
+    // Create a document without a path
+    let without_path = Document::new(
+        "Without Path".to_string(),
+        "no path".to_string(),
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    for doc in [&with_path, &without_path] {
+        client
+            .post(format!("{base}/v1/documents"))
+            .json(&UpsertDocumentRequest::new(doc.clone()))
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // has_path=true returns only documents with a path
+    let mut query = SearchDocumentsQuery::default();
+    query.has_path = Some(true);
+    let result: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .query(&query)
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(result.documents.len(), 1);
+    assert_eq!(result.documents[0].document.title, "With Path");
+
+    // has_path=false returns only documents without a path
+    let mut query = SearchDocumentsQuery::default();
+    query.has_path = Some(false);
+    let result: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .query(&query)
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(result.documents.len(), 1);
+    assert_eq!(result.documents[0].document.title, "Without Path");
+
+    // No has_path filter returns all documents
+    let result: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(result.documents.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn documents_missing_resources_return_404() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
