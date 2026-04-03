@@ -20,6 +20,8 @@ import { IssueCreateModal } from "../features/dashboard-v2/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardV2Page.module.css";
 
+const VALID_FILTERS = ["your-issues", "assigned", "patches", "documents"];
+
 /** Build server-side IssueFilters from the current filter selection. */
 function buildServerFilters(
   filterRootId: string | null,
@@ -64,7 +66,6 @@ export function DashboardV2Page() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
-  const VALID_FILTERS = ["your-issues", "assigned", "patches", "documents"];
   const [filterRootId, setFilterRootId] = useState<string | null>(
     selectedParam && VALID_FILTERS.includes(selectedParam)
       ? selectedParam
@@ -271,11 +272,15 @@ export function DashboardV2Page() {
     setDrawerOpen(false);
   }, []);
 
-  const fetchNextPage = filterRootId === "patches"
-    ? fetchNextPatches
-    : filterRootId === "documents"
-      ? fetchNextDocuments
-      : fetchNextIssues;
+  const fetchNextPage = useMemo(
+    () =>
+      filterRootId === "patches"
+        ? fetchNextPatches
+        : filterRootId === "documents"
+          ? fetchNextDocuments
+          : fetchNextIssues,
+    [filterRootId, fetchNextPatches, fetchNextDocuments, fetchNextIssues],
+  );
 
   const handleLoadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) {
