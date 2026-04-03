@@ -86,13 +86,15 @@ export function DashboardV2Page() {
     [filterRootId, username, inboxLabelId, searchQuery],
   );
 
+  const isSearching = searchQuery.length > 0;
+
   const {
     data: paginatedData,
     isLoading: paginatedLoading,
     fetchNextPage: fetchNextIssues,
     hasNextPage: hasNextIssues,
     isFetchingNextPage: isFetchingNextIssues,
-  } = usePaginatedIssues(serverFilters, !isArtifactFilter);
+  } = usePaginatedIssues(serverFilters, !isArtifactFilter || isSearching);
 
   const {
     data: patchesData,
@@ -100,7 +102,7 @@ export function DashboardV2Page() {
     fetchNextPage: fetchNextPatches,
     hasNextPage: hasNextPatches,
     isFetchingNextPage: isFetchingNextPatches,
-  } = usePaginatedPatches(searchQuery, filterRootId === "patches");
+  } = usePaginatedPatches(searchQuery, filterRootId === "patches" || isSearching);
 
   const {
     data: documentsData,
@@ -108,24 +110,30 @@ export function DashboardV2Page() {
     fetchNextPage: fetchNextDocuments,
     hasNextPage: hasNextDocuments,
     isFetchingNextPage: isFetchingNextDocuments,
-  } = usePaginatedDocuments(searchQuery, filterRootId === "documents");
+  } = usePaginatedDocuments(searchQuery, filterRootId === "documents" || isSearching);
 
   // Flatten paginated pages into a single array
   const issues = useMemo(() => {
     return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
   }, [paginatedData]);
 
-  const isLoading = isArtifactFilter
-    ? (filterRootId === "patches" ? patchesLoading : documentsLoading)
-    : paginatedLoading;
+  const isLoading = isSearching
+    ? paginatedLoading || patchesLoading || documentsLoading
+    : isArtifactFilter
+      ? (filterRootId === "patches" ? patchesLoading : documentsLoading)
+      : paginatedLoading;
 
-  const hasNextPage = isArtifactFilter
-    ? (filterRootId === "patches" ? hasNextPatches : hasNextDocuments)
-    : hasNextIssues;
+  const hasNextPage = isSearching
+    ? (hasNextIssues || hasNextPatches || hasNextDocuments)
+    : isArtifactFilter
+      ? (filterRootId === "patches" ? hasNextPatches : hasNextDocuments)
+      : hasNextIssues;
 
-  const isFetchingNextPage = isArtifactFilter
-    ? (filterRootId === "patches" ? isFetchingNextPatches : isFetchingNextDocuments)
-    : isFetchingNextIssues;
+  const isFetchingNextPage = isSearching
+    ? (isFetchingNextIssues || isFetchingNextPatches || isFetchingNextDocuments)
+    : isArtifactFilter
+      ? (filterRootId === "patches" ? isFetchingNextPatches : isFetchingNextDocuments)
+      : isFetchingNextIssues;
 
   // Badge count query for "Assigned to You" — only open status
   const assignedCountFilters = useMemo<IssueFilters>(() => {
@@ -154,6 +162,34 @@ export function DashboardV2Page() {
 
   // Build flat work items from issues, patches, or documents
   const allWorkItems = useMemo((): WorkItem[] => {
+    // When searching, merge results from all three entity types
+    if (isSearching) {
+      const issueItems: WorkItem[] = issues.map((issue) => ({
+        kind: "issue" as const,
+        id: issue.issue_id,
+        data: issue,
+        lastUpdated: issue.timestamp,
+        isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
+      }));
+      const patchItems: WorkItem[] = (patchesData?.pages.flatMap((page) => page.patches) ?? []).map((patch) => ({
+        kind: "patch" as const,
+        id: patch.patch_id,
+        data: patch,
+        lastUpdated: patch.timestamp,
+        isTerminal: patch.patch.status === "Merged" || patch.patch.status === "Closed",
+        sourceIssueId: undefined,
+      }));
+      const docItems: WorkItem[] = (documentsData?.pages.flatMap((page) => page.documents) ?? []).map((doc) => ({
+        kind: "document" as const,
+        id: doc.document_id,
+        data: doc,
+        lastUpdated: doc.timestamp,
+        isTerminal: false,
+        sourceIssueId: undefined,
+      }));
+      return [...issueItems, ...patchItems, ...docItems];
+    }
+
     if (filterRootId === "patches") {
       const patches = patchesData?.pages.flatMap((page) => page.patches) ?? [];
       return patches.map((patch) => ({
@@ -183,7 +219,7 @@ export function DashboardV2Page() {
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
     }));
-  }, [filterRootId, issues, patchesData, documentsData]);
+  }, [isSearching, filterRootId, issues, patchesData, documentsData]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
@@ -225,15 +261,21 @@ export function DashboardV2Page() {
     setDrawerOpen(false);
   }, []);
 
-  const fetchNextPage = useMemo(
-    () =>
-      filterRootId === "patches"
-        ? fetchNextPatches
-        : filterRootId === "documents"
-          ? fetchNextDocuments
-          : fetchNextIssues,
-    [filterRootId, fetchNextPatches, fetchNextDocuments, fetchNextIssues],
-  );
+  const fetchNextPage = useCallback(() => {
+    if (isSearching) {
+      if (hasNextIssues && !isFetchingNextIssues) fetchNextIssues();
+      if (hasNextPatches && !isFetchingNextPatches) fetchNextPatches();
+      if (hasNextDocuments && !isFetchingNextDocuments) fetchNextDocuments();
+      return;
+    }
+    if (filterRootId === "patches") {
+      fetchNextPatches();
+    } else if (filterRootId === "documents") {
+      fetchNextDocuments();
+    } else {
+      fetchNextIssues();
+    }
+  }, [isSearching, filterRootId, fetchNextIssues, fetchNextPatches, fetchNextDocuments, hasNextIssues, hasNextPatches, hasNextDocuments, isFetchingNextIssues, isFetchingNextPatches, isFetchingNextDocuments]);
 
   const handleLoadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) {
