@@ -33,10 +33,12 @@ pub struct LocalDockerJobEngine {
     server_url: String,
     /// Maps hydra_id → container info for tracking.
     containers: DashMap<SessionId, ContainerInfo>,
+    /// The entrypoint command for containers created by this engine.
+    entrypoint: Vec<String>,
 }
 
 impl LocalDockerJobEngine {
-    pub async fn new(server_url: String) -> Result<Self, JobEngineError> {
+    pub async fn new(server_url: String, entrypoint: Vec<String>) -> Result<Self, JobEngineError> {
         let docker = Docker::connect_with_local_defaults().map_err(|e| {
             JobEngineError::Internal(format!("Failed to connect to Docker daemon: {e}"))
         })?;
@@ -44,6 +46,7 @@ impl LocalDockerJobEngine {
             docker,
             server_url,
             containers: DashMap::new(),
+            entrypoint,
         };
         engine.recover_containers().await?;
         Ok(engine)
@@ -289,7 +292,7 @@ impl JobEngine for LocalDockerJobEngine {
         let config = Config {
             image: Some(image.to_string()),
             env: Some(env),
-            entrypoint: Some(vec!["hydra".to_string()]),
+            entrypoint: Some(self.entrypoint.clone()),
             cmd: Some(vec![
                 "sessions".to_string(),
                 "worker-run".to_string(),
@@ -682,9 +685,16 @@ mod tests {
 
     /// Create a `LocalDockerJobEngine` connected to the local Docker daemon.
     async fn make_docker_engine() -> LocalDockerJobEngine {
-        LocalDockerJobEngine::new("http://localhost:0".to_string())
-            .await
-            .expect("Docker daemon must be available for integration tests")
+        LocalDockerJobEngine::new(
+            "http://localhost:0".to_string(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 5".to_string(),
+            ],
+        )
+        .await
+        .expect("Docker daemon must be available for integration tests")
     }
 
     /// Wait until the container tracked by `hydra_id` is no longer running.
@@ -838,7 +848,13 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires a running Docker daemon
     async fn docker_start_failure_removes_container_from_tracking() {
-        let engine = make_docker_engine().await;
+        // Create an engine with a nonexistent entrypoint to trigger a start failure.
+        let engine = LocalDockerJobEngine::new(
+            "http://localhost:0".to_string(),
+            vec!["nonexistent-binary".to_string()],
+        )
+        .await
+        .expect("Docker daemon must be available for integration tests");
         let docker = Docker::connect_with_local_defaults().unwrap();
 
         ensure_image_pulled(&docker).await;
@@ -846,10 +862,6 @@ mod tests {
         let hydra_id = SessionId::new();
         let (actor, token) = make_actor();
 
-        // Use an image with a nonexistent entrypoint to trigger a start_container failure.
-        // First, create a container config that will fail on start by using an invalid command.
-        // We'll create the job using alpine but with the engine's default entrypoint ("hydra")
-        // which doesn't exist in alpine, causing an OCI runtime error on start.
         let result = engine
             .create_job(
                 &hydra_id,
