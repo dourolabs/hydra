@@ -36,6 +36,8 @@ function buildServerFilters(
     if (username) filters.creator = username;
   } else if (filterRootId === "assigned") {
     if (username) filters.assignee = username;
+  } else if (filterRootId === "all") {
+    // No additional filters — show all issues
   }
 
   return filters;
@@ -63,7 +65,7 @@ export function DashboardV2Page() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
   const [filterRootId, setFilterRootId] = useState<string | null>(
-    selectedParam === "your-issues" || selectedParam === "assigned"
+    selectedParam === "your-issues" || selectedParam === "assigned" || selectedParam === "all"
       ? selectedParam
       : "your-issues",
   );
