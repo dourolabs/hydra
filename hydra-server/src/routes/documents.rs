@@ -207,6 +207,33 @@ pub async fn list_documents(
     Ok(Json(response))
 }
 
+pub async fn list_document_paths(
+    State(state): State<AppState>,
+    Query(query): Query<v1::documents::ListDocumentPathsQuery>,
+) -> Result<Json<v1::documents::ListDocumentPathsResponse>, ApiError> {
+    let prefix = query.prefix.as_deref().unwrap_or("/");
+    info!(prefix = %prefix, "list_document_paths invoked");
+
+    let children = state
+        .list_document_path_children(prefix)
+        .await
+        .map_err(|err| map_document_error(err, None))?;
+
+    let entries = children
+        .into_iter()
+        .map(|(name, full_path, child_count)| {
+            v1::documents::PathChildEntry::new(name, full_path, child_count)
+        })
+        .collect();
+
+    let response = v1::documents::ListDocumentPathsResponse::new(entries);
+    info!(
+        returned = response.children.len(),
+        "list_document_paths completed"
+    );
+    Ok(Json(response))
+}
+
 pub async fn list_document_versions(
     State(state): State<AppState>,
     DocumentIdPath(document_id): DocumentIdPath,

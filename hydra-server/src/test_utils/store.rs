@@ -160,6 +160,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn list_document_path_children(
+        &self,
+        _prefix: &str,
+    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+        fail()
+    }
+
     async fn get_session(
         &self,
         _id: &SessionId,

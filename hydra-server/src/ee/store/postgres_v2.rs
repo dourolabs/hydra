@@ -2575,6 +2575,52 @@ impl ReadOnlyStore for PostgresStoreV2 {
         .await
     }
 
+    async fn list_document_path_children(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+        // Normalize prefix: ensure it ends with '/'
+        let prefix = if prefix.ends_with('/') {
+            prefix.to_string()
+        } else {
+            format!("{prefix}/")
+        };
+        let prefix_len = prefix.len() as i32;
+
+        let sql = format!(
+            "SELECT
+                CASE
+                    WHEN POSITION('/' IN SUBSTRING(d.path FROM $1 + 1)) > 0
+                    THEN SUBSTRING(d.path FROM $1 + 1 FOR POSITION('/' IN SUBSTRING(d.path FROM $1 + 1)) - 1)
+                    ELSE SUBSTRING(d.path FROM $1 + 1)
+                END AS segment,
+                COUNT(*) AS child_count
+             FROM {TABLE_DOCUMENTS_V2} d
+             WHERE d.is_latest = true
+               AND COALESCE(d.deleted, false) = false
+               AND d.path IS NOT NULL
+               AND d.path LIKE $2
+               AND LENGTH(d.path) > $1
+             GROUP BY segment
+             ORDER BY segment"
+        );
+
+        let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+            .bind(prefix_len)
+            .bind(format!("{prefix}%"))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(segment, count)| {
+                let full_path = format!("{prefix}{segment}");
+                (segment, full_path, count as u64)
+            })
+            .collect())
+    }
+
     // -------------------------------------------------------------------------
     // Session methods
     // -------------------------------------------------------------------------

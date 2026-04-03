@@ -33,6 +33,8 @@ import type { DocumentVersionRecord } from "./generated/DocumentVersionRecord";
 import type { SearchDocumentsQuery } from "./generated/SearchDocumentsQuery";
 import type { ListDocumentsResponse } from "./generated/ListDocumentsResponse";
 import type { ListDocumentVersionsResponse } from "./generated/ListDocumentVersionsResponse";
+import type { ListDocumentPathsQuery } from "./generated/ListDocumentPathsQuery";
+import type { ListDocumentPathsResponse } from "./generated/ListDocumentPathsResponse";
 import type { SearchRepositoriesQuery } from "./generated/SearchRepositoriesQuery";
 import type { ListRepositoriesResponse } from "./generated/ListRepositoriesResponse";
 import type { CreateRepositoryRequest } from "./generated/CreateRepositoryRequest";
@@ -411,6 +413,11 @@ export class HydraApiClient {
   /** GET /v1/documents */
   listDocuments(query?: Partial<SearchDocumentsQuery>): Promise<ListDocumentsResponse> {
     return this.get("/v1/documents", query as Record<string, unknown>);
+  }
+
+  /** GET /v1/documents/paths */
+  listDocumentPaths(query?: Partial<ListDocumentPathsQuery>): Promise<ListDocumentPathsResponse> {
+    return this.get("/v1/documents/paths", query as Record<string, unknown>);
   }
 
   /** GET /v1/documents/:documentId/versions */
