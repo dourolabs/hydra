@@ -261,7 +261,6 @@ mod tests {
     async fn login_twice_produces_two_valid_tokens() -> anyhow::Result<()> {
         use crate::domain::actors::{Actor, AuthToken};
 
-
         let github_server = MockServer::start_async().await;
         let _mock = github_server.mock(|when, then| {
             when.method(GET).path("/user");
