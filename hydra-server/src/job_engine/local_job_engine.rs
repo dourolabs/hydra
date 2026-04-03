@@ -11,7 +11,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use super::{HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use super::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
 use crate::domain::actors::Actor;
 
 /// How long completed/failed process entries are kept before being reaped.
@@ -231,6 +231,7 @@ impl JobEngine for LocalJobEngine {
         _memory_limit: String,
         _cpu_request: String,
         _memory_request: String,
+        _bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError> {
         if self.processes.contains_key(hydra_id) {
             return Err(JobEngineError::AlreadyExists(hydra_id.clone()));
@@ -852,6 +853,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -879,6 +881,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -894,6 +897,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await;
 
@@ -920,6 +924,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -949,6 +954,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -978,6 +984,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1008,6 +1015,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1051,6 +1059,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1065,6 +1074,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1108,6 +1118,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1145,6 +1156,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1159,6 +1171,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1189,6 +1202,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1229,6 +1243,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -1264,6 +1279,7 @@ mod tests {
                 "1Gi".to_string(),
                 "500m".to_string(),
                 "1Gi".to_string(),
+                Vec::new(),
             )
             .await
             .unwrap();

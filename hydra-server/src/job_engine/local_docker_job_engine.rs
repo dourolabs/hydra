@@ -18,7 +18,7 @@ use futures::{StreamExt, channel::mpsc};
 use hydra_common::constants::{ENV_HYDRA_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN};
 use tracing::{error, info, warn};
 
-use super::{HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use super::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
 use crate::domain::actors::Actor;
 
 /// Metadata tracked in-memory for each container managed by this engine.
@@ -223,6 +223,10 @@ fn parse_docker_time(s: &str) -> Option<DateTime<Utc>> {
 
 #[async_trait]
 impl JobEngine for LocalDockerJobEngine {
+    fn is_containerized(&self) -> bool {
+        true
+    }
+
     async fn create_job(
         &self,
         hydra_id: &SessionId,
@@ -234,6 +238,7 @@ impl JobEngine for LocalDockerJobEngine {
         memory_limit: String,
         _cpu_request: String,
         _memory_request: String,
+        bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError> {
         if self.containers.contains_key(hydra_id) {
             return Err(JobEngineError::AlreadyExists(hydra_id.clone()));
@@ -283,8 +288,20 @@ impl JobEngine for LocalDockerJobEngine {
         // Parse memory limit for Docker (best-effort).
         let memory = parse_memory_limit(&memory_limit);
 
+        let binds = if bind_mounts.is_empty() {
+            None
+        } else {
+            Some(
+                bind_mounts
+                    .iter()
+                    .map(|m| format!("{}:{}:rw", m.host_path, m.container_path))
+                    .collect(),
+            )
+        };
+
         let host_config = HostConfig {
             memory,
+            binds,
             extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
             ..Default::default()
         };
@@ -776,6 +793,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await
             .expect("create_job should succeed with locally available image");
@@ -824,6 +842,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await
             .expect("create_job should succeed after pulling missing image");
@@ -873,6 +892,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await;
 
@@ -912,6 +932,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await;
 

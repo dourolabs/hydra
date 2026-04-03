@@ -78,6 +78,16 @@ pub enum JobEngineError {
     Internal(String),
 }
 
+/// Describes a filesystem bind mount for Docker containers.
+///
+/// Maps a host filesystem path into a container at a specified mount point.
+/// Used to give Docker workers access to local filesystem git repos.
+#[derive(Debug, Clone)]
+pub struct BindMount {
+    pub host_path: String,
+    pub container_path: String,
+}
+
 /// Trait that abstracts the interface between the HTTP API and Kubernetes state.
 ///
 /// This trait allows the routes to interact with Kubernetes jobs and pods
@@ -98,6 +108,7 @@ pub trait JobEngine: Send + Sync {
     /// * `memory_limit` - Memory limit for the job container
     /// * `cpu_request` - CPU request for the job container
     /// * `memory_request` - Memory request for the job container
+    /// * `bind_mounts` - Optional filesystem bind mounts for Docker containers
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -112,7 +123,14 @@ pub trait JobEngine: Send + Sync {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
+        bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError>;
+
+    /// Returns `true` when workers run inside containers and need host paths
+    /// rewritten to container-side mount points (e.g. Docker engine).
+    fn is_containerized(&self) -> bool {
+        false
+    }
 
     /// Lists all jobs matching the given label selector.
     ///

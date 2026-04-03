@@ -40,7 +40,9 @@ pub use notifications::NotificationError;
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 pub use sessions::{CreateSessionError, SetSessionStatusError};
-pub(crate) use sessions::{WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE};
+pub(crate) use sessions::{
+    WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE, rewrite_local_bundle_url,
+};
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
 

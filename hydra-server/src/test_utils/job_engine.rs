@@ -1,4 +1,4 @@
-use crate::job_engine::{HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use crate::job_engine::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
@@ -103,6 +103,7 @@ impl JobEngine for MockJobEngine {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
+        _bind_mounts: Vec<BindMount>,
     ) -> Result<(), JobEngineError> {
         // If a create_job_error is configured, return it without creating a job.
         // This simulates transient K8s API errors (e.g. etcdserver timeouts)
@@ -269,6 +270,7 @@ mod tests {
                 "128Mi".to_string(),
                 "100m".to_string(),
                 "64Mi".to_string(),
+                Vec::new(),
             )
             .await
             .expect("job creation should succeed");
