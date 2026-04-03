@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import type { IssueStatus, PatchStatus } from "@hydra/api";
 import {
   usePaginatedIssues,
   useIssueCount,
@@ -11,6 +12,7 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar } from "../features/dashboard-v2/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard-v2/HeterogeneousItemList";
+import { FilterBar } from "../features/dashboard-v2/FilterBar";
 import type { WorkItem } from "../features/dashboard-v2/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard-v2/usePageIssueTrees";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
@@ -21,12 +23,21 @@ import styles from "./DashboardV2Page.module.css";
 
 const VALID_FILTERS = ["your-issues", "assigned", "all", "patches", "documents"];
 
+const ALL_ISSUE_STATUSES: IssueStatus[] = [
+  "open", "in-progress", "closed", "dropped", "rejected", "failed",
+];
+const ALL_PATCH_STATUSES: PatchStatus[] = [
+  "Open", "Closed", "Merged", "ChangesRequested",
+];
+
 /** Build server-side IssueFilters from the current filter selection. */
 function buildServerFilters(
   filterRootId: string | null,
   username: string,
   inboxLabelId: string | undefined,
   searchQuery: string,
+  issueStatuses: Set<IssueStatus>,
+  selectedLabelId: string | null,
 ): IssueFilters {
   const filters: IssueFilters = {};
 
@@ -41,6 +52,19 @@ function buildServerFilters(
     if (username) filters.assignee = username;
   } else if (filterRootId === "all") {
     // No additional filters — show all issues
+  }
+
+  // Apply status filter only when not all statuses are selected
+  if (issueStatuses.size > 0 && issueStatuses.size < ALL_ISSUE_STATUSES.length) {
+    filters.status = [...issueStatuses].join(",");
+  }
+
+  // Apply label filter
+  if (selectedLabelId) {
+    // Append to existing labels if present (e.g. inbox label), otherwise set
+    filters.labels = filters.labels
+      ? `${filters.labels},${selectedLabelId}`
+      : selectedLabelId;
   }
 
   return filters;
@@ -74,6 +98,13 @@ export function DashboardV2Page() {
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedIssueStatuses, setSelectedIssueStatuses] = useState<Set<IssueStatus>>(
+    () => new Set(ALL_ISSUE_STATUSES),
+  );
+  const [selectedPatchStatuses, setSelectedPatchStatuses] = useState<Set<PatchStatus>>(
+    () => new Set(ALL_PATCH_STATUSES),
+  );
+  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
 
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
@@ -84,8 +115,8 @@ export function DashboardV2Page() {
 
   // Build server-side filters for the paginated query
   const serverFilters = useMemo(
-    () => buildServerFilters(filterRootId, username, inboxLabelId, searchQuery),
-    [filterRootId, username, inboxLabelId, searchQuery],
+    () => buildServerFilters(filterRootId, username, inboxLabelId, searchQuery, selectedIssueStatuses, selectedLabelId),
+    [filterRootId, username, inboxLabelId, searchQuery, selectedIssueStatuses, selectedLabelId],
   );
 
   const isSearching = searchQuery.length > 0;
@@ -104,13 +135,23 @@ export function DashboardV2Page() {
     isFetchingNextPage: isFetchingNextIssues,
   } = usePaginatedIssues(isSearching ? searchOnlyFilters : serverFilters, !isArtifactFilter || isSearching);
 
+  const patchFilters = useMemo(() => {
+    const pf: { q?: string; status?: PatchStatus[] } = {};
+    if (searchQuery) pf.q = searchQuery;
+    // Only apply status filter when not all are selected and on the patches tab (not searching)
+    if (!isSearching && selectedPatchStatuses.size > 0 && selectedPatchStatuses.size < ALL_PATCH_STATUSES.length) {
+      pf.status = [...selectedPatchStatuses];
+    }
+    return pf;
+  }, [searchQuery, isSearching, selectedPatchStatuses]);
+
   const {
     data: patchesData,
     isLoading: patchesLoading,
     fetchNextPage: fetchNextPatches,
     hasNextPage: hasNextPatches,
     isFetchingNextPage: isFetchingNextPatches,
-  } = usePaginatedPatches(searchQuery, filterRootId === "patches" || isSearching);
+  } = usePaginatedPatches(patchFilters, filterRootId === "patches" || isSearching);
 
   const {
     data: documentsData,
@@ -249,6 +290,10 @@ export function DashboardV2Page() {
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
       setFilterRootId(rootId);
+      // Reset filters when switching tabs
+      setSelectedIssueStatuses(new Set(ALL_ISSUE_STATUSES));
+      setSelectedPatchStatuses(new Set(ALL_PATCH_STATUSES));
+      setSelectedLabelId(null);
       setSearchParams(
         (prev) => {
           prev.set("selected", rootId ?? "your-issues");
@@ -324,6 +369,25 @@ export function DashboardV2Page() {
           hasNextPage={hasNextPage ?? false}
           isFetchingNextPage={isFetchingNextPage}
           onLoadMore={handleLoadMore}
+          filterBar={
+            !isSearching ? (
+              <FilterBar
+                tabKind={
+                  filterRootId === "patches"
+                    ? "patches"
+                    : filterRootId === "documents"
+                      ? "documents"
+                      : "issues"
+                }
+                selectedIssueStatuses={selectedIssueStatuses}
+                onIssueStatusesChange={setSelectedIssueStatuses}
+                selectedPatchStatuses={selectedPatchStatuses}
+                onPatchStatusesChange={setSelectedPatchStatuses}
+                selectedLabelId={selectedLabelId}
+                onLabelChange={setSelectedLabelId}
+              />
+            ) : undefined
+          }
         />
       </div>
       <button

@@ -1,0 +1,168 @@
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.dropdownWrapper {
+  position: relative;
+}
+
+.dropdownTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-terminal);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.dropdownTrigger:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.dropdownTriggerActive {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.chevron {
+  font-size: 8px;
+  margin-left: 2px;
+}
+
+.dropdownMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 180px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: var(--space-1) 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.checkboxItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  font-family: var(--font-family-terminal);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  transition: background var(--transition-fast);
+  user-select: none;
+}
+
+.checkboxItem:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.checkboxLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.onlyButton {
+  flex-shrink: 0;
+  padding: 0 var(--space-1);
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-terminal);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  text-transform: uppercase;
+}
+
+.checkboxItem:hover .onlyButton {
+  opacity: 1;
+}
+
+.onlyButton:hover {
+  color: var(--color-accent);
+}
+
+.labelItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  font-family: var(--font-family-terminal);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  transition: background var(--transition-fast);
+  user-select: none;
+}
+
+.labelItem:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.labelItemSelected {
+  color: var(--color-accent);
+}
+
+.colorDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.labelName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noLabel {
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdownTrigger,
+  .checkboxItem,
+  .labelItem,
+  .onlyButton {
+    transition: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .filterBar {
+    padding: var(--space-1) var(--space-2);
+  }
+}
