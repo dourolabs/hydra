@@ -56,8 +56,16 @@ export function IssueFilterSidebar({
     () => handleFilterChange("assigned"),
     [handleFilterChange],
   );
+  const handlePatchesClick = useCallback(
+    () => handleFilterChange("patches"),
+    [handleFilterChange],
+  );
+  const handleDocumentsClick = useCallback(
+    () => handleFilterChange("documents"),
+    [handleFilterChange],
+  );
 
-  const renderIssueList = (hideWhenCollapsed: boolean) => (
+  const renderFilterList = (hideWhenCollapsed: boolean) => (
     <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
       <FilterItem
         isActive={activeFilter === "your-issues"}
@@ -74,6 +82,21 @@ export function IssueFilterSidebar({
         <span className={styles.itemLabel}>Assigned to You</span>
         {assignedCount > 0 && <span className={styles.badgeCount}>{assignedCount}</span>}
       </FilterItem>
+      <li className={styles.labelSectionHeader}>Artifacts</li>
+      <FilterItem
+        isActive={activeFilter === "patches"}
+        onClick={handlePatchesClick}
+        className={styles.item}
+      >
+        <span className={styles.itemLabel}>Patches</span>
+      </FilterItem>
+      <FilterItem
+        isActive={activeFilter === "documents"}
+        onClick={handleDocumentsClick}
+        className={styles.item}
+      >
+        <span className={styles.itemLabel}>Documents</span>
+      </FilterItem>
     </ul>
   );
 
@@ -86,7 +109,7 @@ export function IssueFilterSidebar({
             <span className={styles.title}>Issues</span>
           </div>
         )}
-        {renderIssueList(true)}
+        {renderFilterList(true)}
       </div>
 
       {/* Mobile slide-out drawer (hamburger button lives in HeterogeneousItemList toolbar) */}
@@ -95,7 +118,7 @@ export function IssueFilterSidebar({
         <div className={styles.drawerHeader}>
           <span className={styles.title}>Issues</span>
         </div>
-        {renderIssueList(false)}
+        {renderFilterList(false)}
       </div>
     </>
   );

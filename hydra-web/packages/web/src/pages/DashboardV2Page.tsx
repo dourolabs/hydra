@@ -5,6 +5,8 @@ import {
   useIssueCount,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
+import { usePaginatedPatches } from "../features/dashboard-v2/usePaginatedPatches";
+import { usePaginatedDocuments } from "../features/dashboard-v2/usePaginatedDocuments";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar } from "../features/dashboard-v2/IssueFilterSidebar";
@@ -16,6 +18,8 @@ import { readCollapsed, writeCollapsed } from "../features/dashboard-v2/sidebarS
 import { IssueCreateModal } from "../features/dashboard-v2/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardV2Page.module.css";
+
+const VALID_FILTERS = ["your-issues", "assigned", "patches", "documents"];
 
 /** Build server-side IssueFilters from the current filter selection. */
 function buildServerFilters(
@@ -62,7 +66,7 @@ export function DashboardV2Page() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
   const [filterRootId, setFilterRootId] = useState<string | null>(
-    selectedParam === "your-issues" || selectedParam === "assigned"
+    selectedParam && VALID_FILTERS.includes(selectedParam)
       ? selectedParam
       : "your-issues",
   );
@@ -74,6 +78,7 @@ export function DashboardV2Page() {
   const inboxLabelId = inboxLabel?.label_id;
 
   const isInboxFilter = filterRootId === "your-issues";
+  const isArtifactFilter = filterRootId === "patches" || filterRootId === "documents";
 
   // Build server-side filters for the paginated query
   const serverFilters = useMemo(
@@ -84,17 +89,43 @@ export function DashboardV2Page() {
   const {
     data: paginatedData,
     isLoading: paginatedLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters);
+    fetchNextPage: fetchNextIssues,
+    hasNextPage: hasNextIssues,
+    isFetchingNextPage: isFetchingNextIssues,
+  } = usePaginatedIssues(serverFilters, !isArtifactFilter);
+
+  const {
+    data: patchesData,
+    isLoading: patchesLoading,
+    fetchNextPage: fetchNextPatches,
+    hasNextPage: hasNextPatches,
+    isFetchingNextPage: isFetchingNextPatches,
+  } = usePaginatedPatches(searchQuery, filterRootId === "patches");
+
+  const {
+    data: documentsData,
+    isLoading: documentsLoading,
+    fetchNextPage: fetchNextDocuments,
+    hasNextPage: hasNextDocuments,
+    isFetchingNextPage: isFetchingNextDocuments,
+  } = usePaginatedDocuments(searchQuery, filterRootId === "documents");
 
   // Flatten paginated pages into a single array
   const issues = useMemo(() => {
     return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
   }, [paginatedData]);
 
-  const isLoading = paginatedLoading;
+  const isLoading = isArtifactFilter
+    ? (filterRootId === "patches" ? patchesLoading : documentsLoading)
+    : paginatedLoading;
+
+  const hasNextPage = isArtifactFilter
+    ? (filterRootId === "patches" ? hasNextPatches : hasNextDocuments)
+    : hasNextIssues;
+
+  const isFetchingNextPage = isArtifactFilter
+    ? (filterRootId === "patches" ? isFetchingNextPatches : isFetchingNextDocuments)
+    : isFetchingNextIssues;
 
   // Badge count query for "Assigned to You" — only open status
   const assignedCountFilters = useMemo<IssueFilters>(() => {
@@ -121,8 +152,30 @@ export function DashboardV2Page() {
     isLoading: pageTreeLoading,
   } = usePageIssueTrees(issues, username);
 
-  // Build flat work items from issues only
+  // Build flat work items from issues, patches, or documents
   const allWorkItems = useMemo((): WorkItem[] => {
+    if (filterRootId === "patches") {
+      const patches = patchesData?.pages.flatMap((page) => page.patches) ?? [];
+      return patches.map((patch) => ({
+        kind: "patch" as const,
+        id: patch.patch_id,
+        data: patch,
+        lastUpdated: patch.timestamp,
+        isTerminal: patch.patch.status === "Merged" || patch.patch.status === "Closed",
+        sourceIssueId: undefined,
+      }));
+    }
+    if (filterRootId === "documents") {
+      const documents = documentsData?.pages.flatMap((page) => page.documents) ?? [];
+      return documents.map((doc) => ({
+        kind: "document" as const,
+        id: doc.document_id,
+        data: doc,
+        lastUpdated: doc.timestamp,
+        isTerminal: false,
+        sourceIssueId: undefined,
+      }));
+    }
     return issues.map((issue) => ({
       kind: "issue" as const,
       id: issue.issue_id,
@@ -130,7 +183,7 @@ export function DashboardV2Page() {
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
     }));
-  }, [issues]);
+  }, [filterRootId, issues, patchesData, documentsData]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
@@ -171,6 +224,16 @@ export function DashboardV2Page() {
   const handleDrawerClose = useCallback(() => {
     setDrawerOpen(false);
   }, []);
+
+  const fetchNextPage = useMemo(
+    () =>
+      filterRootId === "patches"
+        ? fetchNextPatches
+        : filterRootId === "documents"
+          ? fetchNextDocuments
+          : fetchNextIssues,
+    [filterRootId, fetchNextPatches, fetchNextDocuments, fetchNextIssues],
+  );
 
   const handleLoadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) {
