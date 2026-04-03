@@ -28,7 +28,6 @@ interface IssueFilterSidebarProps {
   collapsed: boolean;
   drawerOpen: boolean;
   onDrawerClose: () => void;
-  yourIssuesCount: number;
   assignedCount: number;
 }
 
@@ -38,7 +37,6 @@ export function IssueFilterSidebar({
   collapsed,
   drawerOpen,
   onDrawerClose,
-  yourIssuesCount,
   assignedCount,
 }: IssueFilterSidebarProps) {
   /** On mobile, selecting an issue should also close the drawer. */
@@ -67,7 +65,6 @@ export function IssueFilterSidebar({
         className={styles.item}
       >
         <span className={styles.itemLabel}>Your Issues</span>
-        {yourIssuesCount > 0 && <span className={styles.badgeCount}>{yourIssuesCount}</span>}
       </FilterItem>
       <FilterItem
         isActive={activeFilter === "assigned"}

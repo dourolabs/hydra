@@ -11,7 +11,6 @@ import { IssueFilterSidebar } from "../features/dashboard-v2/IssueFilterSidebar"
 import { HeterogeneousItemList } from "../features/dashboard-v2/HeterogeneousItemList";
 import type { WorkItem } from "../features/dashboard-v2/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard-v2/usePageIssueTrees";
-import { useActiveSessionIssueIds } from "../features/dashboard-v2/useActiveSessionIssueIds";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard-v2/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard-v2/IssueCreateModal";
@@ -97,60 +96,14 @@ export function DashboardV2Page() {
 
   const isLoading = paginatedLoading;
 
-  // Badge count queries for "Your Issues" (inbox issues created by user)
-  const yourIssuesCountFilters = useMemo<IssueFilters>(() => {
-    if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "open,in-progress" };
-  }, [inboxLabelId, username]);
-
-  // Badge count queries for "Assigned to You"
+  // Badge count query for "Assigned to You" — only open status
   const assignedCountFilters = useMemo<IssueFilters>(() => {
     if (!username) return {};
-    return { assignee: username, status: "open,in-progress" };
+    return { assignee: username, status: "open" };
   }, [username]);
 
-  const yourIssuesEnabled = !!inboxLabelId && !!username;
-  const { data: yourIssuesTotalCount = 0 } = useIssueCount(yourIssuesCountFilters, yourIssuesEnabled);
-
   const assignedEnabled = !!username;
-  const { data: assignedTotalCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
-
-  // Fetch active session IDs to exclude from badge counts.
-  // Issues with running/pending sessions should not count toward badges.
-  const { activeIssueIds } = useActiveSessionIssueIds();
-  const activeIdsParam = useMemo(
-    () => (activeIssueIds.size > 0 ? Array.from(activeIssueIds).join(",") : null),
-    [activeIssueIds],
-  );
-
-  // Count how many active-session issues match each badge filter so we can subtract them.
-  const yourIssuesActiveFilters = useMemo<IssueFilters>(() => {
-    if (!activeIdsParam || !inboxLabelId || !username) return {};
-    return {
-      labels: inboxLabelId,
-      creator: username,
-      ids: activeIdsParam,
-      status: "open,in-progress",
-    };
-  }, [activeIdsParam, inboxLabelId, username]);
-
-  const assignedActiveFilters = useMemo<IssueFilters>(() => {
-    if (!activeIdsParam || !username) return {};
-    return { assignee: username, ids: activeIdsParam, status: "open,in-progress" };
-  }, [activeIdsParam, username]);
-
-  const activeCountEnabled = !!activeIdsParam;
-  const { data: yourIssuesActiveCount = 0 } = useIssueCount(
-    yourIssuesActiveFilters,
-    activeCountEnabled && yourIssuesEnabled,
-  );
-  const { data: assignedActiveCount = 0 } = useIssueCount(
-    assignedActiveFilters,
-    activeCountEnabled && assignedEnabled,
-  );
-
-  const yourIssuesCount = Math.max(0, yourIssuesTotalCount - yourIssuesActiveCount);
-  const assignedCount = Math.max(0, assignedTotalCount - assignedActiveCount);
+  const { data: assignedCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
@@ -234,7 +187,6 @@ export function DashboardV2Page() {
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
-          yourIssuesCount={yourIssuesCount}
           assignedCount={assignedCount}
         />
         <HeterogeneousItemList
