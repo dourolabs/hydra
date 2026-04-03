@@ -112,7 +112,12 @@ export function DashboardV2Page() {
 
   // Flatten paginated pages into a single array
   const issues = useMemo(() => {
-    return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
+    const seen = new Set<string>();
+    return (paginatedData?.pages.flatMap((page) => page.issues) ?? []).filter((issue) => {
+      if (seen.has(issue.issue_id)) return false;
+      seen.add(issue.issue_id);
+      return true;
+    });
   }, [paginatedData]);
 
   const isLoading = isArtifactFilter

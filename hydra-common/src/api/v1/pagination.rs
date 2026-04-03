@@ -13,8 +13,8 @@ pub struct DecodedCursor {
 impl DecodedCursor {
     /// Encodes this cursor as a base64 opaque string.
     pub fn encode(&self) -> String {
-        let millis = self.timestamp.timestamp_millis();
-        let raw = format!("{millis}:{}", self.id);
+        let micros = self.timestamp.timestamp_micros();
+        let raw = format!("{micros}:{}", self.id);
         URL_SAFE_NO_PAD.encode(raw.as_bytes())
     }
 
@@ -24,13 +24,13 @@ impl DecodedCursor {
             .decode(cursor)
             .map_err(|e| format!("invalid cursor encoding: {e}"))?;
         let raw = String::from_utf8(bytes).map_err(|e| format!("invalid cursor encoding: {e}"))?;
-        let (millis_str, id) = raw
+        let (micros_str, id) = raw
             .split_once(':')
             .ok_or_else(|| "invalid cursor format".to_string())?;
-        let millis: i64 = millis_str
+        let micros: i64 = micros_str
             .parse()
             .map_err(|e| format!("invalid cursor timestamp: {e}"))?;
-        let timestamp = DateTime::from_timestamp_millis(millis)
+        let timestamp = DateTime::from_timestamp_micros(micros)
             .ok_or_else(|| "invalid cursor timestamp".to_string())?;
         Ok(DecodedCursor {
             timestamp,
@@ -83,7 +83,7 @@ mod tests {
         };
         let encoded = cursor.encode();
         let decoded = DecodedCursor::decode(&encoded).unwrap();
-        assert_eq!(decoded.timestamp.timestamp_millis(), ts.timestamp_millis());
+        assert_eq!(decoded.timestamp.timestamp_micros(), ts.timestamp_micros());
         assert_eq!(decoded.id, id);
     }
 
