@@ -7,8 +7,8 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await page.goto("/documents");
 
     // Top-level path folders should be visible and expanded by default
-    await expect(page.getByText("research")).toBeVisible();
-    await expect(page.getByText("docs")).toBeVisible();
+    await expect(page.getByRole("button", { name: /research/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /docs/ })).toBeVisible();
 
     // Top-level folders are expanded by default, and leaf documents render directly as DocumentRows
     await expect(

@@ -6,6 +6,7 @@ import { apiClient } from "../api/client";
 import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
+import { FolderIcon } from "../components/icons/FolderIcon";
 import { DocumentRow } from "../features/documents/DocumentRow";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
@@ -55,7 +56,7 @@ function DocumentLeafNode({ entry, depth }: LeafNodeProps) {
 
   if (isLoading) {
     return (
-      <li className={styles.treeNode}>
+      <li className={styles.loadingRow}>
         <div style={{ paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }}>
           <Spinner size="sm" />
         </div>
@@ -115,25 +116,27 @@ function ExpandableFolderNode({
   const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
 
   return (
-    <li className={styles.treeNode}>
+    <>
       {isDocAndFolder && inlineDoc && (
         <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} depth={depth} />
       )}
-      <button
-        className={styles.folderRow}
-        style={{
-          paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
-        }}
-        onClick={toggle}
-        aria-expanded={expanded}
-      >
-        <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
-        <span className={styles.folderIcon}>&#128193;</span>
-        <span className={styles.folderName}>{entry.name}</span>
-        <span className={styles.childCount}>{Number(entry.child_count)}</span>
-      </button>
+      <li>
+        <button
+          className={styles.folderRow}
+          style={{
+            paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
+          }}
+          onClick={toggle}
+          aria-expanded={expanded}
+        >
+          <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
+          <FolderIcon className={styles.folderIcon} />
+          <span className={styles.folderName}>{entry.name}</span>
+          <span className={styles.childCount}>{Number(entry.child_count)}</span>
+        </button>
+      </li>
       {expanded && (
-        <ul className={styles.treeChildren}>
+        <>
           {(loadingPaths || loadingDocs) && (
             <li className={styles.loadingRow}>
               <Spinner size="sm" />
@@ -153,9 +156,9 @@ function ExpandableFolderNode({
             leafDocs?.documents
               .filter((d) => !d.document.deleted)
               .map((doc) => <DocumentRow key={doc.document_id} doc={doc} depth={depth + 1} />)}
-        </ul>
+        </>
       )}
-    </li>
+    </>
   );
 }
 

@@ -6,6 +6,7 @@ import type { DocumentSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
+import { DocumentIcon } from "../../components/icons/DocumentIcon";
 import { formatRelativeTime } from "../../utils/time";
 import { getDocumentDisplayTitle } from "./utils";
 import styles from "./DocumentRow.module.css";
@@ -45,7 +46,7 @@ export function DocumentRow({ doc, depth }: DocumentRowProps) {
       }
     >
       <Link to={`/documents/${doc.document_id}`} className={styles.docRowLink}>
-        <span className={styles.docIcon}>&#128196;</span>
+        <DocumentIcon className={styles.docIcon} />
         <span className={styles.docTitle}>{getDocumentDisplayTitle(doc)}</span>
         <div className={styles.docMeta}>
           {doc.document.path && <span className={styles.docPath}>{doc.document.path}</span>}
