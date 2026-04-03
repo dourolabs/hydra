@@ -76,9 +76,9 @@
   }
 
   .docRowLink {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-1);
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   .deleteButton {
@@ -86,11 +86,12 @@
   }
 
   .docTitle {
-    white-space: normal;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .docMeta {
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    display: none;
   }
 }
