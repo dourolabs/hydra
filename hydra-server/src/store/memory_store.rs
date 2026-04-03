@@ -10,7 +10,6 @@ use crate::domain::{
     documents::Document,
     issues::{Issue, IssueDependency, IssueStatus, IssueType},
     labels::Label,
-    messages::Message,
     notifications::Notification,
     patches::Patch,
     secrets::SecretRef,
@@ -18,13 +17,12 @@ use crate::domain::{
 };
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
-use hydra_common::api::v1::messages::SearchMessagesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
+    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -54,8 +52,6 @@ pub struct MemoryStore {
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
     actors: DashMap<String, Vec<Versioned<Actor>>>,
-    /// Maps message IDs to their versioned Message data
-    messages: DashMap<MessageId, Vec<Versioned<Message>>>,
     /// Maps notification IDs to their Notification data (non-versioned)
     notifications: DashMap<NotificationId, Notification>,
     /// Maps agent names to their Agent data (non-versioned)
@@ -88,7 +84,6 @@ impl MemoryStore {
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
-            messages: DashMap::new(),
             notifications: DashMap::new(),
             agents: DashMap::new(),
             labels: DashMap::new(),
@@ -1069,84 +1064,6 @@ impl ReadOnlyStore for MemoryStore {
         Ok(users)
     }
 
-    // ---- Message (read-only) ----
-
-    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
-        let versions = self
-            .messages
-            .get(id)
-            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
-        Self::latest_versioned(versions.value())
-            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))
-    }
-
-    async fn list_messages(
-        &self,
-        query: &SearchMessagesQuery,
-    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        let limit = query.limit.unwrap_or(50) as usize;
-        let include_deleted = query.include_deleted.unwrap_or(false);
-
-        // Collect all messages with their latest versions
-        let mut all_messages: Vec<(MessageId, Versioned<Message>)> = Vec::new();
-        for entry in self.messages.iter() {
-            let msg_id = entry.key().clone();
-            let versions = entry.value();
-            if let Some(latest) = Self::latest_versioned(versions) {
-                let msg = &latest.item;
-
-                // Filter by deleted
-                if msg.deleted && !include_deleted {
-                    continue;
-                }
-
-                // Filter by sender
-                if let Some(ref sender_filter) = query.sender {
-                    match &msg.sender {
-                        Some(sender) if sender.to_string() == *sender_filter => {}
-                        _ => continue,
-                    }
-                }
-
-                // Filter by recipient
-                if let Some(ref recipient_filter) = query.recipient {
-                    if msg.recipient.to_string() != *recipient_filter {
-                        continue;
-                    }
-                }
-
-                // Filter by after timestamp
-                if let Some(ref after_ts) = query.after {
-                    if latest.timestamp <= *after_ts {
-                        continue;
-                    }
-                }
-
-                // Filter by before timestamp
-                if let Some(ref before_ts) = query.before {
-                    if latest.timestamp >= *before_ts {
-                        continue;
-                    }
-                }
-
-                // Filter by is_read
-                if let Some(is_read_filter) = query.is_read {
-                    if msg.is_read != is_read_filter {
-                        continue;
-                    }
-                }
-
-                all_messages.push((msg_id, latest));
-            }
-        }
-
-        // Sort by timestamp descending (newest first)
-        all_messages.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
-        all_messages.truncate(limit);
-
-        Ok(all_messages)
-    }
-
     // ---- Notification (read-only) ----
 
     async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
@@ -1927,38 +1844,6 @@ impl Store for MemoryStore {
             count += 1;
         }
         Ok(count)
-    }
-
-    // ---- Message mutations ----
-
-    async fn add_message(
-        &self,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let id = MessageId::new();
-
-        self.messages.insert(
-            id.clone(),
-            vec![Self::versioned_now_with_actor(message, 1, actor)],
-        );
-
-        Ok((id, 1))
-    }
-
-    async fn update_message(
-        &self,
-        id: &MessageId,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
-        let mut versions = self
-            .messages
-            .get_mut(id)
-            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
-        let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now_with_actor(message, next_version, actor));
-        Ok(next_version)
     }
 
     // ---- Agent mutations ----
@@ -5597,67 +5482,6 @@ mod tests {
         let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
-    }
-
-    #[tokio::test]
-    async fn message_filter_by_is_read() {
-        let store = MemoryStore::new();
-
-        let sender = ActorId::Username(Username::from("alice").into());
-        let recipient = ActorId::Username(Username::from("bob").into());
-
-        // Create an unread message (default)
-        let msg_unread = Message::new(
-            Some(sender.clone()),
-            recipient.clone(),
-            "unread message".into(),
-        );
-        let (_id_unread, _) = store
-            .add_message(msg_unread, &ActorRef::test())
-            .await
-            .unwrap();
-
-        // Create a message and mark it as read
-        let msg = Message::new(
-            Some(sender.clone()),
-            recipient.clone(),
-            "read message".into(),
-        );
-        let (id_read, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
-
-        let read_msg = Message {
-            sender: Some(sender.clone()),
-            recipient: recipient.clone(),
-            body: "read message".into(),
-            deleted: false,
-            is_read: true,
-        };
-        store
-            .update_message(&id_read, read_msg, &ActorRef::test())
-            .await
-            .unwrap();
-
-        // Filter for read messages only
-        let mut query = SearchMessagesQuery::default();
-        query.is_read = Some(true);
-        let results = store.list_messages(&query).await.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, id_read);
-        assert_eq!(results[0].1.item.body, "read message");
-        assert!(results[0].1.item.is_read);
-
-        // Filter for unread messages only
-        let mut query = SearchMessagesQuery::default();
-        query.is_read = Some(false);
-        let results = store.list_messages(&query).await.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].1.item.body, "unread message");
-        assert!(!results[0].1.item.is_read);
-
-        // No filter returns all messages
-        let query = SearchMessagesQuery::default();
-        let results = store.list_messages(&query).await.unwrap();
-        assert_eq!(results.len(), 2);
     }
 
     // ---- Notification tests ----

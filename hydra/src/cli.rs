@@ -91,11 +91,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
     },
-    /// Send, list, or wait for messages.
-    Messages {
-        #[command(subcommand)]
-        command: command::messages::MessagesCommand,
-    },
     /// Manage notifications.
     Notifications {
         #[command(subcommand)]
@@ -237,7 +232,6 @@ pub async fn dispatch(
         }
         Commands::Caches { command } => command::caches::run(command, context).await?,
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
-        Commands::Messages { command } => command::messages::run(client, command, context).await?,
         Commands::Notifications { command } => {
             command::notifications::run(client, command, context).await?
         }

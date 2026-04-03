@@ -20,11 +20,10 @@ use hydra_common::{
             LAST_EVENT_ID_HEADER, ResyncEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
-        messages::VersionedMessage,
         patches::PatchVersionRecord,
         sessions::SessionVersionRecord,
     },
-    ids::{DocumentId, IssueId, MessageId, PatchId, SessionId},
+    ids::{DocumentId, IssueId, PatchId, SessionId},
 };
 use std::{convert::Infallible, sync::Arc};
 use tokio::sync::broadcast::error::RecvError;
@@ -180,7 +179,6 @@ struct EventFilter {
     patch_ids: Option<Vec<PatchId>>,
     label_ids: Option<Vec<LabelId>>,
     document_ids: Option<Vec<DocumentId>>,
-    message_ids: Option<Vec<MessageId>>,
     notification_ids: Option<Vec<NotificationId>>,
 }
 
@@ -246,17 +244,6 @@ impl EventFilter {
             .transpose()
             .map_err(|e| format!("invalid document_ids: {e}"))?;
 
-        let message_ids = query
-            .message_ids
-            .as_ref()
-            .map(|s| {
-                s.split(',')
-                    .map(|t| t.trim().parse::<MessageId>())
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .transpose()
-            .map_err(|e| format!("invalid message_ids: {e}"))?;
-
         let notification_ids = query
             .notification_ids
             .as_ref()
@@ -275,7 +262,6 @@ impl EventFilter {
             patch_ids,
             label_ids,
             document_ids,
-            message_ids,
             notification_ids,
         })
     }
@@ -327,13 +313,6 @@ impl EventFilter {
                     }
                 }
             }
-            EntityId::Message(id) => {
-                if let Some(ids) = &self.message_ids {
-                    if !ids.contains(id) {
-                        return false;
-                    }
-                }
-            }
             EntityId::Notification(id) => {
                 if let Some(ids) = &self.notification_ids {
                     if !ids.contains(id) {
@@ -355,7 +334,6 @@ enum EntityId<'a> {
     Patch(&'a PatchId),
     Label(&'a LabelId),
     Document(&'a DocumentId),
-    Message(&'a MessageId),
     Notification(&'a NotificationId),
 }
 
@@ -383,11 +361,6 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::DocumentUpdated { document_id, .. }
         | ServerEvent::DocumentDeleted { document_id, .. } => {
             ("documents", EntityId::Document(document_id))
-        }
-
-        ServerEvent::MessageCreated { message_id, .. }
-        | ServerEvent::MessageUpdated { message_id, .. } => {
-            ("messages", EntityId::Message(message_id))
         }
 
         ServerEvent::NotificationCreated {
@@ -524,30 +497,6 @@ async fn serialize_entity(
                 new.hidden,
                 new.created_at,
                 new.updated_at,
-            );
-            serde_json::to_value(record).ok()?
-        }
-        MutationPayload::Message { new, .. } => {
-            let api_msg: hydra_common::api::v1::messages::Message = new.clone().into();
-            let creation_time = if version == 1 {
-                timestamp
-            } else {
-                let msg_id: MessageId = entity_id.parse().ok()?;
-                state
-                    .store()
-                    .get_message(&msg_id)
-                    .await
-                    .ok()
-                    .map(|v| v.creation_time)
-                    .unwrap_or(timestamp)
-            };
-            let record = VersionedMessage::new(
-                entity_id.parse().ok()?,
-                version,
-                timestamp,
-                api_msg,
-                Some(payload.actor().clone()),
-                creation_time,
             );
             serde_json::to_value(record).ok()?
         }
@@ -763,34 +712,6 @@ async fn server_event_to_sse(
             SseEventType::LabelDeleted,
             "label",
             label_id.to_string(),
-            *version,
-            *timestamp,
-            payload,
-        ),
-        ServerEvent::MessageCreated {
-            message_id,
-            version,
-            timestamp,
-            payload,
-            ..
-        } => (
-            SseEventType::MessageCreated,
-            "message",
-            message_id.to_string(),
-            *version,
-            *timestamp,
-            payload,
-        ),
-        ServerEvent::MessageUpdated {
-            message_id,
-            version,
-            timestamp,
-            payload,
-            ..
-        } => (
-            SseEventType::MessageUpdated,
-            "message",
-            message_id.to_string(),
             *version,
             *timestamp,
             payload,
@@ -1115,98 +1036,6 @@ mod tests {
             task_obj.get("start_time").is_none(),
             "start_time should be absent for a created (not yet running) job"
         );
-    }
-
-    #[tokio::test]
-    async fn server_event_to_sse_message_created() {
-        let state = test_app_state();
-        let message_id = MessageId::new();
-        let recipient =
-            crate::domain::actors::ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap());
-        let sender = crate::domain::actors::ActorId::Username(Username::from("alice").into());
-        let message = crate::domain::messages::Message::new(
-            Some(sender.clone()),
-            recipient.clone(),
-            "hello".to_string(),
-        );
-        let payload = Arc::new(MutationPayload::Message {
-            old: None,
-            new: message,
-            actor: ActorRef::test(),
-        });
-        let timestamp = Utc::now();
-        let event = ServerEvent::MessageCreated {
-            seq: 1,
-            message_id: message_id.clone(),
-            recipient,
-            sender: Some(sender),
-            version: 1,
-            timestamp,
-            payload,
-        };
-
-        let (event_type, data) = server_event_to_sse(&event, &state).await;
-
-        assert_eq!(event_type, SseEventType::MessageCreated);
-        assert_eq!(data.entity_type, "message");
-        assert_eq!(data.entity_id, message_id.to_string());
-        assert_eq!(data.version, 1);
-
-        let entity = data.entity.expect("entity should be present");
-        let obj = entity.as_object().expect("entity should be a JSON object");
-        assert_eq!(
-            obj.get("message_id").unwrap().as_str().unwrap(),
-            message_id.to_string()
-        );
-        assert_eq!(obj.get("version").unwrap().as_u64().unwrap(), 1);
-        let msg_obj = obj.get("message").expect("should contain message field");
-        assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "hello");
-    }
-
-    #[tokio::test]
-    async fn server_event_to_sse_message_updated() {
-        let state = test_app_state();
-        let message_id = MessageId::new();
-        let recipient =
-            crate::domain::actors::ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap());
-        let sender = crate::domain::actors::ActorId::Username(Username::from("alice").into());
-        let old_message = crate::domain::messages::Message::new(
-            Some(sender.clone()),
-            recipient.clone(),
-            "original".to_string(),
-        );
-        let new_message = crate::domain::messages::Message::new(
-            Some(sender.clone()),
-            recipient.clone(),
-            "updated".to_string(),
-        );
-        let payload = Arc::new(MutationPayload::Message {
-            old: Some(old_message),
-            new: new_message,
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::MessageUpdated {
-            seq: 2,
-            message_id: message_id.clone(),
-            recipient,
-            sender: Some(sender),
-            version: 2,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        let (event_type, data) = server_event_to_sse(&event, &state).await;
-
-        assert_eq!(event_type, SseEventType::MessageUpdated);
-        assert_eq!(data.entity_type, "message");
-        assert_eq!(data.entity_id, message_id.to_string());
-        assert_eq!(data.version, 2);
-
-        let entity = data
-            .entity
-            .expect("entity should be present for update events");
-        let msg_obj = entity.get("message").expect("should contain message field");
-        assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "updated");
     }
 
     fn dummy_notification() -> crate::domain::notifications::Notification {

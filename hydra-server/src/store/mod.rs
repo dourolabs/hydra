@@ -4,7 +4,6 @@ use crate::domain::{
     documents::Document,
     issues::Issue,
     labels::Label,
-    messages::Message,
     notifications::Notification,
     patches::Patch,
     secrets::SecretRef,
@@ -15,12 +14,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
-use hydra_common::api::v1::messages::SearchMessagesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
+    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -223,8 +221,6 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Document not found: {0}")]
     DocumentNotFound(DocumentId),
-    #[error("Message not found: {0}")]
-    MessageNotFound(MessageId),
     #[error("Notification not found: {0}")]
     NotificationNotFound(NotificationId),
     #[error("Agent not found: {0}")]
@@ -513,18 +509,6 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Counts unread notifications for the given recipient.
     async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError>;
-
-    // ---- Message (read-only) ----
-
-    /// Retrieves a message by its MessageId. Returns the latest version.
-    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError>;
-
-    /// Lists messages matching the search query, returning the latest version
-    /// of each message in descending order (most recent first).
-    async fn list_messages(
-        &self,
-        query: &SearchMessagesQuery,
-    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError>;
 
     // ---- Agent (read-only) ----
 
@@ -873,27 +857,6 @@ pub trait Store: ReadOnlyStore {
         recipient: &ActorId,
         before: Option<DateTime<Utc>>,
     ) -> Result<u64, StoreError>;
-
-    // ---- Message mutations ----
-
-    /// Adds a new message to the store at version 1.
-    ///
-    /// Returns the new MessageId and initial version number (1).
-    async fn add_message(
-        &self,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<(MessageId, VersionNumber), StoreError>;
-
-    /// Updates an existing message in the store, incrementing the version.
-    ///
-    /// Returns the new version number. Follows the same pattern as `update_issue`.
-    async fn update_message(
-        &self,
-        id: &MessageId,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError>;
 
     // ---- Agent mutations ----
 

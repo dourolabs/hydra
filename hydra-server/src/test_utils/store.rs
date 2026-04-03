@@ -5,7 +5,6 @@ use crate::{
         documents::Document,
         issues::Issue,
         labels::Label,
-        messages::Message,
         notifications::Notification,
         patches::Patch,
         secrets::SecretRef,
@@ -17,12 +16,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
-use hydra_common::api::v1::messages::SearchMessagesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
+    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -225,17 +223,6 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        fail()
-    }
-
-    async fn get_message(&self, _id: &MessageId) -> Result<Versioned<Message>, StoreError> {
-        fail()
-    }
-
-    async fn list_messages(
-        &self,
-        _query: &SearchMessagesQuery,
-    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
         fail()
     }
 
@@ -523,23 +510,6 @@ impl Store for FailingStore {
         _recipient: &ActorId,
         _before: Option<DateTime<Utc>>,
     ) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn add_message(
-        &self,
-        _message: Message,
-        _actor: &ActorRef,
-    ) -> Result<(MessageId, VersionNumber), StoreError> {
-        fail()
-    }
-
-    async fn update_message(
-        &self,
-        _id: &MessageId,
-        _message: Message,
-        _actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
