@@ -34,7 +34,7 @@ function useDocumentsAtPath(path: string, enabled: boolean) {
 function useUncategorizedDocuments() {
   return useQuery<ListDocumentsResponse, Error>({
     queryKey: ["uncategorizedDocuments"],
-    queryFn: () => apiClient.listDocuments({}),
+    queryFn: () => apiClient.listDocuments({ limit: 200 }),
     select: (data) => ({
       ...data,
       documents: data.documents.filter(
