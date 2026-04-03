@@ -38,6 +38,11 @@ function useUncategorizedDocuments() {
   });
 }
 
+interface LeafNodeProps {
+  entry: PathChildEntry;
+  depth: number;
+}
+
 interface FolderNodeProps {
   entry: PathChildEntry;
   depth: number;
@@ -45,7 +50,7 @@ interface FolderNodeProps {
   onToggle: (path: string) => void;
 }
 
-function DocumentLeafNode({ entry, depth }: FolderNodeProps) {
+function DocumentLeafNode({ entry, depth }: LeafNodeProps) {
   const { data: docs, isLoading } = useDocumentsAtPath(entry.full_path, true);
 
   if (isLoading) {
@@ -70,7 +75,7 @@ function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) 
 
   // If entry is purely a document (not also a folder prefix), render directly
   if (isDocOnly) {
-    return <DocumentLeafNode entry={entry} depth={depth} expandedPaths={expandedPaths} onToggle={onToggle} />;
+    return <DocumentLeafNode entry={entry} depth={depth} />;
   }
 
   return <ExpandableFolderNode entry={entry} depth={depth} expandedPaths={expandedPaths} onToggle={onToggle} isDocAndFolder={isDocAndFolder} />;
