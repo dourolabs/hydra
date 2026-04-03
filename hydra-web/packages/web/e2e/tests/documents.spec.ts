@@ -6,21 +6,16 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
-    // Top-level path folders should be visible
+    // Top-level path folders should be visible and expanded by default
     await expect(page.getByText("research")).toBeVisible();
     await expect(page.getByText("docs")).toBeVisible();
 
-    // Expand the "research" folder to see sub-entries
-    await page.getByText("research").click();
-    await expect(
-      page.getByText("adr-001-oauth2-migration")
-    ).toBeVisible();
+    // Top-level folders are expanded by default, so sub-entries should already be visible
+    await expect(page.getByText("adr-001-oauth2-migration")).toBeVisible();
 
     // Expand a leaf entry to see the document
     await page.getByText("adr-001-oauth2-migration").click();
-    await expect(
-      page.getByText("ADR-001: OAuth2 Migration Strategy")
-    ).toBeVisible();
+    await expect(page.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
   });
 
   test("can navigate to a document detail page @documents:view-detail", async ({
@@ -28,13 +23,10 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
-    // Expand the "research" folder, then the leaf entry
-    await page.getByText("research").click();
+    // Top-level folders are expanded by default; click the leaf entry directly
     await page.getByText("adr-001-oauth2-migration").click();
 
-    await expect(
-      page.getByText("ADR-001: OAuth2 Migration Strategy")
-    ).toBeVisible();
+    await expect(page.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
 
     // Click on the document link to navigate to its detail page
     await page.getByText("ADR-001: OAuth2 Migration Strategy").click();
@@ -42,7 +34,7 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
 
     // Verify the document detail page shows the title
     await expect(
-      page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first()
+      page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
   });
 
@@ -51,13 +43,11 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents/d-seed00001");
     await expect(
-      page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first()
+      page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
 
     // Verify path metadata is displayed
-    await expect(
-      page.getByText("/research/adr-001-oauth2-migration")
-    ).toBeVisible();
+    await expect(page.getByText("/research/adr-001-oauth2-migration")).toBeVisible();
   });
 
   test("document detail breadcrumb links back to documents list @documents:view-detail", async ({

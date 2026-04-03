@@ -11,12 +11,17 @@
   margin-bottom: var(--space-4);
 }
 
+.section {
+  margin-bottom: var(--space-6);
+}
+
 .sectionTitle {
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  margin: 0 0 var(--space-2) 0;
 }
 
 .docList {
