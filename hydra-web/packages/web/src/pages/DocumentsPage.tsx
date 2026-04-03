@@ -1,17 +1,14 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Panel, Button, Spinner } from "@hydra/ui";
-import type {
-  ListDocumentPathsResponse,
-  ListDocumentsResponse,
-  PathChildEntry,
-} from "@hydra/api";
+import { Button, Spinner } from "@hydra/ui";
+import type { ListDocumentPathsResponse, ListDocumentsResponse, PathChildEntry } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
 import { DocumentRow } from "../features/documents/DocumentRow";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
+import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
 import styles from "./DocumentsPage.module.css";
 
 function useDocumentPaths(prefix: string | null, enabled: boolean) {
@@ -25,8 +22,7 @@ function useDocumentPaths(prefix: string | null, enabled: boolean) {
 function useDocumentsAtPath(path: string, enabled: boolean) {
   return useQuery<ListDocumentsResponse, Error>({
     queryKey: ["documentsAtPath", path],
-    queryFn: () =>
-      apiClient.listDocuments({ path_prefix: path, path_is_exact: true }),
+    queryFn: () => apiClient.listDocuments({ path_prefix: path, path_is_exact: true }),
     enabled,
   });
 }
@@ -37,9 +33,7 @@ function useUncategorizedDocuments() {
     queryFn: () => apiClient.listDocuments({ limit: 200 }),
     select: (data) => ({
       ...data,
-      documents: data.documents.filter(
-        (d) => !d.document.path && !d.document.deleted,
-      ),
+      documents: data.documents.filter((d) => !d.document.path && !d.document.deleted),
     }),
   });
 }
@@ -47,15 +41,14 @@ function useUncategorizedDocuments() {
 interface FolderNodeProps {
   entry: PathChildEntry;
   depth: number;
+  expandedPaths: Set<string>;
+  onToggle: (path: string) => void;
 }
 
-function FolderNode({ entry, depth }: FolderNodeProps) {
-  const [expanded, setExpanded] = useState(false);
+function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) {
+  const expanded = expandedPaths.has(entry.full_path);
 
-  const { data: childPaths, isLoading: loadingPaths } = useDocumentPaths(
-    entry.full_path,
-    expanded,
-  );
+  const { data: childPaths, isLoading: loadingPaths } = useDocumentPaths(entry.full_path, expanded);
 
   const hasChildren = childPaths && childPaths.children.length > 0;
   const isLeaf = childPaths && childPaths.children.length === 0;
@@ -65,13 +58,15 @@ function FolderNode({ entry, depth }: FolderNodeProps) {
     expanded && isLeaf === true,
   );
 
-  const toggle = useCallback(() => setExpanded((prev) => !prev), []);
+  const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
 
   return (
     <li className={styles.treeNode}>
       <button
         className={styles.folderRow}
-        style={{ paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }}
+        style={{
+          paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
+        }}
         onClick={toggle}
         aria-expanded={expanded}
       >
@@ -92,14 +87,14 @@ function FolderNode({ entry, depth }: FolderNodeProps) {
                 key={child.full_path}
                 entry={child}
                 depth={depth + 1}
+                expandedPaths={expandedPaths}
+                onToggle={onToggle}
               />
             ))}
           {isLeaf &&
             leafDocs?.documents
               .filter((d) => !d.document.deleted)
-              .map((doc) => (
-                <DocumentRow key={doc.document_id} doc={doc} />
-              ))}
+              .map((doc) => <DocumentRow key={doc.document_id} doc={doc} />)}
         </ul>
       )}
     </li>
@@ -109,24 +104,20 @@ function FolderNode({ entry, depth }: FolderNodeProps) {
 export function DocumentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
 
-  const {
-    data: topLevel,
-    isLoading,
-    error,
-    refetch,
-  } = useDocumentPaths(null, true);
+  const { data: topLevel, isLoading, error, refetch } = useDocumentPaths(null, true);
 
-  const { data: uncategorized, isLoading: loadingUncategorized } =
-    useUncategorizedDocuments();
+  const { data: uncategorized, isLoading: loadingUncategorized } = useUncategorizedDocuments();
+
+  const topLevelPaths = useMemo(
+    () => (topLevel?.children ?? []).map((c) => c.full_path),
+    [topLevel],
+  );
+
+  const { expandedPaths, onToggle } = useDocumentTreeExpandState(topLevelPaths);
 
   const hasTopLevel = topLevel && topLevel.children.length > 0;
-  const hasUncategorized =
-    uncategorized && uncategorized.documents.length > 0;
-  const isEmpty =
-    !isLoading &&
-    !loadingUncategorized &&
-    !hasTopLevel &&
-    !hasUncategorized;
+  const hasUncategorized = uncategorized && uncategorized.documents.length > 0;
+  const isEmpty = !isLoading && !loadingUncategorized && !hasTopLevel && !hasUncategorized;
 
   return (
     <div className={styles.page}>
@@ -148,37 +139,34 @@ export function DocumentsPage() {
       {isEmpty && <EmptyState message="No documents found." />}
 
       {hasTopLevel && (
-        <Panel
-          header={
-            <span className={styles.sectionTitle}>Documents</span>
-          }
-        >
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Documents</h2>
           <ul className={styles.treeRoot}>
             {topLevel.children.map((entry) => (
-              <FolderNode key={entry.full_path} entry={entry} depth={0} />
+              <FolderNode
+                key={entry.full_path}
+                entry={entry}
+                depth={0}
+                expandedPaths={expandedPaths}
+                onToggle={onToggle}
+              />
             ))}
           </ul>
-        </Panel>
+        </section>
       )}
 
       {hasUncategorized && (
-        <Panel
-          header={
-            <span className={styles.sectionTitle}>Uncategorized</span>
-          }
-        >
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Uncategorized</h2>
           <ul className={styles.docList}>
             {uncategorized.documents.map((doc) => (
               <DocumentRow key={doc.document_id} doc={doc} />
             ))}
           </ul>
-        </Panel>
+        </section>
       )}
 
-      <DocumentCreateModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-      />
+      <DocumentCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }
