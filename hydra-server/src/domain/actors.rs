@@ -148,7 +148,7 @@ impl Actor {
         (token, hash, salt)
     }
 
-    fn hash_auth_token(token: &str) -> String {
+    pub fn hash_auth_token(token: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let digest = hasher.finalize();

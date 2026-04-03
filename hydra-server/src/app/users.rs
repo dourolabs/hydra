@@ -119,14 +119,24 @@ impl AppState {
         {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
-                    self.store
-                        .update_actor(actor.clone(), login_actor)
-                        .await
-                        .map_err(|source| LoginError::Store { source })?;
+                    // Actor already exists — don't overwrite the old token.
+                    // Just insert the new token into auth_tokens below.
                 }
                 other => return Err(LoginError::Store { source: other }),
             }
         }
+
+        // Store the new token hash in the auth_tokens table so multiple
+        // devices can be logged in simultaneously.
+        let token_hash = Actor::hash_auth_token(
+            auth_token
+                .strip_prefix(&format!("{}:", actor.name()))
+                .expect("auth token should include actor name prefix"),
+        );
+        self.store
+            .add_auth_token(&actor.name(), &token_hash)
+            .await
+            .map_err(|source| LoginError::Store { source })?;
 
         Ok((user, actor, auth_token))
     }
@@ -151,14 +161,23 @@ impl AppState {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
                     // Multiple tasks for the same issue share the same ActorId::Issue
-                    // but get separate auth tokens. Update the existing actor entry.
-                    self.store
-                        .update_actor(actor.clone(), lifecycle_actor)
-                        .await?;
+                    // but get separate auth tokens. Insert into auth_tokens below.
                 }
                 other => return Err(other),
             }
         }
+
+        // Store the new token hash in the auth_tokens table so multiple
+        // sessions for the same actor can authenticate independently.
+        let token_hash = Actor::hash_auth_token(
+            auth_token
+                .strip_prefix(&format!("{}:", actor.name()))
+                .expect("auth token should include actor name prefix"),
+        );
+        self.store
+            .add_auth_token(&actor.name(), &token_hash)
+            .await?;
+
         Ok((actor, auth_token))
     }
 
@@ -235,6 +254,104 @@ mod tests {
             .expect_err("login should fail for invalid token");
 
         assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_twice_produces_two_valid_tokens() -> anyhow::Result<()> {
+        use crate::domain::actors::{Actor, AuthToken};
+
+        let github_server = MockServer::start_async().await;
+        let _mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+
+        // First login
+        let response1 = handles
+            .state
+            .login_with_github_token(
+                "gh-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
+            .await
+            .expect("first login should succeed");
+
+        // Second login
+        let response2 = handles
+            .state
+            .login_with_github_token(
+                "gh-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
+            .await
+            .expect("second login should succeed");
+
+        // Both tokens should be different
+        assert_ne!(response1.login_token, response2.login_token);
+
+        // Both tokens should be verifiable via auth_tokens table
+        let parsed1 = AuthToken::parse(&response1.login_token)?;
+        let parsed2 = AuthToken::parse(&response2.login_token)?;
+
+        let store_read = handles.store.as_ref();
+        let hashes = store_read
+            .get_auth_token_hashes(parsed1.actor_name())
+            .await?;
+        assert_eq!(hashes.len(), 2);
+
+        let hash1 = Actor::hash_auth_token(parsed1.raw_token());
+        let hash2 = Actor::hash_auth_token(parsed2.raw_token());
+        assert!(
+            hashes.contains(&hash1),
+            "first token hash should be in auth_tokens"
+        );
+        assert!(
+            hashes.contains(&hash2),
+            "second token hash should be in auth_tokens"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn job_actor_tokens_stored_in_auth_tokens() -> anyhow::Result<()> {
+        use crate::app::test_helpers::sample_task;
+        use crate::domain::actors::{Actor, AuthToken};
+
+        use crate::test_utils::test_state_handles;
+
+        let handles = test_state_handles();
+
+        // Create a session to use for job actor creation
+        let (session_id, _) = handles
+            .state
+            .store
+            .add_session_with_actor(sample_task(), chrono::Utc::now(), ActorRef::test())
+            .await?;
+
+        // Create a job actor
+        let (actor, auth_token) = handles
+            .state
+            .create_actor_for_job(session_id, ActorRef::test())
+            .await?;
+
+        // Verify token is in auth_tokens
+        let parsed = AuthToken::parse(&auth_token)?;
+        let store_read = handles.store.as_ref();
+        let hashes = store_read.get_auth_token_hashes(&actor.name()).await?;
+        let token_hash = Actor::hash_auth_token(parsed.raw_token());
+        assert!(
+            hashes.contains(&token_hash),
+            "job actor token should be in auth_tokens"
+        );
+
         Ok(())
     }
 }
