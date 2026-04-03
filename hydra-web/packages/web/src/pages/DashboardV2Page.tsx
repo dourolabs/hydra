@@ -19,7 +19,7 @@ import { IssueCreateModal } from "../features/dashboard-v2/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardV2Page.module.css";
 
-const VALID_FILTERS = ["your-issues", "assigned", "patches", "documents"];
+const VALID_FILTERS = ["your-issues", "assigned", "all", "patches", "documents"];
 
 /** Build server-side IssueFilters from the current filter selection. */
 function buildServerFilters(
@@ -39,6 +39,8 @@ function buildServerFilters(
     if (username) filters.creator = username;
   } else if (filterRootId === "assigned") {
     if (username) filters.assignee = username;
+  } else if (filterRootId === "all") {
+    // No additional filters — show all issues
   }
 
   return filters;
