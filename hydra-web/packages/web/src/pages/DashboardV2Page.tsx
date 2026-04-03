@@ -88,13 +88,19 @@ export function DashboardV2Page() {
 
   const isSearching = searchQuery.length > 0;
 
+  // When searching, use a global filter (only search query, no sidebar filters)
+  const searchOnlyFilters = useMemo<IssueFilters>(
+    () => (searchQuery ? { q: searchQuery } : {}),
+    [searchQuery],
+  );
+
   const {
     data: paginatedData,
     isLoading: paginatedLoading,
     fetchNextPage: fetchNextIssues,
     hasNextPage: hasNextIssues,
     isFetchingNextPage: isFetchingNextIssues,
-  } = usePaginatedIssues(serverFilters, !isArtifactFilter || isSearching);
+  } = usePaginatedIssues(isSearching ? searchOnlyFilters : serverFilters, !isArtifactFilter || isSearching);
 
   const {
     data: patchesData,
@@ -287,7 +293,7 @@ export function DashboardV2Page() {
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
-          activeFilter={filterRootId}
+          activeFilter={isSearching ? null : filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
