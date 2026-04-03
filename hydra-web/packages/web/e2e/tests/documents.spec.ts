@@ -1,19 +1,25 @@
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Documents @documents:list @documents:view-detail", () => {
-  test("displays the documents list page @documents:list", async ({
+  test("displays the documents list page with tree explorer @documents:list", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/documents");
-    // Seed data documents should be visible
+
+    // Top-level path folders should be visible
+    await expect(page.getByText("research")).toBeVisible();
+    await expect(page.getByText("docs")).toBeVisible();
+
+    // Expand the "research" folder to see sub-entries
+    await page.getByText("research").click();
+    await expect(
+      page.getByText("adr-001-oauth2-migration")
+    ).toBeVisible();
+
+    // Expand a leaf entry to see the document
+    await page.getByText("adr-001-oauth2-migration").click();
     await expect(
       page.getByText("ADR-001: OAuth2 Migration Strategy")
-    ).toBeVisible();
-    await expect(
-      page.getByText("API Reference Guide v2.0")
-    ).toBeVisible();
-    await expect(
-      page.getByText("Developer Onboarding Guide")
     ).toBeVisible();
   });
 
@@ -21,11 +27,16 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     authenticatedPage: page,
   }) => {
     await page.goto("/documents");
+
+    // Expand the "research" folder, then the leaf entry
+    await page.getByText("research").click();
+    await page.getByText("adr-001-oauth2-migration").click();
+
     await expect(
       page.getByText("ADR-001: OAuth2 Migration Strategy")
     ).toBeVisible();
 
-    // Click on the first document to navigate to its detail page
+    // Click on the document link to navigate to its detail page
     await page.getByText("ADR-001: OAuth2 Migration Strategy").click();
     await expect(page).toHaveURL(/\/documents\/d-seed00001/);
 

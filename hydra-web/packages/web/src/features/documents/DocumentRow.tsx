@@ -23,6 +23,9 @@ export function DocumentRow({ doc }: DocumentRowProps) {
     mutationFn: () => apiClient.deleteDocument(doc.document_id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
+      queryClient.invalidateQueries({ queryKey: ["documentPaths"] });
+      queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
+      queryClient.invalidateQueries({ queryKey: ["uncategorizedDocuments"] });
       addToast("Document deleted", "success");
       setDeleteOpen(false);
     },
