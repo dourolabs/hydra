@@ -129,6 +129,32 @@ describe("IssueFilterSidebar", () => {
     expect(props.onFilterChange).toHaveBeenCalledWith("assigned");
   });
 
+  it("renders All Issues filter item", () => {
+    renderSidebar();
+    expect(screen.getAllByText("All Issues").length).toBeGreaterThan(0);
+  });
+
+  it("calls onFilterChange with 'all' on All Issues click", () => {
+    const { props } = renderSidebar();
+    const elements = screen.getAllByText("All Issues");
+    fireEvent.click(elements[0].closest("li")!);
+    expect(props.onFilterChange).toHaveBeenCalledWith("all");
+  });
+
+  it("does not render badge count for All Issues", () => {
+    renderSidebar();
+    const allIssuesElements = screen.getAllByText("All Issues");
+    const li = allIssuesElements[0].closest("li")!;
+    expect(li.querySelector(".badgeCount")).toBeNull();
+  });
+
+  it("marks All Issues filter with active class", () => {
+    renderSidebar({ activeFilter: "all" });
+    const items = screen.getAllByText("All Issues");
+    const li = items[0].closest("li")!;
+    expect(li.className).toContain("active");
+  });
+
   it("renders backdrop when drawer is open", () => {
     const { container } = renderSidebar({ drawerOpen: true });
     const backdrop = container.querySelector(".backdrop");

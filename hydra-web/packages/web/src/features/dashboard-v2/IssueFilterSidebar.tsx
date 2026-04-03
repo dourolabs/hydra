@@ -56,6 +56,10 @@ export function IssueFilterSidebar({
     () => handleFilterChange("assigned"),
     [handleFilterChange],
   );
+  const handleAllIssuesClick = useCallback(
+    () => handleFilterChange("all"),
+    [handleFilterChange],
+  );
   const handlePatchesClick = useCallback(
     () => handleFilterChange("patches"),
     [handleFilterChange],
@@ -81,6 +85,13 @@ export function IssueFilterSidebar({
       >
         <span className={styles.itemLabel}>Assigned to You</span>
         {assignedCount > 0 && <span className={styles.badgeCount}>{assignedCount}</span>}
+      </FilterItem>
+      <FilterItem
+        isActive={activeFilter === "all"}
+        onClick={handleAllIssuesClick}
+        className={styles.item}
+      >
+        <span className={styles.itemLabel}>All Issues</span>
       </FilterItem>
       <li className={styles.labelSectionHeader}>Artifacts</li>
       <FilterItem
