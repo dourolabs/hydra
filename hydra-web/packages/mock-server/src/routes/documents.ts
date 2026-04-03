@@ -89,6 +89,7 @@ export function createDocumentRoutes(store: Store): Hono {
     const items = store.list<Document>(COLLECTION, false);
 
     const segmentCounts = new Map<string, number>();
+    const segmentIsDoc = new Map<string, boolean>();
     for (const { entry } of items) {
       const docPath = entry.data.path;
       if (!docPath || !docPath.startsWith(normalizedPrefix)) continue;
@@ -97,6 +98,9 @@ export function createDocumentRoutes(store: Store): Hono {
       const slashIdx = rest.indexOf("/");
       const segment = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
       segmentCounts.set(segment, (segmentCounts.get(segment) || 0) + 1);
+      if (docPath === `${normalizedPrefix}${segment}`) {
+        segmentIsDoc.set(segment, true);
+      }
     }
 
     const children: PathChildEntry[] = Array.from(segmentCounts.entries())
@@ -105,6 +109,7 @@ export function createDocumentRoutes(store: Store): Hono {
         name,
         full_path: `${normalizedPrefix}${name}`,
         child_count: BigInt(child_count),
+        is_document: segmentIsDoc.get(name) || false,
       }));
 
     const resp: ListDocumentPathsResponse = { children };

@@ -161,7 +161,7 @@ impl ReadOnlyStore for FailingStore {
     async fn list_document_path_children(
         &self,
         _prefix: &str,
-    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+    ) -> Result<Vec<(String, String, u64, bool)>, StoreError> {
         fail()
     }
 

@@ -45,7 +45,38 @@ interface FolderNodeProps {
   onToggle: (path: string) => void;
 }
 
+function DocumentLeafNode({ entry, depth }: FolderNodeProps) {
+  const { data: docs, isLoading } = useDocumentsAtPath(entry.full_path, true);
+
+  if (isLoading) {
+    return (
+      <li className={styles.treeNode}>
+        <div style={{ paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }}>
+          <Spinner size="sm" />
+        </div>
+      </li>
+    );
+  }
+
+  const doc = docs?.documents.find((d) => !d.document.deleted);
+  if (!doc) return null;
+
+  return <DocumentRow key={doc.document_id} doc={doc} />;
+}
+
 function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) {
+  const isDocOnly = entry.is_document && Number(entry.child_count) === 1;
+  const isDocAndFolder = entry.is_document && Number(entry.child_count) > 1;
+
+  // If entry is purely a document (not also a folder prefix), render directly
+  if (isDocOnly) {
+    return <DocumentLeafNode entry={entry} depth={depth} expandedPaths={expandedPaths} onToggle={onToggle} />;
+  }
+
+  return <ExpandableFolderNode entry={entry} depth={depth} expandedPaths={expandedPaths} onToggle={onToggle} isDocAndFolder={isDocAndFolder} />;
+}
+
+function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndFolder }: FolderNodeProps & { isDocAndFolder: boolean }) {
   const expanded = expandedPaths.has(entry.full_path);
 
   const { data: childPaths, isLoading: loadingPaths } = useDocumentPaths(entry.full_path, expanded);
@@ -58,10 +89,20 @@ function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) 
     expanded && isLeaf === true,
   );
 
+  // For entries that are both a document and a folder prefix, fetch the doc
+  const { data: inlineDocs } = useDocumentsAtPath(
+    entry.full_path,
+    isDocAndFolder,
+  );
+  const inlineDoc = inlineDocs?.documents.find((d) => !d.document.deleted);
+
   const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
 
   return (
     <li className={styles.treeNode}>
+      {isDocAndFolder && inlineDoc && (
+        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} />
+      )}
       <button
         className={styles.folderRow}
         style={{

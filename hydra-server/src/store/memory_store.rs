@@ -885,7 +885,7 @@ impl ReadOnlyStore for MemoryStore {
     async fn list_document_path_children(
         &self,
         prefix: &str,
-    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+    ) -> Result<Vec<(String, String, u64, bool)>, StoreError> {
         let prefix = if prefix.ends_with('/') {
             prefix.to_string()
         } else {
@@ -893,6 +893,8 @@ impl ReadOnlyStore for MemoryStore {
         };
 
         let mut segment_counts: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+        let mut segment_is_doc: std::collections::BTreeMap<String, bool> =
             std::collections::BTreeMap::new();
 
         for entry in self.documents.iter() {
@@ -912,6 +914,10 @@ impl ReadOnlyStore for MemoryStore {
                             None => rest,
                         };
                         *segment_counts.entry(segment.to_string()).or_insert(0) += 1;
+                        let full_path = format!("{prefix}{segment}");
+                        if path_str == full_path {
+                            segment_is_doc.insert(segment.to_string(), true);
+                        }
                     }
                 }
             }
@@ -921,7 +927,8 @@ impl ReadOnlyStore for MemoryStore {
             .into_iter()
             .map(|(segment, count)| {
                 let full_path = format!("{prefix}{segment}");
-                (segment, full_path, count)
+                let is_document = segment_is_doc.get(&segment).copied().unwrap_or(false);
+                (segment, full_path, count, is_document)
             })
             .collect())
     }

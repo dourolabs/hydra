@@ -308,14 +308,16 @@ pub struct PathChildEntry {
     pub name: String,
     pub full_path: String,
     pub child_count: u64,
+    pub is_document: bool,
 }
 
 impl PathChildEntry {
-    pub fn new(name: String, full_path: String, child_count: u64) -> Self {
+    pub fn new(name: String, full_path: String, child_count: u64, is_document: bool) -> Self {
         Self {
             name,
             full_path,
             child_count,
+            is_document,
         }
     }
 }

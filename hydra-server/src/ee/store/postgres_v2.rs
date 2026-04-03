@@ -2499,7 +2499,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn list_document_path_children(
         &self,
         prefix: &str,
-    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+    ) -> Result<Vec<(String, String, u64, bool)>, StoreError> {
         // Normalize prefix: ensure it ends with '/'
         let prefix = if prefix.ends_with('/') {
             prefix.to_string()
@@ -2515,7 +2515,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     THEN SUBSTRING(d.path FROM $1 + 1 FOR POSITION('/' IN SUBSTRING(d.path FROM $1 + 1)) - 1)
                     ELSE SUBSTRING(d.path FROM $1 + 1)
                 END AS segment,
-                COUNT(*) AS child_count
+                COUNT(*) AS child_count,
+                MAX(CASE WHEN d.path = $3 || CASE
+                    WHEN POSITION('/' IN SUBSTRING(d.path FROM $1 + 1)) > 0
+                    THEN SUBSTRING(d.path FROM $1 + 1 FOR POSITION('/' IN SUBSTRING(d.path FROM $1 + 1)) - 1)
+                    ELSE SUBSTRING(d.path FROM $1 + 1)
+                END THEN 1 ELSE 0 END)::int AS is_doc
              FROM {TABLE_DOCUMENTS_V2} d
              WHERE d.is_latest = true
                AND COALESCE(d.deleted, false) = false
@@ -2526,18 +2531,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
              ORDER BY segment"
         );
 
-        let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+        let rows = sqlx::query_as::<_, (String, i64, i32)>(&sql)
             .bind(prefix_len)
             .bind(format!("{prefix}%"))
+            .bind(&prefix)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         Ok(rows
             .into_iter()
-            .map(|(segment, count)| {
+            .map(|(segment, count, is_doc)| {
                 let full_path = format!("{prefix}{segment}");
-                (segment, full_path, count as u64)
+                (segment, full_path, count as u64, is_doc != 0)
             })
             .collect())
     }

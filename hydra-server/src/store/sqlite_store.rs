@@ -2589,7 +2589,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_document_path_children(
         &self,
         prefix: &str,
-    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+    ) -> Result<Vec<(String, String, u64, bool)>, StoreError> {
         // Normalize prefix: ensure it ends with '/'
         let prefix = if prefix.ends_with('/') {
             prefix.to_string()
@@ -2605,7 +2605,12 @@ impl ReadOnlyStore for SqliteStore {
                     THEN SUBSTR(path, ?1 + 1, INSTR(SUBSTR(path, ?1 + 1), '/') - 1)
                     ELSE SUBSTR(path, ?1 + 1)
                 END AS segment,
-                COUNT(*) AS child_count
+                COUNT(*) AS child_count,
+                MAX(CASE WHEN path = ?3 || CASE
+                    WHEN INSTR(SUBSTR(path, ?1 + 1), '/') > 0
+                    THEN SUBSTR(path, ?1 + 1, INSTR(SUBSTR(path, ?1 + 1), '/') - 1)
+                    ELSE SUBSTR(path, ?1 + 1)
+                END THEN 1 ELSE 0 END) AS is_doc
              FROM {TABLE_DOCUMENTS_V2}
              WHERE is_latest = 1
                AND COALESCE(deleted, 0) = 0
@@ -2616,18 +2621,19 @@ impl ReadOnlyStore for SqliteStore {
              ORDER BY segment"
         );
 
-        let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+        let rows = sqlx::query_as::<_, (String, i64, i32)>(&sql)
             .bind(prefix_len)
             .bind(format!("{prefix}%"))
+            .bind(&prefix)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         Ok(rows
             .into_iter()
-            .map(|(segment, count)| {
+            .map(|(segment, count, is_doc)| {
                 let full_path = format!("{prefix}{segment}");
-                (segment, full_path, count as u64)
+                (segment, full_path, count as u64, is_doc != 0)
             })
             .collect())
     }
@@ -5705,9 +5711,11 @@ mod tests {
         assert_eq!(children[0].0, "agents");
         assert_eq!(children[0].1, "/agents");
         assert_eq!(children[0].2, 3); // 3 docs under /agents/
+        assert!(!children[0].3); // /agents is not a document
         assert_eq!(children[1].0, "docs");
         assert_eq!(children[1].1, "/docs");
         assert_eq!(children[1].2, 1);
+        assert!(!children[1].3); // /docs is not a document
 
         // Nested prefix "/agents/" returns child segments
         let children = store.list_document_path_children("/agents/").await.unwrap();
@@ -5715,9 +5723,11 @@ mod tests {
         assert_eq!(children[0].0, "pm");
         assert_eq!(children[0].1, "/agents/pm");
         assert_eq!(children[0].2, 1);
+        assert!(!children[0].3); // /agents/pm is not a document
         assert_eq!(children[1].0, "swe");
         assert_eq!(children[1].1, "/agents/swe");
         assert_eq!(children[1].2, 2);
+        assert!(!children[1].3); // /agents/swe is not a document
 
         // Prefix without trailing slash works the same
         let children = store.list_document_path_children("/agents").await.unwrap();
@@ -5763,6 +5773,47 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].0, "pm");
         assert_eq!(children[0].2, 1);
+    }
+
+    #[tokio::test]
+    async fn list_document_path_children_reports_is_document() {
+        let store = create_test_store().await;
+
+        // Create a leaf document at /agents/pm/notes.md
+        store
+            .add_document(
+                sample_document(Some("agents/pm/notes.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Create a document whose path is also a prefix for other docs
+        store
+            .add_document(sample_document(Some("agents/pm"), None), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // At prefix "/agents/", "pm" should be is_document=true (path /agents/pm exists as a doc)
+        let children = store.list_document_path_children("/agents/").await.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0, "pm");
+        assert_eq!(children[0].2, 2); // 2 docs: /agents/pm and /agents/pm/notes.md
+        assert!(children[0].3); // /agents/pm IS a document
+
+        // At prefix "/agents/pm/", "notes.md" should be is_document=true
+        let children = store
+            .list_document_path_children("/agents/pm/")
+            .await
+            .unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0, "notes.md");
+        assert!(children[0].3); // /agents/pm/notes.md IS a document
+
+        // At prefix "/", "agents" is NOT a document
+        let children = store.list_document_path_children("/").await.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].0, "agents");
+        assert!(!children[0].3); // /agents is NOT a document
     }
 
     #[tokio::test]
