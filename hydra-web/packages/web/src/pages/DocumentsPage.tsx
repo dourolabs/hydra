@@ -66,7 +66,7 @@ function DocumentLeafNode({ entry, depth }: LeafNodeProps) {
   const doc = docs?.documents.find((d) => !d.document.deleted);
   if (!doc) return null;
 
-  return <DocumentRow key={doc.document_id} doc={doc} />;
+  return <DocumentRow key={doc.document_id} doc={doc} depth={depth} />;
 }
 
 function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) {
@@ -78,10 +78,24 @@ function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) 
     return <DocumentLeafNode entry={entry} depth={depth} />;
   }
 
-  return <ExpandableFolderNode entry={entry} depth={depth} expandedPaths={expandedPaths} onToggle={onToggle} isDocAndFolder={isDocAndFolder} />;
+  return (
+    <ExpandableFolderNode
+      entry={entry}
+      depth={depth}
+      expandedPaths={expandedPaths}
+      onToggle={onToggle}
+      isDocAndFolder={isDocAndFolder}
+    />
+  );
 }
 
-function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndFolder }: FolderNodeProps & { isDocAndFolder: boolean }) {
+function ExpandableFolderNode({
+  entry,
+  depth,
+  expandedPaths,
+  onToggle,
+  isDocAndFolder,
+}: FolderNodeProps & { isDocAndFolder: boolean }) {
   const expanded = expandedPaths.has(entry.full_path);
 
   const { data: childPaths, isLoading: loadingPaths } = useDocumentPaths(entry.full_path, expanded);
@@ -95,10 +109,7 @@ function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndF
   );
 
   // For entries that are both a document and a folder prefix, fetch the doc
-  const { data: inlineDocs } = useDocumentsAtPath(
-    entry.full_path,
-    isDocAndFolder,
-  );
+  const { data: inlineDocs } = useDocumentsAtPath(entry.full_path, isDocAndFolder);
   const inlineDoc = inlineDocs?.documents.find((d) => !d.document.deleted);
 
   const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
@@ -106,7 +117,7 @@ function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndF
   return (
     <li className={styles.treeNode}>
       {isDocAndFolder && inlineDoc && (
-        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} />
+        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} depth={depth} />
       )}
       <button
         className={styles.folderRow}
@@ -117,6 +128,7 @@ function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndF
         aria-expanded={expanded}
       >
         <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
+        <span className={styles.folderIcon}>&#128193;</span>
         <span className={styles.folderName}>{entry.name}</span>
         <span className={styles.childCount}>{Number(entry.child_count)}</span>
       </button>
@@ -140,7 +152,7 @@ function ExpandableFolderNode({ entry, depth, expandedPaths, onToggle, isDocAndF
           {isLeaf &&
             leafDocs?.documents
               .filter((d) => !d.document.deleted)
-              .map((doc) => <DocumentRow key={doc.document_id} doc={doc} />)}
+              .map((doc) => <DocumentRow key={doc.document_id} doc={doc} depth={depth + 1} />)}
         </ul>
       )}
     </li>
@@ -167,7 +179,8 @@ export function DocumentsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
+      <div className={styles.panelHeaderRow}>
+        <h2 className={styles.sectionTitle}>Documents</h2>
         <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
           New Document
         </Button>
@@ -186,7 +199,6 @@ export function DocumentsPage() {
 
       {hasTopLevel && (
         <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Documents</h2>
           <ul className={styles.treeRoot}>
             {topLevel.children.map((entry) => (
               <FolderNode

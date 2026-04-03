@@ -12,9 +12,10 @@ import styles from "./DocumentRow.module.css";
 
 interface DocumentRowProps {
   doc: DocumentSummaryRecord;
+  depth?: number;
 }
 
-export function DocumentRow({ doc }: DocumentRowProps) {
+export function DocumentRow({ doc, depth }: DocumentRowProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const { addToast } = useToast();
   const queryClient = useQueryClient();
@@ -30,19 +31,21 @@ export function DocumentRow({ doc }: DocumentRowProps) {
       setDeleteOpen(false);
     },
     onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to delete document",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to delete document", "error");
     },
   });
 
   return (
-    <li className={styles.docRow}>
-      <Link
-        to={`/documents/${doc.document_id}`}
-        className={styles.docRowLink}
-      >
+    <li
+      className={styles.docRow}
+      style={
+        depth !== undefined
+          ? { paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }
+          : undefined
+      }
+    >
+      <Link to={`/documents/${doc.document_id}`} className={styles.docRowLink}>
+        <span className={styles.docIcon}>&#128196;</span>
         <span className={styles.docTitle}>{getDocumentDisplayTitle(doc)}</span>
         <div className={styles.docMeta}>
           {doc.document.path && <span className={styles.docPath}>{doc.document.path}</span>}
