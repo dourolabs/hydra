@@ -1969,16 +1969,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // Filter to the latest version of each issue using the is_latest
         // column maintained by a BEFORE INSERT trigger, avoiding correlated
         // subqueries or DISTINCT ON.
-        let mut sql = format!(
+        let subquery = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
              i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
              i.form, i.form_response, i.feedback \
-             FROM {TABLE_ISSUES_V2} i"
+             FROM {TABLE_ISSUES_V2} i \
+             WHERE i.is_latest = true"
         );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
-        predicates.push("i.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
