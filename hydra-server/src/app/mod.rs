@@ -5,7 +5,6 @@ pub mod event_bus;
 mod issues;
 mod labels;
 mod merge_queue;
-mod messages;
 mod notifications;
 mod patches;
 mod repositories;
@@ -35,7 +34,6 @@ pub use issues::{
     SubmitFeedbackError, SubmitFormActionError, UpdateTodoListError, UpsertIssueError,
 };
 pub use labels::{CreateLabelError, UpdateLabelError};
-pub use messages::MessageError;
 pub use notifications::NotificationError;
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};

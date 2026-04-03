@@ -14,10 +14,6 @@ use hydra_common::{
     api::v1::login::{
         DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
     },
-    api::v1::messages::{
-        ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest,
-        SendMessageResponse,
-    },
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
@@ -286,10 +282,6 @@ pub trait HydraClientInterface: Send + Sync {
         query: &EventsQuery,
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream>;
-
-    async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
-    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
-    async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse>;
 
     async fn list_notifications(
         &self,
@@ -1690,63 +1682,6 @@ impl HydraClient {
         )))
     }
 
-    /// Call `POST /v1/messages` to send a new message.
-    pub async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse> {
-        let url = self.endpoint("/v1/messages")?;
-        let response = self
-            .authed(self.http.post(url))
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit send message request")?
-            .error_for_status_with_body("hydra-server returned an error while sending message")
-            .await?;
-
-        response
-            .json::<SendMessageResponse>()
-            .await
-            .context("failed to decode send message response")
-    }
-
-    /// Call `GET /v1/messages` to list messages (authenticated endpoint).
-    pub async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
-        let url = self.endpoint("/v1/messages")?;
-        let response = self
-            .authed(self.http.get(url))
-            .query(query)
-            .send()
-            .await
-            .context("failed to fetch messages list")?
-            .error_for_status_with_body("hydra-server returned an error while listing messages")
-            .await?;
-
-        response
-            .json::<ListMessagesResponse>()
-            .await
-            .context("failed to decode list messages response")
-    }
-
-    /// Call `GET /v1/messages/receive` to receive unread messages.
-    pub async fn receive_messages(
-        &self,
-        query: &ReceiveMessagesQuery,
-    ) -> Result<ListMessagesResponse> {
-        let url = self.endpoint("/v1/messages/receive")?;
-        let response = self
-            .authed(self.http.get(url))
-            .query(query)
-            .send()
-            .await
-            .context("failed to submit receive messages request")?
-            .error_for_status_with_body("hydra-server returned an error while receiving messages")
-            .await?;
-
-        response
-            .json::<ListMessagesResponse>()
-            .await
-            .context("failed to decode receive messages response")
-    }
-
     /// Call `GET /v1/notifications` to list notifications.
     pub async fn list_notifications(
         &self,
@@ -2375,18 +2310,6 @@ impl HydraClientInterface for HydraClient {
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream> {
         HydraClient::subscribe_events(self, query, last_event_id).await
-    }
-
-    async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse> {
-        HydraClient::send_message(self, request).await
-    }
-
-    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
-        HydraClient::list_messages(self, query).await
-    }
-
-    async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse> {
-        HydraClient::receive_messages(self, query).await
     }
 
     async fn list_notifications(

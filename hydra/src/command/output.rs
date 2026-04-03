@@ -5,11 +5,8 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use hydra_common::{
     agents::AgentRecord,
-    api::v1::{
-        messages::VersionedMessage,
-        notifications::{
-            ListNotificationsResponse, MarkReadResponse, NotificationResponse, UnreadCountResponse,
-        },
+    api::v1::notifications::{
+        ListNotificationsResponse, MarkReadResponse, NotificationResponse, UnreadCountResponse,
     },
     documents::{DocumentSummaryRecord, DocumentVersionRecord},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
@@ -183,17 +180,6 @@ pub fn render_document_summary_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_document_summary_records_jsonl(documents, writer),
         ResolvedOutputFormat::Pretty => render_document_summary_records_pretty(documents, writer),
-    }
-}
-
-pub fn render_versioned_messages(
-    format: ResolvedOutputFormat,
-    messages: &[VersionedMessage],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_versioned_messages_jsonl(messages, writer),
-        ResolvedOutputFormat::Pretty => render_versioned_messages_pretty(messages, writer),
     }
 }
 
@@ -803,44 +789,6 @@ fn render_document_records_pretty(
         }
 
         if index + 1 < documents.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_versioned_messages_jsonl(
-    messages: &[VersionedMessage],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for message in messages {
-        serde_json::to_writer(&mut *writer, message)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_versioned_messages_pretty(
-    messages: &[VersionedMessage],
-    writer: &mut impl Write,
-) -> Result<()> {
-    if messages.is_empty() {
-        writeln!(writer, "No messages found.")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    for (index, msg) in messages.iter().enumerate() {
-        writeln!(writer, "Message {} (v{})", msg.message_id, msg.version)?;
-        if let Some(ref sender) = msg.message.sender {
-            writeln!(writer, "  sender: {sender}")?;
-        }
-        writeln!(writer, "  recipient: {}", msg.message.recipient)?;
-        writeln!(writer, "  timestamp: {}", msg.timestamp)?;
-        writeln!(writer, "  body: {}", msg.message.body)?;
-        if index + 1 < messages.len() {
             writeln!(writer)?;
         }
     }

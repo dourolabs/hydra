@@ -3,7 +3,6 @@ pub mod agents;
 pub mod documents;
 pub mod issues;
 pub mod labels;
-pub mod messages;
 pub mod notifications;
 pub mod patches;
 pub mod secrets;

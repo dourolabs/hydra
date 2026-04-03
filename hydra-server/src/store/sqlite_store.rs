@@ -7,7 +7,6 @@ use crate::domain::{
         TodoItem,
     },
     labels::Label,
-    messages::Message,
     notifications::Notification,
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     secrets::SecretRef,
@@ -17,13 +16,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
-use hydra_common::api::v1::messages::SearchMessagesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, SessionId,
+    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -47,7 +45,6 @@ const TABLE_AGENTS: &str = "agents";
 const TABLE_LABELS: &str = "labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 const TABLE_NOTIFICATIONS: &str = "notifications";
-const TABLE_MESSAGES_V2: &str = "messages_v2";
 const TABLE_AUTH_TOKENS: &str = "auth_tokens";
 const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
@@ -281,23 +278,6 @@ struct NotificationRow {
     policy: String,
     is_read: bool,
     created_at: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct MessageRow {
-    id: String,
-    version_number: i64,
-    sender: Option<String>,
-    recipient: String,
-    body: String,
-    is_read: bool,
-    deleted: bool,
-    actor: Option<String>,
-    created_at: String,
-    #[allow(dead_code)]
-    updated_at: String,
-    #[sqlx(default)]
-    creation_time: Option<String>,
 }
 
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
@@ -1469,85 +1449,6 @@ impl SqliteStore {
         .execute(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-
-        Ok(())
-    }
-
-    // ---- Message helpers ----
-
-    fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
-        let sender = row
-            .sender
-            .as_deref()
-            .map(|s| {
-                Actor::parse_name(s).map_err(|_| {
-                    StoreError::Internal(format!(
-                        "invalid sender '{}' stored for message '{}'",
-                        s, row.id
-                    ))
-                })
-            })
-            .transpose()?;
-        let recipient = Actor::parse_name(&row.recipient).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid recipient '{}' stored for message '{}'",
-                row.recipient, row.id
-            ))
-        })?;
-
-        Ok(Message {
-            sender,
-            recipient,
-            body: row.body.clone(),
-            deleted: row.deleted,
-            is_read: row.is_read,
-        })
-    }
-
-    async fn insert_message_row(
-        &self,
-        id: &MessageId,
-        version_number: VersionNumber,
-        message: &Message,
-        actor: Option<&str>,
-    ) -> Result<(), StoreError> {
-        let version_number = i64::try_from(version_number).map_err(|_| {
-            StoreError::Internal(format!("version number overflow for message '{id}'"))
-        })?;
-        let sender_name = message.sender.as_ref().map(|s| s.to_string());
-        let recipient_name = message.recipient.to_string();
-
-        // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-
-        // Clear is_latest on the previous latest version
-        sqlx::query(&format!(
-            "UPDATE {TABLE_MESSAGES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
-        ))
-        .bind(id.as_ref())
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        // Insert the new version with is_latest = 1
-        sqlx::query(&format!(
-            "INSERT INTO {TABLE_MESSAGES_V2} \
-             (id, version_number, sender, recipient, body, is_read, deleted, actor, is_latest) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
-        ))
-        .bind(id.as_ref())
-        .bind(version_number)
-        .bind(&sender_name)
-        .bind(&recipient_name)
-        .bind(&message.body)
-        .bind(message.is_read)
-        .bind(message.deleted)
-        .bind(actor)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -3111,139 +3012,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
-    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
-        let sql = format!(
-            "SELECT id, version_number, sender, recipient, body, is_read, deleted, actor, \
-             created_at, updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = ?1) AS creation_time \
-             FROM {TABLE_MESSAGES_V2} \
-             WHERE id = ?1 \
-             ORDER BY version_number DESC \
-             LIMIT 1"
-        );
-        let row = sqlx::query_as::<_, MessageRow>(&sql)
-            .bind(id.as_ref())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?
-            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
-
-        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid version number stored for message '{}'",
-                row.id
-            ))
-        })?;
-        let created_at = parse_sqlite_timestamp(&row.created_at)?;
-        let creation_time = row
-            .creation_time
-            .as_deref()
-            .map(parse_sqlite_timestamp)
-            .transpose()?
-            .unwrap_or(created_at);
-        let actor = parse_actor_json_string(row.actor.as_deref())?;
-        let message = self.row_to_message(&row)?;
-        Ok(Versioned::with_optional_actor(
-            message,
-            version,
-            created_at,
-            actor,
-            creation_time,
-        ))
-    }
-
-    async fn list_messages(
-        &self,
-        query: &SearchMessagesQuery,
-    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        let limit = i64::from(query.limit.unwrap_or(50));
-        let include_deleted = query.include_deleted.unwrap_or(false);
-
-        let subquery = format!(
-            "SELECT m.id, m.version_number, m.sender, m.recipient, m.body, m.is_read, \
-             m.deleted, m.actor, m.created_at, m.updated_at, \
-             (SELECT MIN(m2.created_at) FROM {TABLE_MESSAGES_V2} m2 WHERE m2.id = m.id) AS creation_time \
-             FROM {TABLE_MESSAGES_V2} m \
-             WHERE m.is_latest = 1"
-        );
-
-        let mut conditions = Vec::new();
-        let mut bind_values: Vec<String> = Vec::new();
-
-        if !include_deleted {
-            conditions.push("deleted = 0".to_string());
-        }
-        if let Some(ref sender) = query.sender {
-            conditions.push(format!("sender = ?{}", bind_values.len() + 1));
-            bind_values.push(sender.clone());
-        }
-        if let Some(ref recipient) = query.recipient {
-            conditions.push(format!("recipient = ?{}", bind_values.len() + 1));
-            bind_values.push(recipient.clone());
-        }
-        if let Some(after) = query.after {
-            conditions.push(format!("created_at > ?{}", bind_values.len() + 1));
-            bind_values.push(after.to_rfc3339());
-        }
-        if let Some(before) = query.before {
-            conditions.push(format!("created_at < ?{}", bind_values.len() + 1));
-            bind_values.push(before.to_rfc3339());
-        }
-        if let Some(is_read) = query.is_read {
-            conditions.push(format!("is_read = ?{}", bind_values.len() + 1));
-            bind_values.push(if is_read {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            });
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let limit_param = bind_values.len() + 1;
-        let sql = format!(
-            "SELECT * FROM ({subquery}) AS latest{where_clause} \
-             ORDER BY created_at DESC LIMIT ?{limit_param}"
-        );
-
-        let mut qb = sqlx::query_as::<_, MessageRow>(&sql);
-        for val in &bind_values {
-            qb = qb.bind(val);
-        }
-        qb = qb.bind(limit);
-
-        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
-        let mut messages = Vec::with_capacity(rows.len());
-        for row in rows {
-            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(format!(
-                    "invalid version number stored for message '{}'",
-                    row.id
-                ))
-            })?;
-            let message_id = row.id.parse::<MessageId>().map_err(|err| {
-                StoreError::Internal(format!("invalid message id stored in database: {err}"))
-            })?;
-            let created_at = parse_sqlite_timestamp(&row.created_at)?;
-            let creation_time = row
-                .creation_time
-                .as_deref()
-                .map(parse_sqlite_timestamp)
-                .transpose()?
-                .unwrap_or(created_at);
-            let actor = parse_actor_json_string(row.actor.as_deref())?;
-            let message = self.row_to_message(&row)?;
-            let versioned =
-                Versioned::with_optional_actor(message, version, created_at, actor, creation_time);
-            messages.push((message_id, versioned));
-        }
-        Ok(messages)
-    }
-
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
@@ -4163,38 +3931,6 @@ impl Store for SqliteStore {
             .map_err(map_sqlx_error)?
         };
         Ok(result.rows_affected())
-    }
-
-    async fn add_message(
-        &self,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let id = MessageId::new();
-        let actor_json = actor_to_json_string(actor);
-        self.insert_message_row(&id, 1, &message, Some(&actor_json))
-            .await?;
-        Ok((id, 1))
-    }
-
-    async fn update_message(
-        &self,
-        id: &MessageId,
-        message: Message,
-        actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_MESSAGES_V2, id.as_ref())
-            .await?
-            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for message '{id}'"))
-        })?;
-
-        let actor_json = actor_to_json_string(actor);
-        self.insert_message_row(id, next_version, &message, Some(&actor_json))
-            .await?;
-        Ok(next_version)
     }
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
@@ -7210,114 +6946,6 @@ mod tests {
         assert_eq!(results.len(), 3);
     }
 
-    // ---- Message tests ----
-
-    fn sample_message() -> Message {
-        Message {
-            sender: Some(ActorId::from_str("alice").unwrap()),
-            recipient: ActorId::from_str("bob").unwrap(),
-            body: "Hello Bob!".to_string(),
-            deleted: false,
-            is_read: false,
-        }
-    }
-
-    #[tokio::test]
-    async fn add_and_get_message() {
-        let store = create_test_store().await;
-        let msg = sample_message();
-
-        let (id, version) = store
-            .add_message(msg.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(version, 1);
-
-        let fetched = store.get_message(&id).await.unwrap();
-        assert_eq!(fetched.item.body, "Hello Bob!");
-        assert_eq!(fetched.version, 1);
-        assert_eq!(fetched.item.sender, msg.sender);
-        assert_eq!(fetched.item.recipient, msg.recipient);
-    }
-
-    #[tokio::test]
-    async fn get_message_not_found() {
-        let store = create_test_store().await;
-        let id = MessageId::from_str("m-nonexistent").unwrap();
-        let err = store.get_message(&id).await.unwrap_err();
-        assert!(matches!(err, StoreError::MessageNotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn update_message_creates_new_version() {
-        let store = create_test_store().await;
-        let msg = sample_message();
-
-        let (id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
-
-        let mut updated = sample_message();
-        updated.body = "Updated body".to_string();
-        let v2 = store
-            .update_message(&id, updated, &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(v2, 2);
-
-        let fetched = store.get_message(&id).await.unwrap();
-        assert_eq!(fetched.item.body, "Updated body");
-        assert_eq!(fetched.version, 2);
-    }
-
-    #[tokio::test]
-    async fn list_messages_returns_latest_version() {
-        let store = create_test_store().await;
-        let msg = sample_message();
-
-        let (id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
-
-        let mut updated = sample_message();
-        updated.body = "Updated".to_string();
-        store
-            .update_message(&id, updated, &ActorRef::test())
-            .await
-            .unwrap();
-
-        let mut query = SearchMessagesQuery::default();
-        query.recipient = Some("u-bob".to_string());
-        let results = store.list_messages(&query).await.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].1.item.body, "Updated");
-        assert_eq!(results[0].1.version, 2);
-    }
-
-    #[tokio::test]
-    async fn list_messages_filters_deleted() {
-        let store = create_test_store().await;
-
-        let (id, _) = store
-            .add_message(sample_message(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let mut deleted = sample_message();
-        deleted.deleted = true;
-        store
-            .update_message(&id, deleted, &ActorRef::test())
-            .await
-            .unwrap();
-
-        let results = store
-            .list_messages(&SearchMessagesQuery::default())
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 0);
-
-        let mut query = SearchMessagesQuery::default();
-        query.include_deleted = Some(true);
-        let results_with_deleted = store.list_messages(&query).await.unwrap();
-        assert_eq!(results_with_deleted.len(), 1);
-    }
-
     // ---- Auth token tests ----
 
     #[tokio::test]
@@ -8155,52 +7783,5 @@ mod tests {
 
         let flags = get_task_is_latest_flags(&store, &task_id).await;
         assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
-    }
-
-    // ---- is_latest tests for messages ----
-
-    /// Helper to query is_latest values for a given message id, ordered by version_number.
-    async fn get_message_is_latest_flags(
-        store: &SqliteStore,
-        msg_id: &MessageId,
-    ) -> Vec<(i64, i64)> {
-        sqlx::query_as::<_, (i64, i64)>(
-            "SELECT version_number, is_latest FROM messages_v2 WHERE id = ?1 ORDER BY version_number",
-        )
-        .bind(msg_id.as_ref())
-        .fetch_all(&store.pool)
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn is_latest_set_on_new_message() {
-        let store = create_test_store().await;
-        let (msg_id, _) = store
-            .add_message(sample_message(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let flags = get_message_is_latest_flags(&store, &msg_id).await;
-        assert_eq!(flags, vec![(1, 1)]);
-    }
-
-    #[tokio::test]
-    async fn is_latest_updated_on_message_update() {
-        let store = create_test_store().await;
-        let (msg_id, _) = store
-            .add_message(sample_message(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let mut updated_msg = sample_message();
-        updated_msg.is_read = true;
-        store
-            .update_message(&msg_id, updated_msg, &ActorRef::test())
-            .await
-            .unwrap();
-
-        let flags = get_message_is_latest_flags(&store, &msg_id).await;
-        assert_eq!(flags, vec![(1, 0), (2, 1)]);
     }
 }

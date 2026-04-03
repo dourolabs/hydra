@@ -28,8 +28,7 @@ pub use api::v1::{
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
-    DocumentId, HydraId, HydraIdError, IssueId, LabelId, MessageId, NotificationId, PatchId,
-    SessionId,
+    DocumentId, HydraId, HydraIdError, IssueId, LabelId, NotificationId, PatchId, SessionId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
