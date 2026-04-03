@@ -17,6 +17,7 @@ import type { WorkItem } from "../features/dashboard-v2/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard-v2/usePageIssueTrees";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard-v2/sidebarStorage";
+import { readFilterState, writeFilterState } from "../features/dashboard-v2/filterStorage";
 import { IssueCreateModal } from "../features/dashboard-v2/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardV2Page.module.css";
@@ -72,8 +73,9 @@ function buildServerFilters(
 
 export function DashboardV2Page() {
   const { user } = useAuth();
-  const [searchValue, setSearchValue] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const savedFilters = useMemo(() => readFilterState(), []);
+  const [searchValue, setSearchValue] = useState(savedFilters?.searchValue ?? "");
+  const [searchQuery, setSearchQuery] = useState(savedFilters?.searchValue ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleSearchChange = useCallback((value: string) => {
@@ -91,20 +93,34 @@ export function DashboardV2Page() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
-  const [filterRootId, setFilterRootId] = useState<string | null>(
-    selectedParam && VALID_FILTERS.includes(selectedParam)
-      ? selectedParam
-      : "your-issues",
-  );
+  const [filterRootId, setFilterRootId] = useState<string | null>(() => {
+    // URL param takes priority over localStorage
+    if (selectedParam && VALID_FILTERS.includes(selectedParam)) return selectedParam;
+    if (savedFilters && VALID_FILTERS.includes(savedFilters.filterRootId)) return savedFilters.filterRootId;
+    return "your-issues";
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedIssueStatuses, setSelectedIssueStatuses] = useState<Set<IssueStatus>>(
-    () => new Set(ALL_ISSUE_STATUSES),
+    () => new Set(savedFilters?.selectedIssueStatuses ?? ALL_ISSUE_STATUSES),
   );
   const [selectedPatchStatuses, setSelectedPatchStatuses] = useState<Set<PatchStatus>>(
-    () => new Set(ALL_PATCH_STATUSES),
+    () => new Set(savedFilters?.selectedPatchStatuses ?? ALL_PATCH_STATUSES),
   );
-  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
+  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(
+    savedFilters?.selectedLabelId ?? null,
+  );
+
+  // Persist filter state to localStorage
+  useEffect(() => {
+    writeFilterState({
+      filterRootId: filterRootId ?? "your-issues",
+      selectedIssueStatuses: Array.from(selectedIssueStatuses),
+      selectedPatchStatuses: Array.from(selectedPatchStatuses),
+      selectedLabelId,
+      searchValue,
+    });
+  }, [filterRootId, selectedIssueStatuses, selectedPatchStatuses, selectedLabelId, searchValue]);
 
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
