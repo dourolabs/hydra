@@ -793,6 +793,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await
             .expect("create_job should succeed with locally available image");
@@ -841,6 +842,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await
             .expect("create_job should succeed after pulling missing image");
@@ -890,6 +892,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await;
 
@@ -929,6 +932,7 @@ mod tests {
                 "512Mi".to_string(),
                 "500m".to_string(),
                 "512Mi".to_string(),
+                vec![],
             )
             .await;
 
