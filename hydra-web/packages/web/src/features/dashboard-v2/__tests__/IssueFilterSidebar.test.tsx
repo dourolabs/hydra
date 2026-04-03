@@ -34,7 +34,6 @@ function renderSidebar(overrides: Partial<Parameters<typeof IssueFilterSidebar>[
     collapsed: false,
     drawerOpen: false,
     onDrawerClose: vi.fn(),
-    yourIssuesCount: 3,
     assignedCount: 2,
   };
 
@@ -68,20 +67,9 @@ describe("IssueFilterSidebar", () => {
     expect(screen.queryByText("Labels")).toBeNull();
   });
 
-  it("renders your issues count badge", () => {
-    renderSidebar({ yourIssuesCount: 5 });
-    expect(screen.getAllByText("5").length).toBeGreaterThan(0);
-  });
-
   it("renders assigned count badge", () => {
     renderSidebar({ assignedCount: 7 });
     expect(screen.getAllByText("7").length).toBeGreaterThan(0);
-  });
-
-  it("does not render your issues count when zero", () => {
-    renderSidebar({ yourIssuesCount: 0 });
-    expect(screen.getAllByText("Your Issues").length).toBeGreaterThan(0);
-    expect(screen.queryByText("0")).toBeNull();
   });
 
   it("does not render assigned count when zero", () => {
