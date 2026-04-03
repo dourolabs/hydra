@@ -143,7 +143,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 let rewritten = rewrite_localhost_for_docker(hostname);
                 format!("http://{rewritten}")
             };
-            match LocalDockerJobEngine::new(server_url).await {
+            match LocalDockerJobEngine::new(server_url, vec!["hydra".to_string()]).await {
                 Ok(engine) => {
                     info!("using local Docker job engine");
                     Arc::new(engine)
