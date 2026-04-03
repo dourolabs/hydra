@@ -13,6 +13,7 @@ import { descriptionSnippet } from "../../utils/text";
 import { LabelChip } from "../labels/LabelChip";
 import { useSessionDuration } from "./useSessionDuration";
 import { useSwipeToArchive } from "./useSwipeToArchive";
+import { DocumentIcon } from "../../components/icons/DocumentIcon";
 import styles from "./ItemRow.module.css";
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
@@ -40,30 +41,10 @@ function PatchIcon() {
   );
 }
 
-function DocumentIcon() {
-  return (
-    <svg
-      className={styles.typeIcon}
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M9 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V5L9 1z" />
-      <path d="M9 1v4h4" />
-      <path d="M5 8h6M5 11h4" />
-    </svg>
-  );
-}
-
 const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
   issue: null,
   patch: PatchIcon,
-  document: DocumentIcon,
+  document: () => <DocumentIcon className={styles.typeIcon} />,
 };
 
 interface ItemRowProps {
