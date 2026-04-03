@@ -82,35 +82,7 @@ export function createDocumentRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // GET /v1/documents/:id
-  app.get("/v1/documents/:id", (c) => {
-    const id = c.req.param("id");
-    const includeDeleted = c.req.query("include_deleted") === "true";
-    const entry = store.get<Document>(COLLECTION, id, includeDeleted);
-    if (!entry) {
-      return c.json({ error: `document '${id}' not found` }, 404);
-    }
-    const creationTime = store.getCreationTime(COLLECTION, id)!;
-    return c.json(
-      toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime),
-    );
-  });
-
-  // GET /v1/documents/:id/versions/:version
-  app.get("/v1/documents/:id/versions/:version", (c) => {
-    const id = c.req.param("id");
-    const version = Number(c.req.param("version"));
-    const entry = store.getVersion<Document>(COLLECTION, id, version);
-    if (!entry) {
-      return c.json({ error: `document '${id}' version ${version} not found` }, 404);
-    }
-    const creationTime = store.getCreationTime(COLLECTION, id)!;
-    return c.json(
-      toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime),
-    );
-  });
-
-  // GET /v1/documents/paths
+  // GET /v1/documents/paths — must be registered BEFORE /v1/documents/:id
   app.get("/v1/documents/paths", (c) => {
     const prefix = c.req.query("prefix") || "/";
     const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
@@ -137,6 +109,34 @@ export function createDocumentRoutes(store: Store): Hono {
 
     const resp: ListDocumentPathsResponse = { children };
     return c.json(resp);
+  });
+
+  // GET /v1/documents/:id
+  app.get("/v1/documents/:id", (c) => {
+    const id = c.req.param("id");
+    const includeDeleted = c.req.query("include_deleted") === "true";
+    const entry = store.get<Document>(COLLECTION, id, includeDeleted);
+    if (!entry) {
+      return c.json({ error: `document '${id}' not found` }, 404);
+    }
+    const creationTime = store.getCreationTime(COLLECTION, id)!;
+    return c.json(
+      toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime),
+    );
+  });
+
+  // GET /v1/documents/:id/versions/:version
+  app.get("/v1/documents/:id/versions/:version", (c) => {
+    const id = c.req.param("id");
+    const version = Number(c.req.param("version"));
+    const entry = store.getVersion<Document>(COLLECTION, id, version);
+    if (!entry) {
+      return c.json({ error: `document '${id}' version ${version} not found` }, 404);
+    }
+    const creationTime = store.getCreationTime(COLLECTION, id)!;
+    return c.json(
+      toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime),
+    );
   });
 
   // GET /v1/documents
