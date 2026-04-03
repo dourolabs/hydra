@@ -959,6 +959,14 @@ impl StoreWithEvents {
         self.inner.update_actor(actor, &acting_as).await
     }
 
+    pub async fn add_auth_token(
+        &self,
+        actor_name: &str,
+        token_hash: &str,
+    ) -> Result<(), StoreError> {
+        self.inner.add_auth_token(actor_name, token_hash).await
+    }
+
     // ---- User mutations (inherent, with actor) ----
 
     pub async fn add_user(&self, user: User, actor: ActorRef) -> Result<(), StoreError> {

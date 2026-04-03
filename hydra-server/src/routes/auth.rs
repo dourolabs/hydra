@@ -1,6 +1,6 @@
 use crate::{
     app::AppState,
-    domain::actors::{AuthToken, AuthTokenError},
+    domain::actors::{Actor, AuthToken, AuthTokenError},
     routes::sessions::ApiError,
     store::StoreError,
 };
@@ -45,7 +45,20 @@ pub async fn require_auth(
         }
     };
 
-    if actor.verify_auth_token(&auth_token) {
+    // Check the auth_tokens table first (supports multiple tokens per actor).
+    let token_hash = Actor::hash_auth_token(auth_token.raw_token());
+    let token_valid = match state
+        .store()
+        .get_auth_token_hashes(auth_token.actor_name())
+        .await
+    {
+        Ok(hashes) => hashes.iter().any(|h| h == &token_hash),
+        Err(_) => false,
+    };
+
+    // Fall back to the legacy single-token hash on the Actor struct for
+    // backward compatibility with tokens created before the migration.
+    if token_valid || actor.verify_auth_token(&auth_token) {
         info!(actor = %actor.name(), "authorization accepted");
         request.extensions_mut().insert(actor);
         Ok(next.run(request).await)
