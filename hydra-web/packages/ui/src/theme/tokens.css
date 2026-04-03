@@ -86,7 +86,7 @@
 
   /* Typography */
   --font-family-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
-  --font-family-terminal: "IBM Plex Sans", -apple-system, sans-serif;
+  --font-family-terminal: "Mona Sans", -apple-system, sans-serif;
   --font-family-sans: "Inter", -apple-system, sans-serif;
   --font-size-xxs: 0.625rem;
   --font-size-xs: 0.75rem;
