@@ -88,10 +88,9 @@
 }
 
 .folderIcon {
-  font-size: var(--font-size-sm);
+  display: block;
   flex-shrink: 0;
-  width: 1.2em;
-  text-align: center;
+  color: var(--color-text-tertiary);
 }
 
 .loadingRow {
@@ -101,8 +100,3 @@
   padding: var(--space-2) var(--space-4);
 }
 
-.treeRoot > :nth-child(odd),
-.treeChildren > :nth-child(odd),
-.docList > :nth-child(odd) {
-  background-color: var(--color-bg-secondary);
-}

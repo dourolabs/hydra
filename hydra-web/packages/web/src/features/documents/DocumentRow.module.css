@@ -32,10 +32,9 @@
 }
 
 .docIcon {
-  font-size: var(--font-size-sm);
+  display: block;
   flex-shrink: 0;
-  width: 1.2em;
-  text-align: center;
+  color: var(--color-text-tertiary);
 }
 
 .docTitle {
