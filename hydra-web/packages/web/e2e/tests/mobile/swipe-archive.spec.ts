@@ -4,7 +4,7 @@ test.describe("Mobile click to open @mobile:click-to-open", () => {
   test("tapping an inbox issue row navigates to the issue detail page", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=inbox");
+    await page.goto("/?selected=your-issues");
 
     const itemText = "Update deployment documentation";
     await expect(page.getByText(itemText)).toBeVisible();
@@ -26,7 +26,7 @@ test.describe("Mobile Swipe to Archive @mobile:swipe-archive", () => {
   test("swiping an inbox item past threshold archives it @mobile:swipe-archive", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=inbox");
+    await page.goto("/?selected=your-issues");
 
     const itemText = "Update deployment documentation";
     await expect(page.getByText(itemText)).toBeVisible();

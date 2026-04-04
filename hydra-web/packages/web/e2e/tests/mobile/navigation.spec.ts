@@ -14,7 +14,7 @@ test.describe("Mobile Navigation @mobile:nav", () => {
 
     // Navigate to Dashboard via sidebar
     await page.getByTestId("nav-dashboard").click();
-    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=inbox$/);
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=your-issues$/);
   });
 
   test("deep link to issue detail renders correctly @mobile:nav", async ({

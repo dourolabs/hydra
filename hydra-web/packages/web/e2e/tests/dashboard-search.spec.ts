@@ -4,10 +4,10 @@ test.describe("Dashboard Search @dashboard:search", () => {
   test("search input retains focus and page does not flash while results load @dashboard:search", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=inbox");
+    await page.goto("/?selected=your-issues");
 
     // Wait for the dashboard to fully load
-    const searchInput = page.getByPlaceholder("Search issues...");
+    const searchInput = page.getByPlaceholder("Search...");
     await expect(searchInput).toBeVisible();
 
     // Verify initial items are visible before searching

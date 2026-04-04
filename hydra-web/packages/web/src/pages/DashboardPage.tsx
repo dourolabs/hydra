@@ -1,24 +1,28 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import type { IssueStatus, PatchStatus } from "@hydra/api";
 import {
   usePaginatedIssues,
   useIssueCount,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
+import { usePaginatedPatches } from "../features/dashboard/usePaginatedPatches";
+import { usePaginatedDocuments } from "../features/dashboard/usePaginatedDocuments";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
+import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
+import { FilterBar } from "../features/dashboard/FilterBar";
 import type { WorkItem } from "../features/dashboard/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
-import { useActiveSessionIssueIds } from "../features/dashboard/useActiveSessionIssueIds";
-import { usePatchesByIssue } from "../features/patches/usePatchesByIssue";
-import { useDocumentsByIds } from "../features/documents/useDocumentsByIds";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
+import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardPage.module.css";
+
+const VALID_FILTERS = ["your-issues", "assigned", "all", "patches", "documents"];
 
 /** Build server-side IssueFilters from the current filter selection. */
 function buildServerFilters(
@@ -26,6 +30,8 @@ function buildServerFilters(
   username: string,
   inboxLabelId: string | undefined,
   searchQuery: string,
+  selectedIssueStatus: IssueStatus | null,
+  selectedLabelId: string | null,
 ): IssueFilters {
   const filters: IssueFilters = {};
 
@@ -33,24 +39,34 @@ function buildServerFilters(
     filters.q = searchQuery;
   }
 
-  if (filterRootId === "inbox") {
+  if (filterRootId === "your-issues") {
     if (inboxLabelId) filters.labels = inboxLabelId;
     if (username) filters.creator = username;
-  } else if (filterRootId === "my-issues") {
-    if (username) filters.creator = username;
-  } else if (filterRootId?.startsWith(LABEL_FILTER_PREFIX)) {
-    const labelId = filterRootId.slice(LABEL_FILTER_PREFIX.length);
-    filters.labels = labelId;
+  } else if (filterRootId === "assigned") {
+    if (username) filters.assignee = username;
+  } else if (filterRootId === "all") {
+    // No additional filters — show all issues
   }
-  // For "everything" (null), no extra server filters
+
+  // Apply status filter when a single status is selected
+  if (selectedIssueStatus) {
+    filters.status = selectedIssueStatus;
+  }
+
+  // Apply label filter
+  if (selectedLabelId) {
+    // Append to existing labels if present (e.g. inbox label), otherwise set
+    filters.labels = filters.labels ? `${filters.labels},${selectedLabelId}` : selectedLabelId;
+  }
 
   return filters;
 }
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const [searchValue, setSearchValue] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const savedFilters = useMemo(() => readFilterState(), []);
+  const [searchValue, setSearchValue] = useState(savedFilters?.searchValue ?? "");
+  const [searchQuery, setSearchQuery] = useState(savedFilters?.searchValue ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleSearchChange = useCallback((value: string) => {
@@ -68,95 +84,144 @@ export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
-  const [filterRootId, setFilterRootId] = useState<string | null>(
-    selectedParam === "everything" ? null : (selectedParam ?? "inbox"),
-  );
+  const [filterRootId, setFilterRootId] = useState<string | null>(() => {
+    // URL param takes priority over localStorage
+    if (selectedParam && VALID_FILTERS.includes(selectedParam)) return selectedParam;
+    if (savedFilters && VALID_FILTERS.includes(savedFilters.filterRootId))
+      return savedFilters.filterRootId;
+    return "your-issues";
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedIssueStatus, setSelectedIssueStatus] = useState<IssueStatus | null>(
+    savedFilters?.selectedIssueStatus ?? null,
+  );
+  const [selectedPatchStatus, setSelectedPatchStatus] = useState<PatchStatus | null>(
+    savedFilters?.selectedPatchStatus ?? null,
+  );
+  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(
+    savedFilters?.selectedLabelId ?? null,
+  );
+
+  // Persist filter state to localStorage
+  useEffect(() => {
+    writeFilterState({
+      filterRootId: filterRootId ?? "your-issues",
+      selectedIssueStatus,
+      selectedPatchStatus,
+      selectedLabelId,
+      searchValue,
+    });
+  }, [filterRootId, selectedIssueStatus, selectedPatchStatus, selectedLabelId, searchValue]);
 
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
   const inboxLabelId = inboxLabel?.label_id;
 
-  const isInboxFilter = filterRootId === "inbox";
+  const isInboxFilter = filterRootId === "your-issues";
+  const isArtifactFilter = filterRootId === "patches" || filterRootId === "documents";
 
   // Build server-side filters for the paginated query
   const serverFilters = useMemo(
-    () => buildServerFilters(filterRootId, username, inboxLabelId, searchQuery),
-    [filterRootId, username, inboxLabelId, searchQuery],
+    () =>
+      buildServerFilters(
+        filterRootId,
+        username,
+        inboxLabelId,
+        searchQuery,
+        selectedIssueStatus,
+        selectedLabelId,
+      ),
+    [filterRootId, username, inboxLabelId, searchQuery, selectedIssueStatus, selectedLabelId],
+  );
+
+  const isSearching = searchQuery.length > 0;
+
+  // When searching, use a global filter (only search query, no sidebar filters)
+  const searchOnlyFilters = useMemo<IssueFilters>(
+    () => (searchQuery ? { q: searchQuery } : {}),
+    [searchQuery],
   );
 
   const {
     data: paginatedData,
     isLoading: paginatedLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters);
+    fetchNextPage: fetchNextIssues,
+    hasNextPage: hasNextIssues,
+    isFetchingNextPage: isFetchingNextIssues,
+  } = usePaginatedIssues(
+    isSearching ? searchOnlyFilters : serverFilters,
+    !isArtifactFilter || isSearching,
+  );
+
+  const patchFilters = useMemo(() => {
+    const pf: { q?: string; status?: PatchStatus[] } = {};
+    if (searchQuery) pf.q = searchQuery;
+    // Apply status filter when a single status is selected and on the patches tab (not searching)
+    if (!isSearching && selectedPatchStatus) {
+      pf.status = [selectedPatchStatus];
+    }
+    return pf;
+  }, [searchQuery, isSearching, selectedPatchStatus]);
+
+  const {
+    data: patchesData,
+    isLoading: patchesLoading,
+    fetchNextPage: fetchNextPatches,
+    hasNextPage: hasNextPatches,
+    isFetchingNextPage: isFetchingNextPatches,
+  } = usePaginatedPatches(patchFilters, filterRootId === "patches" || isSearching);
+
+  const {
+    data: documentsData,
+    isLoading: documentsLoading,
+    fetchNextPage: fetchNextDocuments,
+    hasNextPage: hasNextDocuments,
+    isFetchingNextPage: isFetchingNextDocuments,
+  } = usePaginatedDocuments(searchQuery, filterRootId === "documents" || isSearching);
 
   // Flatten paginated pages into a single array
   const issues = useMemo(() => {
-    return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
+    const seen = new Set<string>();
+    return (paginatedData?.pages.flatMap((page) => page.issues) ?? []).filter((issue) => {
+      if (seen.has(issue.issue_id)) return false;
+      seen.add(issue.issue_id);
+      return true;
+    });
   }, [paginatedData]);
 
-  const isLoading = paginatedLoading;
+  const isLoading = isSearching
+    ? paginatedLoading || patchesLoading || documentsLoading
+    : isArtifactFilter
+      ? filterRootId === "patches"
+        ? patchesLoading
+        : documentsLoading
+      : paginatedLoading;
 
-  // Badge count queries (count-only, no issue data fetched).
-  // Uses multi-status filter to get open + in-progress counts in a single call
-  // per category, excluding terminal statuses (closed, failed, dropped, rejected).
-  const inboxCountFilters = useMemo<IssueFilters>(() => {
-    if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "open,in-progress" };
-  }, [inboxLabelId, username]);
+  const hasNextPage = isSearching
+    ? hasNextIssues || hasNextPatches || hasNextDocuments
+    : isArtifactFilter
+      ? filterRootId === "patches"
+        ? hasNextPatches
+        : hasNextDocuments
+      : hasNextIssues;
 
-  const myIssuesCountFilters = useMemo<IssueFilters>(() => {
+  const isFetchingNextPage = isSearching
+    ? isFetchingNextIssues || isFetchingNextPatches || isFetchingNextDocuments
+    : isArtifactFilter
+      ? filterRootId === "patches"
+        ? isFetchingNextPatches
+        : isFetchingNextDocuments
+      : isFetchingNextIssues;
+
+  // Badge count query for "Assigned to You" — only open status
+  const assignedCountFilters = useMemo<IssueFilters>(() => {
     if (!username) return {};
-    return { creator: username, status: "open,in-progress" };
+    return { assignee: username, status: "open" };
   }, [username]);
 
-  const inboxEnabled = !!inboxLabelId && !!username;
-  const { data: inboxTotalCount = 0 } = useIssueCount(inboxCountFilters, inboxEnabled);
-
-  const myIssuesEnabled = !!username;
-  const { data: myIssuesTotalCount = 0 } = useIssueCount(myIssuesCountFilters, myIssuesEnabled);
-
-  // Fetch active session IDs to exclude from badge counts.
-  // Issues with running/pending sessions should not count toward badges.
-  const { activeIssueIds } = useActiveSessionIssueIds();
-  const activeIdsParam = useMemo(
-    () => (activeIssueIds.size > 0 ? Array.from(activeIssueIds).join(",") : null),
-    [activeIssueIds],
-  );
-
-  // Count how many active-session issues match each badge filter so we can subtract them.
-  // Uses multi-status filter to match the total queries above.
-  const inboxActiveFilters = useMemo<IssueFilters>(() => {
-    if (!activeIdsParam || !inboxLabelId || !username) return {};
-    return {
-      labels: inboxLabelId,
-      creator: username,
-      ids: activeIdsParam,
-      status: "open,in-progress",
-    };
-  }, [activeIdsParam, inboxLabelId, username]);
-
-  const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
-    if (!activeIdsParam || !username) return {};
-    return { creator: username, ids: activeIdsParam, status: "open,in-progress" };
-  }, [activeIdsParam, username]);
-
-  const activeCountEnabled = !!activeIdsParam;
-  const { data: inboxActiveCount = 0 } = useIssueCount(
-    inboxActiveFilters,
-    activeCountEnabled && inboxEnabled,
-  );
-  const { data: myIssuesActiveCount = 0 } = useIssueCount(
-    myIssuesActiveFilters,
-    activeCountEnabled && myIssuesEnabled,
-  );
-
-  const inboxCount = Math.max(0, inboxTotalCount - inboxActiveCount);
-  const myIssuesCount = Math.max(0, myIssuesTotalCount - myIssuesActiveCount);
+  const assignedEnabled = !!username;
+  const { data: assignedCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
@@ -168,91 +233,82 @@ export function DashboardPage() {
 
   // Per-issue tree construction via relationships API
   const {
-    treeDataMap,
     isActiveMap,
     childStatusMap,
     sessionsByIssue,
     isLoading: pageTreeLoading,
   } = usePageIssueTrees(issues, username);
 
-  // Issue IDs from all loaded pages (for scoping artifacts in infinite scroll)
-  const currentPageIssueIds = useMemo(() => {
-    const pages = paginatedData?.pages;
-    if (!pages || pages.length === 0) return new Set<string>();
-    return new Set(
-      pages.flatMap((page) => (page.issues ?? []).map((i) => i.issue_id)),
-    );
-  }, [paginatedData]);
-
-  // Collect unique patch/document IDs and build reverse lookup (artifact -> source issue)
-  // Only include artifacts from issues on the current (last loaded) page.
-  const { allPatchIds, allDocumentIds, artifactToIssue } = useMemo(() => {
-    const pIds = new Set<string>();
-    const dIds = new Set<string>();
-    const lookup = new Map<string, string>();
-    for (const [issueId, data] of treeDataMap) {
-      if (!currentPageIssueIds.has(issueId)) continue;
-      for (const id of data.patchIds) {
-        pIds.add(id);
-        if (!lookup.has(id)) lookup.set(id, issueId);
-      }
-      for (const id of data.documentIds) {
-        dIds.add(id);
-        if (!lookup.has(id)) lookup.set(id, issueId);
-      }
-    }
-    return {
-      allPatchIds: Array.from(pIds),
-      allDocumentIds: Array.from(dIds),
-      artifactToIssue: lookup,
-    };
-  }, [treeDataMap, currentPageIssueIds]);
-
-  // Fetch patch and document records
-  const { data: patchRecords } = usePatchesByIssue(allPatchIds);
-  const { data: documentRecords } = useDocumentsByIds(allDocumentIds);
-
-  // Build flat work items from issues, patches, and documents
+  // Build flat work items from issues, patches, or documents
   const allWorkItems = useMemo((): WorkItem[] => {
-    const items: WorkItem[] = issues.map((issue) => ({
+    // When searching, merge results from all three entity types
+    if (isSearching) {
+      const issueItems: WorkItem[] = issues.map((issue) => ({
+        kind: "issue" as const,
+        id: issue.issue_id,
+        data: issue,
+        lastUpdated: issue.timestamp,
+        isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
+      }));
+      const patchItems: WorkItem[] = (patchesData?.pages.flatMap((page) => page.patches) ?? []).map(
+        (patch) => ({
+          kind: "patch" as const,
+          id: patch.patch_id,
+          data: patch,
+          lastUpdated: patch.timestamp,
+          isTerminal: patch.patch.status === "Merged" || patch.patch.status === "Closed",
+          sourceIssueId: undefined,
+        }),
+      );
+      const docItems: WorkItem[] = (
+        documentsData?.pages.flatMap((page) => page.documents) ?? []
+      ).map((doc) => ({
+        kind: "document" as const,
+        id: doc.document_id,
+        data: doc,
+        lastUpdated: doc.timestamp,
+        isTerminal: false,
+        sourceIssueId: undefined,
+      }));
+      return [...issueItems, ...patchItems, ...docItems];
+    }
+
+    if (filterRootId === "patches") {
+      const patches = patchesData?.pages.flatMap((page) => page.patches) ?? [];
+      return patches.map((patch) => ({
+        kind: "patch" as const,
+        id: patch.patch_id,
+        data: patch,
+        lastUpdated: patch.timestamp,
+        isTerminal: patch.patch.status === "Merged" || patch.patch.status === "Closed",
+        sourceIssueId: undefined,
+      }));
+    }
+    if (filterRootId === "documents") {
+      const documents = documentsData?.pages.flatMap((page) => page.documents) ?? [];
+      return documents.map((doc) => ({
+        kind: "document" as const,
+        id: doc.document_id,
+        data: doc,
+        lastUpdated: doc.timestamp,
+        isTerminal: false,
+        sourceIssueId: undefined,
+      }));
+    }
+    return issues.map((issue) => ({
       kind: "issue" as const,
       id: issue.issue_id,
       data: issue,
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
     }));
-
-    for (const patch of patchRecords) {
-      const status = patch.patch.status;
-      items.push({
-        kind: "patch" as const,
-        id: patch.patch_id,
-        data: patch,
-        lastUpdated: patch.timestamp,
-        isTerminal: status === "Merged" || status === "Closed",
-        sourceIssueId: artifactToIssue.get(patch.patch_id),
-      });
-    }
-
-    for (const doc of documentRecords) {
-      items.push({
-        kind: "document" as const,
-        id: doc.document_id,
-        data: doc,
-        lastUpdated: doc.timestamp,
-        isTerminal: false,
-        sourceIssueId: artifactToIssue.get(doc.document_id),
-      });
-    }
-
-    return items;
-  }, [issues, patchRecords, documentRecords, artifactToIssue]);
+  }, [isSearching, filterRootId, issues, patchesData, documentsData]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
       setSearchParams(
         (prev) => {
-          prev.set("selected", "inbox");
+          prev.set("selected", "your-issues");
           return prev;
         },
         { replace: true },
@@ -263,9 +319,13 @@ export function DashboardPage() {
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
       setFilterRootId(rootId);
+      // Reset filters when switching tabs
+      setSelectedIssueStatus(null);
+      setSelectedPatchStatus(null);
+      setSelectedLabelId(null);
       setSearchParams(
         (prev) => {
-          prev.set("selected", rootId ?? "everything");
+          prev.set("selected", rootId ?? "your-issues");
           return prev;
         },
         { replace: true },
@@ -288,6 +348,34 @@ export function DashboardPage() {
     setDrawerOpen(false);
   }, []);
 
+  const fetchNextPage = useCallback(() => {
+    if (isSearching) {
+      if (hasNextIssues && !isFetchingNextIssues) fetchNextIssues();
+      if (hasNextPatches && !isFetchingNextPatches) fetchNextPatches();
+      if (hasNextDocuments && !isFetchingNextDocuments) fetchNextDocuments();
+      return;
+    }
+    if (filterRootId === "patches") {
+      fetchNextPatches();
+    } else if (filterRootId === "documents") {
+      fetchNextDocuments();
+    } else {
+      fetchNextIssues();
+    }
+  }, [
+    isSearching,
+    filterRootId,
+    fetchNextIssues,
+    fetchNextPatches,
+    fetchNextDocuments,
+    hasNextIssues,
+    hasNextPatches,
+    hasNextDocuments,
+    isFetchingNextIssues,
+    isFetchingNextPatches,
+    isFetchingNextDocuments,
+  ]);
+
   const handleLoadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
@@ -298,15 +386,12 @@ export function DashboardPage() {
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
-          activeFilter={filterRootId}
+          activeFilter={isSearching ? null : filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
-          isActiveMap={isActiveMap}
-          username={username}
-          inboxCount={inboxCount}
-          myIssuesCount={myIssuesCount}
+          assignedCount={assignedCount}
         />
         <HeterogeneousItemList
           items={allWorkItems}
@@ -325,6 +410,25 @@ export function DashboardPage() {
           hasNextPage={hasNextPage ?? false}
           isFetchingNextPage={isFetchingNextPage}
           onLoadMore={handleLoadMore}
+          filterBar={
+            !isSearching ? (
+              <FilterBar
+                tabKind={
+                  filterRootId === "patches"
+                    ? "patches"
+                    : filterRootId === "documents"
+                      ? "documents"
+                      : "issues"
+                }
+                selectedIssueStatus={selectedIssueStatus}
+                onIssueStatusChange={setSelectedIssueStatus}
+                selectedPatchStatus={selectedPatchStatus}
+                onPatchStatusChange={setSelectedPatchStatus}
+                selectedLabelId={selectedLabelId}
+                onLabelChange={setSelectedLabelId}
+              />
+            ) : undefined
+          }
         />
       </div>
       <button

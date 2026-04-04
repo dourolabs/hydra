@@ -4,12 +4,9 @@ test.describe("Mobile Dashboard @mobile:dashboard", () => {
   test("dashboard renders and shows issues @mobile:dashboard", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=inbox");
+    await page.goto("/?selected=your-issues");
 
-    // Dashboard should show issue sections
-    await expect(page.getByText(/Complete \(\d+\)/)).toBeVisible();
-
-    // Issues should be visible
+    // Issues should be visible in the flat list
     await expect(
       page.getByText("Update deployment documentation")
     ).toBeVisible();
@@ -18,7 +15,7 @@ test.describe("Mobile Dashboard @mobile:dashboard", () => {
   test("can click through to an issue from dashboard @mobile:dashboard", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=inbox");
+    await page.goto("/?selected=your-issues");
 
     // Click on an issue to navigate to detail
     await page.getByText("Update deployment documentation").click();

@@ -4,7 +4,7 @@ test.describe("Issue Create @issues:create", () => {
   test("can create a new issue via the UI @issues:create", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
@@ -35,7 +35,7 @@ test.describe("Issue Create @issues:create", () => {
   test("create issue button is disabled when description is empty @issues:create", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
@@ -62,7 +62,7 @@ test.describe("Issue Create @issues:create", () => {
   test("can cancel issue creation @issues:create", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal

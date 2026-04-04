@@ -4,8 +4,8 @@ test.describe("Dashboard Child Session Indicator @dashboard:child-session-indica
   test("shows pulsing status box for child issue with running session @dashboard:child-session-indicator", async ({
     authenticatedPage: page,
   }) => {
-    // Navigate to dashboard with everything filter
-    await page.goto("/?selected=everything");
+    // Navigate to dashboard with all issues filter
+    await page.goto("/?selected=all");
 
     // Find the row for "Platform v2.0 Migration" (i-seed00001)
     // which has child i-seed00002 with a running session t-seed00002
