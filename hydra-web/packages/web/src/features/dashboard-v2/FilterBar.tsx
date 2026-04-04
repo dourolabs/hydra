@@ -21,6 +21,7 @@ const ISSUE_STATUS_COLORS: Record<IssueStatus, string> = {
   failed: "var(--color-status-failed)",
   dropped: "var(--color-status-dropped)",
   rejected: "var(--color-status-rejected)",
+  unknown: "var(--color-text-tertiary)",
 };
 
 const PATCH_STATUS_COLORS: Record<PatchStatus, string> = {
@@ -28,6 +29,7 @@ const PATCH_STATUS_COLORS: Record<PatchStatus, string> = {
   Closed: "var(--color-status-issue-closed)",
   Merged: "var(--color-status-merged, var(--color-accent))",
   ChangesRequested: "var(--color-status-attention, var(--color-status-failed))",
+  Unknown: "var(--color-text-tertiary)",
 };
 
 type TabKind = "issues" | "patches" | "documents";
