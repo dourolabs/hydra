@@ -43,8 +43,7 @@ impl Automation for InboxLabelAutomation {
                     return self.apply_label(ctx).await;
                 }
                 if let MutationPayload::Issue { new, .. } = payload.as_ref() {
-                    new.status.is_active()
-                        && is_human_assignee(ctx, new.assignee.as_deref()).await
+                    new.status.is_active() && is_human_assignee(ctx, new.assignee.as_deref()).await
                 } else {
                     false
                 }
@@ -54,8 +53,7 @@ impl Automation for InboxLabelAutomation {
                     if new.status.is_terminal() {
                         return self.remove_label(ctx).await;
                     }
-                    new.status.is_active()
-                        && is_human_assignee(ctx, new.assignee.as_deref()).await
+                    new.status.is_active() && is_human_assignee(ctx, new.assignee.as_deref()).await
                 } else {
                     false
                 }
