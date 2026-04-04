@@ -116,6 +116,7 @@ impl InboxLabelAutomation {
     async fn apply_label(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
         let issue_id = match ctx.event {
             ServerEvent::IssueCreated { issue_id, .. } => issue_id,
+            ServerEvent::IssueUpdated { issue_id, .. } => issue_id,
             _ => return Ok(()),
         };
 
