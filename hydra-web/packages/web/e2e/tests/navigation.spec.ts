@@ -14,7 +14,7 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
 
     // Navigate to Dashboard via sidebar
     await page.getByTestId('nav-dashboard').click();
-    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=inbox$/);
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=your-issues$/);
   });
 
   test("deep link to issue detail works @nav:deep-link", async ({
@@ -46,7 +46,7 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
   test("browser back button works @nav:back-button", async ({ authenticatedPage: page }) => {
     // Navigate to dashboard
     await page.goto("/");
-    await expect(page).toHaveURL(/\/\?selected=inbox$/);
+    await expect(page).toHaveURL(/\/\?selected=your-issues$/);
 
     // Navigate to an issue detail
     await page.goto("/issues/i-seed00001");
@@ -54,6 +54,6 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
 
     // Go back
     await page.goBack();
-    await expect(page).toHaveURL(/\/\?selected=inbox$/);
+    await expect(page).toHaveURL(/\/\?selected=your-issues$/);
   });
 });

@@ -4,7 +4,7 @@ test.describe("Label display on dashboard item rows @labels:display", () => {
   test("shows label chips on issues with labels @labels:display", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Seed data: i-seed00001 has "platform-v2", i-seed00002 has "platform-v2" + "auth",
@@ -18,7 +18,7 @@ test.describe("Label display on dashboard item rows @labels:display", () => {
   test("label chips appear within their respective issue rows @labels:display", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Verify "infra" label chip appears in the i-seed00006 row
@@ -39,7 +39,7 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
   test("creates an issue with an existing and a new label @labels:create-with", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
@@ -155,7 +155,7 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
   test("hidden labels do not appear in dashboard issue rows @labels:hidden", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
 
     // Use CSS class selector to target ItemRow elements specifically (not sidebar items)
     const darkModeRow = page.locator('li[class*="row"]').filter({
@@ -170,7 +170,7 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
   test("hidden labels do not appear in label picker dropdown @labels:hidden", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
@@ -188,27 +188,27 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
     await expect(inboxOption).not.toBeVisible();
   });
 
-  test("hidden labels do not appear in sidebar label filter section @labels:hidden", async ({
+  test("hidden labels do not appear in filter bar label dropdown @labels:hidden", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // The sidebar Labels section should list visible labels but not "inbox"
-    // Use exact match to distinguish from the "Inbox" navigation item
-    const sidebar = page.locator('[class*="sidebar"]');
-    await expect(sidebar.getByText("Labels")).toBeVisible();
-    await expect(sidebar.getByText("platform-v2")).toBeVisible();
-    // The label section header "Labels" is visible, but "inbox" as a label entry should not be
-    await expect(sidebar.getByText("inbox", { exact: true })).not.toBeVisible();
+    // Open the Label dropdown in the filter bar
+    const labelButton = page.locator("button", { hasText: "Label" });
+    await labelButton.click();
+
+    // The dropdown should list visible labels but not "inbox"
+    await expect(page.getByText("platform-v2")).toBeVisible();
+    await expect(page.locator('[class*="labelItem"]').getByText("inbox", { exact: true })).not.toBeVisible();
   });
 });
 
-test.describe("Newly created label appears in sidebar @labels:sidebar-create", () => {
-  test("label created during issue creation shows in sidebar @labels:sidebar-create", async ({
+test.describe("Newly created label appears in filter bar @labels:filter-bar-create", () => {
+  test("label created during issue creation shows in filter bar label dropdown @labels:filter-bar-create", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
@@ -219,21 +219,21 @@ test.describe("Newly created label appears in sidebar @labels:sidebar-create", (
     // Fill in required fields
     await modal
       .getByPlaceholder("Short summary (optional)")
-      .fill("Sidebar label test issue");
+      .fill("Filter bar label test issue");
     await modal
       .getByPlaceholder("Describe the issue...")
-      .fill("Testing that new labels appear in sidebar");
+      .fill("Testing that new labels appear in filter bar");
 
     // Create a new label via the LabelPicker
     const labelInput = modal.getByPlaceholder("Add labels...");
     await labelInput.click();
-    await labelInput.fill("sidebar-test-label");
+    await labelInput.fill("filter-bar-test-label");
     const createOption = modal.locator("li").filter({ hasText: /Create/ });
     await expect(createOption).toBeVisible();
     await createOption.click();
 
     // Verify label chip appears in modal
-    await expect(modal.getByText("sidebar-test-label")).toBeVisible();
+    await expect(modal.getByText("filter-bar-test-label")).toBeVisible();
 
     // Close dropdown by clicking title field
     await modal.getByPlaceholder("Short summary (optional)").click();
@@ -247,31 +247,25 @@ test.describe("Newly created label appears in sidebar @labels:sidebar-create", (
     await page.reload();
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Verify the new label appears in the sidebar under Labels section
-    // Use the stats pattern (e.g. "0/1") to target the sidebar label item,
-    // not the LabelChip on the issue row
-    await expect(
-      page.getByRole("button", { name: /^sidebar-test-label \d+\/\d+$/ }),
-    ).toBeVisible();
+    // Verify the new label appears in the filter bar Label dropdown
+    const labelButton = page.locator("button", { hasText: "Label" });
+    await labelButton.click();
+    await expect(page.getByText("filter-bar-test-label")).toBeVisible();
   });
 });
 
-test.describe("Filter by label in sidebar shows issue with badge @labels:filter", () => {
-  test("clicking a label in sidebar filters dashboard and shows label chip on issue @labels:filter", async ({
+test.describe("Filter by label in filter bar shows issue with badge @labels:filter", () => {
+  test("selecting a label in filter bar dropdown filters dashboard and shows label chip on issue @labels:filter", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/?selected=everything");
+    await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // The seed data has "infra" label on i-seed00006 ("Implement API rate limiting")
-    // Click the "infra" label in the sidebar to filter
-    // Use the accessible name which includes the label name and stats (e.g. "infra 0/1")
-    const sidebarInfra = page.getByRole("button", { name: /^infra \d+\/\d+$/ });
-    await expect(sidebarInfra).toBeVisible();
-    await sidebarInfra.click();
-
-    // URL should update to contain label filter
-    await expect(page).toHaveURL(/selected=label(%3A|:)/);
+    // Open the Label dropdown in the filter bar and select "infra"
+    const labelButton = page.locator("button", { hasText: "Label" });
+    await labelButton.click();
+    await page.locator('[class*="labelItem"]').filter({ hasText: "infra" }).click();
 
     // The filtered list should show the issue with the "infra" label
     const issueRow = page.locator("li[role=button]").filter({
