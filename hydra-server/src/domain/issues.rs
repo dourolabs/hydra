@@ -40,6 +40,12 @@ impl IssueStatus {
                 | IssueStatus::Failed
         )
     }
+
+    /// Returns true if this status represents an active state
+    /// (Open or InProgress).
+    pub fn is_active(&self) -> bool {
+        matches!(self, IssueStatus::Open | IssueStatus::InProgress)
+    }
 }
 
 impl fmt::Display for IssueStatus {
