@@ -37,6 +37,20 @@ impl IssueStatus {
             IssueStatus::Unknown => "unknown",
         }
     }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        )
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(self, IssueStatus::Open | IssueStatus::InProgress)
+    }
 }
 
 impl fmt::Display for IssueStatus {

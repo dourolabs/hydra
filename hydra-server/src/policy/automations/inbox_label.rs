@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::{ActorId, ActorRef};
-use crate::domain::issues::IssueStatus;
 use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
@@ -44,7 +43,7 @@ impl Automation for InboxLabelAutomation {
                     return self.apply_label(ctx).await;
                 }
                 if let MutationPayload::Issue { new, .. } = payload.as_ref() {
-                    is_active_status(&new.status)
+                    new.status.is_active()
                         && is_human_assignee(ctx, new.assignee.as_deref()).await
                 } else {
                     false
@@ -52,10 +51,10 @@ impl Automation for InboxLabelAutomation {
             }
             ServerEvent::IssueUpdated { payload, .. } => {
                 if let MutationPayload::Issue { new, .. } = payload.as_ref() {
-                    if is_terminal_status(&new.status) {
+                    if new.status.is_terminal() {
                         return self.remove_label(ctx).await;
                     }
-                    is_active_status(&new.status)
+                    new.status.is_active()
                         && is_human_assignee(ctx, new.assignee.as_deref()).await
                 } else {
                     false
@@ -161,17 +160,6 @@ fn is_human_actor(actor: &ActorRef) -> bool {
         ActorRef::Authenticated {
             actor_id: ActorId::Username(_),
         }
-    )
-}
-
-fn is_active_status(status: &IssueStatus) -> bool {
-    matches!(status, IssueStatus::Open | IssueStatus::InProgress)
-}
-
-fn is_terminal_status(status: &IssueStatus) -> bool {
-    matches!(
-        status,
-        IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
     )
 }
 
