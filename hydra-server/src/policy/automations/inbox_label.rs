@@ -49,6 +49,9 @@ impl Automation for InboxLabelAutomation {
             }
             ServerEvent::IssueUpdated { payload, .. } => {
                 if let MutationPayload::Issue { new, .. } = payload.as_ref() {
+                    if is_terminal_status(&new.status) {
+                        return self.remove_label(ctx).await;
+                    }
                     is_active_status(&new.status)
                         && is_human_assignee(ctx, new.assignee.as_deref()).await
                 } else {
@@ -67,6 +70,46 @@ impl Automation for InboxLabelAutomation {
 }
 
 impl InboxLabelAutomation {
+    async fn remove_label(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
+        let issue_id = match ctx.event {
+            ServerEvent::IssueUpdated { issue_id, .. } => issue_id,
+            _ => return Ok(()),
+        };
+
+        let label = ctx
+            .store
+            .get_label_by_name(INBOX_LABEL_NAME)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!("failed to look up inbox label: {e}"))
+            })?;
+
+        let (label_id, _) = match label {
+            Some(pair) => pair,
+            None => {
+                tracing::warn!("inbox label not found; skipping inbox_label removal");
+                return Ok(());
+            }
+        };
+
+        let object_id: hydra_common::HydraId = issue_id.clone().into();
+        ctx.app_state
+            .remove_label_association(&label_id, &object_id)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "failed to remove inbox label from issue {issue_id}: {e}"
+                ))
+            })?;
+
+        tracing::info!(
+            issue_id = %issue_id,
+            "inbox_label automation removed inbox label"
+        );
+
+        Ok(())
+    }
+
     async fn apply_label(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
         let issue_id = match ctx.event {
             ServerEvent::IssueCreated { issue_id, .. }
@@ -120,6 +163,13 @@ fn is_human_actor(actor: &ActorRef) -> bool {
 
 fn is_active_status(status: &IssueStatus) -> bool {
     matches!(status, IssueStatus::Open | IssueStatus::InProgress)
+}
+
+fn is_terminal_status(status: &IssueStatus) -> bool {
+    matches!(
+        status,
+        IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
+    )
 }
 
 async fn is_human_assignee(ctx: &AutomationContext<'_>, assignee: Option<&str>) -> bool {
@@ -646,6 +696,202 @@ mod tests {
             .get_labels_for_object(&issue_id.clone().into())
             .await
             .unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label_id, inbox_label_id);
+    }
+
+    #[tokio::test]
+    async fn removes_inbox_label_on_close() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let inbox_label_id = setup_inbox_label(&handles).await;
+        add_human_user(&handles, "human_assignee").await;
+
+        let old_issue = make_issue(IssueStatus::Open, Some("human_assignee".to_string()));
+        let (issue_id, _) = store
+            .add_issue(old_issue.clone(), &human_actor())
+            .await
+            .unwrap();
+
+        // Pre-apply the inbox label
+        let object_id: hydra_common::HydraId = issue_id.clone().into();
+        handles
+            .state
+            .add_label_association(&inbox_label_id, &object_id)
+            .await
+            .unwrap();
+
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+
+        let new_issue = make_issue(IssueStatus::Closed, Some("human_assignee".to_string()));
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: human_actor(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = InboxLabelAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn removes_inbox_label_on_failed() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let inbox_label_id = setup_inbox_label(&handles).await;
+        add_human_user(&handles, "human_assignee").await;
+
+        let old_issue = make_issue(IssueStatus::InProgress, Some("human_assignee".to_string()));
+        let (issue_id, _) = store
+            .add_issue(old_issue.clone(), &human_actor())
+            .await
+            .unwrap();
+
+        // Pre-apply the inbox label
+        let object_id: hydra_common::HydraId = issue_id.clone().into();
+        handles
+            .state
+            .add_label_association(&inbox_label_id, &object_id)
+            .await
+            .unwrap();
+
+        let new_issue = make_issue(IssueStatus::Failed, Some("human_assignee".to_string()));
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: human_actor(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = InboxLabelAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_inbox_label_noop_when_not_present() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let _inbox_label_id = setup_inbox_label(&handles).await;
+
+        let old_issue = make_issue(IssueStatus::Open, None);
+        let (issue_id, _) = store
+            .add_issue(old_issue.clone(), &human_actor())
+            .await
+            .unwrap();
+
+        // No inbox label applied
+        let new_issue = make_issue(IssueStatus::Closed, None);
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: human_actor(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = InboxLabelAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        // Should not error even though label was not present
+        automation.execute(&ctx).await.unwrap();
+
+        let object_id: hydra_common::HydraId = issue_id.clone().into();
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reopen_reapplies_inbox_label_with_human_assignee() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let inbox_label_id = setup_inbox_label(&handles).await;
+        add_human_user(&handles, "human_assignee").await;
+
+        let old_issue = make_issue(IssueStatus::Closed, Some("human_assignee".to_string()));
+        let (issue_id, _) = store
+            .add_issue(old_issue.clone(), &human_actor())
+            .await
+            .unwrap();
+
+        // No inbox label (was removed on close)
+        let new_issue = make_issue(IssueStatus::Open, Some("human_assignee".to_string()));
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: human_actor(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = InboxLabelAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let object_id: hydra_common::HydraId = issue_id.clone().into();
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label_id, inbox_label_id);
     }
