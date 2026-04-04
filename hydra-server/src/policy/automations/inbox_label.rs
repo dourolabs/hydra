@@ -44,8 +44,7 @@ impl Automation for InboxLabelAutomation {
 impl InboxLabelAutomation {
     async fn apply_label(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
         let issue_id = match ctx.event {
-            ServerEvent::IssueCreated { issue_id, .. }
-            | ServerEvent::IssueUpdated { issue_id, .. } => issue_id,
+            ServerEvent::IssueCreated { issue_id, .. } => issue_id,
             _ => return Ok(()),
         };
 
@@ -282,51 +281,6 @@ mod tests {
             .unwrap();
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label_id, inbox_label_id);
-    }
-
-    #[tokio::test]
-    async fn does_not_apply_on_update_with_human_assignee() {
-        let handles = test_utils::test_state_handles();
-        let store = handles.store.clone();
-
-        let _inbox_label_id = setup_inbox_label(&handles).await;
-
-        let old_issue = make_issue(IssueStatus::Open, None);
-        let (issue_id, _) = store
-            .add_issue(old_issue.clone(), &human_actor())
-            .await
-            .unwrap();
-
-        let new_issue = make_issue(IssueStatus::Open, Some("someone".to_string()));
-
-        let payload = Arc::new(MutationPayload::Issue {
-            old: Some(old_issue),
-            new: new_issue,
-            actor: human_actor(),
-        });
-
-        let event = ServerEvent::IssueUpdated {
-            seq: 2,
-            issue_id: issue_id.clone(),
-            version: 2,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        let automation = InboxLabelAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        let labels = store
-            .get_labels_for_object(&issue_id.clone().into())
-            .await
-            .unwrap();
-        assert!(labels.is_empty());
     }
 
     #[tokio::test]
