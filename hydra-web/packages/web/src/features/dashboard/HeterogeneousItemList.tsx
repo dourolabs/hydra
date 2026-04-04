@@ -1,8 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { SessionSummaryRecord } from "@hydra/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./workItemTypes";
-import { topologicalSortWorkItems } from "../issues/topologicalSort";
 import { ItemRow } from "./ItemRow";
 import { SearchBox } from "../../components/SearchBox/SearchBox";
 import styles from "./HeterogeneousItemList.module.css";
@@ -24,16 +23,7 @@ interface HeterogeneousItemListProps {
   hasNextPage?: boolean;
   isFetchingNextPage?: boolean;
   onLoadMore?: () => void;
-}
-
-/** Artifacts are patches and documents regardless of terminal status. */
-function isArtifact(item: WorkItem): boolean {
-  return item.kind === "patch" || item.kind === "document";
-}
-
-/** Active items are non-terminal issues (excludes artifacts). */
-function isActiveItem(item: WorkItem): boolean {
-  return item.kind === "issue" && !item.isTerminal;
+  filterBar?: ReactNode;
 }
 
 function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
@@ -57,22 +47,10 @@ export function HeterogeneousItemList({
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
+  filterBar,
 }: HeterogeneousItemListProps) {
-  const activeItems = useMemo(
-    () => topologicalSortWorkItems(items.filter(isActiveItem)),
-    [items],
-  );
-
-  const artifactItems = useMemo(
-    () => items.filter(isArtifact).sort(sortByLastUpdated),
-    [items],
-  );
-
-  const completeItems = useMemo(
-    () =>
-      items
-        .filter((i) => i.kind === "issue" && i.isTerminal)
-        .sort(sortByLastUpdated),
+  const sortedItems = useMemo(
+    () => [...items].sort(sortByLastUpdated),
     [items],
   );
 
@@ -119,10 +97,12 @@ export function HeterogeneousItemList({
         <SearchBox
           value={searchValue}
           onChange={onSearchChange}
-          placeholder="Search issues..."
+          placeholder="Search..."
           leftElement={hamburgerButton}
         />
       </div>
+
+      {filterBar}
 
       <div className={styles.listScroll}>
         {isLoading && items.length === 0 && (
@@ -133,86 +113,29 @@ export function HeterogeneousItemList({
           <div className={styles.empty}>No items yet.</div>
         )}
 
-        {activeItems.length > 0 && (
-          <>
-            <div className={styles.sectionHeader}>
-              Active ({activeItems.length})
-            </div>
-            <ul className={styles.list}>
-              {activeItems.map((item) => (
-                <ItemRow
-                  key={`${item.kind}-${item.id}`}
-                  item={item}
-                  sessions={
-                    item.kind === "issue"
-                      ? sessionsByIssue.get(item.id)
-                      : undefined
-                  }
-                  childStatuses={
-                    item.kind === "issue"
-                      ? childStatusMap.get(item.id)
-                      : undefined
-                  }
-                  isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
-                  treeLoading={treeLoading}
-                  filterRootId={filterRootId}
-                  inboxLabelId={inboxLabelId}
-
-                />
-              ))}
-            </ul>
-          </>
-        )}
-
-        {completeItems.length > 0 && (
-          <>
-            <div className={styles.sectionHeader}>
-              Complete ({completeItems.length})
-            </div>
-            <ul className={styles.list}>
-              {completeItems.map((item) => (
-                <ItemRow
-                  key={`${item.kind}-${item.id}`}
-                  item={item}
-                  sessions={
-                    item.kind === "issue"
-                      ? sessionsByIssue.get(item.id)
-                      : undefined
-                  }
-                  childStatuses={
-                    item.kind === "issue"
-                      ? childStatusMap.get(item.id)
-                      : undefined
-                  }
-                  isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
-                  treeLoading={treeLoading}
-                  filterRootId={filterRootId}
-                  inboxLabelId={inboxLabelId}
-
-                />
-              ))}
-            </ul>
-          </>
-        )}
-
-        {artifactItems.length > 0 && (
-          <>
-            <div className={styles.sectionHeader}>
-              Artifacts ({artifactItems.length})
-            </div>
-            <ul className={styles.list}>
-              {artifactItems.map((item) => (
-                <ItemRow
-                  key={`${item.kind}-${item.id}`}
-                  item={item}
-                  sessions={undefined}
-                  filterRootId={filterRootId}
-
-                />
-              ))}
-
-            </ul>
-          </>
+        {sortedItems.length > 0 && (
+          <ul className={styles.list}>
+            {sortedItems.map((item) => (
+              <ItemRow
+                key={`${item.kind}-${item.id}`}
+                item={item}
+                sessions={
+                  item.kind === "issue"
+                    ? sessionsByIssue.get(item.id)
+                    : undefined
+                }
+                childStatuses={
+                  item.kind === "issue"
+                    ? childStatusMap.get(item.id)
+                    : undefined
+                }
+                isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
+                treeLoading={treeLoading}
+                filterRootId={filterRootId}
+                inboxLabelId={inboxLabelId}
+              />
+            ))}
+          </ul>
         )}
 
         {hasNextPage && (
