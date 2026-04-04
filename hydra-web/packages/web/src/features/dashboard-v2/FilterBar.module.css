@@ -60,57 +60,6 @@
   overflow-y: auto;
 }
 
-.checkboxItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  font-family: var(--font-family-terminal);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  transition: background var(--transition-fast);
-  user-select: none;
-}
-
-.checkboxItem:hover {
-  background: var(--color-bg-tertiary);
-}
-
-.checkbox {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--color-accent);
-  flex-shrink: 0;
-}
-
-.checkboxLabel {
-  flex: 1;
-  min-width: 0;
-}
-
-.onlyButton {
-  flex-shrink: 0;
-  padding: 0 var(--space-1);
-  background: none;
-  border: none;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-terminal);
-  font-size: 10px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  text-transform: uppercase;
-}
-
-.checkboxItem:hover .onlyButton {
-  opacity: 1;
-}
-
-.onlyButton:hover {
-  color: var(--color-accent);
-}
-
 .labelItem {
   display: flex;
   align-items: center;
@@ -154,9 +103,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dropdownTrigger,
-  .checkboxItem,
-  .labelItem,
-  .onlyButton {
+  .labelItem {
     transition: none;
   }
 }

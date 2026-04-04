@@ -4,8 +4,8 @@ const STORAGE_KEY = "hydra:v2:dashboard:filters";
 
 export interface PersistedFilterState {
   filterRootId: string;
-  selectedIssueStatuses: IssueStatus[];
-  selectedPatchStatuses: PatchStatus[];
+  selectedIssueStatus: IssueStatus | null;
+  selectedPatchStatus: PatchStatus | null;
   selectedLabelId: string | null;
   searchValue: string;
 }
@@ -17,8 +17,19 @@ export function readFilterState(): PersistedFilterState | null {
     const parsed = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
     if (typeof parsed.filterRootId !== "string") return null;
-    if (!Array.isArray(parsed.selectedIssueStatuses)) return null;
-    if (!Array.isArray(parsed.selectedPatchStatuses)) return null;
+    // Accept both new single-value format and legacy array format
+    if (
+      parsed.selectedIssueStatus !== null &&
+      parsed.selectedIssueStatus !== undefined &&
+      typeof parsed.selectedIssueStatus !== "string"
+    )
+      return null;
+    if (
+      parsed.selectedPatchStatus !== null &&
+      parsed.selectedPatchStatus !== undefined &&
+      typeof parsed.selectedPatchStatus !== "string"
+    )
+      return null;
     return parsed as PersistedFilterState;
   } catch {
     return null;

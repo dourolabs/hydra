@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { IssueStatus, PatchStatus, LabelRecord } from "@hydra/api";
 import { useLabels } from "../labels/useLabels";
 import styles from "./FilterBar.module.css";
@@ -12,35 +12,50 @@ const ISSUE_STATUSES: IssueStatus[] = [
   "failed",
 ];
 
-const PATCH_STATUSES: PatchStatus[] = [
-  "Open",
-  "Closed",
-  "Merged",
-  "ChangesRequested",
-];
+const PATCH_STATUSES: PatchStatus[] = ["Open", "Closed", "Merged", "ChangesRequested"];
+
+const ISSUE_STATUS_COLORS: Record<IssueStatus, string> = {
+  open: "var(--color-status-open)",
+  "in-progress": "var(--color-status-in-progress)",
+  closed: "var(--color-status-issue-closed)",
+  failed: "var(--color-status-failed)",
+  dropped: "var(--color-status-dropped)",
+  rejected: "var(--color-status-rejected)",
+  unknown: "var(--color-text-tertiary)",
+};
+
+const PATCH_STATUS_COLORS: Record<PatchStatus, string> = {
+  Open: "var(--color-status-open)",
+  Closed: "var(--color-status-issue-closed)",
+  Merged: "var(--color-status-merged, var(--color-accent))",
+  ChangesRequested: "var(--color-status-attention, var(--color-status-failed))",
+  Unknown: "var(--color-text-tertiary)",
+};
 
 type TabKind = "issues" | "patches" | "documents";
 
 interface FilterBarProps {
   tabKind: TabKind;
-  selectedIssueStatuses: Set<IssueStatus>;
-  onIssueStatusesChange: (statuses: Set<IssueStatus>) => void;
-  selectedPatchStatuses: Set<PatchStatus>;
-  onPatchStatusesChange: (statuses: Set<PatchStatus>) => void;
+  selectedIssueStatus: IssueStatus | null;
+  onIssueStatusChange: (status: IssueStatus | null) => void;
+  selectedPatchStatus: PatchStatus | null;
+  onPatchStatusChange: (status: PatchStatus | null) => void;
   selectedLabelId: string | null;
   onLabelChange: (labelId: string | null) => void;
 }
 
-function StatusMultiSelect<T extends string>({
+function StatusSelect<T extends string>({
   allStatuses,
   selected,
   onChange,
   label,
+  colorMap,
 }: {
   allStatuses: T[];
-  selected: Set<T>;
-  onChange: (next: Set<T>) => void;
+  selected: T | null;
+  onChange: (next: T | null) => void;
   label: string;
+  colorMap: Record<T, string>;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -56,43 +71,13 @@ function StatusMultiSelect<T extends string>({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const allSelected = selected.size === allStatuses.length;
-  const noneSelected = selected.size === 0;
-  const triggerLabel =
-    allSelected || noneSelected
-      ? label
-      : selected.size === 1
-        ? `${label}: ${[...selected][0]}`
-        : `${label}: ${selected.size} selected`;
-
-  const handleToggle = useCallback(
-    (status: T) => {
-      const next = new Set(selected);
-      if (next.has(status)) {
-        next.delete(status);
-      } else {
-        next.add(status);
-      }
-      onChange(next);
-    },
-    [selected, onChange],
-  );
-
-  const handleOnly = useCallback(
-    (status: T, e: React.MouseEvent) => {
-      e.stopPropagation();
-      onChange(new Set([status]));
-    },
-    [onChange],
-  );
-
-  const isActive = !allSelected && !noneSelected;
+  const triggerLabel = selected ? `${label}: ${selected}` : label;
 
   return (
     <div className={styles.dropdownWrapper} ref={ref}>
       <button
         type="button"
-        className={`${styles.dropdownTrigger} ${isActive ? styles.dropdownTriggerActive : ""}`}
+        className={`${styles.dropdownTrigger} ${selected ? styles.dropdownTriggerActive : ""}`}
         onClick={() => setOpen((v) => !v)}
       >
         {triggerLabel}
@@ -100,27 +85,27 @@ function StatusMultiSelect<T extends string>({
       </button>
       {open && (
         <div className={styles.dropdownMenu}>
+          <div
+            className={`${styles.labelItem} ${!selected ? styles.labelItemSelected : ""}`}
+            onClick={() => {
+              onChange(null);
+              setOpen(false);
+            }}
+          >
+            <span className={styles.noLabel}>All statuses</span>
+          </div>
           {allStatuses.map((status) => (
-            <label
+            <div
               key={status}
-              className={styles.checkboxItem}
-              onClick={() => handleToggle(status)}
+              className={`${styles.labelItem} ${selected === status ? styles.labelItemSelected : ""}`}
+              onClick={() => {
+                onChange(status);
+                setOpen(false);
+              }}
             >
-              <input
-                type="checkbox"
-                className={styles.checkbox}
-                checked={selected.has(status)}
-                onChange={() => {}}
-              />
-              <span className={styles.checkboxLabel}>{status}</span>
-              <button
-                type="button"
-                className={styles.onlyButton}
-                onClick={(e) => handleOnly(status, e)}
-              >
-                Only
-              </button>
-            </label>
+              <span className={styles.colorDot} style={{ backgroundColor: colorMap[status] }} />
+              <span className={styles.labelName}>{status}</span>
+            </div>
           ))}
         </div>
       )}
@@ -150,12 +135,8 @@ function LabelSelect({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const selectedLabel = labels?.find(
-    (l: LabelRecord) => l.label_id === selectedLabelId,
-  );
-  const triggerLabel = selectedLabel
-    ? `Label: ${selectedLabel.name}`
-    : "Label";
+  const selectedLabel = labels?.find((l: LabelRecord) => l.label_id === selectedLabelId);
+  const triggerLabel = selectedLabel ? `Label: ${selectedLabel.name}` : "Label";
 
   return (
     <div className={styles.dropdownWrapper} ref={ref}>
@@ -187,10 +168,7 @@ function LabelSelect({
                 setOpen(false);
               }}
             >
-              <span
-                className={styles.colorDot}
-                style={{ backgroundColor: label.color }}
-              />
+              <span className={styles.colorDot} style={{ backgroundColor: label.color }} />
               <span className={styles.labelName}>{label.name}</span>
             </div>
           ))}
@@ -202,10 +180,10 @@ function LabelSelect({
 
 export function FilterBar({
   tabKind,
-  selectedIssueStatuses,
-  onIssueStatusesChange,
-  selectedPatchStatuses,
-  onPatchStatusesChange,
+  selectedIssueStatus,
+  onIssueStatusChange,
+  selectedPatchStatus,
+  onPatchStatusChange,
   selectedLabelId,
   onLabelChange,
 }: FilterBarProps) {
@@ -217,24 +195,23 @@ export function FilterBar({
     <div className={styles.filterBar}>
       {tabKind === "issues" && (
         <>
-          <StatusMultiSelect
+          <StatusSelect
             allStatuses={ISSUE_STATUSES}
-            selected={selectedIssueStatuses}
-            onChange={onIssueStatusesChange}
+            selected={selectedIssueStatus}
+            onChange={onIssueStatusChange}
             label="Status"
+            colorMap={ISSUE_STATUS_COLORS}
           />
-          <LabelSelect
-            selectedLabelId={selectedLabelId}
-            onChange={onLabelChange}
-          />
+          <LabelSelect selectedLabelId={selectedLabelId} onChange={onLabelChange} />
         </>
       )}
       {tabKind === "patches" && (
-        <StatusMultiSelect
+        <StatusSelect
           allStatuses={PATCH_STATUSES}
-          selected={selectedPatchStatuses}
-          onChange={onPatchStatusesChange}
+          selected={selectedPatchStatus}
+          onChange={onPatchStatusChange}
           label="Status"
+          colorMap={PATCH_STATUS_COLORS}
         />
       )}
     </div>
