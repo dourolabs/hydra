@@ -57,7 +57,7 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
       <div className={styles.top}>
         <Tooltip content="Dashboard" position="right">
           <Link to="/" className={styles.logo}>
-            M
+            H
           </Link>
         </Tooltip>
 
