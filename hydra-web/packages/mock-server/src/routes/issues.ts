@@ -188,11 +188,9 @@ export function createIssueRoutes(store: Store): Hono {
       });
     }
 
-    // Sort by creation time descending (newest first) for stable pagination
+    // Sort by last-update time descending (most recently updated first) for stable pagination
     filtered.sort((a, b) => {
-      const aTime = store.getCreationTime(COLLECTION, a.id)!;
-      const bTime = store.getCreationTime(COLLECTION, b.id)!;
-      return bTime.localeCompare(aTime);
+      return b.entry.timestamp.localeCompare(a.entry.timestamp);
     });
 
     const totalCount = filtered.length;
