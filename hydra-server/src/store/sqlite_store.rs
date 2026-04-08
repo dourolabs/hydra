@@ -2043,7 +2043,7 @@ impl ReadOnlyStore for SqliteStore {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "creation_time",
+            "updated_at",
             "id",
         )?;
 
@@ -5310,6 +5310,38 @@ mod tests {
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.item.title, "Special Needle Title");
+    }
+
+    #[tokio::test]
+    async fn list_issues_sorted_by_update_time() {
+        let store = create_test_store().await;
+
+        // Create issue A, then issue B (B has a later creation time).
+        let (id_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (id_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Update issue A so its updated_at becomes the most recent.
+        let mut updated_a = sample_issue(vec![]);
+        updated_a.description = "updated A".to_string();
+        store
+            .update_issue(&id_a, updated_a, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // List should return A first (most recently updated), then B.
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, id_a);
+        assert_eq!(results[1].0, id_b);
     }
 
     #[tokio::test]
