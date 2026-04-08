@@ -312,7 +312,7 @@ pub async fn list_issues(
     let next_cursor = compute_next_cursor(
         &mut filtered,
         eff_limit,
-        |r| &r.creation_time,
+        |r| &r.timestamp,
         |r| r.issue_id.as_ref(),
     );
 
