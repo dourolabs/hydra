@@ -5,7 +5,9 @@ use tokio::sync::RwLock;
 
 use crate::app::event_bus::EventType;
 use crate::domain::actors::ActorRef;
-use crate::policy::automations::agent_queue::{AgentQueue, SharedSpawnAttempts, agent_task_state};
+use crate::policy::automations::agent_queue::{
+    AgentQueue, SharedSpawnAttempts, SpawnResult, agent_task_state,
+};
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::api::v1::issues::{IssueStatus, SearchIssuesQuery};
@@ -141,10 +143,10 @@ impl Automation for SpawnSessionsAutomation {
                     )
                     .await
                 {
-                    Ok(Some(task)) => {
+                    Ok(SpawnResult::Spawned(task)) => {
                         match ctx
                             .app_state
-                            .add_session(task, chrono::Utc::now(), actor.clone())
+                            .add_session(*task, chrono::Utc::now(), actor.clone())
                             .await
                         {
                             Ok(session_id) => {
@@ -167,7 +169,59 @@ impl Automation for SpawnSessionsAutomation {
                             }
                         }
                     }
-                    Ok(None) => {}
+                    Ok(SpawnResult::RetriesExhausted {
+                        issue_id: exhausted_issue_id,
+                        max_tries,
+                    }) => {
+                        // Query all sessions for this issue to include in the failure message.
+                        let session_ids: Vec<hydra_common::SessionId> = ctx
+                            .app_state
+                            .get_sessions_for_issue(&exhausted_issue_id)
+                            .await
+                            .unwrap_or_default();
+                        let session_id_list = session_ids
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let progress = format!(
+                            "Automatic failure: the system exhausted all {max_tries} session spawn \
+                             attempts for this issue. Session IDs: {session_id_list}"
+                        );
+
+                        // Update the issue to Failed with a descriptive progress message.
+                        let mut failed_issue = issue.clone();
+                        failed_issue.status = crate::domain::issues::IssueStatus::Failed;
+                        failed_issue.progress = progress.clone();
+                        if let Err(err) = ctx
+                            .app_state
+                            .upsert_issue(
+                                Some(exhausted_issue_id.clone()),
+                                hydra_common::api::v1::issues::UpsertIssueRequest::new(
+                                    failed_issue.into(),
+                                    None,
+                                ),
+                                actor.clone(),
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                automation = AUTOMATION_NAME,
+                                agent = queue.agent.name,
+                                issue_id = %exhausted_issue_id,
+                                error = %err,
+                                "failed to mark issue as failed after retries exhausted"
+                            );
+                        } else {
+                            tracing::info!(
+                                automation = AUTOMATION_NAME,
+                                agent = queue.agent.name,
+                                issue_id = %exhausted_issue_id,
+                                "marked issue as failed: retries exhausted"
+                            );
+                        }
+                    }
+                    Ok(SpawnResult::Skipped) => {}
                     Err(err) => {
                         tracing::warn!(
                             automation = AUTOMATION_NAME,
@@ -499,6 +553,86 @@ mod tests {
             sessions_after.len(),
             1,
             "should not spawn when attempts exhausted"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn marks_issue_failed_when_attempts_exhausted() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+        let agent_name = "agent-fail";
+
+        // max_tries=1, so only one attempt is allowed
+        register_agent_with_capacity(&handles, agent_name, 5, 1).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+
+        let issue = make_issue(agent_name, &repo_name);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+
+        // First event: should spawn
+        let event = issue_created_event(issue_id.clone(), issue.clone());
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(sessions.len(), 1, "first attempt should spawn");
+
+        // Complete the session so the issue no longer has an active session
+        let session_id = &sessions[0];
+        let mut session = handles.state.get_session(session_id).await?;
+        session.status = Status::Complete;
+        handles
+            .store
+            .update_session(session_id, session.clone(), &ActorRef::test())
+            .await?;
+
+        // Second event: should NOT spawn and should mark issue as Failed
+        let session_updated = session_updated_event(
+            session_id.clone(),
+            {
+                let mut s = session.clone();
+                s.status = Status::Running;
+                s
+            },
+            session,
+        );
+        let ctx2 = AutomationContext {
+            event: &session_updated,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx2).await?;
+
+        // Verify issue is now Failed
+        let updated_issue = handles.store.get_issue(&issue_id, false).await?;
+        assert_eq!(
+            updated_issue.item.status,
+            IssueStatus::Failed,
+            "issue should be marked as failed when retries exhausted"
+        );
+
+        // Verify progress message contains session ID
+        assert!(
+            updated_issue.item.progress.contains("Automatic failure"),
+            "progress should contain failure explanation"
+        );
+        assert!(
+            updated_issue
+                .item
+                .progress
+                .contains(&session_id.to_string()),
+            "progress should contain the session ID"
         );
 
         Ok(())
