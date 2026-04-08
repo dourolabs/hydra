@@ -28,6 +28,32 @@ pub type SharedSpawnAttempts = Arc<RwLock<HashMap<IssueId, SpawnAttempt>>>;
 pub const ISSUE_ID_ENV_VAR: &str = "HYDRA_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "HYDRA_AGENT_NAME";
 
+/// Result of attempting to spawn a session for an issue.
+pub(crate) enum SpawnResult {
+    /// A session was built and is ready to be added.
+    Spawned(Box<Session>),
+    /// The issue was skipped (not eligible for spawning).
+    Skipped,
+    /// The spawn attempt retry cap has been exhausted for this issue.
+    RetriesExhausted { issue_id: IssueId, max_tries: i32 },
+}
+
+#[cfg(test)]
+impl SpawnResult {
+    /// Returns the spawned session, or `None` if the result is not `Spawned`.
+    fn into_session(self) -> Option<Session> {
+        match self {
+            SpawnResult::Spawned(session) => Some(*session),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if a session was spawned.
+    fn is_spawned(&self) -> bool {
+        matches!(self, SpawnResult::Spawned(_))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SpawnAttempt {
     status: IssueStatus,
@@ -198,7 +224,7 @@ impl AgentQueue {
         task_state: &AgentTaskState,
         cached_prompt: &mut Option<String>,
         cached_mcp_config: &mut Option<Option<McpConfig>>,
-    ) -> anyhow::Result<Option<Session>> {
+    ) -> anyhow::Result<SpawnResult> {
         let has_feedback = issue.feedback.is_some();
 
         // Assignment check.
@@ -211,7 +237,7 @@ impl AgentQueue {
             issue.assignee.as_deref() == Some(self.agent.name.as_str())
         };
         if !is_assigned {
-            return Ok(None);
+            return Ok(SpawnResult::Skipped);
         }
 
         // Compute guard conditions.
@@ -239,7 +265,7 @@ impl AgentQueue {
             || has_active_session
             || (!has_feedback && (is_terminal || !is_ready || parent_running))
         {
-            return Ok(None);
+            return Ok(SpawnResult::Skipped);
         }
 
         // Resolve prompt (lazily cached across calls).
@@ -286,7 +312,7 @@ impl AgentQueue {
             .build_task(state, issue_id, issue, prompt, mcp_config)
             .await?;
         let Some(task) = maybe_task else {
-            return Ok(None);
+            return Ok(SpawnResult::Skipped);
         };
 
         // Spawn attempt tracking.
@@ -311,10 +337,13 @@ impl AgentQueue {
             )
             .await
         {
-            return Ok(None);
+            return Ok(SpawnResult::RetriesExhausted {
+                issue_id: issue_id.clone(),
+                max_tries,
+            });
         }
 
-        Ok(Some(task))
+        Ok(SpawnResult::Spawned(Box::new(task)))
     }
 }
 
@@ -657,7 +686,7 @@ mod tests {
         let mut tasks = Vec::new();
         let mut cached_prompt: Option<String> = None;
         for (issue_id, versioned_issue) in &issues {
-            if let Ok(Some(session)) = queue
+            if let Ok(SpawnResult::Spawned(session)) = queue
                 .spawn_for_issue(
                     &handles.state,
                     issue_id,
@@ -668,7 +697,7 @@ mod tests {
                 )
                 .await
             {
-                tasks.push(session);
+                tasks.push(*session);
             }
         }
         assert_eq!(tasks.len(), 2);
@@ -763,7 +792,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -825,8 +854,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         let updated_patch = handles.store.get_patch(&patch_id, false).await?;
         let mut updated_patch = updated_patch.item;
@@ -856,7 +885,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
         Ok(())
     }
@@ -893,7 +922,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -938,8 +967,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        let session = result.unwrap();
+        assert!(result.is_spawned());
+        let session = result.into_session().unwrap();
         assert_eq!(session.context, BundleSpec::None);
         assert_eq!(
             session
@@ -977,7 +1006,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1024,7 +1053,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1099,7 +1128,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1190,7 +1219,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result1.is_some());
+        assert!(result1.is_spawned());
 
         let issue2 = handles.store.get_issue(&issue_id2, false).await?.item;
         let result2 = queue
@@ -1203,15 +1232,17 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result2.is_some());
+        assert!(result2.is_spawned());
 
+        let session2 = result2.into_session().unwrap();
         let has_repo_task = matches!(
-            result2.as_ref().unwrap().context,
+            session2.context,
             BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
         );
         assert!(has_repo_task, "expected a task with ServiceRepository");
 
-        let has_no_repo_task = matches!(result1.as_ref().unwrap().context, BundleSpec::None);
+        let session1 = result1.into_session().unwrap();
+        let has_no_repo_task = matches!(session1.context, BundleSpec::None);
         assert!(
             has_no_repo_task,
             "expected a task with BundleSpec::None for the repo-less issue"
@@ -1273,8 +1304,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1289,7 +1320,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1372,7 +1403,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1474,9 +1505,10 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
         assert_eq!(
             result
+                .into_session()
                 .unwrap()
                 .env_vars
                 .get(ISSUE_ID_ENV_VAR)
@@ -1520,8 +1552,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1536,8 +1568,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1552,7 +1584,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -1590,7 +1622,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(first_run.is_some());
+        assert!(first_run.is_spawned());
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1605,7 +1637,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(blocked.is_none());
+        assert!(!blocked.is_spawned());
 
         let issue_ver = handles.store.get_issue(&issue_id, false).await?;
         let mut issue_item = issue_ver.item;
@@ -1628,7 +1660,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
         Ok(())
     }
@@ -1667,8 +1699,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         // Second attempt should be blocked (max_tries=1 reached).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -1684,7 +1716,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(blocked.is_none());
+        assert!(!blocked.is_spawned());
 
         // Create a child issue — this counts as progress on the parent.
         // Assign to a different agent so it doesn't spawn here.
@@ -1719,9 +1751,10 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
         assert_eq!(
             result
+                .into_session()
                 .unwrap()
                 .env_vars
                 .get(ISSUE_ID_ENV_VAR)
@@ -1785,8 +1818,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(parent_result.is_some());
-        record_completed_task(&handles, parent_result.unwrap()).await?;
+        assert!(parent_result.is_spawned());
+        record_completed_task(&handles, parent_result.into_session().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
@@ -1799,8 +1832,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(child_result.is_some());
-        record_completed_task(&handles, child_result.unwrap()).await?;
+        assert!(child_result.is_spawned());
+        record_completed_task(&handles, child_result.into_session().unwrap()).await?;
 
         // Further attempts should be blocked for both.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -1816,7 +1849,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(blocked.is_none());
+        assert!(!blocked.is_spawned());
 
         // Update the child issue — this counts as progress on the parent.
         let child = handles.store.get_issue(&child_id, false).await?;
@@ -1843,7 +1876,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(parent_result.is_some());
+        assert!(parent_result.is_spawned());
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
@@ -1856,7 +1889,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(child_result.is_some());
+        assert!(child_result.is_spawned());
 
         Ok(())
     }
@@ -1914,8 +1947,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(parent_result.is_some());
-        record_completed_task(&handles, parent_result.unwrap()).await?;
+        assert!(parent_result.is_spawned());
+        record_completed_task(&handles, parent_result.into_session().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
@@ -1928,8 +1961,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(child_result.is_some());
-        record_completed_task(&handles, child_result.unwrap()).await?;
+        assert!(child_result.is_spawned());
+        record_completed_task(&handles, child_result.into_session().unwrap()).await?;
 
         // No changes to children — counter should NOT reset, so no tasks spawn.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -1945,7 +1978,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -2004,7 +2037,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -2040,7 +2073,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none());
+        assert!(!result.is_spawned());
 
         Ok(())
     }
@@ -2102,8 +2135,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        let session = result.unwrap();
+        assert!(result.is_spawned());
+        let session = result.into_session().unwrap();
 
         let resolved = handles.state.resolve_task(&session).await?;
         assert_eq!(
@@ -2185,9 +2218,9 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
-        let session = result.unwrap();
+        let session = result.into_session().unwrap();
         assert_eq!(session.secrets, Some(secrets));
 
         Ok(())
@@ -2245,9 +2278,9 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
-        let session = result.unwrap();
+        let session = result.into_session().unwrap();
         assert!(session.secrets.is_none());
 
         Ok(())
@@ -2291,8 +2324,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         // Second iteration: new AgentQueue with same shared state.
         let mut queue2 = queue_with_attempts("agent-a", attempts.clone());
@@ -2312,8 +2345,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned());
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         // Third iteration: new AgentQueue, same shared state.
         let mut queue3 = queue_with_attempts("agent-a", attempts);
@@ -2334,7 +2367,7 @@ mod tests {
             )
             .await?;
         assert!(
-            result.is_none(),
+            !result.is_spawned(),
             "expected no tasks after max_tries reached across queue instances"
         );
 
@@ -2378,9 +2411,9 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
-        let session = result.unwrap();
+        let session = result.into_session().unwrap();
         // Agent secrets come first, then issue secrets, deduplicated.
         assert_eq!(
             session.secrets,
@@ -2427,10 +2460,10 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
         assert_eq!(
-            result.unwrap().secrets,
+            result.into_session().unwrap().secrets,
             Some(vec!["AGENT_SECRET".to_string()])
         );
 
@@ -2469,9 +2502,9 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some());
+        assert!(result.is_spawned());
 
-        assert_eq!(result.unwrap().secrets, None);
+        assert_eq!(result.into_session().unwrap().secrets, None);
 
         Ok(())
     }
@@ -2548,7 +2581,7 @@ mod tests {
             )
             .await?;
 
-        let session = result.expect("should spawn a session");
+        let session = result.into_session().expect("should spawn a session");
         let mcp_config = session
             .mcp_config
             .expect("session should have mcp_config populated");
@@ -2592,7 +2625,7 @@ mod tests {
             )
             .await?;
 
-        let session = result.expect("should spawn a session");
+        let session = result.into_session().expect("should spawn a session");
         assert!(session.mcp_config.is_none());
 
         Ok(())
@@ -2634,7 +2667,7 @@ mod tests {
             )
             .await?;
 
-        let session = result.expect("should spawn a session");
+        let session = result.into_session().expect("should spawn a session");
         assert!(
             session.mcp_config.is_none(),
             "mcp_config should be None when document is missing"
@@ -2737,7 +2770,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none(), "should not spawn without feedback");
+        assert!(!result.is_spawned(), "should not spawn without feedback");
 
         // Set feedback on the issue.
         let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
@@ -2761,7 +2794,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some(), "should spawn with feedback set");
+        assert!(result.is_spawned(), "should spawn with feedback set");
 
         // Feedback does NOT bypass the active session guard.
         // Simulate an active session for this issue by adding it to existing_issue_ids.
@@ -2780,7 +2813,7 @@ mod tests {
             )
             .await?;
         assert!(
-            result.is_none(),
+            !result.is_spawned(),
             "feedback should NOT bypass active session guard"
         );
 
@@ -2833,8 +2866,8 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some(), "first attempt should succeed");
-        record_completed_task(&handles, result.unwrap()).await?;
+        assert!(result.is_spawned(), "first attempt should succeed");
+        record_completed_task(&handles, result.into_session().unwrap()).await?;
 
         // Second attempt with same feedback should be blocked (max_tries=1).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -2850,7 +2883,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_none(), "should be blocked by max_tries");
+        assert!(!result.is_spawned(), "should be blocked by max_tries");
 
         // Change the feedback text.
         let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
@@ -2874,7 +2907,7 @@ mod tests {
                 &mut None,
             )
             .await?;
-        assert!(result.is_some(), "new feedback should reset attempts");
+        assert!(result.is_spawned(), "new feedback should reset attempts");
 
         Ok(())
     }
