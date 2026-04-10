@@ -12,6 +12,9 @@ interface SessionLogViewerProps {
 /** Statuses that indicate the session is still running and should stream. */
 const STREAMING_STATUSES = new Set(["created", "pending", "running"]);
 
+/** Maximum number of lines to keep in the streaming buffer. */
+const MAX_STREAM_LINES = 50_000;
+
 export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
   const isStreaming = STREAMING_STATUSES.has(status);
 
@@ -28,6 +31,24 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
   const [streamConnected, setStreamConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // RAF batching: accumulate lines in a ref, flush on animation frame
+  const pendingLinesRef = useRef<string[]>([]);
+  const rafIdRef = useRef<number | null>(null);
+
+  const flushPendingLines = useCallback(() => {
+    rafIdRef.current = null;
+    const pending = pendingLinesRef.current;
+    if (pending.length === 0) return;
+    pendingLinesRef.current = [];
+
+    setStreamLines((prev) => {
+      const combined = prev.length + pending.length > MAX_STREAM_LINES
+        ? [...prev, ...pending].slice(-MAX_STREAM_LINES)
+        : [...prev, ...pending];
+      return combined;
+    });
+  }, []);
+
   // Follow output toggle state (only relevant when streaming)
   const [followOutput, setFollowOutput] = useState(true);
 
@@ -36,6 +57,11 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingLinesRef.current = [];
   }, []);
 
   const openLogStream = useCallback(() => {
@@ -55,7 +81,10 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
       const chunk = event.data as string;
       if (chunk) {
         const newLines = chunk.split("\n");
-        setStreamLines((prev) => [...prev, ...newLines]);
+        pendingLinesRef.current.push(...newLines);
+        if (rafIdRef.current === null) {
+          rafIdRef.current = requestAnimationFrame(flushPendingLines);
+        }
       }
     };
 
@@ -67,7 +96,7 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
         setStreamConnected(false);
       }
     };
-  }, [sessionId, cleanup]);
+  }, [sessionId, cleanup, flushPendingLines]);
 
   useEffect(() => {
     if (!isStreaming) {
