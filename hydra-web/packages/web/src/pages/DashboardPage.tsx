@@ -323,6 +323,10 @@ export function DashboardPage() {
       setSelectedIssueStatus(null);
       setSelectedPatchStatus(null);
       setSelectedLabelId(null);
+      // Clear search so the selected nav item takes effect
+      setSearchValue("");
+      setSearchQuery("");
+      clearTimeout(debounceRef.current);
       setSearchParams(
         (prev) => {
           prev.set("selected", rootId ?? "your-issues");
