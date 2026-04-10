@@ -43,7 +43,8 @@ interface VersionedRecord {
  * Updates in place (with version guard) if the entity already exists, or
  * appends to cover newly-created entities.
  */
-function upsertInList<TResp, TItem extends VersionedRecord>(
+/** @internal Exported for testing. */
+export function upsertInList<TResp, TItem extends VersionedRecord>(
   qc: QueryClient,
   key: readonly unknown[],
   getItems: (resp: TResp) => TItem[],
@@ -143,6 +144,19 @@ export function useSSE(): SSEConnectionState {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
+  const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectingRef = useRef(false);
+
+  /** Debounced cache invalidation — collapses multiple rapid calls into one. */
+  const debouncedInvalidate = useCallback(() => {
+    if (invalidateTimerRef.current) {
+      clearTimeout(invalidateTimerRef.current);
+    }
+    invalidateTimerRef.current = setTimeout(() => {
+      invalidateTimerRef.current = null;
+      invalidatePageAndTreeCaches(queryClient);
+    }, 100);
+  }, [queryClient]);
 
   /** Apply a direct cache update from SSE entity data. */
   const handleEntityEvent = useCallback(
@@ -214,6 +228,11 @@ export function useSSE(): SSEConnectionState {
   );
 
   const connect = useCallback(() => {
+    // Skip if already connected or connection is in progress
+    if (esRef.current?.readyState === EventSource.OPEN) return;
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+
     // Clean up previous connection
     if (esRef.current) {
       esRef.current.close();
@@ -226,13 +245,14 @@ export function useSSE(): SSEConnectionState {
     esRef.current = es;
 
     es.onopen = () => {
+      connectingRef.current = false;
       setState("connected");
       retriesRef.current = 0;
 
       // If this is a reconnection (we previously received events), invalidate
       // caches to cover any events missed during the disconnect window.
       if (lastEventIdRef.current !== null) {
-        invalidatePageAndTreeCaches(queryClient);
+        debouncedInvalidate();
       }
     };
 
@@ -259,7 +279,7 @@ export function useSSE(): SSEConnectionState {
     // Resync event — client has fallen behind, invalidate page and tree caches
     // only (not all caches globally) to trigger targeted refetches.
     es.addEventListener("resync", () => {
-      invalidatePageAndTreeCaches(queryClient);
+      debouncedInvalidate();
     });
 
     // Heartbeat — keep-alive, no action needed
@@ -268,6 +288,7 @@ export function useSSE(): SSEConnectionState {
     });
 
     es.onerror = () => {
+      connectingRef.current = false;
       es.close();
       esRef.current = null;
       setState("disconnected");
@@ -277,7 +298,7 @@ export function useSSE(): SSEConnectionState {
       retriesRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
     };
-  }, [handleEntityEvent, queryClient]);
+  }, [handleEntityEvent, queryClient, debouncedInvalidate]);
 
   useEffect(() => {
     connect();
@@ -290,6 +311,10 @@ export function useSSE(): SSEConnectionState {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
+      }
+      if (invalidateTimerRef.current) {
+        clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
       }
     };
   }, [connect]);
@@ -304,7 +329,9 @@ export function useSSE(): SSEConnectionState {
           clearTimeout(timerRef.current);
           timerRef.current = null;
         }
-        invalidatePageAndTreeCaches(queryClient);
+        // Debounce the invalidation — connect()'s onopen will also trigger
+        // debouncedInvalidate, so rapid visibility changes collapse into one pass.
+        debouncedInvalidate();
         connect();
       }
     };
@@ -313,7 +340,7 @@ export function useSSE(): SSEConnectionState {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [connect, queryClient]);
+  }, [connect, debouncedInvalidate]);
 
   return state;
 }
