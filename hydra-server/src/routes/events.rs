@@ -522,7 +522,22 @@ async fn serialize_entity(
             );
             serde_json::to_value(response).ok()?
         }
-        MutationPayload::Conversation { new, .. } => serde_json::to_value(new).ok()?,
+        MutationPayload::Conversation { new, .. } => {
+            let conversation_id: hydra_common::ConversationId = entity_id.parse().ok()?;
+            let creation_time = if version == 1 {
+                timestamp
+            } else {
+                state
+                    .store()
+                    .get_conversation(&conversation_id)
+                    .await
+                    .ok()
+                    .map(|v| v.creation_time)
+                    .unwrap_or(timestamp)
+            };
+            let api_conv = new.to_api(conversation_id, creation_time, timestamp);
+            serde_json::to_value(api_conv).ok()?
+        }
     };
     Some(value)
 }

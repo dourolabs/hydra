@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog};
+use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -15,10 +16,7 @@ use crate::domain::{
     secrets::SecretRef,
     users::{User, Username},
 };
-use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationStatus, ConversationSummary,
-    SearchConversationsQuery,
-};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
@@ -73,8 +71,10 @@ pub struct MemoryStore {
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
     object_relationships:
         DashMap<(HydraId, super::RelationshipType, HydraId), super::ObjectRelationship>,
-    /// Maps conversation IDs to their Conversation data
-    conversations: DashMap<ConversationId, Conversation>,
+    /// Maps conversation IDs to their versioned Conversation data
+    conversations: DashMap<ConversationId, Vec<Versioned<Conversation>>>,
+    /// Maps conversation IDs to their versioned events
+    conversation_events: DashMap<ConversationId, Vec<Versioned<ConversationEvent>>>,
     /// Maps conversation IDs to their session state blobs
     conversation_session_state: DashMap<ConversationId, Vec<u8>>,
 }
@@ -101,6 +101,7 @@ impl MemoryStore {
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
+            conversation_events: DashMap::new(),
             conversation_session_state: DashMap::new(),
         }
     }
@@ -1438,17 +1439,22 @@ impl ReadOnlyStore for MemoryStore {
 
     // ---- Conversation (read-only) ----
 
-    async fn get_conversation(&self, id: &ConversationId) -> Result<Conversation, StoreError> {
-        self.conversations
+    async fn get_conversation(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError> {
+        let versions = self
+            .conversations
             .get(id)
-            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        Self::latest_versioned(versions.value())
             .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))
     }
 
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ConversationSummary>, StoreError> {
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let search_term = query
             .q
             .as_ref()
@@ -1459,27 +1465,33 @@ impl ReadOnlyStore for MemoryStore {
             .as_ref()
             .map(|v| v.trim())
             .filter(|v| !v.is_empty());
+        let status_filter = query
+            .status
+            .map(crate::domain::conversations::ConversationStatus::from);
 
-        let items: Vec<(ConversationId, ConversationSummary)> = self
+        let items: Vec<(ConversationId, Versioned<Conversation>)> = self
             .conversations
             .iter()
-            .filter(|entry| {
-                let conv = entry.value();
+            .filter_map(|entry| {
+                let id = entry.key().clone();
+                let versions = entry.value();
+                let versioned = Self::latest_versioned(versions)?;
+                let conv = &versioned.item;
 
-                if let Some(status) = query.status {
+                if let Some(status) = status_filter {
                     if conv.status != status {
-                        return false;
+                        return None;
                     }
                 }
 
                 if let Some(creator) = &creator_filter {
                     if !conv.creator.as_ref().eq_ignore_ascii_case(creator) {
-                        return false;
+                        return None;
                     }
                 }
 
                 if let Some(ref term) = search_term {
-                    let matches_id = conv.conversation_id.as_ref().to_lowercase().contains(term);
+                    let matches_id = id.as_ref().to_lowercase().contains(term);
                     let matches_title = conv
                         .title
                         .as_deref()
@@ -1491,56 +1503,43 @@ impl ReadOnlyStore for MemoryStore {
                         .map(|a| a.to_lowercase().contains(term))
                         .unwrap_or(false);
                     if !matches_id && !matches_title && !matches_agent {
-                        return false;
+                        return None;
                     }
                 }
 
-                true
-            })
-            .map(|entry| {
-                let conv = entry.value();
-                let last_event_preview = conv.events.last().map(|e| match e {
-                    ConversationEvent::UserMessage { content, .. }
-                    | ConversationEvent::AssistantMessage { content, .. } => {
-                        content.chars().take(100).collect()
-                    }
-                    ConversationEvent::Suspending { reason, .. } => reason.clone(),
-                    ConversationEvent::Resumed { .. } => "Resumed".to_string(),
-                    ConversationEvent::Closed { .. } => "Closed".to_string(),
-                });
-                (
-                    conv.conversation_id.clone(),
-                    ConversationSummary::new(
-                        conv.conversation_id.clone(),
-                        conv.title.clone(),
-                        conv.agent_name.clone(),
-                        conv.status,
-                        conv.events.len(),
-                        last_event_preview,
-                        conv.creator.clone(),
-                        conv.created_at,
-                        conv.updated_at,
-                    ),
-                )
+                Some((id, versioned))
             })
             .collect();
 
         let paginated = apply_memory_pagination(
             items,
-            |(_id, s)| s.updated_at,
-            |(id, _s)| id.as_ref(),
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
             &query.cursor,
             query.limit,
         )?;
 
-        Ok(paginated.into_iter().map(|(_id, s)| s).collect())
+        Ok(paginated)
+    }
+
+    async fn get_conversation_events(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
+        if !self.conversations.contains_key(id) {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+        Ok(self
+            .conversation_events
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default())
     }
 
     async fn get_conversation_session_state(
         &self,
         id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        // Verify conversation exists
         if !self.conversations.contains_key(id) {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
@@ -2188,54 +2187,65 @@ impl Store for MemoryStore {
 
     // ---- Conversation mutations ----
 
-    async fn create_conversation(
+    async fn add_conversation(
         &self,
-        mut conversation: Conversation,
-    ) -> Result<Conversation, StoreError> {
+        conversation: Conversation,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError> {
         let id = ConversationId::new();
-        conversation.conversation_id = id.clone();
-        self.conversations.insert(id, conversation.clone());
-        Ok(conversation)
+        let now = Utc::now();
+        let versioned = Versioned::with_actor(conversation, 1, now, actor.clone(), now);
+        self.conversations.insert(id.clone(), vec![versioned]);
+        Ok((id, 1))
     }
 
     async fn update_conversation(
         &self,
         id: &ConversationId,
-        status: Option<ConversationStatus>,
-        title: Option<String>,
-        active_session_id: Option<Option<SessionId>>,
-    ) -> Result<Conversation, StoreError> {
+        conversation: Conversation,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let mut entry = self
             .conversations
             .get_mut(id)
             .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
-        let conv = entry.value_mut();
-        if let Some(s) = status {
-            conv.status = s;
-        }
-        if let Some(t) = title {
-            conv.title = Some(t);
-        }
-        if let Some(sid) = active_session_id {
-            conv.active_session_id = sid;
-        }
-        conv.updated_at = Utc::now();
-        Ok(conv.clone())
+        let versions = entry.value_mut();
+        let next_version = Self::next_version(versions);
+        let creation_time = versions
+            .first()
+            .map(|v| v.creation_time)
+            .unwrap_or_else(Utc::now);
+        let now = Utc::now();
+        versions.push(Versioned::with_actor(
+            conversation,
+            next_version,
+            now,
+            actor.clone(),
+            creation_time,
+        ));
+        Ok(next_version)
     }
 
     async fn append_conversation_event(
         &self,
         id: &ConversationId,
         event: ConversationEvent,
-    ) -> Result<Conversation, StoreError> {
-        let mut entry = self
-            .conversations
-            .get_mut(id)
-            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
-        let conv = entry.value_mut();
-        conv.events.push(event);
-        conv.updated_at = Utc::now();
-        Ok(conv.clone())
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        if !self.conversations.contains_key(id) {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+        let mut events = self.conversation_events.entry(id.clone()).or_default();
+        let next_version = Self::next_version(&events);
+        let now = Utc::now();
+        events.push(Versioned::with_actor(
+            event,
+            next_version,
+            now,
+            actor.clone(),
+            now,
+        ));
+        Ok(next_version)
     }
 
     async fn store_conversation_session_state(
@@ -7219,32 +7229,33 @@ mod tests {
     // ---- Conversation tests ----
 
     fn sample_conversation() -> Conversation {
-        Conversation::new(
-            hydra_common::ConversationId::new(), // will be overwritten by create
-            Some("Test conversation".to_string()),
-            Some("test-agent".to_string()),
-            vec![],
-            None,
-            hydra_common::api::v1::conversations::ConversationStatus::Active,
-            Username::from("alice").into(),
-            Utc::now(),
-            Utc::now(),
-        )
+        use crate::domain::conversations::ConversationStatus;
+        Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            active_session_id: None,
+            status: ConversationStatus::Active,
+            creator: Username::from("alice"),
+        }
+    }
+
+    fn test_actor() -> ActorRef {
+        ActorRef::test()
     }
 
     #[tokio::test]
     async fn create_and_get_conversation() {
         let store = MemoryStore::new();
-        let conv = store
-            .create_conversation(sample_conversation())
+        let (id, version) = store
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
-        assert_eq!(conv.title.as_deref(), Some("Test conversation"));
-        assert_eq!(conv.agent_name.as_deref(), Some("test-agent"));
+        assert_eq!(version, 1);
 
-        let fetched = store.get_conversation(&conv.conversation_id).await.unwrap();
-        assert_eq!(fetched.conversation_id, conv.conversation_id);
-        assert_eq!(fetched.title, conv.title);
+        let fetched = store.get_conversation(&id).await.unwrap();
+        assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
+        assert_eq!(fetched.item.agent_name.as_deref(), Some("test-agent"));
+        assert_eq!(fetched.version, 1);
     }
 
     #[tokio::test]
@@ -7257,72 +7268,82 @@ mod tests {
 
     #[tokio::test]
     async fn update_conversation_fields() {
-        use hydra_common::api::v1::conversations::ConversationStatus;
+        use crate::domain::conversations::ConversationStatus;
 
         let store = MemoryStore::new();
-        let conv = store
-            .create_conversation(sample_conversation())
-            .await
-            .unwrap();
-        let id = conv.conversation_id.clone();
-
-        let updated = store
-            .update_conversation(
-                &id,
-                Some(ConversationStatus::Idle),
-                Some("New title".to_string()),
-                Some(Some(SessionId::new())),
-            )
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
 
-        assert_eq!(updated.status, ConversationStatus::Idle);
-        assert_eq!(updated.title.as_deref(), Some("New title"));
-        assert!(updated.active_session_id.is_some());
+        let mut updated_conv = sample_conversation();
+        updated_conv.status = ConversationStatus::Idle;
+        updated_conv.title = Some("New title".to_string());
+        updated_conv.active_session_id = Some(SessionId::new());
+
+        let version = store
+            .update_conversation(&id, updated_conv, &test_actor())
+            .await
+            .unwrap();
+        assert_eq!(version, 2);
 
         // Verify persistence
         let fetched = store.get_conversation(&id).await.unwrap();
-        assert_eq!(fetched.status, ConversationStatus::Idle);
-        assert_eq!(fetched.title.as_deref(), Some("New title"));
+        assert_eq!(fetched.item.status, ConversationStatus::Idle);
+        assert_eq!(fetched.item.title.as_deref(), Some("New title"));
+        assert!(fetched.item.active_session_id.is_some());
+        assert_eq!(fetched.version, 2);
     }
 
     #[tokio::test]
     async fn update_conversation_not_found() {
         let store = MemoryStore::new();
         let id = hydra_common::ConversationId::new();
-        let result = store.update_conversation(&id, None, None, None).await;
+        let result = store
+            .update_conversation(&id, sample_conversation(), &test_actor())
+            .await;
         assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 
     #[tokio::test]
-    async fn append_conversation_event() {
-        use hydra_common::api::v1::conversations::ConversationEvent;
+    async fn append_and_get_conversation_events() {
+        use crate::domain::conversations::ConversationEvent;
 
         let store = MemoryStore::new();
-        let conv = store
-            .create_conversation(sample_conversation())
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
-        let id = conv.conversation_id.clone();
-        assert!(conv.events.is_empty());
+
+        // Initially no events
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert!(events.is_empty());
 
         let event = ConversationEvent::UserMessage {
             content: "Hello!".to_string(),
             timestamp: Utc::now(),
         };
-        let updated = store.append_conversation_event(&id, event).await.unwrap();
-        assert_eq!(updated.events.len(), 1);
+        let v1 = store
+            .append_conversation_event(&id, event, &test_actor())
+            .await
+            .unwrap();
+        assert_eq!(v1, 1);
 
         let event2 = ConversationEvent::AssistantMessage {
             content: "Hi there!".to_string(),
             timestamp: Utc::now(),
         };
-        let updated = store.append_conversation_event(&id, event2).await.unwrap();
-        assert_eq!(updated.events.len(), 2);
+        let v2 = store
+            .append_conversation_event(&id, event2, &test_actor())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
 
         // Verify persistence
-        let fetched = store.get_conversation(&id).await.unwrap();
-        assert_eq!(fetched.events.len(), 2);
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].version, 1);
+        assert_eq!(events[1].version, 2);
     }
 
     #[tokio::test]
@@ -7331,11 +7352,11 @@ mod tests {
 
         let store = MemoryStore::new();
         store
-            .create_conversation(sample_conversation())
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
         store
-            .create_conversation(sample_conversation())
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
 
@@ -7348,46 +7369,43 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filter_by_status() {
-        use hydra_common::api::v1::conversations::{ConversationStatus, SearchConversationsQuery};
+        use crate::domain::conversations::ConversationStatus;
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
 
         let store = MemoryStore::new();
-        let conv = store
-            .create_conversation(sample_conversation())
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let mut closed_conv = sample_conversation();
+        closed_conv.status = ConversationStatus::Closed;
+        store
+            .update_conversation(&id, closed_conv, &test_actor())
             .await
             .unwrap();
         store
-            .update_conversation(
-                &conv.conversation_id,
-                Some(ConversationStatus::Closed),
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        store
-            .create_conversation(sample_conversation())
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap(); // Active
 
         let results = store
             .list_conversations(&SearchConversationsQuery {
-                status: Some(ConversationStatus::Active),
+                status: Some(hydra_common::api::v1::conversations::ConversationStatus::Active),
                 ..Default::default()
             })
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].status, ConversationStatus::Active);
+        assert_eq!(results[0].1.item.status, ConversationStatus::Active);
     }
 
     #[tokio::test]
     async fn store_and_get_session_state() {
         let store = MemoryStore::new();
-        let conv = store
-            .create_conversation(sample_conversation())
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
-        let id = conv.conversation_id.clone();
 
         // Initially no session state
         let state = store.get_conversation_session_state(&id).await.unwrap();

@@ -1,3 +1,4 @@
+use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -12,9 +13,7 @@ use crate::domain::{
 use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationSummary, SearchConversationsQuery,
-};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
@@ -980,43 +979,44 @@ impl StoreWithEvents {
 
     // ---- Conversation mutations (inherent, with actor) ----
 
-    pub async fn create_conversation_with_actor(
+    pub async fn add_conversation_with_actor(
         &self,
         conversation: Conversation,
         actor: ActorRef,
-    ) -> Result<Conversation, StoreError> {
-        let result = self.inner.create_conversation(conversation).await?;
+    ) -> Result<(ConversationId, VersionNumber), StoreError> {
+        let (id, version) = self
+            .inner
+            .add_conversation(conversation.clone(), &actor)
+            .await?;
         let payload = Arc::new(MutationPayload::Conversation {
             old: None,
-            new: result.clone(),
+            new: conversation,
             actor,
         });
         self.event_bus
-            .emit_conversation_created(result.conversation_id.clone(), 1, payload);
-        Ok(result)
+            .emit_conversation_created(id.clone(), version, payload);
+        Ok((id, version))
     }
 
     pub async fn update_conversation_with_actor(
         &self,
         id: &ConversationId,
-        status: Option<hydra_common::api::v1::conversations::ConversationStatus>,
-        title: Option<String>,
-        active_session_id: Option<Option<SessionId>>,
+        conversation: Conversation,
         actor: ActorRef,
-    ) -> Result<Conversation, StoreError> {
-        let old = self.inner.get_conversation(id).await.ok();
-        let result = self
+    ) -> Result<VersionNumber, StoreError> {
+        let old = self.inner.get_conversation(id).await.ok().map(|v| v.item);
+        let version = self
             .inner
-            .update_conversation(id, status, title, active_session_id)
+            .update_conversation(id, conversation.clone(), &actor)
             .await?;
         let payload = Arc::new(MutationPayload::Conversation {
             old,
-            new: result.clone(),
+            new: conversation,
             actor,
         });
         self.event_bus
-            .emit_conversation_updated(id.clone(), 1, payload);
-        Ok(result)
+            .emit_conversation_updated(id.clone(), version, payload);
+        Ok(version)
     }
 
     pub async fn append_conversation_event_with_actor(
@@ -1024,17 +1024,12 @@ impl StoreWithEvents {
         id: &ConversationId,
         event: ConversationEvent,
         actor: ActorRef,
-    ) -> Result<Conversation, StoreError> {
-        let old = self.inner.get_conversation(id).await.ok();
-        let result = self.inner.append_conversation_event(id, event).await?;
-        let payload = Arc::new(MutationPayload::Conversation {
-            old,
-            new: result.clone(),
-            actor,
-        });
-        self.event_bus
-            .emit_conversation_updated(id.clone(), 1, payload);
-        Ok(result)
+    ) -> Result<VersionNumber, StoreError> {
+        let version = self
+            .inner
+            .append_conversation_event(id, event, &actor)
+            .await?;
+        Ok(version)
     }
 
     pub async fn store_conversation_session_state(
@@ -1633,15 +1628,25 @@ impl ReadOnlyStore for StoreWithEvents {
 
     // ---- Conversation (read-only) ----
 
-    async fn get_conversation(&self, id: &ConversationId) -> Result<Conversation, StoreError> {
+    async fn get_conversation(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError> {
         self.inner.get_conversation(id).await
     }
 
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ConversationSummary>, StoreError> {
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         self.inner.list_conversations(query).await
+    }
+
+    async fn get_conversation_events(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
+        self.inner.get_conversation_events(id).await
     }
 
     async fn get_conversation_session_state(

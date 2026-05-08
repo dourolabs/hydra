@@ -1,6 +1,7 @@
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
+    conversations::{Conversation, ConversationEvent},
     documents::Document,
     issues::Issue,
     labels::Label,
@@ -12,9 +13,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationSummary, SearchConversationsQuery,
-};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
@@ -573,14 +572,23 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Conversation (read-only) ----
 
-    /// Retrieves a conversation by its ConversationId, including its full event history.
-    async fn get_conversation(&self, id: &ConversationId) -> Result<Conversation, StoreError>;
+    /// Retrieves a conversation by its ConversationId.
+    async fn get_conversation(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError>;
 
     /// Lists conversations matching the query, returning summaries sorted by updated_at DESC.
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ConversationSummary>, StoreError>;
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError>;
+
+    /// Retrieves conversation events by conversation ID.
+    async fn get_conversation_events(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError>;
 
     /// Retrieves the stored session state blob for a conversation, if any.
     async fn get_conversation_session_state(
@@ -781,26 +789,27 @@ pub trait Store: ReadOnlyStore {
     /// Creates a new conversation in the store.
     ///
     /// The store generates and assigns the conversation ID.
-    async fn create_conversation(
+    async fn add_conversation(
         &self,
         conversation: Conversation,
-    ) -> Result<Conversation, StoreError>;
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError>;
 
-    /// Updates mutable fields of an existing conversation (status, title, active_session_id).
+    /// Updates an existing conversation. Takes the full conversation object.
     async fn update_conversation(
         &self,
         id: &ConversationId,
-        status: Option<hydra_common::api::v1::conversations::ConversationStatus>,
-        title: Option<String>,
-        active_session_id: Option<Option<SessionId>>,
-    ) -> Result<Conversation, StoreError>;
+        conversation: Conversation,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
-    /// Appends an event to a conversation's event list and updates updated_at.
+    /// Appends an event to a conversation's event stream.
     async fn append_conversation_event(
         &self,
         id: &ConversationId,
         event: ConversationEvent,
-    ) -> Result<Conversation, StoreError>;
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Stores a session state blob for a conversation (used for session resumption).
     async fn store_conversation_session_state(

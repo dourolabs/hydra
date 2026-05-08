@@ -3,6 +3,7 @@
 //! This store implementation uses the v2 tables with proper column definitions
 //! instead of JSONB payloads, providing better query performance and type safety.
 
+use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::store::status_to_db_str;
 use crate::{
     domain::{
@@ -26,9 +27,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationSummary, SearchConversationsQuery,
-};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
@@ -3448,14 +3447,24 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect())
     }
 
-    async fn get_conversation(&self, _id: &ConversationId) -> Result<Conversation, StoreError> {
+    async fn get_conversation(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError> {
         todo!("Postgres conversation store not yet implemented")
     }
 
     async fn list_conversations(
         &self,
         _query: &SearchConversationsQuery,
-    ) -> Result<Vec<ConversationSummary>, StoreError> {
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
+        todo!("Postgres conversation store not yet implemented")
+    }
+
+    async fn get_conversation_events(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
         todo!("Postgres conversation store not yet implemented")
     }
 
@@ -4385,20 +4394,20 @@ impl Store for PostgresStoreV2 {
         Ok(())
     }
 
-    async fn create_conversation(
+    async fn add_conversation(
         &self,
         _conversation: Conversation,
-    ) -> Result<Conversation, StoreError> {
+        _actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError> {
         todo!("Postgres conversation store not yet implemented")
     }
 
     async fn update_conversation(
         &self,
         _id: &ConversationId,
-        _status: Option<hydra_common::api::v1::conversations::ConversationStatus>,
-        _title: Option<String>,
-        _active_session_id: Option<Option<SessionId>>,
-    ) -> Result<Conversation, StoreError> {
+        _conversation: Conversation,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         todo!("Postgres conversation store not yet implemented")
     }
 
@@ -4406,7 +4415,8 @@ impl Store for PostgresStoreV2 {
         &self,
         _id: &ConversationId,
         _event: ConversationEvent,
-    ) -> Result<Conversation, StoreError> {
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         todo!("Postgres conversation store not yet implemented")
     }
 
