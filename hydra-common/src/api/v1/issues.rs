@@ -19,7 +19,6 @@ pub enum IssueStatus {
     InProgress,
     Closed,
     Dropped,
-    Rejected,
     Failed,
     #[serde(other)]
     Unknown,
@@ -32,7 +31,6 @@ impl IssueStatus {
             IssueStatus::InProgress => "in-progress",
             IssueStatus::Closed => "closed",
             IssueStatus::Dropped => "dropped",
-            IssueStatus::Rejected => "rejected",
             IssueStatus::Failed => "failed",
             IssueStatus::Unknown => "unknown",
         }
@@ -41,10 +39,7 @@ impl IssueStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            IssueStatus::Closed
-                | IssueStatus::Dropped
-                | IssueStatus::Rejected
-                | IssueStatus::Failed
+            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
         )
     }
 
@@ -69,7 +64,7 @@ impl FromStr for IssueStatus {
             "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
             "closed" => Ok(IssueStatus::Closed),
             "dropped" => Ok(IssueStatus::Dropped),
-            "rejected" => Ok(IssueStatus::Rejected),
+            "rejected" => Ok(IssueStatus::Dropped),
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
         }

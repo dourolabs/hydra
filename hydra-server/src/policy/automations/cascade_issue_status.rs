@@ -14,7 +14,7 @@ const AUTOMATION_NAME: &str = "cascade_issue_status";
 /// When an issue's status changes to a terminal/failure status, recursively
 /// drop all child issues.
 ///
-/// Configurable via `trigger_statuses` param (defaults to Dropped, Rejected, Failed).
+/// Configurable via `trigger_statuses` param (defaults to Dropped, Failed).
 pub struct CascadeIssueStatusAutomation {
     trigger_statuses: Vec<IssueStatus>,
 }
@@ -49,17 +49,13 @@ impl CascadeIssueStatusAutomation {
 }
 
 fn default_trigger_statuses() -> Vec<IssueStatus> {
-    vec![
-        IssueStatus::Dropped,
-        IssueStatus::Rejected,
-        IssueStatus::Failed,
-    ]
+    vec![IssueStatus::Dropped, IssueStatus::Failed]
 }
 
 fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
     match s.to_lowercase().as_str() {
         "dropped" => Ok(IssueStatus::Dropped),
-        "rejected" => Ok(IssueStatus::Rejected),
+        "rejected" => Ok(IssueStatus::Dropped),
         "failed" => Ok(IssueStatus::Failed),
         "closed" => Ok(IssueStatus::Closed),
         "open" => Ok(IssueStatus::Open),
@@ -389,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drops_children_when_parent_rejected() {
+    async fn drops_children_when_parent_dropped_v2() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -409,17 +405,17 @@ mod tests {
         );
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
-        // Reject the parent — children should be dropped.
-        let mut rejected_parent = parent;
-        rejected_parent.status = IssueStatus::Rejected;
+        // Drop the parent — children should be dropped.
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped;
         store
-            .update_issue(&parent_id, rejected_parent.clone(), &ActorRef::test())
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
-            new: rejected_parent,
+            new: dropped_parent,
             actor: ActorRef::test(),
         });
 
@@ -590,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skips_rejected_child_when_parent_dropped() {
+    async fn skips_dropped_child_when_parent_dropped() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -601,7 +597,7 @@ mod tests {
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Rejected,
+            IssueStatus::Dropped,
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -640,7 +636,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Rejected);
+        assert_eq!(child_result.item.status, IssueStatus::Dropped);
     }
 
     #[tokio::test]

@@ -243,10 +243,7 @@ impl AgentQueue {
         // Compute guard conditions.
         let is_terminal = matches!(
             issue.status,
-            IssueStatus::Closed
-                | IssueStatus::Dropped
-                | IssueStatus::Rejected
-                | IssueStatus::Failed
+            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
         );
         let is_ready = state
             .is_issue_ready(issue_id)
@@ -2007,14 +2004,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_spawn_for_rejected_issues() -> anyhow::Result<()> {
+    async fn does_not_spawn_for_dropped_issues() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
                 issue(
-                    "Rejected issue",
-                    IssueStatus::Rejected,
+                    "Dropped issue",
+                    IssueStatus::Dropped,
                     Some("agent-a"),
                     vec![],
                     &repo_name,

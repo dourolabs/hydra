@@ -237,7 +237,7 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
 /// Scenario 7d: Failed/Dropped blockers are treated as terminal and unblock
 /// the dependent issue.
 ///
-/// The policy engine considers Closed, Dropped, Rejected, and Failed as
+/// The policy engine considers Closed, Dropped, and Failed as
 /// terminal blocker states. This test verifies that when a blocker is marked
 /// as Failed, the blocked issue can be closed (the failed blocker counts as
 /// resolved). Contrast with 7c where an *Open* blocker prevents closure.

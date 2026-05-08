@@ -201,7 +201,7 @@ impl PatchWorkflowAutomation {
     ///
     /// Checks for existing open/in-progress ReviewRequest and MergeRequest issues
     /// before creating new ones to prevent duplicates. Issues in terminal states
-    /// (Closed, Failed, Dropped, Rejected) do not block creation of new issues.
+    /// (Closed, Failed, Dropped) do not block creation of new issues.
     async fn create_workflow_issues(
         &self,
         ctx: &AutomationContext<'_>,
@@ -1984,7 +1984,6 @@ merge_request:
             IssueStatus::Closed,
             IssueStatus::Failed,
             IssueStatus::Dropped,
-            IssueStatus::Rejected,
         ] {
             let rr = Issue::new(
                 IssueType::ReviewRequest,

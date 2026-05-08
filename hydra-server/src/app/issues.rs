@@ -732,10 +732,7 @@ fn issue_ready<'a>(
         let issue = issue.item;
 
         match issue.status {
-            IssueStatus::Closed
-            | IssueStatus::Dropped
-            | IssueStatus::Rejected
-            | IssueStatus::Failed => Ok(false),
+            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed => Ok(false),
             IssueStatus::Open => {
                 for dependency in issue.dependencies.iter().filter(|dependency| {
                     dependency.dependency_type == IssueDependencyType::BlockedOn
@@ -785,10 +782,7 @@ fn subtree_has_ready_issue<'a>(
         let issue = issue.item;
 
         match issue.status {
-            IssueStatus::Closed
-            | IssueStatus::Dropped
-            | IssueStatus::Rejected
-            | IssueStatus::Failed => Ok(false),
+            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed => Ok(false),
             IssueStatus::Open => {
                 // An Open issue is ready if all its blockers are closed.
                 for dependency in issue.dependencies.iter().filter(|dependency| {
@@ -1390,24 +1384,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_issue_is_not_ready() {
-        let state = test_state();
-
-        let (issue_id, _) = {
-            let store = state.store.as_ref();
-            store
-                .add_issue_with_actor(
-                    issue_with_status("rejected", IssueStatus::Rejected, vec![]),
-                    ActorRef::test(),
-                )
-                .await
-                .unwrap()
-        };
-
-        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
     async fn failed_issue_is_not_ready() {
         let state = test_state();
 
@@ -1426,7 +1402,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_progress_parent_ready_when_child_rejected() {
+    async fn in_progress_parent_ready_when_child_dropped() {
         let state = test_state();
 
         let store = state.store.as_ref();
@@ -1437,7 +1413,7 @@ mod tests {
             .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
+        let child = issue_with_status("child", IssueStatus::Dropped, vec![child_dep]);
         store
             .add_issue_with_actor(child, ActorRef::test())
             .await
@@ -1491,17 +1467,6 @@ mod tests {
                 issue_with_status(
                     "dropped child",
                     IssueStatus::Dropped,
-                    vec![child_dep.clone()],
-                ),
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        store
-            .add_issue_with_actor(
-                issue_with_status(
-                    "rejected child",
-                    IssueStatus::Rejected,
                     vec![child_dep.clone()],
                 ),
                 ActorRef::test(),
@@ -1727,38 +1692,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_blocker_keeps_issue_blocked() {
-        let state = test_state();
-
-        let (blocked_issue_id, _) = {
-            let store = state.store.as_ref();
-            let (blocker_id, _) = store
-                .add_issue_with_actor(
-                    issue_with_status("blocker", IssueStatus::Rejected, vec![]),
-                    ActorRef::test(),
-                )
-                .await
-                .unwrap();
-            store
-                .add_issue_with_actor(
-                    issue_with_status(
-                        "blocked",
-                        IssueStatus::Open,
-                        vec![IssueDependency::new(
-                            IssueDependencyType::BlockedOn,
-                            blocker_id,
-                        )],
-                    ),
-                    ActorRef::test(),
-                )
-                .await
-                .unwrap()
-        };
-
-        assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
     async fn failed_blocker_keeps_issue_blocked() {
         let state = test_state();
 
@@ -1791,7 +1724,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_issue_cascades_to_children() {
+    async fn dropped_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
@@ -1837,12 +1770,12 @@ mod tests {
             .insert_job(&child_task_id, JobStatus::Running)
             .await;
 
-        let mut rejected_parent = parent_issue;
-        rejected_parent.status = IssueStatus::Rejected;
+        let mut dropped_parent = parent_issue;
+        dropped_parent.status = IssueStatus::Dropped;
         state
             .upsert_issue(
                 Some(parent_id.clone()),
-                api::issues::UpsertIssueRequest::new(rejected_parent.into(), None),
+                api::issues::UpsertIssueRequest::new(dropped_parent.into(), None),
                 ActorRef::test(),
             )
             .await
@@ -1921,7 +1854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_blocker_does_not_auto_drop_dependents() {
+    async fn dropped_blocker_does_not_auto_drop_dependents() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
@@ -1948,12 +1881,12 @@ mod tests {
             .await
             .unwrap();
 
-        let mut rejected_blocker = blocker_issue;
-        rejected_blocker.status = IssueStatus::Rejected;
+        let mut dropped_blocker = blocker_issue;
+        dropped_blocker.status = IssueStatus::Dropped;
         state
             .upsert_issue(
                 Some(blocker_id.clone()),
-                api::issues::UpsertIssueRequest::new(rejected_blocker.into(), None),
+                api::issues::UpsertIssueRequest::new(dropped_blocker.into(), None),
                 ActorRef::test(),
             )
             .await

@@ -14,7 +14,7 @@ pub const INBOX_LABEL_NAME: &str = "inbox";
 /// - An issue is created/updated to (open || in-progress) with a human assignee
 ///
 /// Automatically removes the 'inbox' label when an issue transitions to a terminal
-/// status (Closed, Dropped, Rejected, Failed).
+/// status (Closed, Dropped, Failed).
 pub struct InboxLabelAutomation;
 
 impl InboxLabelAutomation {
