@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod conversations;
 pub mod documents;
 pub mod error;
 pub mod events;

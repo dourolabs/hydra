@@ -373,6 +373,7 @@ impl UserHandle {
             },
             HashMap::new(),
             None,
+            false,
         );
         let response = self
             .client
@@ -402,6 +403,7 @@ impl UserHandle {
             },
             HashMap::new(),
             Some(issue_id.clone()),
+            false,
         );
         let response = self
             .client
