@@ -266,10 +266,8 @@ function ReadOnlyField({ field, value }: { field: Field; value: JsonValue }) {
 
 export function FormPanel({ issueId, form, formResponse }: FormPanelProps) {
   const queryClient = useQueryClient();
-  const isReadOnly = !!formResponse;
-
   const [values, setValues] = useState<FormValues>(() =>
-    isReadOnly ? (formResponse.values as FormValues) : initValues(form.fields),
+    formResponse ? (formResponse.values as FormValues) : initValues(form.fields),
   );
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -302,6 +300,8 @@ export function FormPanel({ issueId, form, formResponse }: FormPanelProps) {
       setSubmitError(err.message);
     },
   });
+
+  const isReadOnly = !!formResponse || mutation.isSuccess;
 
   const handleAction = useCallback(
     (action: Action) => {
