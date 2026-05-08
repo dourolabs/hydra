@@ -346,7 +346,7 @@ export function FormPanel({ issueId, form, formResponse }: FormPanelProps) {
   );
 
   // Find the action that was taken (for read-only view)
-  const submittedAction = isReadOnly
+  const submittedAction = formResponse
     ? form.actions.find((a) => a.id === formResponse.action_id)
     : null;
 
