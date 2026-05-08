@@ -47,19 +47,14 @@
   color: var(--color-status-blocked);
 }
 
-.rejected {
-  background-color: var(--color-status-rejected-bg);
-  color: var(--color-status-rejected);
-}
-
 .merged {
   background-color: var(--color-status-approved-bg);
   color: var(--color-status-approved);
 }
 
 .changes_requested {
-  background-color: var(--color-status-rejected-bg);
-  color: var(--color-status-rejected);
+  background-color: var(--color-status-dropped-bg);
+  color: var(--color-status-dropped);
 }
 
 .approved {

@@ -23,7 +23,6 @@ const statuses: BadgeStatus[] = [
   "failed",
   "dropped",
   "blocked",
-  "rejected",
 ];
 
 const sampleTree: TreeNode[] = [
