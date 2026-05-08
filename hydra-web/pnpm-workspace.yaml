@@ -3,3 +3,5 @@ packages:
   - "packages/mock-server"
   - "packages/ui"
   - "packages/web"
+onlyBuiltDependencies:
+  - "esbuild"
