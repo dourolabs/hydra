@@ -1,5 +1,5 @@
 use crate::{
-    BuildCacheContext, IssueId, RepoName, SessionId, VersionNumber,
+    BuildCacheContext, ConversationId, IssueId, RepoName, SessionId, VersionNumber,
     actor_ref::ActorRef,
     task_status::{Status, TaskError},
     users::Username,
@@ -38,6 +38,10 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
     #[serde(default = "default_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +72,8 @@ impl Session {
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
         mcp_config: Option<McpConfig>,
+        interactive: bool,
+        conversation_id: Option<ConversationId>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -88,6 +94,8 @@ impl Session {
             memory_limit,
             secrets,
             mcp_config,
+            interactive,
+            conversation_id,
             status,
             last_message,
             error,
@@ -117,6 +125,8 @@ pub struct CreateSessionRequest {
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_id: Option<IssueId>,
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 impl CreateSessionRequest {
@@ -126,6 +136,7 @@ impl CreateSessionRequest {
         context: BundleSpec,
         variables: HashMap<String, String>,
         issue_id: Option<IssueId>,
+        interactive: bool,
     ) -> Self {
         Self {
             prompt,
@@ -133,6 +144,7 @@ impl CreateSessionRequest {
             context,
             variables,
             issue_id,
+            interactive,
         }
     }
 }
@@ -672,6 +684,8 @@ mod tests {
             Some("500m".to_string()),
             Some("1Gi".to_string()),
             Some(vec!["secret".to_string()]),
+            None,
+            false,
             None,
             Status::Running,
             Some("last message text".to_string()),

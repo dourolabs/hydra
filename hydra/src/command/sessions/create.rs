@@ -49,7 +49,8 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id);
+    let request =
+        CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id, false);
     let response = client.create_session(&request).await?;
     let session_id = response.session_id;
 
@@ -290,6 +291,8 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
+                None,
                 status,
                 None,
                 error,
@@ -330,6 +333,7 @@ mod tests {
             BundleSpec::None,
             variables.clone(),
             None,
+            false,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
@@ -394,6 +398,7 @@ mod tests {
             },
             variables,
             None,
+            false,
         );
         let job_id = task_id("t-job-service");
         let create_mock = server.mock(|when, then| {
@@ -441,6 +446,7 @@ mod tests {
             },
             variables,
             None,
+            false,
         );
         let job_id = task_id("t-job-service-default-rev");
         let create_mock = server.mock(|when, then| {
@@ -488,6 +494,7 @@ mod tests {
             },
             variables,
             None,
+            false,
         );
         let job_id = task_id("t-job-git");
         let create_mock = server.mock(|when, then| {
@@ -535,6 +542,7 @@ mod tests {
             },
             variables,
             None,
+            false,
         );
         let job_id = task_id("t-job-git-default-rev");
         let create_mock = server.mock(|when, then| {
@@ -579,6 +587,7 @@ mod tests {
             BundleSpec::None,
             variables,
             None,
+            false,
         );
         let job_id = task_id("t-job-image");
         let create_mock = server.mock(|when, then| {
@@ -624,6 +633,7 @@ mod tests {
                 ("FOO".to_string(), "bar".to_string()),
             ]),
             None,
+            false,
         );
         let job_id = task_id("t-job-with-vars");
         let create_mock = server.mock(|when, then| {
