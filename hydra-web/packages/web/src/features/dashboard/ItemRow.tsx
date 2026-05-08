@@ -24,7 +24,6 @@ const STATUS_DOT_CLASSES: Record<string, string> = {
   failed: styles.statusDotFailed,
   dropped: styles.statusDotDropped,
   blocked: styles.statusDotBlocked,
-  rejected: styles.statusDotRejected,
 };
 
 function PatchIcon() {

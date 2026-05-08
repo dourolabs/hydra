@@ -34,10 +34,6 @@
   background: var(--color-status-dropped);
 }
 
-.statusBoxRejected {
-  background: var(--color-status-rejected);
-}
-
 .statusBoxAttention {
   background: var(--color-status-attention);
 }

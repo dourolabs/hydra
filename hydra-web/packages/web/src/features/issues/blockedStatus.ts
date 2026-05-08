@@ -9,7 +9,6 @@ export interface BlockedStatus {
 
 const HARD_BLOCKED_STATUSES: ReadonlySet<IssueStatus> = new Set([
   "failed",
-  "rejected",
   "dropped",
 ]);
 
@@ -21,7 +20,7 @@ const HARD_BLOCKED_STATUSES: ReadonlySet<IssueStatus> = new Set([
  *   whose status is NOT "closed". If the target issue is missing from the map,
  *   it is treated as not blocking (skipped).
  * - hardBlocked: true when the issue has a "blocked-on" dependency on an issue
- *   whose status is "failed", "rejected", or "dropped". Hard-blocked is always
+ *   whose status is "failed" or "dropped". Hard-blocked is always
  *   a subset of blocked.
  */
 export function computeBlockedStatus(

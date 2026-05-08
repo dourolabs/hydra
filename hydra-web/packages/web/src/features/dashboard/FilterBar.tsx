@@ -8,7 +8,6 @@ const ISSUE_STATUSES: IssueStatus[] = [
   "in-progress",
   "closed",
   "dropped",
-  "rejected",
   "failed",
 ];
 
@@ -20,7 +19,6 @@ const ISSUE_STATUS_COLORS: Record<IssueStatus, string> = {
   closed: "var(--color-status-issue-closed)",
   failed: "var(--color-status-failed)",
   dropped: "var(--color-status-dropped)",
-  rejected: "var(--color-status-rejected)",
   unknown: "var(--color-text-tertiary)",
 };
 

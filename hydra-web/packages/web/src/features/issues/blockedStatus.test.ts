@@ -121,21 +121,6 @@ describe("computeBlockedStatus", () => {
     expect(result.hardBlockedBy).toEqual(["blocker"]);
   });
 
-  it("returns hard-blocked when blocked-on target is rejected", () => {
-    const blocker = makeRecord("blocker", "rejected");
-    const issue = makeRecord("issue", "open", [
-      { type: "blocked-on", issue_id: "blocker" },
-    ]);
-    const issueMap = buildMap([blocker, issue]);
-
-    const result = computeBlockedStatus(issue, issueMap);
-
-    expect(result.blocked).toBe(true);
-    expect(result.blockedBy).toEqual(["blocker"]);
-    expect(result.hardBlocked).toBe(true);
-    expect(result.hardBlockedBy).toEqual(["blocker"]);
-  });
-
   it("returns hard-blocked when blocked-on target is dropped", () => {
     const blocker = makeRecord("blocker", "dropped");
     const issue = makeRecord("issue", "open", [
