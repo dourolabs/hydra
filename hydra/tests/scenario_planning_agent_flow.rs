@@ -618,7 +618,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 /// 1. User creates parent issue
 /// 2. PM creates two children: child 1 assigned to SWE, child 2 blocked-on child 1
 /// 3. SWE picks up child 1 (job starts running)
-/// 4. User rejects child 1 (sets status to rejected)
+/// 4. User drops child 1 (sets status to dropped)
 /// 5. Child 2 remains open but blocked (not ready)
 /// 6. Parent becomes ready for re-spawning (no ready descendants)
 /// 7. PM drops child 2 and creates replacement child
@@ -626,9 +626,9 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 /// 9. PM closes parent
 ///
 /// Verifies:
-/// - User can reject an issue to trigger re-planning
-/// - Rejected issue is terminal and does not block parent
-/// - Blocked sibling (not explicitly rejected) does not prevent PM from re-spawning
+/// - User can drop an issue to trigger re-planning
+/// - Dropped issue is terminal and does not block parent
+/// - Blocked sibling (not explicitly dropped) does not prevent PM from re-spawning
 /// - PM re-spawns after rejection
 /// - Replacement child completes the work
 #[tokio::test]
@@ -715,13 +715,13 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         "child 1 should have exactly one session"
     );
 
-    // ── Step 4: User rejects child 1 ────────────────────────────────
-    // User decides they don't like the plan and sets child 1 to rejected.
-    user.update_issue_status(&child1_id, IssueStatus::Rejected)
+    // ── Step 4: User drops child 1 ────────────────────────────────
+    // User decides they don't like the plan and sets child 1 to dropped.
+    user.update_issue_status(&child1_id, IssueStatus::Dropped)
         .await?;
 
-    let child1_rejected = user.get_issue(&child1_id).await?;
-    child1_rejected.assert_status(IssueStatus::Rejected);
+    let child1_dropped = user.get_issue(&child1_id).await?;
+    child1_dropped.assert_status(IssueStatus::Dropped);
 
     // Reconcile task status: the kill_tasks_on_issue_failure automation
     // killed the SWE job in the engine, but the task record still shows
@@ -729,12 +729,12 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     harness.step_monitor_jobs().await?;
 
     // ── Step 5: Verify child 2 state ────────────────────────────────
-    // Child 2 is blocked-on the rejected child 1. It should remain open.
+    // Child 2 is blocked-on the dropped child 1. It should remain open.
     let child2_check = user.get_issue(&child2_id).await?;
     child2_check.assert_status(IssueStatus::Open);
 
     // ── Step 6: Parent becomes ready for re-spawning ─────────────────
-    // Parent is in-progress with no ready descendants (child 1 is rejected,
+    // Parent is in-progress with no ready descendants (child 1 is dropped,
     // child 2 is blocked). The spawner should create a new task for the parent.
     let pm_tasks_round2 = harness.await_sessions(&parent_id, 2).await?;
     assert_eq!(
@@ -773,9 +773,9 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .context("replacement child should exist")?;
     let child3_id = child3.issue_id.clone();
 
-    // Verify original child is still rejected.
-    let child1_still_rejected = user.get_issue(&child1_id).await?;
-    child1_still_rejected.assert_status(IssueStatus::Rejected);
+    // Verify original child is still dropped.
+    let child1_still_dropped = user.get_issue(&child1_id).await?;
+    child1_still_dropped.assert_status(IssueStatus::Dropped);
 
     // Verify new child is open.
     let child3_check = user.get_issue(&child3_id).await?;
@@ -828,7 +828,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     parent_final.assert_status(IssueStatus::Closed);
 
     let child1_final = user.get_issue(&child1_id).await?;
-    child1_final.assert_status(IssueStatus::Rejected);
+    child1_final.assert_status(IssueStatus::Dropped);
 
     let child2_final = user.get_issue(&child2_id).await?;
     child2_final.assert_status(IssueStatus::Dropped);
@@ -841,7 +841,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "Elasticsearch",
-        IssueStatus::Rejected,
+        IssueStatus::Dropped,
     );
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,

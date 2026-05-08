@@ -53,10 +53,7 @@ impl Automation for KillTasksOnFailureAutomation {
         if old.status == new.status {
             return Ok(());
         }
-        if !matches!(
-            new.status,
-            IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
-        ) {
+        if !matches!(new.status, IssueStatus::Dropped | IssueStatus::Failed) {
             return Ok(());
         }
 

@@ -52,10 +52,7 @@ impl Restriction for IssueLifecycleRestriction {
 
             if !matches!(
                 blocker.item.status,
-                IssueStatus::Closed
-                    | IssueStatus::Dropped
-                    | IssueStatus::Rejected
-                    | IssueStatus::Failed
+                IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
             ) {
                 open_blockers.push(dependency.issue_id.clone());
             }
@@ -104,10 +101,7 @@ impl Restriction for IssueLifecycleRestriction {
                         })?;
                 if !matches!(
                     child.item.status,
-                    IssueStatus::Closed
-                        | IssueStatus::Dropped
-                        | IssueStatus::Rejected
-                        | IssueStatus::Failed
+                    IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
                 ) {
                     open_children.push(child_id);
                 }
@@ -291,7 +285,6 @@ mod tests {
 
         for status in [
             IssueStatus::Closed,
-            IssueStatus::Rejected,
             IssueStatus::Failed,
             IssueStatus::Dropped,
         ] {
