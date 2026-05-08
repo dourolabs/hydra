@@ -4,7 +4,6 @@ export const TERMINAL_STATUSES: Set<string> = new Set([
   "closed",
   "failed",
   "dropped",
-  "rejected",
 ]);
 
 /** Normalize a PascalCase patch status (e.g. "ChangesRequested") to a BadgeStatus ("changes-requested"). */
@@ -50,7 +49,6 @@ export function normalizeIssueStatus(status: string): BadgeStatus {
     failed: "failed",
     dropped: "dropped",
     blocked: "blocked",
-    rejected: "rejected",
   };
   return map[status] ?? "unknown";
 }

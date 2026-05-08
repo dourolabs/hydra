@@ -8,7 +8,6 @@ export type BadgeStatus =
   | "failed"
   | "dropped"
   | "blocked"
-  | "rejected"
   | "merged"
   | "changes-requested"
   | "approved"
@@ -32,7 +31,6 @@ const statusLabels: Record<BadgeStatus, string> = {
   failed: "Failed",
   dropped: "Dropped",
   blocked: "Blocked",
-  rejected: "Rejected",
   merged: "Merged",
   "changes-requested": "Changes Requested",
   approved: "Approved",

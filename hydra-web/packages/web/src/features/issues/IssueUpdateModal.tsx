@@ -13,7 +13,6 @@ const statusOptions: SelectOption[] = [
   { value: "in-progress", label: "In Progress" },
   { value: "closed", label: "Closed" },
   { value: "dropped", label: "Dropped" },
-  { value: "rejected", label: "Rejected" },
   { value: "failed", label: "Failed" },
 ];
 

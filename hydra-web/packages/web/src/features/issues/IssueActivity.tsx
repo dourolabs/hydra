@@ -18,7 +18,6 @@ const STATUS_DOT_COLORS: Record<string, string> = {
   closed: "var(--color-status-issue-closed)",
   failed: "var(--color-status-failed)",
   dropped: "var(--color-status-dropped)",
-  rejected: "var(--color-status-rejected)",
 };
 
 function getDotColor(

@@ -2,15 +2,16 @@
   background-color: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  height: 500px;
+  overflow: auto;
+  max-height: 500px;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
-.row {
-  display: flex;
-  align-items: baseline;
+.table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
 .row:hover {
@@ -23,7 +24,8 @@
   color: var(--color-text-tertiary);
   user-select: none;
   white-space: nowrap;
-  flex-shrink: 0;
+  width: 1%;
+  vertical-align: top;
   border-right: 1px solid var(--color-border);
 }
 
