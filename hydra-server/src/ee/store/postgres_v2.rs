@@ -6654,6 +6654,89 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn internal_and_external_secret_coexist_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set internal then external version of the same secret
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        // get_user_secret should return the external version
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"external_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_user_secret_returns_internal_when_only_internal_exists_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"internal_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn delete_user_secret_only_removes_external_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set both internal and external
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        // Delete should only remove external
+        store.delete_user_secret(&alice, "MY_SECRET").await.unwrap();
+
+        // Should fall back to internal
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"internal_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_user_secret_names_deduplicates_coexisting_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set both internal and external for the same secret
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        let refs = store.list_user_secret_names(&alice).await.unwrap();
+        // Should only appear once, reported as non-internal
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "MY_SECRET");
+        assert!(!refs[0].internal);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn object_relationship_round_trip_v2(pool: PgStorePool) {
         use crate::store::{ObjectKind, RelationshipType};
 
