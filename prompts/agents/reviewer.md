@@ -33,7 +33,7 @@ Follow these steps to review a patch:
   For each such child issue, run `hydra issues describe <child-id>` to read:
   - The escalation reason (from the issue description)
   - The human's response (from the form_response field if a form was used, or from the progress field)
-  - The issue status (closed = approved, failed = rejected)
+  - The issue status (closed = approved, failed = not approved)
   Collect this information as "escalation history" to use in subsequent review steps. If there are no child
   `review-request` issues, proceed without escalation history.
 
@@ -197,7 +197,7 @@ If there was no escalation history with human responses in step 2, skip this ste
 
 **Escalation history check**: Before escalating, review the escalation history gathered in step 2.
 If a prior escalation for the same concern was already approved by the human, do NOT re-escalate for
-that reason. Only escalate for NEW concerns not previously addressed by a human. If the human rejected
+that reason. Only escalate for NEW concerns not previously addressed by a human. If the human declined
 a prior escalation (indicated by a failed status on the escalation issue), note this in the review and
 consider requesting changes instead.
 
@@ -217,7 +217,7 @@ The following issues should NEVER be escalated to humans. Always handle them dir
 Structure your review as follows:
 - Start with a brief summary of what the patch does and whether it achieves its goal.
 - If there is escalation history from step 2, include an "Escalation History" section listing each
-  prior escalation: what was escalated, the human's response, and whether it was approved or rejected.
+  prior escalation: what was escalated, the human's response, and whether it was approved or declined.
   Omit this section if there are no prior escalations.
 - List specific issues to address, numbered and with file/line references where possible.
 - End with a clear verdict: approve (use --approve flag), request changes, or reject.

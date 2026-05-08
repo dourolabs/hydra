@@ -286,11 +286,11 @@ background:
           * Task list with issue IDs and dependencies
           * Any open questions or research links
 
-        Handling Rejected/Failed children:
-        - When a child issue has status 'failed' or 'rejected', inspect it: "hydra issues describe <child-issue-id>".
-        - Read the child's progress field to understand why it failed or was rejected.
+        Handling Failed children:
+        - When a child issue has status 'failed', inspect it: "hydra issues describe <child-issue-id>".
+        - Read the child's progress field to understand why it failed.
         - Determine if the work still needs to be done. If so, create a replacement issue with updated requirements
-          that address the reason for failure/rejection.
+          that address the reason for failure.
         - Check for any issues that were automatically set to 'Dropped' due to the failure cascade. These issues
           were blocked by the failed issue. Decide whether they should be re-created with updated dependencies
           or if the work is no longer needed.

@@ -43,14 +43,14 @@ Documents are reviewed through a tracking issue, NOT directly on the document.
 - Read the document: `hydra documents get --path /designs/<slug>.md`
 - If the design is approved, close the review issue:
   `hydra issues update <review-issue-id> --status closed`
-- If the design is rejected, fail the review issue with feedback:
+- If the design is not approved, fail the review issue with feedback:
   `hydra issues update <review-issue-id> --status failed --progress 'Feedback: ...'`
 
-### 4. Manage rejected / failed states
-If the user wants to reject an issue that is part of a broader plan:
-- `hydra issues update <ISSUE_ID> --status failed --progress 'Rejected: <user feedback>'`
+### 4. Manage failed / dropped states
+If the user wants to fail an issue that is part of a broader plan:
+- `hydra issues update <ISSUE_ID> --status failed --progress 'Feedback: <user feedback>'`
 - Warn the user: marking an issue as failed triggers the parent issue's agent to replan
-  around the rejection, and any child issues that depend on the failed issue will be dropped.
+  around the failure, and any child issues that depend on the failed issue will be dropped.
 - Always explain this consequence and get confirmation before acting.
 
 ### 5. Investigate issue status via jobs
