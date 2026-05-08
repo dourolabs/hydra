@@ -4,15 +4,14 @@ use std::process::Command;
 /// Try to find the `pnpm` binary, checking PATH first, then well-known
 /// node version manager locations (NVM, Volta, fnm).
 fn find_pnpm() -> String {
-    // 1. Check if pnpm is available on PATH.
-    if Command::new("pnpm")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
-    {
-        return "pnpm".to_string();
+    // 1. Check if pnpm is available on PATH using a which-style lookup.
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join("pnpm");
+            if candidate.is_file() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
     }
 
     // 2. Check well-known node manager locations.
