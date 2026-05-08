@@ -38,14 +38,10 @@ fn main() {
     match status {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            println!("cargo:warning=pnpm install exited with status {s}; skipping frontend build");
-            ensure_dist_dir(&dist_dir);
-            return;
+            panic!("pnpm install failed with status {s}");
         }
         Err(e) => {
-            println!("cargo:warning=pnpm not found ({e}); skipping frontend build");
-            ensure_dist_dir(&dist_dir);
-            return;
+            panic!("pnpm not found ({e}), cannot build frontend");
         }
     }
 
@@ -57,14 +53,10 @@ fn main() {
     match status {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            println!(
-                "cargo:warning=pnpm build failed with status {s}; frontend will not be embedded"
-            );
-            ensure_dist_dir(&dist_dir);
+            panic!("pnpm build failed with status {s}");
         }
         Err(e) => {
-            println!("cargo:warning=failed to run pnpm build: {e}; frontend will not be embedded");
-            ensure_dist_dir(&dist_dir);
+            panic!("Failed to run pnpm build: {e}");
         }
     }
 }

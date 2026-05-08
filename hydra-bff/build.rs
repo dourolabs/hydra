@@ -8,25 +8,13 @@ fn main() {
     }
 
     let frontend_dir = Path::new("../hydra-web");
-    let dist_dir = frontend_dir.join("packages/web/dist");
 
-    // If the frontend source doesn't exist, skip the build gracefully.
+    // The embedded-frontend feature is enabled, so the frontend source must be present.
     if !frontend_dir.join("package.json").exists() {
-        println!(
-            "cargo:warning=hydra-web directory not found at {}, skipping frontend build",
+        panic!(
+            "hydra-web directory not found at {} — required for embedded-frontend feature",
             frontend_dir.display()
         );
-        // Create an empty dist directory so rust-embed doesn't fail.
-        if !dist_dir.exists() {
-            std::fs::create_dir_all(&dist_dir).ok();
-            // Create a minimal index.html so the embed has at least one file.
-            std::fs::write(
-                dist_dir.join("index.html"),
-                "<!DOCTYPE html><html><body>Frontend not built</body></html>",
-            )
-            .ok();
-        }
-        return;
     }
     // Install dependencies if needed.
     if !frontend_dir.join("node_modules").exists() {
@@ -40,16 +28,10 @@ fn main() {
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
-                println!(
-                    "cargo:warning=pnpm install failed with status {s}, skipping frontend build"
-                );
-                ensure_dist_exists(&dist_dir);
-                return;
+                panic!("pnpm install failed with status {s}");
             }
             Err(e) => {
-                println!("cargo:warning=pnpm not found ({e}), skipping frontend build");
-                ensure_dist_exists(&dist_dir);
-                return;
+                panic!("pnpm not found ({e}), cannot build frontend");
             }
         }
     }
@@ -67,12 +49,10 @@ fn main() {
             println!("cargo:warning=Frontend build completed successfully");
         }
         Ok(s) => {
-            println!("cargo:warning=Frontend build failed with status {s}, creating placeholder");
-            ensure_dist_exists(&dist_dir);
+            panic!("Frontend build failed with status {s}");
         }
         Err(e) => {
-            println!("cargo:warning=Failed to run frontend build ({e}), creating placeholder");
-            ensure_dist_exists(&dist_dir);
+            panic!("Failed to run frontend build: {e}");
         }
     }
 
@@ -80,15 +60,4 @@ fn main() {
     println!("cargo:rerun-if-changed=../hydra-web/packages/web/src");
     println!("cargo:rerun-if-changed=../hydra-web/packages/web/index.html");
     println!("cargo:rerun-if-changed=../hydra-web/packages/web/vite.config.ts");
-}
-
-fn ensure_dist_exists(dist_dir: &Path) {
-    if !dist_dir.exists() {
-        std::fs::create_dir_all(dist_dir).ok();
-        std::fs::write(
-            dist_dir.join("index.html"),
-            "<!DOCTYPE html><html><body>Frontend not built</body></html>",
-        )
-        .ok();
-    }
 }
