@@ -1150,6 +1150,8 @@ impl SqliteStore {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mcp_config,
+            interactive: false,
+            conversation_id: None,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -5972,6 +5974,8 @@ mod tests {
             None,
             None,
             None,
+            false,
+            None,
             Status::Created,
             None,
             None,
@@ -6363,6 +6367,8 @@ mod tests {
             Some(
                 serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
             ),
+            false,
+            None,
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {

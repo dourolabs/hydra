@@ -10,6 +10,7 @@ const PATCH_PREFIX: &str = "p-";
 const SESSION_PREFIX: &str = "s-";
 const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
+const CONVERSATION_PREFIX: &str = "c-";
 const NOTIFICATION_PREFIX: &str = "nf-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +85,12 @@ pub struct NotificationId(String);
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct LabelId(String);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
+pub struct ConversationId(String);
+
 impl HydraId {
     pub fn as_issue_id(&self) -> Option<IssueId> {
         IssueId::try_from(self.clone()).ok()
@@ -109,6 +116,10 @@ impl HydraId {
         LabelId::try_from(self.clone()).ok()
     }
 
+    pub fn as_conversation_id(&self) -> Option<ConversationId> {
+        ConversationId::try_from(self.clone()).ok()
+    }
+
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
         // Check longer prefixes first to avoid ambiguity (e.g., "nf-" before single-char prefixes)
         if value.starts_with(NOTIFICATION_PREFIX) {
@@ -123,6 +134,8 @@ impl HydraId {
             DocumentId::validate_str(value)
         } else if value.starts_with(SESSION_PREFIX) {
             SessionId::validate_str(value)
+        } else if value.starts_with(CONVERSATION_PREFIX) {
+            ConversationId::validate_str(value)
         } else {
             Err(HydraIdError::InvalidPrefix(value.to_string()))
         }
@@ -343,6 +356,40 @@ impl<'de> Deserialize<'de> for LabelId {
     }
 }
 
+impl ConversationId {
+    pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
+        generate_with_prefix(CONVERSATION_PREFIX, random_len).map(Self)
+    }
+
+    pub fn new() -> Self {
+        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
+    }
+
+    pub const fn prefix() -> &'static str {
+        CONVERSATION_PREFIX
+    }
+
+    fn validate_str(value: &str) -> Result<(), HydraIdError> {
+        validate_with_prefix(value, CONVERSATION_PREFIX)
+    }
+}
+
+impl Default for ConversationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for ConversationId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        ConversationId::try_from(value).map_err(de::Error::custom)
+    }
+}
+
 impl TryFrom<String> for HydraId {
     type Error = HydraIdError;
 
@@ -406,6 +453,15 @@ impl TryFrom<String> for LabelId {
     }
 }
 
+impl TryFrom<String> for ConversationId {
+    type Error = HydraIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        ConversationId::validate_str(&value)?;
+        Ok(Self(value))
+    }
+}
+
 impl TryFrom<HydraId> for IssueId {
     type Error = HydraIdError;
 
@@ -454,6 +510,14 @@ impl TryFrom<HydraId> for LabelId {
     }
 }
 
+impl TryFrom<HydraId> for ConversationId {
+    type Error = HydraIdError;
+
+    fn try_from(value: HydraId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0)
+    }
+}
+
 impl From<IssueId> for HydraId {
     fn from(value: IssueId) -> Self {
         Self(value.0)
@@ -490,6 +554,12 @@ impl From<LabelId> for HydraId {
     }
 }
 
+impl From<ConversationId> for HydraId {
+    fn from(value: ConversationId) -> Self {
+        Self(value.0)
+    }
+}
+
 impl From<IssueId> for String {
     fn from(value: IssueId) -> Self {
         value.0
@@ -522,6 +592,12 @@ impl From<NotificationId> for String {
 
 impl From<LabelId> for String {
     fn from(value: LabelId) -> Self {
+        value.0
+    }
+}
+
+impl From<ConversationId> for String {
+    fn from(value: ConversationId) -> Self {
         value.0
     }
 }
@@ -574,6 +650,12 @@ impl fmt::Display for LabelId {
     }
 }
 
+impl fmt::Display for ConversationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl AsRef<str> for HydraId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -611,6 +693,12 @@ impl AsRef<str> for NotificationId {
 }
 
 impl AsRef<str> for LabelId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for ConversationId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -665,6 +753,14 @@ impl FromStr for NotificationId {
 }
 
 impl FromStr for LabelId {
+    type Err = HydraIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.to_string().try_into()
+    }
+}
+
+impl FromStr for ConversationId {
     type Err = HydraIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
