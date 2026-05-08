@@ -3414,7 +3414,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let sql = format!(
-            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2"
+            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2 ORDER BY internal ASC LIMIT 1"
         );
         let row = sqlx::query_scalar::<_, Vec<u8>>(&sql)
             .bind(username.as_str())
@@ -3430,7 +3430,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         username: &Username,
     ) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
-            "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = $1 ORDER BY secret_name"
+            "SELECT secret_name, MIN(internal::int)::bool as internal FROM {TABLE_USER_SECRETS} WHERE username = $1 GROUP BY secret_name ORDER BY secret_name"
         );
         let rows = sqlx::query_as::<_, (String, bool)>(&sql)
             .bind(username.as_str())
@@ -3441,23 +3441,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .into_iter()
             .map(|(name, internal)| SecretRef { name, internal })
             .collect())
-    }
-
-    async fn is_secret_internal(
-        &self,
-        username: &Username,
-        secret_name: &str,
-    ) -> Result<bool, StoreError> {
-        let sql = format!(
-            "SELECT internal FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2"
-        );
-        let row = sqlx::query_scalar::<_, bool>(&sql)
-            .bind(username.as_str())
-            .bind(secret_name)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        Ok(row.unwrap_or(false))
     }
 }
 
@@ -4346,8 +4329,8 @@ impl Store for PostgresStoreV2 {
         let sql = format!(
             "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, internal, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $5) \
-             ON CONFLICT (username, secret_name) \
-             DO UPDATE SET encrypted_value = $3, internal = $4, updated_at = $5"
+             ON CONFLICT (username, secret_name, internal) \
+             DO UPDATE SET encrypted_value = $3, updated_at = $5"
         );
         let now = chrono::Utc::now();
         sqlx::query(&sql)
@@ -4367,8 +4350,9 @@ impl Store for PostgresStoreV2 {
         username: &Username,
         secret_name: &str,
     ) -> Result<(), StoreError> {
-        let sql =
-            format!("DELETE FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2");
+        let sql = format!(
+            "DELETE FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2 AND internal = FALSE"
+        );
         sqlx::query(&sql)
             .bind(username.as_str())
             .bind(secret_name)
@@ -6666,6 +6650,89 @@ mod tests {
             .delete_user_secret(&alice, "nonexistent")
             .await
             .unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn internal_and_external_secret_coexist_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set internal then external version of the same secret
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        // get_user_secret should return the external version
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"external_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_user_secret_returns_internal_when_only_internal_exists_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"internal_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn delete_user_secret_only_removes_external_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set both internal and external
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        // Delete should only remove external
+        store.delete_user_secret(&alice, "MY_SECRET").await.unwrap();
+
+        // Should fall back to internal
+        let fetched = store.get_user_secret(&alice, "MY_SECRET").await.unwrap();
+        assert_eq!(fetched, Some(b"internal_val".to_vec()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_user_secret_names_deduplicates_coexisting_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = Username::from("alice");
+
+        // Set both internal and external for the same secret
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"internal_val", true)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "MY_SECRET", b"external_val", false)
+            .await
+            .unwrap();
+
+        let refs = store.list_user_secret_names(&alice).await.unwrap();
+        // Should only appear once, reported as non-internal
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "MY_SECRET");
+        assert!(!refs[0].internal);
     }
 
     #[sqlx::test(migrations = "./migrations")]
