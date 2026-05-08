@@ -19,6 +19,7 @@ use hydra_common::constants::{ENV_HYDRA_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKE
 use tracing::{error, info, warn};
 
 use super::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use crate::config::RegistryCredential;
 use crate::domain::actors::Actor;
 
 /// Metadata tracked in-memory for each container managed by this engine.
@@ -35,10 +36,16 @@ pub struct LocalDockerJobEngine {
     containers: DashMap<SessionId, ContainerInfo>,
     /// The entrypoint command for containers created by this engine.
     entrypoint: Vec<String>,
+    /// Registry credentials for authenticating image pulls.
+    registry_credentials: Vec<RegistryCredential>,
 }
 
 impl LocalDockerJobEngine {
-    pub async fn new(server_url: String, entrypoint: Vec<String>) -> Result<Self, JobEngineError> {
+    pub async fn new(
+        server_url: String,
+        entrypoint: Vec<String>,
+        registry_credentials: Vec<RegistryCredential>,
+    ) -> Result<Self, JobEngineError> {
         let docker = Docker::connect_with_local_defaults().map_err(|e| {
             JobEngineError::Internal(format!("Failed to connect to Docker daemon: {e}"))
         })?;
@@ -47,9 +54,15 @@ impl LocalDockerJobEngine {
             server_url,
             containers: DashMap::new(),
             entrypoint,
+            registry_credentials,
         };
         engine.recover_containers().await?;
         Ok(engine)
+    }
+
+    /// Find matching registry credentials for the given image name.
+    fn find_credentials_for_image(&self, image: &str) -> Option<bollard::auth::DockerCredentials> {
+        find_credentials_for_image(&self.registry_credentials, image)
     }
 
     async fn recover_containers(&self) -> Result<(), JobEngineError> {
@@ -251,13 +264,14 @@ impl JobEngine for LocalDockerJobEngine {
             info!(hydra_id = %hydra_id, image = %image, "image exists locally, skipping pull");
         } else {
             info!(hydra_id = %hydra_id, image = %image, "image not found locally, pulling");
+            let credentials = self.find_credentials_for_image(image);
             let mut pull_stream = self.docker.create_image(
                 Some(CreateImageOptions {
                     from_image: image,
                     ..Default::default()
                 }),
                 None,
-                None,
+                credentials,
             );
             while let Some(result) = pull_stream.next().await {
                 match result {
@@ -583,6 +597,41 @@ fn extract_session_id_from_names(names: Option<&[String]>) -> Option<SessionId> 
     })
 }
 
+/// Find matching registry credentials for the given image name.
+///
+/// Extracts the registry host from the image and matches against the configured
+/// credentials list. Returns `None` when no credential matches.
+fn find_credentials_for_image(
+    credentials: &[RegistryCredential],
+    image: &str,
+) -> Option<bollard::auth::DockerCredentials> {
+    let registry = extract_registry_host(image);
+    credentials
+        .iter()
+        .find(|cred| cred.serveraddress == registry)
+        .map(|cred| bollard::auth::DockerCredentials {
+            username: Some(cred.username.clone()),
+            password: Some(cred.password.clone()),
+            serveraddress: Some(cred.serveraddress.clone()),
+            ..Default::default()
+        })
+}
+
+/// Extract the registry host from a Docker image name.
+///
+/// The registry host is the part before the first `/`, but only when it
+/// contains a `.` or `:` (indicating a hostname, not a Docker Hub user/org).
+/// When no registry host is present, defaults to `docker.io`.
+fn extract_registry_host(image: &str) -> &str {
+    if let Some(slash_pos) = image.find('/') {
+        let prefix = &image[..slash_pos];
+        if prefix.contains('.') || prefix.contains(':') {
+            return prefix;
+        }
+    }
+    "docker.io"
+}
+
 /// Best-effort parsing of Kubernetes-style memory limits (e.g., "512Mi", "1Gi") to bytes.
 fn parse_memory_limit(limit: &str) -> Option<i64> {
     let limit = limit.trim();
@@ -604,6 +653,68 @@ fn parse_memory_limit(limit: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_registry_host_with_hostname() {
+        assert_eq!(
+            extract_registry_host("ghcr.io/myorg/myimage:latest"),
+            "ghcr.io"
+        );
+    }
+
+    #[test]
+    fn extract_registry_host_with_port() {
+        assert_eq!(
+            extract_registry_host("localhost:5000/myimage:latest"),
+            "localhost:5000"
+        );
+    }
+
+    #[test]
+    fn extract_registry_host_docker_hub_implicit() {
+        assert_eq!(extract_registry_host("alpine:latest"), "docker.io");
+    }
+
+    #[test]
+    fn extract_registry_host_docker_hub_user() {
+        assert_eq!(extract_registry_host("library/alpine:latest"), "docker.io");
+    }
+
+    #[test]
+    fn extract_registry_host_complex_path() {
+        assert_eq!(
+            extract_registry_host("registry.example.com/org/repo/image:v1"),
+            "registry.example.com"
+        );
+    }
+
+    #[test]
+    fn find_credentials_matches_registry() {
+        let creds = vec![RegistryCredential {
+            serveraddress: "ghcr.io".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+        }];
+
+        let result = find_credentials_for_image(&creds, "ghcr.io/myorg/myimage:latest");
+        assert!(result.is_some());
+        let cred = result.unwrap();
+        assert_eq!(cred.username.as_deref(), Some("user"));
+        assert_eq!(cred.password.as_deref(), Some("pass"));
+        assert_eq!(cred.serveraddress.as_deref(), Some("ghcr.io"));
+    }
+
+    #[test]
+    fn find_credentials_returns_none_when_no_match() {
+        let creds = vec![RegistryCredential {
+            serveraddress: "ghcr.io".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+        }];
+
+        let result = find_credentials_for_image(&creds, "alpine:latest");
+        assert!(result.is_none());
+    }
 
     #[test]
     fn parse_memory_limit_handles_mi() {
@@ -709,6 +820,7 @@ mod tests {
                 "-c".to_string(),
                 "sleep 5".to_string(),
             ],
+            vec![],
         )
         .await
         .expect("Docker daemon must be available for integration tests")
@@ -871,6 +983,7 @@ mod tests {
         let engine = LocalDockerJobEngine::new(
             "http://localhost:0".to_string(),
             vec!["nonexistent-binary".to_string()],
+            vec![],
         )
         .await
         .expect("Docker daemon must be available for integration tests");

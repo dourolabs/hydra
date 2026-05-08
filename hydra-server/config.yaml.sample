@@ -42,6 +42,17 @@ sqlite_path: "hydra.db"
 # Local Docker (default for single-player mode):
 job_engine: "local"
 #
+# Docker with registry credentials (for pulling from private registries):
+# job_engine: "docker"
+# docker:
+#   registry_credentials:
+#     - serveraddress: "ghcr.io"
+#       username: "my-username"
+#       password: "my-pat-token"
+#     - serveraddress: "registry.example.com"
+#       username: "user"
+#       password: "password"
+#
 # Kubernetes (for production):
 # job_engine: "kubernetes"
 # kubernetes:

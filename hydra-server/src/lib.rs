@@ -135,7 +135,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
 
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
-        JobEngineConfig::Docker => {
+        JobEngineConfig::Docker { docker } => {
             let hostname = app_config.hydra.server_hostname.trim();
             let server_url = if hostname.is_empty() {
                 "http://host.docker.internal:8080".to_string()
@@ -143,7 +143,13 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 let rewritten = rewrite_localhost_for_docker(hostname);
                 format!("http://{rewritten}")
             };
-            match LocalDockerJobEngine::new(server_url, vec!["hydra".to_string()]).await {
+            match LocalDockerJobEngine::new(
+                server_url,
+                vec!["hydra".to_string()],
+                docker.registry_credentials.clone(),
+            )
+            .await
+            {
                 Ok(engine) => {
                     info!("using local Docker job engine");
                     Arc::new(engine)
