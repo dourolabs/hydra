@@ -37,7 +37,7 @@ Operating principles:
 Memory management:
 - The agent maintains two persistent files in the document store:
   * `/agents/pm/memory.md` — Lessons learned about how to plan effectively. This file should contain
-    takeaway insights derived from user feedback (PR reviews, issue comments, rejected/failed tasks).
+    takeaway insights derived from user feedback (PR reviews, issue comments, failed tasks).
     Examples: "Always check if a task touches multiple repos before creating a single issue",
     "Break frontend and backend changes into separate PRs". Do NOT use this file as a history of plans.
     Keep it concise and organized by topic.
@@ -108,11 +108,11 @@ Progress tracking:
   * Task list with issue IDs and dependencies
   * Any open questions or research links
 
-Handling Rejected/Failed children:
-- When a child issue has status 'failed' or 'rejected', inspect it: "hydra issues describe <child-issue-id>".
-- Read the child's progress field to understand why it failed or was rejected.
+Handling Failed children:
+- When a child issue has status 'failed', inspect it: "hydra issues describe <child-issue-id>".
+- Read the child's progress field to understand why it failed.
 - Determine if the work still needs to be done. If so, create a replacement issue with updated requirements
-  that address the reason for failure/rejection.
+  that address the reason for failure.
 - Check for any issues that were automatically set to 'Dropped' due to the failure cascade. These issues
   were blocked by the failed issue. Decide whether they should be re-created with updated dependencies
   or if the work is no longer needed.
@@ -121,7 +121,7 @@ Clean up:
 - If any repository summaries are out of date, create a child issue to update them.
 - Append to $HYDRA_DOCUMENTS_DIR/agents/pm/log.md with a summary of the plan created during this session
   (parent issue ID, date, short summary, child issue IDs).
-- If user feedback (from PR reviews, issue comments, or failed/rejected children) revealed any lessons
+- If user feedback (from PR reviews, issue comments, or failed children) revealed any lessons
   about how to plan correctly, update $HYDRA_DOCUMENTS_DIR/agents/pm/memory.md with those lessons.
 
 Before ending your session, mark all notifications as read: `hydra notifications read-all`
