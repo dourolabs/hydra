@@ -62,8 +62,9 @@ pub enum ServerCommand {
         /// variable. Defaults to info when neither this flag nor RUST_LOG is set.
         #[arg(long)]
         log_level: Option<LogLevel>,
-        /// Force reinitialization: stop the server, delete all state in
-        /// ~/.hydra/server/, and reinitialize from scratch.
+        /// Force reinitialization: stop the server, delete and regenerate the
+        /// config file, and reinitialize. The database and other persistent
+        /// state are preserved.
         #[arg(long)]
         force: bool,
     },
@@ -119,7 +120,8 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>, force: bo
     let server_dir = expand_path(SERVER_DIR);
     let config_path = expand_path(SERVER_CONFIG_PATH);
 
-    // --force: stop the server and wipe all state before reinitializing.
+    // --force: stop the server and delete the config file before reinitializing.
+    // The database and other persistent state in ~/.hydra/server/ are preserved.
     if force {
         if is_server_process_alive() {
             println!("Stopping running server...");
@@ -127,10 +129,10 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>, force: bo
             // Brief pause to allow the port to be released.
             thread::sleep(Duration::from_secs(1));
         }
-        if server_dir.exists() {
-            println!("Removing existing server state: {}", server_dir.display());
-            fs::remove_dir_all(&server_dir)
-                .with_context(|| format!("failed to remove {}", server_dir.display()))?;
+        if config_path.exists() {
+            println!("Removing existing config: {}", config_path.display());
+            fs::remove_file(&config_path)
+                .with_context(|| format!("failed to remove {}", config_path.display()))?;
         }
     }
 
