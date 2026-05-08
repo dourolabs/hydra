@@ -199,7 +199,7 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
     await labelButton.click();
 
     // The dropdown should list visible labels but not "inbox"
-    await expect(page.getByText("platform-v2")).toBeVisible();
+    await expect(page.locator('[class*="labelItem"]').getByText("platform-v2")).toBeVisible();
     await expect(page.locator('[class*="labelItem"]').getByText("inbox", { exact: true })).not.toBeVisible();
   });
 });
@@ -250,7 +250,7 @@ test.describe("Newly created label appears in filter bar @labels:filter-bar-crea
     // Verify the new label appears in the filter bar Label dropdown
     const labelButton = page.locator("button", { hasText: "Label" });
     await labelButton.click();
-    await expect(page.getByText("filter-bar-test-label")).toBeVisible();
+    await expect(page.locator('[class*="labelItem"]').getByText("filter-bar-test-label")).toBeVisible();
   });
 });
 
