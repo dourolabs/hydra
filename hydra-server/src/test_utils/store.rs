@@ -14,14 +14,17 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hydra_common::api::v1::conversations::{
+    Conversation, ConversationEvent, ConversationSummary, SearchConversationsQuery,
+};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -331,6 +334,24 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Vec<SecretRef>, StoreError> {
         fail()
     }
+
+    async fn get_conversation(&self, _id: &ConversationId) -> Result<Conversation, StoreError> {
+        fail()
+    }
+
+    async fn list_conversations(
+        &self,
+        _query: &SearchConversationsQuery,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
+        fail()
+    }
+
+    async fn get_conversation_session_state(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -585,6 +606,39 @@ impl Store for FailingStore {
         &self,
         _username: &Username,
         _secret_name: &str,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn create_conversation(
+        &self,
+        _conversation: Conversation,
+    ) -> Result<Conversation, StoreError> {
+        fail()
+    }
+
+    async fn update_conversation(
+        &self,
+        _id: &ConversationId,
+        _status: Option<hydra_common::api::v1::conversations::ConversationStatus>,
+        _title: Option<String>,
+        _active_session_id: Option<Option<SessionId>>,
+    ) -> Result<Conversation, StoreError> {
+        fail()
+    }
+
+    async fn append_conversation_event(
+        &self,
+        _id: &ConversationId,
+        _event: ConversationEvent,
+    ) -> Result<Conversation, StoreError> {
+        fail()
+    }
+
+    async fn store_conversation_session_state(
+        &self,
+        _id: &ConversationId,
+        _data: Vec<u8>,
     ) -> Result<(), StoreError> {
         fail()
     }

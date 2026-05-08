@@ -15,6 +15,10 @@ use crate::domain::{
     secrets::SecretRef,
     users::{User, Username},
 };
+use hydra_common::api::v1::conversations::{
+    Conversation, ConversationEvent, ConversationStatus, ConversationSummary,
+    SearchConversationsQuery,
+};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
@@ -22,8 +26,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -69,6 +73,10 @@ pub struct MemoryStore {
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
     object_relationships:
         DashMap<(HydraId, super::RelationshipType, HydraId), super::ObjectRelationship>,
+    /// Maps conversation IDs to their Conversation data
+    conversations: DashMap<ConversationId, Conversation>,
+    /// Maps conversation IDs to their session state blobs
+    conversation_session_state: DashMap<ConversationId, Vec<u8>>,
 }
 
 impl MemoryStore {
@@ -92,6 +100,8 @@ impl MemoryStore {
             auth_tokens: DashMap::new(),
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
+            conversations: DashMap::new(),
+            conversation_session_state: DashMap::new(),
         }
     }
 
@@ -1425,6 +1435,120 @@ impl ReadOnlyStore for MemoryStore {
         refs.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(refs)
     }
+
+    // ---- Conversation (read-only) ----
+
+    async fn get_conversation(&self, id: &ConversationId) -> Result<Conversation, StoreError> {
+        self.conversations
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))
+    }
+
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty());
+        let creator_filter = query
+            .creator
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty());
+
+        let items: Vec<(ConversationId, ConversationSummary)> = self
+            .conversations
+            .iter()
+            .filter(|entry| {
+                let conv = entry.value();
+
+                if let Some(status) = query.status {
+                    if conv.status != status {
+                        return false;
+                    }
+                }
+
+                if let Some(creator) = &creator_filter {
+                    if !conv.creator.as_ref().eq_ignore_ascii_case(creator) {
+                        return false;
+                    }
+                }
+
+                if let Some(ref term) = search_term {
+                    let matches_id = conv.conversation_id.as_ref().to_lowercase().contains(term);
+                    let matches_title = conv
+                        .title
+                        .as_deref()
+                        .map(|t| t.to_lowercase().contains(term))
+                        .unwrap_or(false);
+                    let matches_agent = conv
+                        .agent_name
+                        .as_deref()
+                        .map(|a| a.to_lowercase().contains(term))
+                        .unwrap_or(false);
+                    if !matches_id && !matches_title && !matches_agent {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .map(|entry| {
+                let conv = entry.value();
+                let last_event_preview = conv.events.last().map(|e| match e {
+                    ConversationEvent::UserMessage { content, .. }
+                    | ConversationEvent::AssistantMessage { content, .. } => {
+                        content.chars().take(100).collect()
+                    }
+                    ConversationEvent::Suspending { reason, .. } => reason.clone(),
+                    ConversationEvent::Resumed { .. } => "Resumed".to_string(),
+                    ConversationEvent::Closed { .. } => "Closed".to_string(),
+                });
+                (
+                    conv.conversation_id.clone(),
+                    ConversationSummary::new(
+                        conv.conversation_id.clone(),
+                        conv.title.clone(),
+                        conv.agent_name.clone(),
+                        conv.status,
+                        conv.events.len(),
+                        last_event_preview,
+                        conv.creator.clone(),
+                        conv.created_at,
+                        conv.updated_at,
+                    ),
+                )
+            })
+            .collect();
+
+        let paginated = apply_memory_pagination(
+            items,
+            |(_id, s)| s.updated_at,
+            |(id, _s)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )?;
+
+        Ok(paginated.into_iter().map(|(_id, s)| s).collect())
+    }
+
+    async fn get_conversation_session_state(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        // Verify conversation exists
+        if !self.conversations.contains_key(id) {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+        Ok(self
+            .conversation_session_state
+            .get(id)
+            .map(|entry| entry.value().clone()))
+    }
 }
 
 #[async_trait]
@@ -2059,6 +2183,70 @@ impl Store for MemoryStore {
         // Only delete the external version
         let key = (username.clone(), secret_name.to_string(), false);
         self.user_secrets.remove(&key);
+        Ok(())
+    }
+
+    // ---- Conversation mutations ----
+
+    async fn create_conversation(
+        &self,
+        mut conversation: Conversation,
+    ) -> Result<Conversation, StoreError> {
+        let id = ConversationId::new();
+        conversation.conversation_id = id.clone();
+        self.conversations.insert(id, conversation.clone());
+        Ok(conversation)
+    }
+
+    async fn update_conversation(
+        &self,
+        id: &ConversationId,
+        status: Option<ConversationStatus>,
+        title: Option<String>,
+        active_session_id: Option<Option<SessionId>>,
+    ) -> Result<Conversation, StoreError> {
+        let mut entry = self
+            .conversations
+            .get_mut(id)
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        let conv = entry.value_mut();
+        if let Some(s) = status {
+            conv.status = s;
+        }
+        if let Some(t) = title {
+            conv.title = Some(t);
+        }
+        if let Some(sid) = active_session_id {
+            conv.active_session_id = sid;
+        }
+        conv.updated_at = Utc::now();
+        Ok(conv.clone())
+    }
+
+    async fn append_conversation_event(
+        &self,
+        id: &ConversationId,
+        event: ConversationEvent,
+    ) -> Result<Conversation, StoreError> {
+        let mut entry = self
+            .conversations
+            .get_mut(id)
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        let conv = entry.value_mut();
+        conv.events.push(event);
+        conv.updated_at = Utc::now();
+        Ok(conv.clone())
+    }
+
+    async fn store_conversation_session_state(
+        &self,
+        id: &ConversationId,
+        data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        if !self.conversations.contains_key(id) {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+        self.conversation_session_state.insert(id.clone(), data);
         Ok(())
     }
 }
@@ -7026,5 +7214,213 @@ mod tests {
             matches!(result, Err(StoreError::DocumentPathConflict)),
             "expected DocumentPathConflict, got {result:?}"
         );
+    }
+
+    // ---- Conversation tests ----
+
+    fn sample_conversation() -> Conversation {
+        Conversation::new(
+            hydra_common::ConversationId::new(), // will be overwritten by create
+            Some("Test conversation".to_string()),
+            Some("test-agent".to_string()),
+            vec![],
+            None,
+            hydra_common::api::v1::conversations::ConversationStatus::Active,
+            Username::from("alice").into(),
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    #[tokio::test]
+    async fn create_and_get_conversation() {
+        let store = MemoryStore::new();
+        let conv = store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        assert_eq!(conv.title.as_deref(), Some("Test conversation"));
+        assert_eq!(conv.agent_name.as_deref(), Some("test-agent"));
+
+        let fetched = store.get_conversation(&conv.conversation_id).await.unwrap();
+        assert_eq!(fetched.conversation_id, conv.conversation_id);
+        assert_eq!(fetched.title, conv.title);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_not_found() {
+        let store = MemoryStore::new();
+        let id = hydra_common::ConversationId::new();
+        let result = store.get_conversation(&id).await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn update_conversation_fields() {
+        use hydra_common::api::v1::conversations::ConversationStatus;
+
+        let store = MemoryStore::new();
+        let conv = store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        let id = conv.conversation_id.clone();
+
+        let updated = store
+            .update_conversation(
+                &id,
+                Some(ConversationStatus::Idle),
+                Some("New title".to_string()),
+                Some(Some(SessionId::new())),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.status, ConversationStatus::Idle);
+        assert_eq!(updated.title.as_deref(), Some("New title"));
+        assert!(updated.active_session_id.is_some());
+
+        // Verify persistence
+        let fetched = store.get_conversation(&id).await.unwrap();
+        assert_eq!(fetched.status, ConversationStatus::Idle);
+        assert_eq!(fetched.title.as_deref(), Some("New title"));
+    }
+
+    #[tokio::test]
+    async fn update_conversation_not_found() {
+        let store = MemoryStore::new();
+        let id = hydra_common::ConversationId::new();
+        let result = store.update_conversation(&id, None, None, None).await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn append_conversation_event() {
+        use hydra_common::api::v1::conversations::ConversationEvent;
+
+        let store = MemoryStore::new();
+        let conv = store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        let id = conv.conversation_id.clone();
+        assert!(conv.events.is_empty());
+
+        let event = ConversationEvent::UserMessage {
+            content: "Hello!".to_string(),
+            timestamp: Utc::now(),
+        };
+        let updated = store.append_conversation_event(&id, event).await.unwrap();
+        assert_eq!(updated.events.len(), 1);
+
+        let event2 = ConversationEvent::AssistantMessage {
+            content: "Hi there!".to_string(),
+            timestamp: Utc::now(),
+        };
+        let updated = store.append_conversation_event(&id, event2).await.unwrap();
+        assert_eq!(updated.events.len(), 2);
+
+        // Verify persistence
+        let fetched = store.get_conversation(&id).await.unwrap();
+        assert_eq!(fetched.events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_conversations_basic() {
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+
+        let store = MemoryStore::new();
+        store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_conversations_filter_by_status() {
+        use hydra_common::api::v1::conversations::{ConversationStatus, SearchConversationsQuery};
+
+        let store = MemoryStore::new();
+        let conv = store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        store
+            .update_conversation(
+                &conv.conversation_id,
+                Some(ConversationStatus::Closed),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap(); // Active
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                status: Some(ConversationStatus::Active),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ConversationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn store_and_get_session_state() {
+        let store = MemoryStore::new();
+        let conv = store
+            .create_conversation(sample_conversation())
+            .await
+            .unwrap();
+        let id = conv.conversation_id.clone();
+
+        // Initially no session state
+        let state = store.get_conversation_session_state(&id).await.unwrap();
+        assert!(state.is_none());
+
+        // Store session state
+        let data = vec![1, 2, 3, 4, 5];
+        store
+            .store_conversation_session_state(&id, data.clone())
+            .await
+            .unwrap();
+
+        let state = store.get_conversation_session_state(&id).await.unwrap();
+        assert_eq!(state, Some(data));
+
+        // Overwrite
+        let data2 = vec![10, 20, 30];
+        store
+            .store_conversation_session_state(&id, data2.clone())
+            .await
+            .unwrap();
+        let state = store.get_conversation_session_state(&id).await.unwrap();
+        assert_eq!(state, Some(data2));
+    }
+
+    #[tokio::test]
+    async fn session_state_not_found_for_missing_conversation() {
+        let store = MemoryStore::new();
+        let id = hydra_common::ConversationId::new();
+        let result = store.get_conversation_session_state(&id).await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
+
+        let result = store.store_conversation_session_state(&id, vec![1]).await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 }
