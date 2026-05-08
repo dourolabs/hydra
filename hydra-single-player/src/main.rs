@@ -54,8 +54,10 @@ mod tests {
         let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "server", "init"]).expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { .. },
-            }) => {}
+                command: ServerCommand::Init { force, .. },
+            }) => {
+                assert!(!force, "force should default to false");
+            }
             _ => panic!("expected Server Init"),
         }
     }
@@ -89,12 +91,13 @@ mod tests {
         .expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { config, .. },
+                command: ServerCommand::Init { config, force, .. },
             }) => {
                 assert_eq!(
                     config,
                     Some(std::path::PathBuf::from("/path/to/config.yaml"))
                 );
+                assert!(!force);
             }
             _ => panic!("expected Server Init with --config"),
         }
@@ -105,11 +108,52 @@ mod tests {
         let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "server", "init"]).expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { config, .. },
+                command: ServerCommand::Init { config, force, .. },
             }) => {
                 assert_eq!(config, None);
+                assert!(!force);
             }
             _ => panic!("expected Server Init without --config"),
+        }
+    }
+
+    #[test]
+    fn parse_server_init_with_force_flag() {
+        let sp_cli =
+            SinglePlayerCli::try_parse_from(["hydra", "server", "init", "--force"]).expect("parse");
+        match sp_cli.command {
+            Some(SinglePlayerCommands::Server {
+                command: ServerCommand::Init { config, force, .. },
+            }) => {
+                assert!(force);
+                assert_eq!(config, None);
+            }
+            _ => panic!("expected Server Init with --force"),
+        }
+    }
+
+    #[test]
+    fn parse_server_init_with_force_and_config() {
+        let sp_cli = SinglePlayerCli::try_parse_from([
+            "hydra",
+            "server",
+            "init",
+            "--force",
+            "--config",
+            "/path/to/config.yaml",
+        ])
+        .expect("parse");
+        match sp_cli.command {
+            Some(SinglePlayerCommands::Server {
+                command: ServerCommand::Init { config, force, .. },
+            }) => {
+                assert!(force);
+                assert_eq!(
+                    config,
+                    Some(std::path::PathBuf::from("/path/to/config.yaml"))
+                );
+            }
+            _ => panic!("expected Server Init with --force and --config"),
         }
     }
 
