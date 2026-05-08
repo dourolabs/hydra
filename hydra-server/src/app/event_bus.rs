@@ -74,6 +74,11 @@ pub enum MutationPayload {
         new: Conversation,
         actor: ActorRef,
     },
+    ConversationEvent {
+        conversation_id: ConversationId,
+        event: ConversationEvent,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -86,7 +91,8 @@ impl MutationPayload {
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Notification { actor, .. }
-            | MutationPayload::Conversation { actor, .. } => actor,
+            | MutationPayload::Conversation { actor, .. }
+            | MutationPayload::ConversationEvent { actor, .. } => actor,
         }
     }
 }
@@ -112,6 +118,7 @@ pub enum EventType {
     NotificationCreated,
     ConversationCreated,
     ConversationUpdated,
+    ConversationEventCreated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -243,6 +250,13 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    ConversationEventCreated {
+        seq: u64,
+        conversation_id: ConversationId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -265,7 +279,8 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { seq, .. }
             | ServerEvent::NotificationCreated { seq, .. }
             | ServerEvent::ConversationCreated { seq, .. }
-            | ServerEvent::ConversationUpdated { seq, .. } => *seq,
+            | ServerEvent::ConversationUpdated { seq, .. }
+            | ServerEvent::ConversationEventCreated { seq, .. } => *seq,
         }
     }
 
@@ -288,7 +303,8 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { payload, .. }
             | ServerEvent::NotificationCreated { payload, .. }
             | ServerEvent::ConversationCreated { payload, .. }
-            | ServerEvent::ConversationUpdated { payload, .. } => payload,
+            | ServerEvent::ConversationUpdated { payload, .. }
+            | ServerEvent::ConversationEventCreated { payload, .. } => payload,
         }
     }
 
@@ -324,6 +340,7 @@ impl ServerEvent {
             ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
             ServerEvent::ConversationCreated { .. } => EventType::ConversationCreated,
             ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
+            ServerEvent::ConversationEventCreated { .. } => EventType::ConversationEventCreated,
         }
     }
 }
@@ -614,6 +631,21 @@ impl EventBus {
         payload: Arc<MutationPayload>,
     ) {
         self.send(ServerEvent::ConversationUpdated {
+            seq: self.next_seq(),
+            conversation_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_conversation_event_created(
+        &self,
+        conversation_id: ConversationId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::ConversationEventCreated {
             seq: self.next_seq(),
             conversation_id,
             version,
@@ -1025,10 +1057,18 @@ impl StoreWithEvents {
         event: ConversationEvent,
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        let event_clone = event.clone();
         let version = self
             .inner
             .append_conversation_event(id, event, &actor)
             .await?;
+        let payload = Arc::new(MutationPayload::ConversationEvent {
+            conversation_id: id.clone(),
+            event: event_clone,
+            actor,
+        });
+        self.event_bus
+            .emit_conversation_event_created(id.clone(), version, payload);
         Ok(version)
     }
 

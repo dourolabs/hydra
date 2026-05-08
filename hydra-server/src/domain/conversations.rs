@@ -20,6 +20,8 @@ pub struct Conversation {
     #[serde(default)]
     pub status: ConversationStatus,
     pub creator: Username,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +130,7 @@ impl From<api::conversations::Conversation> for Conversation {
             active_session_id: value.active_session_id,
             status: value.status.into(),
             creator: value.creator.into(),
+            deleted: false,
         }
     }
 }
