@@ -62,6 +62,11 @@ pub enum ServerCommand {
         /// variable. Defaults to info when neither this flag nor RUST_LOG is set.
         #[arg(long)]
         log_level: Option<LogLevel>,
+        /// Force reinitialization: stop the server, delete and regenerate the
+        /// config file, and reinitialize. The database and other persistent
+        /// state are preserved.
+        #[arg(long)]
+        force: bool,
     },
     /// Start the local hydra server as a background daemon.
     Start {
@@ -94,7 +99,11 @@ pub enum ServerCommand {
 
 pub fn run(command: ServerCommand) -> Result<()> {
     match command {
-        ServerCommand::Init { config, log_level } => cmd_init(config, log_level),
+        ServerCommand::Init {
+            config,
+            log_level,
+            force,
+        } => cmd_init(config, log_level, force),
         ServerCommand::Start { log_level } => cmd_start(log_level),
         ServerCommand::Stop => cmd_stop(),
         ServerCommand::Status => cmd_status(),
@@ -107,19 +116,49 @@ pub fn run(command: ServerCommand) -> Result<()> {
 // init
 // ---------------------------------------------------------------------------
 
-fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>) -> Result<()> {
+fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>, force: bool) -> Result<()> {
     let server_dir = expand_path(SERVER_DIR);
     let config_path = expand_path(SERVER_CONFIG_PATH);
 
-    if config_path.exists() {
-        bail!(
-            "Server already initialized (config exists at {}). \
-             Run `hydra server start` to start it.",
-            config_path.display()
-        );
+    // --force: stop the server and delete the config file before reinitializing.
+    // The database and other persistent state in ~/.hydra/server/ are preserved.
+    if force {
+        if is_server_process_alive() {
+            println!("Stopping running server...");
+            stop_server()?;
+            // Brief pause to allow the port to be released.
+            thread::sleep(Duration::from_secs(1));
+        }
+        if config_path.exists() {
+            println!("Removing existing config: {}", config_path.display());
+            fs::remove_file(&config_path)
+                .with_context(|| format!("failed to remove {}", config_path.display()))?;
+        }
     }
 
-    let (job_engine, config_auth_token_file) = if let Some(ref source_config) = config_file {
+    // Determine config: generate if missing, skip if already present (unless --force wiped it).
+    let (job_engine, config_auth_token_file) = if config_path.exists() {
+        if config_file.is_some() {
+            println!(
+                "Config already exists at {}. Use --force to replace it.",
+                config_path.display()
+            );
+        } else {
+            println!("Config already exists, skipping config generation.");
+        }
+        // Load the existing config to determine the job engine and auth token path.
+        let existing_config = hydra_server::config::AppConfig::load(&config_path)?;
+        let engine = match &existing_config.job_engine {
+            hydra_server::config::JobEngineConfig::Local { .. } => "local",
+            hydra_server::config::JobEngineConfig::Docker => "docker",
+            hydra_server::config::JobEngineConfig::Kubernetes { .. } => "kubernetes",
+        };
+        let auth_token_file = existing_config
+            .auth
+            .auth_token_file()
+            .map(|p| p.to_path_buf());
+        (engine.to_string(), auth_token_file)
+    } else if let Some(ref source_config) = config_file {
         // Non-interactive mode: read config file, substitute env vars, validate, and copy.
         cmd_init_from_config(source_config, &server_dir, &config_path)?
     } else {
@@ -127,6 +166,9 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>) -> Result
         let engine = cmd_init_interactive(&server_dir, &config_path)?;
         (engine, None)
     };
+
+    // Ensure server directories exist (idempotent via create_dir_all).
+    create_server_dirs(&server_dir)?;
 
     // If the user chose Docker, build the worker image before starting the server
     // so all interactive prompts and long-running builds complete first.
@@ -138,21 +180,23 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>) -> Result
     // to the hardcoded default path.
     let token_path = config_auth_token_file.unwrap_or_else(|| expand_path(AUTH_TOKEN_PATH));
 
-    // Delete any stale auth-token file from a previous run so that
-    // wait_for_auth_token() only returns once the server has written a fresh one.
-    let _ = fs::remove_file(&token_path);
+    // Start the server if not already running.
+    if is_server_process_alive() {
+        println!("Server is already running, skipping start.");
+    } else {
+        // Delete any stale auth-token file from a previous run so that
+        // wait_for_auth_token() only returns once the server has written a fresh one.
+        let _ = fs::remove_file(&token_path);
 
-    // Start the server in-process so it creates the local user and auth token.
-    println!("Starting server...");
-    start_server_in_process(log_level)?;
+        println!("Starting server...");
+        start_server_in_process(log_level)?;
 
-    // Poll /health to verify the server is actually running before continuing.
-    wait_for_server_healthy()?;
+        // Poll /health to verify the server is actually running before continuing.
+        wait_for_server_healthy()?;
+    }
 
-    // Wait for the auth token file to appear (the server writes it on startup).
+    // Always refresh the auth token and CLI config (follows cmd_start pattern).
     let auth_token = wait_for_auth_token(&token_path)?;
-
-    // Verify the token actually works before proceeding.
     verify_auth_token(&auth_token)?;
 
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
@@ -162,10 +206,10 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>) -> Result
     cli_config.write_to(&cli_config_path)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
-    // Auto-populate default agents and their prompts.
+    // Auto-populate default agents and their prompts (upsert — safe to re-run).
     create_default_agents(&auth_token)?;
 
-    // Upload default documents to the document store.
+    // Upload default documents to the document store (upsert — safe to re-run).
     upload_default_documents(&auth_token)?;
 
     let engine_label = if job_engine == "docker" {
