@@ -143,6 +143,18 @@ export function useSSE(): SSEConnectionState {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
+  const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectingRef = useRef(false);
+
+  const debouncedInvalidate = useCallback(() => {
+    if (invalidateTimerRef.current) {
+      clearTimeout(invalidateTimerRef.current);
+    }
+    invalidateTimerRef.current = setTimeout(() => {
+      invalidateTimerRef.current = null;
+      invalidatePageAndTreeCaches(queryClient);
+    }, 100);
+  }, [queryClient]);
 
   /** Apply a direct cache update from SSE entity data. */
   const handleEntityEvent = useCallback(
@@ -214,6 +226,11 @@ export function useSSE(): SSEConnectionState {
   );
 
   const connect = useCallback(() => {
+    // Guard against duplicate connections
+    if (esRef.current?.readyState === EventSource.OPEN) return;
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+
     // Clean up previous connection
     if (esRef.current) {
       esRef.current.close();
@@ -228,11 +245,12 @@ export function useSSE(): SSEConnectionState {
     es.onopen = () => {
       setState("connected");
       retriesRef.current = 0;
+      connectingRef.current = false;
 
       // If this is a reconnection (we previously received events), invalidate
       // caches to cover any events missed during the disconnect window.
       if (lastEventIdRef.current !== null) {
-        invalidatePageAndTreeCaches(queryClient);
+        debouncedInvalidate();
       }
     };
 
@@ -259,7 +277,7 @@ export function useSSE(): SSEConnectionState {
     // Resync event — client has fallen behind, invalidate page and tree caches
     // only (not all caches globally) to trigger targeted refetches.
     es.addEventListener("resync", () => {
-      invalidatePageAndTreeCaches(queryClient);
+      debouncedInvalidate();
     });
 
     // Heartbeat — keep-alive, no action needed
@@ -270,6 +288,7 @@ export function useSSE(): SSEConnectionState {
     es.onerror = () => {
       es.close();
       esRef.current = null;
+      connectingRef.current = false;
       setState("disconnected");
 
       // Reconnect with exponential backoff
@@ -277,7 +296,7 @@ export function useSSE(): SSEConnectionState {
       retriesRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
     };
-  }, [handleEntityEvent, queryClient]);
+  }, [debouncedInvalidate, handleEntityEvent, queryClient]);
 
   useEffect(() => {
     connect();
@@ -290,6 +309,10 @@ export function useSSE(): SSEConnectionState {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
+      }
+      if (invalidateTimerRef.current) {
+        clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
       }
     };
   }, [connect]);
@@ -304,7 +327,7 @@ export function useSSE(): SSEConnectionState {
           clearTimeout(timerRef.current);
           timerRef.current = null;
         }
-        invalidatePageAndTreeCaches(queryClient);
+        debouncedInvalidate();
         connect();
       }
     };
@@ -313,7 +336,7 @@ export function useSSE(): SSEConnectionState {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [connect, queryClient]);
+  }, [connect, debouncedInvalidate]);
 
   return state;
 }
