@@ -67,7 +67,10 @@ impl fmt::Display for StorageConfig {
 pub enum JobEngineConfig {
     /// Local Docker-based job execution (default for single-player mode).
     #[serde(rename = "docker")]
-    Docker,
+    Docker {
+        #[serde(default)]
+        docker: DockerSection,
+    },
     /// Kubernetes-based job execution (for production / multi-player mode).
     #[serde(rename = "kubernetes")]
     Kubernetes { kubernetes: KubernetesSection },
@@ -81,14 +84,16 @@ pub enum JobEngineConfig {
 
 impl Default for JobEngineConfig {
     fn default() -> Self {
-        Self::Docker
+        Self::Docker {
+            docker: DockerSection::default(),
+        }
     }
 }
 
 impl fmt::Display for JobEngineConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Docker => write!(f, "docker"),
+            Self::Docker { .. } => write!(f, "docker"),
             Self::Kubernetes { .. } => write!(f, "kubernetes"),
             Self::Local { .. } => write!(f, "local"),
         }
@@ -555,6 +560,19 @@ impl Default for KubernetesSection {
             image_pull_secrets: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, Default, Serialize)]
+pub struct DockerSection {
+    #[serde(default)]
+    pub registry_credentials: Vec<RegistryCredential>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct RegistryCredential {
+    pub serveraddress: String,
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]

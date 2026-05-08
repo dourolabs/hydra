@@ -150,7 +150,7 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>, force: bo
         let existing_config = hydra_server::config::AppConfig::load(&config_path)?;
         let engine = match &existing_config.job_engine {
             hydra_server::config::JobEngineConfig::Local { .. } => "local",
-            hydra_server::config::JobEngineConfig::Docker => "docker",
+            hydra_server::config::JobEngineConfig::Docker { .. } => "docker",
             hydra_server::config::JobEngineConfig::Kubernetes { .. } => "kubernetes",
         };
         let auth_token_file = existing_config
@@ -269,7 +269,7 @@ fn cmd_init_from_config(
 
     let job_engine = match &app_config.job_engine {
         hydra_server::config::JobEngineConfig::Local { .. } => "local",
-        hydra_server::config::JobEngineConfig::Docker => "docker",
+        hydra_server::config::JobEngineConfig::Docker { .. } => "docker",
         hydra_server::config::JobEngineConfig::Kubernetes { .. } => "kubernetes",
     };
 
@@ -794,7 +794,9 @@ fn render_server_config(
         "local" => JobEngineConfig::Local {
             log_dir: job_log_dir.map(str::to_string),
         },
-        _ => JobEngineConfig::Docker,
+        _ => JobEngineConfig::Docker {
+            docker: hydra_server::config::DockerSection::default(),
+        },
     };
 
     let config = AppConfig {
@@ -1382,7 +1384,7 @@ mod tests {
         ));
         assert!(matches!(
             app_config.job_engine,
-            hydra_server::config::JobEngineConfig::Docker
+            hydra_server::config::JobEngineConfig::Docker { .. }
         ));
     }
 
