@@ -1,5 +1,4 @@
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::conversations::ConversationEvent as DomainEvent;
 use crate::{
     app::{AppState, CreateConversationError, CreateSessionError},
     store::StoreError,
@@ -13,7 +12,6 @@ use hydra_common::{
     ConversationId,
     api::v1::{ApiError, conversations as api_conversations},
 };
-use std::collections::HashMap;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -202,6 +200,7 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::conversations::ConversationEvent as DomainEvent;
     use hydra_common::{ConversationId, IssueId};
 
     #[test]
