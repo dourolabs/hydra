@@ -24,8 +24,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -2231,11 +2231,12 @@ impl Store for MemoryStore {
         id: &ConversationId,
         event: ConversationEvent,
         actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
+    ) -> Result<ConversationEventId, StoreError> {
         if !self.conversations.contains_key(id) {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
         let mut events = self.conversation_events.entry(id.clone()).or_default();
+        let event_index = events.len();
         let next_version = Self::next_version(&events);
         let now = Utc::now();
         events.push(Versioned::with_actor(
@@ -2245,7 +2246,10 @@ impl Store for MemoryStore {
             actor.clone(),
             now,
         ));
-        Ok(next_version)
+        Ok(ConversationEventId {
+            conversation_id: id.clone(),
+            event_index,
+        })
     }
 
     async fn store_conversation_session_state(
@@ -7328,7 +7332,8 @@ mod tests {
             .append_conversation_event(&id, event, &test_actor())
             .await
             .unwrap();
-        assert_eq!(v1, 1);
+        assert_eq!(v1.conversation_id, id);
+        assert_eq!(v1.event_index, 0);
 
         let event2 = ConversationEvent::AssistantMessage {
             content: "Hi there!".to_string(),
@@ -7338,7 +7343,8 @@ mod tests {
             .append_conversation_event(&id, event2, &test_actor())
             .await
             .unwrap();
-        assert_eq!(v2, 2);
+        assert_eq!(v2.conversation_id, id);
+        assert_eq!(v2.event_index, 1);
 
         // Verify persistence
         let events = store.get_conversation_events(&id).await.unwrap();
