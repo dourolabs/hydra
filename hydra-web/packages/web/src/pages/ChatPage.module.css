@@ -23,24 +23,11 @@
 }
 
 .back {
-  color: var(--color-accent-dim);
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  padding: 0;
-  white-space: nowrap;
-}
-
-.back:hover {
-  color: var(--color-accent);
+  composes: back from "../features/chat/chat-shared.module.css";
 }
 
 .title {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  margin: 0;
+  composes: title from "../features/chat/chat-shared.module.css";
 }
 
 .center {
