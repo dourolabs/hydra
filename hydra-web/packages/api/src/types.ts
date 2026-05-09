@@ -154,3 +154,18 @@ export type { VersionResponse } from "./generated/VersionResponse";
 export type { Versioned } from "./generated/Versioned";
 export type { WhoAmIResponse } from "./generated/WhoAmIResponse";
 export type { WorkerContext } from "./generated/WorkerContext";
+
+// Conversations
+export type { Conversation } from "./generated/Conversation";
+export type { ConversationEvent } from "./generated/ConversationEvent";
+export type { ConversationEventId } from "./generated/ConversationEventId";
+export type { ConversationId } from "./generated/ConversationId";
+export type { ConversationStatus } from "./generated/ConversationStatus";
+export type { ConversationSummary } from "./generated/ConversationSummary";
+export type { CreateConversationRequest } from "./generated/CreateConversationRequest";
+export type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
+export type { SendMessageRequest } from "./generated/SendMessageRequest";
+export type { ServerMessage } from "./generated/ServerMessage";
+export type { WorkerCatchUp } from "./generated/WorkerCatchUp";
+export type { WorkerConnect } from "./generated/WorkerConnect";
+export type { WorkerMessage } from "./generated/WorkerMessage";

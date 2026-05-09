@@ -269,5 +269,20 @@ mod ts_export {
 
         // API v1: error
         crate::api::v1::error::ApiErrorBody::export_all(&cfg).expect("ApiErrorBody");
+
+        // API v1: conversations
+        crate::conversations::Conversation::export_all(&cfg).expect("Conversation");
+        crate::conversations::ConversationSummary::export_all(&cfg).expect("ConversationSummary");
+        crate::conversations::ConversationStatus::export_all(&cfg).expect("ConversationStatus");
+        crate::conversations::ConversationEvent::export_all(&cfg).expect("ConversationEvent");
+        crate::conversations::CreateConversationRequest::export_all(&cfg)
+            .expect("CreateConversationRequest");
+        crate::conversations::SendMessageRequest::export_all(&cfg).expect("SendMessageRequest");
+        crate::conversations::SearchConversationsQuery::export_all(&cfg)
+            .expect("SearchConversationsQuery");
+        crate::conversations::WorkerConnect::export_all(&cfg).expect("WorkerConnect");
+        crate::conversations::WorkerCatchUp::export_all(&cfg).expect("WorkerCatchUp");
+        crate::conversations::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
+        crate::conversations::ServerMessage::export_all(&cfg).expect("ServerMessage");
     }
 }

@@ -60,6 +60,12 @@ import type { LabelRecord } from "./generated/LabelRecord";
 import type { ListSecretsResponse } from "./generated/ListSecretsResponse";
 import type { SetSecretRequest } from "./generated/SetSecretRequest";
 import type { VersionResponse } from "./generated/VersionResponse";
+import type { Conversation } from "./generated/Conversation";
+import type { ConversationSummary } from "./generated/ConversationSummary";
+import type { ConversationEvent } from "./generated/ConversationEvent";
+import type { CreateConversationRequest } from "./generated/CreateConversationRequest";
+import type { SendMessageRequest } from "./generated/SendMessageRequest";
+import type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -612,6 +618,45 @@ export class HydraApiClient {
   /** GET /v1/relations */
   listRelations(query: ListRelationsRequest): Promise<ListRelationsResponse> {
     return this.get("/v1/relations", query as Record<string, unknown>);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Conversations
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/conversations */
+  listConversations(query?: Partial<SearchConversationsQuery>): Promise<ConversationSummary[]> {
+    return this.get("/v1/conversations", query as Record<string, unknown>);
+  }
+
+  /** GET /v1/conversations/:conversationId */
+  getConversation(conversationId: string): Promise<Conversation> {
+    return this.get(`/v1/conversations/${encodeURIComponent(conversationId)}`);
+  }
+
+  /** GET /v1/conversations/:conversationId/events */
+  getConversationEvents(conversationId: string): Promise<ConversationEvent[]> {
+    return this.get(`/v1/conversations/${encodeURIComponent(conversationId)}/events`);
+  }
+
+  /** POST /v1/conversations */
+  createConversation(request: CreateConversationRequest): Promise<Conversation> {
+    return this.post("/v1/conversations", request);
+  }
+
+  /** POST /v1/conversations/:conversationId/messages */
+  sendMessage(conversationId: string, request: SendMessageRequest): Promise<void> {
+    return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/messages`, request);
+  }
+
+  /** POST /v1/conversations/:conversationId/close */
+  closeConversation(conversationId: string): Promise<void> {
+    return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/close`);
+  }
+
+  /** POST /v1/conversations/:conversationId/resume */
+  resumeConversation(conversationId: string): Promise<Conversation> {
+    return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/resume`);
   }
 
   // ---------------------------------------------------------------------------
