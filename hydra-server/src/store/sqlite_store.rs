@@ -609,7 +609,7 @@ impl SqliteStore {
             other => {
                 return Err(StoreError::Internal(format!(
                     "unknown conversation status: {other}"
-                )))
+                )));
             }
         };
         Ok(Conversation {
@@ -3739,8 +3739,7 @@ impl ReadOnlyStore for SqliteStore {
              WHERE c.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let (mut predicates, mut bindings) =
-            build_conversations_predicates_sqlite(query);
+        let (mut predicates, mut bindings) = build_conversations_predicates_sqlite(query);
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -3772,9 +3771,7 @@ impl ReadOnlyStore for SqliteStore {
             })?;
             let conversation = Self::row_to_conversation(&row)?;
             let conversation_id = row.id.parse::<ConversationId>().map_err(|err| {
-                StoreError::Internal(format!(
-                    "invalid conversation id stored in database: {err}"
-                ))
+                StoreError::Internal(format!("invalid conversation id stored in database: {err}"))
             })?;
             let timestamp = parse_sqlite_timestamp(&row.created_at)?;
             let creation_time = row
@@ -3816,16 +3813,11 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut events = Vec::with_capacity(rows.len());
         for row in rows {
-            let event: ConversationEvent =
-                serde_json::from_str(&row.event_data).map_err(|e| {
-                    StoreError::Internal(format!(
-                        "failed to deserialize conversation event: {e}"
-                    ))
-                })?;
+            let event: ConversationEvent = serde_json::from_str(&row.event_data).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize conversation event: {e}"))
+            })?;
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(
-                    "invalid version number for conversation event".to_string(),
-                )
+                StoreError::Internal("invalid version number for conversation event".to_string())
             })?;
             let timestamp = parse_sqlite_timestamp(&row.created_at)?;
             events.push(Versioned::with_optional_actor(
@@ -4702,8 +4694,7 @@ impl Store for SqliteStore {
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-        Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json))
-            .await?;
+        Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json)).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok((id, 1))
@@ -4768,9 +4759,7 @@ impl Store for SqliteStore {
 
         // Event index is version - 1 (0-based)
         let event_index = usize::try_from(next_version.saturating_sub(1)).map_err(|_| {
-            StoreError::Internal(format!(
-                "event index overflow for conversation '{id}'"
-            ))
+            StoreError::Internal(format!("event index overflow for conversation '{id}'"))
         })?;
 
         let event_data = serde_json::to_string(&event).map_err(|e| {
@@ -8661,9 +8650,7 @@ mod tests {
             .unwrap();
 
         let query = SearchConversationsQuery {
-            status: Some(
-                hydra_common::api::v1::conversations::ConversationStatus::Active,
-            ),
+            status: Some(hydra_common::api::v1::conversations::ConversationStatus::Active),
             ..Default::default()
         };
         let results = store.list_conversations(&query).await.unwrap();
@@ -8697,7 +8684,10 @@ mod tests {
         };
         let results = store.list_conversations(&query).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].1.item.creator, Username::from("alice".to_string()));
+        assert_eq!(
+            results[0].1.item.creator,
+            Username::from("alice".to_string())
+        );
     }
 
     #[tokio::test]
@@ -8723,10 +8713,7 @@ mod tests {
         };
         let results = store.list_conversations(&query).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].1.item.title,
-            Some("Meeting notes".to_string()),
-        );
+        assert_eq!(results[0].1.item.title, Some("Meeting notes".to_string()),);
     }
 
     #[tokio::test]
