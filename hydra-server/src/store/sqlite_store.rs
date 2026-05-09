@@ -3526,6 +3526,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_conversation(
         &self,
         _id: &ConversationId,
+        _include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         todo!("SQLite conversation store not yet implemented")
     }

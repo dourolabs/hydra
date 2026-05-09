@@ -532,7 +532,7 @@ async fn serialize_entity(
             } else {
                 state
                     .store()
-                    .get_conversation(&conversation_id)
+                    .get_conversation(&conversation_id, true)
                     .await
                     .ok()
                     .map(|v| v.creation_time)
