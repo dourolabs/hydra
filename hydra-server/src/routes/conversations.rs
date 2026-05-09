@@ -1,7 +1,7 @@
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::conversations::{Conversation, ConversationEvent as DomainEvent};
+use crate::domain::conversations::ConversationEvent as DomainEvent;
 use crate::{
-    app::{AppState, CreateSessionError},
+    app::{AppState, CreateConversationError, CreateSessionError},
     store::StoreError,
 };
 use axum::{
@@ -11,12 +11,8 @@ use axum::{
 };
 use hydra_common::{
     ConversationId,
-    api::v1::{
-        ApiError, conversations as api_conversations,
-        sessions::{BundleSpec, CreateSessionRequest},
-    },
+    api::v1::{ApiError, conversations as api_conversations},
 };
-use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -46,65 +42,12 @@ pub async fn create_conversation(
     info!("create_conversation invoked");
 
     let creator = actor.creator.clone();
-
-    // 1. Create a domain Conversation with status Active
-    let conversation = Conversation {
-        title: None,
-        agent_name: payload.agent_name.clone(),
-        active_session_id: None,
-        status: crate::domain::conversations::ConversationStatus::Active,
-        creator: creator.clone(),
-        deleted: false,
-    };
-
-    // 2. Persist the conversation
     let actor_ref = ActorRef::from(&actor);
-    let (conversation_id, _version) = state
-        .store
-        .add_conversation_with_actor(conversation.clone(), actor_ref.clone())
-        .await
-        .map_err(map_conversation_error)?;
 
-    // 3. Append the first UserMessage event
-    let event = DomainEvent::UserMessage {
-        content: payload.message.clone(),
-        timestamp: chrono::Utc::now(),
-    };
-    state
-        .store
-        .append_conversation_event_with_actor(&conversation_id, event, actor_ref.clone())
+    let (conversation_id, versioned) = state
+        .create_conversation(payload.message, payload.agent_name, actor_ref, creator)
         .await
-        .map_err(map_conversation_error)?;
-
-    // 4. Create an interactive session
-    let session_request = CreateSessionRequest::new(
-        payload.message,
-        None,
-        BundleSpec::None,
-        HashMap::new(),
-        None,
-        true,
-    );
-    let session_id = state
-        .create_session(session_request, actor_ref.clone(), creator)
-        .await
-        .map_err(map_create_session_error)?;
-
-    // 5. Update conversation with active_session_id
-    let mut updated_conversation = conversation;
-    updated_conversation.active_session_id = Some(session_id);
-    state
-        .store
-        .update_conversation_with_actor(&conversation_id, updated_conversation, actor_ref)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // 6. Return the conversation
-    let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-        .map_err(map_conversation_error)?;
+        .map_err(map_create_conversation_error)?;
 
     let api_conversation = versioned.item.to_api(
         conversation_id,
@@ -232,6 +175,13 @@ fn truncate_preview(content: &str, prefix: &str) -> String {
     } else {
         let truncated: String = content.chars().take(remaining).collect();
         format!("{prefix}{truncated}…")
+    }
+}
+
+fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
+    match err {
+        CreateConversationError::Store { source } => map_conversation_error(source),
+        CreateConversationError::Session { source } => map_create_session_error(source),
     }
 }
 
