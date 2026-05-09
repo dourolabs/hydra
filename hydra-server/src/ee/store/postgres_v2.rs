@@ -676,7 +676,7 @@ impl PostgresStoreV2 {
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(session.prompt.as_deref().unwrap_or(""))
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -748,8 +748,14 @@ impl PostgresStoreV2 {
             }
         };
 
+        let prompt = if row.prompt.is_empty() {
+            None
+        } else {
+            Some(row.prompt.clone())
+        };
+
         Ok(Session {
-            prompt: row.prompt.clone(),
+            prompt,
             context,
             spawned_from,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
@@ -4991,7 +4997,7 @@ mod tests {
 
     fn sample_session() -> Session {
         Session::new(
-            "prompt".to_string(),
+            Some("prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -5013,7 +5019,7 @@ mod tests {
     /// Session with creator and other fields set for round-trip tests.
     fn session_with_creator_for_round_trip() -> Session {
         Session::new(
-            "round-trip prompt".to_string(),
+            Some("round-trip prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("alice"),
@@ -5063,7 +5069,7 @@ mod tests {
     /// Session with every optional field set so serialization round-trip can assert full equality.
     fn sample_session_all_fields() -> Session {
         let mut session = Session::new(
-            "full prompt".to_string(),
+            Some("full prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("bob"),
@@ -5155,7 +5161,7 @@ mod tests {
             dependencies,
             patches,
             Some(Form {
-                prompt: "Please review and respond".to_string(),
+                prompt: Some("Please review and respond".to_string()),
                 fields: vec![
                     Field {
                         key: "name".to_string(),
@@ -5314,7 +5320,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let mut updated = fetched.item.clone();
-        updated.prompt = "updated prompt".to_string();
+        updated.prompt = Some("updated prompt".to_string());
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -5325,7 +5331,7 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        assert_eq!(fetched2.item.prompt, "updated prompt");
+        assert_eq!(fetched2.item.prompt, Some("updated prompt".to_string()));
         assert_eq!(fetched2.version, 2);
     }
 

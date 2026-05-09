@@ -2,4 +2,4 @@
 import type { BundleSpec } from "./BundleSpec";
 import type { IssueId } from "./IssueId";
 
-export type CreateSessionRequest = { prompt: string, image?: string | null, context: BundleSpec, variables?: { [key in string]: string }, issue_id?: IssueId | null, };
+export type CreateSessionRequest = { prompt?: string | null, image?: string | null, context: BundleSpec, variables?: { [key in string]: string }, issue_id?: IssueId | null, interactive: boolean, };

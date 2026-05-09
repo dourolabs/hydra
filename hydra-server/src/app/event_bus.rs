@@ -2119,7 +2119,7 @@ mod tests {
         let mut rx = bus.subscribe();
 
         let task = StoreTask {
-            prompt: "test task".to_string(),
+            prompt: Some("test task".to_string()),
             context: crate::domain::sessions::BundleSpec::None,
             spawned_from: None,
             creator: crate::domain::users::Username::from("test-user"),
@@ -2148,7 +2148,7 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume SessionCreated
 
         let updated_task = StoreTask {
-            prompt: "test task".to_string(),
+            prompt: Some("test task".to_string()),
             context: crate::domain::sessions::BundleSpec::None,
             spawned_from: None,
             creator: crate::domain::users::Username::from("test-user"),

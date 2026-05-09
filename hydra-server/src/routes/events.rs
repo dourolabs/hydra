@@ -872,7 +872,7 @@ mod tests {
 
     fn dummy_task() -> Session {
         Session::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),

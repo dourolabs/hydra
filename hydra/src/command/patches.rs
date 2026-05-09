@@ -1465,7 +1465,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
@@ -1567,7 +1567,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
@@ -1747,7 +1747,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::ServiceRepository {
                     name: RepoName::from_str("dourolabs/api")?,
                     rev: None,
@@ -1847,7 +1847,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
@@ -1965,7 +1965,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::GitRepository {
                     url: "https://github.com/dourolabs/example".to_string(),
                     rev: "main".to_string(),

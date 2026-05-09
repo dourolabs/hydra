@@ -19,7 +19,8 @@ pub type McpConfig = Value;
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Session {
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
@@ -61,7 +62,7 @@ pub struct Session {
 impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        prompt: String,
+        prompt: Option<String>,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
         creator: Username,
@@ -116,7 +117,8 @@ fn default_status() -> Status {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateSessionRequest {
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default)]
@@ -131,7 +133,7 @@ pub struct CreateSessionRequest {
 
 impl CreateSessionRequest {
     pub fn new(
-        prompt: String,
+        prompt: Option<String>,
         image: Option<String>,
         context: BundleSpec,
         variables: HashMap<String, String>,
@@ -274,7 +276,8 @@ impl<'de> Deserialize<'de> for Bundle {
 #[non_exhaustive]
 pub struct WorkerContext {
     pub request_context: Bundle,
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
@@ -291,7 +294,7 @@ impl WorkerContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         request_context: Bundle,
-        prompt: String,
+        prompt: Option<String>,
         model: Option<String>,
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
@@ -335,7 +338,8 @@ impl CreateSessionResponse {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SessionSummary {
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
     pub creator: Username,
@@ -355,13 +359,15 @@ pub struct SessionSummary {
 
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
-        let prompt = if session.prompt.chars().count() > 20 {
-            let mut s: String = session.prompt.chars().take(20).collect();
-            s.push_str("...");
-            s
-        } else {
-            session.prompt.clone()
-        };
+        let prompt = session.prompt.as_ref().map(|p| {
+            if p.chars().count() > 20 {
+                let mut s: String = p.chars().take(20).collect();
+                s.push_str("...");
+                s
+            } else {
+                p.clone()
+            }
+        });
         let error = session.error.as_ref().map(|e| match e {
             TaskError::JobEngineError { reason } => {
                 if reason.chars().count() > 100 {
@@ -679,7 +685,7 @@ mod tests {
 
     fn make_test_session(prompt: &str) -> Session {
         Session::new(
-            prompt.to_string(),
+            Some(prompt.to_string()),
             BundleSpec::None,
             Some(IssueId::new()),
             Username::from("alice"),
@@ -707,14 +713,14 @@ mod tests {
         let long_prompt = "x".repeat(500);
         let session = make_test_session(&long_prompt);
         let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, format!("{}...", "x".repeat(20)));
+        assert_eq!(summary.prompt, Some(format!("{}...", "x".repeat(20))));
     }
 
     #[test]
     fn session_summary_preserves_short_prompt() {
         let session = make_test_session("short prompt");
         let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, "short prompt");
+        assert_eq!(summary.prompt, Some("short prompt".to_string()));
     }
 
     #[test]
@@ -736,7 +742,7 @@ mod tests {
     fn session_summary_maps_all_fields() {
         let session = make_test_session("my prompt");
         let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, "my prompt");
+        assert_eq!(summary.prompt, Some("my prompt".to_string()));
         assert!(summary.spawned_from.is_some());
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.status, Status::Running);
@@ -756,7 +762,10 @@ mod tests {
         let summary_record = SessionSummaryRecord::from(&record);
         assert_eq!(summary_record.session_id, session_id);
         assert_eq!(summary_record.version, 7);
-        assert_eq!(summary_record.session.prompt, "record test");
+        assert_eq!(
+            summary_record.session.prompt,
+            Some("record test".to_string())
+        );
         assert_eq!(summary_record.actor, None);
     }
 
@@ -862,7 +871,7 @@ mod tests {
         });
         let context = WorkerContext::new(
             Bundle::None,
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             HashMap::new(),
             None,

@@ -315,14 +315,8 @@ pub async fn resume_conversation(
     let actor_ref = ActorRef::from(&actor);
 
     // Create a new interactive session
-    let session_request = CreateSessionRequest::new(
-        String::new(),
-        None,
-        BundleSpec::None,
-        HashMap::new(),
-        None,
-        true,
-    );
+    let session_request =
+        CreateSessionRequest::new(None, None, BundleSpec::None, HashMap::new(), None, true);
     let session_id = state
         .create_session(session_request, actor_ref.clone(), creator)
         .await

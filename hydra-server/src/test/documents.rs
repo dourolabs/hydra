@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 fn sample_task(status: Status) -> Session {
     Session::new(
-        "prompt".to_string(),
+        Some("prompt".to_string()),
         BundleSpec::None,
         None,
         Username::from("test-creator"),

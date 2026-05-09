@@ -146,7 +146,7 @@ mod tests {
 
     fn make_task(issue_id: &hydra_common::IssueId) -> crate::domain::sessions::Session {
         crate::domain::sessions::Session::new(
-            "test task".to_string(),
+            Some("test task".to_string()),
             BundleSpec::None,
             Some(issue_id.clone()),
             Username::from("test-creator"),

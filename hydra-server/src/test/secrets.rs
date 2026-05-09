@@ -996,7 +996,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "test prompt".to_string(),
+                prompt: Some("test prompt".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: creator.clone(),

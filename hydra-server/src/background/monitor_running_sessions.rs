@@ -130,7 +130,7 @@ mod tests {
         let engine = Arc::new(MockJobEngine::new());
         let handles = test_state_with_engine_handles(engine.clone());
         let task = Session::new(
-            "observe".to_string(),
+            Some("observe".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -220,7 +220,7 @@ mod tests {
             .unwrap();
 
         let task = Session::new(
-            "spawned task".to_string(),
+            Some("spawned task".to_string()),
             BundleSpec::None,
             Some(issue_id.clone()),
             Username::from("test-creator"),

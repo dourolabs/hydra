@@ -365,7 +365,7 @@ impl UserHandle {
     /// Returns the new session's task ID.
     pub async fn create_session(&self, repo: &RepoName, prompt: &str) -> Result<SessionId> {
         let request = CreateSessionRequest::new(
-            prompt.to_string(),
+            Some(prompt.to_string()),
             None,
             BundleSpec::ServiceRepository {
                 name: repo.clone(),
@@ -395,7 +395,7 @@ impl UserHandle {
         issue_id: &IssueId,
     ) -> Result<SessionId> {
         let request = CreateSessionRequest::new(
-            prompt.to_string(),
+            Some(prompt.to_string()),
             None,
             BundleSpec::ServiceRepository {
                 name: repo.clone(),

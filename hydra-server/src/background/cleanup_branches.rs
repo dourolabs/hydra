@@ -497,7 +497,7 @@ mod tests {
     async fn is_branch_stale_returns_false_for_existing_task() {
         let handles = crate::test_utils::test_state_handles();
         let task = crate::store::Session::new(
-            "test task".to_string(),
+            Some("test task".to_string()),
             crate::domain::sessions::BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -574,7 +574,7 @@ mod tests {
     async fn is_branch_stale_returns_true_for_deleted_task() {
         let handles = crate::test_utils::test_state_handles();
         let task = crate::store::Session::new(
-            "deleted task".to_string(),
+            Some("deleted task".to_string()),
             crate::domain::sessions::BundleSpec::None,
             None,
             Username::from("test-creator"),

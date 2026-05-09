@@ -90,7 +90,7 @@ mod tests {
 
     fn make_session(status: Status) -> Session {
         Session::new(
-            "test task".to_string(),
+            Some("test task".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),

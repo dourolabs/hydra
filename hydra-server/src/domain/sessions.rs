@@ -13,7 +13,8 @@ fn default_task_status() -> Status {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
@@ -55,7 +56,7 @@ pub struct Session {
 impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        prompt: String,
+        prompt: Option<String>,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
         creator: Username,
@@ -277,7 +278,7 @@ mod tests {
     fn session_roundtrip_preserves_secrets() {
         let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
         let domain_session = Session::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -307,7 +308,7 @@ mod tests {
     #[test]
     fn session_roundtrip_preserves_empty_secrets() {
         let domain_session = Session::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
