@@ -34,7 +34,10 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskError, TaskStatusLog};
+use super::{
+    ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskError,
+    TaskStatusLog,
+};
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
@@ -164,6 +167,13 @@ struct ConversationEventRow {
     event_data: String,
     actor: Option<String>,
     created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationEventSummaryRow {
+    conversation_id: String,
+    event_count: i64,
+    last_event_data: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3830,6 +3840,66 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         Ok(events)
+    }
+
+    async fn get_conversation_event_summaries(
+        &self,
+        ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT e.id AS conversation_id, COUNT(*) AS event_count, \
+             (SELECT e2.event_data FROM {TABLE_CONVERSATION_EVENTS} e2 \
+              WHERE e2.id = e.id ORDER BY e2.version_number DESC LIMIT 1) AS last_event_data \
+             FROM {TABLE_CONVERSATION_EVENTS} e \
+             WHERE e.id IN ({}) \
+             GROUP BY e.id",
+            placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, ConversationEventSummaryRow>(&sql);
+        for id in ids {
+            query_builder = query_builder.bind(id.as_ref());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let conv_id = row
+                .conversation_id
+                .parse::<ConversationId>()
+                .map_err(|e| StoreError::Internal(format!("invalid conversation id: {e}")))?;
+            let last_event_preview = row
+                .last_event_data
+                .as_deref()
+                .map(|data| {
+                    serde_json::from_str::<ConversationEvent>(data)
+                        .map(|event| event.preview())
+                        .map_err(|e| {
+                            StoreError::Internal(format!(
+                                "failed to deserialize conversation event: {e}"
+                            ))
+                        })
+                })
+                .transpose()?;
+            result.insert(
+                conv_id,
+                ConversationEventSummary {
+                    event_count: row.event_count as usize,
+                    last_event_preview,
+                },
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_conversation_session_state(

@@ -48,6 +48,31 @@ pub enum ConversationEvent {
     },
 }
 
+impl ConversationEvent {
+    /// Returns a short preview string for this event, suitable for summaries.
+    pub fn preview(&self) -> String {
+        const MAX_LEN: usize = 100;
+
+        fn truncate(content: &str, prefix: &str) -> String {
+            let remaining = MAX_LEN.saturating_sub(prefix.len());
+            if content.len() <= remaining {
+                format!("{prefix}{content}")
+            } else {
+                let truncated: String = content.chars().take(remaining).collect();
+                format!("{prefix}{truncated}…")
+            }
+        }
+
+        match self {
+            ConversationEvent::UserMessage { content, .. } => truncate(content, "User: "),
+            ConversationEvent::AssistantMessage { content, .. } => truncate(content, "Assistant: "),
+            ConversationEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
+            ConversationEvent::Resumed { .. } => "Resumed".to_string(),
+            ConversationEvent::Closed { .. } => "Closed".to_string(),
+        }
+    }
+}
+
 // ---- From conversions: API -> Domain ----
 
 impl From<api::conversations::ConversationStatus> for ConversationStatus {

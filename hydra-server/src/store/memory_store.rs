@@ -3,7 +3,9 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
-use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog};
+use super::{
+    ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog,
+};
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
@@ -1546,6 +1548,28 @@ impl ReadOnlyStore for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone())
             .unwrap_or_default())
+    }
+
+    async fn get_conversation_event_summaries(
+        &self,
+        ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
+        let mut result = HashMap::new();
+        for id in ids {
+            if let Some(entry) = self.conversation_events.get(id) {
+                let events = entry.value();
+                if !events.is_empty() {
+                    result.insert(
+                        id.clone(),
+                        ConversationEventSummary {
+                            event_count: events.len(),
+                            last_event_preview: events.last().map(|v| v.item.preview()),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_conversation_session_state(
@@ -7533,5 +7557,89 @@ mod tests {
         // get_conversation with include_deleted=true should return the deleted conversation
         let fetched = store.get_conversation(&id, true).await.unwrap();
         assert!(fetched.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_returns_counts_and_previews() {
+        let store = MemoryStore::new();
+        let (id1, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (id2, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (id3, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // Add 2 events to conversation 1
+        store
+            .append_conversation_event(
+                &id1,
+                ConversationEvent::UserMessage {
+                    content: "Hello".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_conversation_event(
+                &id1,
+                ConversationEvent::AssistantMessage {
+                    content: "Hi there".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        // Add 1 event to conversation 2
+        store
+            .append_conversation_event(
+                &id2,
+                ConversationEvent::UserMessage {
+                    content: "Goodbye".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        // conversation 3 has no events
+
+        let summaries = store
+            .get_conversation_event_summaries(&[id1.clone(), id2.clone(), id3.clone()])
+            .await
+            .unwrap();
+
+        // Conversation 1: 2 events, last is assistant message
+        let s1 = summaries.get(&id1).expect("should have summary for id1");
+        assert_eq!(s1.event_count, 2);
+        assert_eq!(
+            s1.last_event_preview.as_deref(),
+            Some("Assistant: Hi there")
+        );
+
+        // Conversation 2: 1 event
+        let s2 = summaries.get(&id2).expect("should have summary for id2");
+        assert_eq!(s2.event_count, 1);
+        assert_eq!(s2.last_event_preview.as_deref(), Some("User: Goodbye"));
+
+        // Conversation 3: no events, omitted
+        assert!(!summaries.contains_key(&id3));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_empty_ids() {
+        let store = MemoryStore::new();
+        let summaries = store.get_conversation_event_summaries(&[]).await.unwrap();
+        assert!(summaries.is_empty());
     }
 }
