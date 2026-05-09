@@ -8732,4 +8732,76 @@ mod tests {
             .await;
         assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
+
+    #[tokio::test]
+    async fn list_conversations_filters_deleted() {
+        let store = create_test_store().await;
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Conversation should be visible in list initially
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].1.item.deleted);
+
+        // Soft-delete the conversation
+        let mut deleted_conv = sample_conversation();
+        deleted_conv.deleted = true;
+        store
+            .update_conversation(&id, deleted_conv, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Deleted conversation should not appear in default list
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+
+        // Deleted conversation should appear with include_deleted=true
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                include_deleted: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_filters_deleted() {
+        let store = create_test_store().await;
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Conversation is accessible when not deleted
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
+
+        // Soft-delete the conversation
+        let mut deleted_conv = sample_conversation();
+        deleted_conv.deleted = true;
+        store
+            .update_conversation(&id, deleted_conv, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // get_conversation with include_deleted=false should return ConversationNotFound
+        let err = store.get_conversation(&id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationNotFound(_)));
+
+        // get_conversation with include_deleted=true should return the deleted conversation
+        let fetched = store.get_conversation(&id, true).await.unwrap();
+        assert!(fetched.item.deleted);
+    }
 }
