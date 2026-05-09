@@ -49,8 +49,14 @@ pub async fn run(
         }
         None => None,
     };
-    let request =
-        CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id, false);
+    let request = CreateSessionRequest::new(
+        Some(prompt),
+        image,
+        bundle_context,
+        variables,
+        issue_id,
+        false,
+    );
     let response = client.create_session(&request).await?;
     let session_id = response.session_id;
 
@@ -280,7 +286,7 @@ mod tests {
             0,
             chrono::Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::None,
                 None,
                 Username::from("test-creator"),
@@ -328,7 +334,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let create_request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             BundleSpec::None,
             variables.clone(),
@@ -390,7 +396,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             BundleSpec::ServiceRepository {
                 name: RepoName::from_str("dourolabs/service-repo").unwrap(),
@@ -438,7 +444,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             BundleSpec::ServiceRepository {
                 name: RepoName::from_str("dourolabs/service-repo").unwrap(),
@@ -486,7 +492,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             BundleSpec::GitRepository {
                 url: "https://example.com/repo.git".into(),
@@ -534,7 +540,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             None,
             BundleSpec::GitRepository {
                 url: "https://example.com/repo.git".into(),
@@ -582,7 +588,7 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "custom image".to_string());
         let request = CreateSessionRequest::new(
-            "custom image".to_string(),
+            Some("custom image".to_string()),
             Some("ghcr.io/example/hydra:dev".to_string()),
             BundleSpec::None,
             variables,
@@ -625,7 +631,7 @@ mod tests {
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
         let request = CreateSessionRequest::new(
-            "variable prompt".to_string(),
+            Some("variable prompt".to_string()),
             None,
             BundleSpec::None,
             HashMap::from([

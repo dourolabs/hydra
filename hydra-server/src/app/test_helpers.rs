@@ -15,7 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub fn sample_task() -> Session {
     Session::new(
-        "Spawn me".to_string(),
+        Some("Spawn me".to_string()),
         BundleSpec::None,
         None,
         Username::from("test-creator"),
@@ -40,7 +40,7 @@ pub fn task_for_issue(issue_id: &IssueId) -> Session {
 
 pub fn task_for_issue_with_status(issue_id: &IssueId, status: Status) -> Session {
     Session::new(
-        "Spawn me".to_string(),
+        Some("Spawn me".to_string()),
         BundleSpec::None,
         Some(issue_id.clone()),
         Username::from("creator"),

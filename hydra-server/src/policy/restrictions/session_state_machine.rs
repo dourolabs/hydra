@@ -94,7 +94,7 @@ mod tests {
 
     fn make_task_with_status(status: Status) -> Session {
         Session::new(
-            "test".to_string(),
+            Some("test".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),

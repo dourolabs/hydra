@@ -150,7 +150,7 @@ impl AgentQueue {
         };
 
         Ok(Some(Session::new(
-            prompt.to_string(),
+            Some(prompt.to_string()),
             bundle,
             Some(issue_id.clone()),
             issue.creator.clone(),
@@ -616,7 +616,7 @@ mod tests {
         env_vars: HashMap<String, String>,
     ) -> Session {
         Session::new(
-            prompt.to_string(),
+            Some(prompt.to_string()),
             context,
             spawned_from,
             Username::from("test-creator"),
@@ -715,7 +715,7 @@ mod tests {
                 ..
             } = task;
 
-            assert_eq!(prompt, "Fix the issue");
+            assert_eq!(prompt, Some("Fix the issue".to_string()));
             assert_eq!(
                 context,
                 BundleSpec::ServiceRepository {
@@ -1360,7 +1360,7 @@ mod tests {
             .store
             .add_session(
                 Session {
-                    prompt: "Existing".to_string(),
+                    prompt: Some("Existing".to_string()),
                     context: BundleSpec::None,
                     spawned_from: Some(issue_id.clone()),
                     creator: Username::from("test-creator"),
@@ -1468,7 +1468,7 @@ mod tests {
             .store
             .add_session(
                 Session {
-                    prompt: "Pending work".to_string(),
+                    prompt: Some("Pending work".to_string()),
                     context: BundleSpec::None,
                     spawned_from: Some(first_issue_id.clone()),
                     creator: Username::from("test-creator"),

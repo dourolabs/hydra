@@ -1121,7 +1121,7 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(session.prompt.as_deref().unwrap_or(""))
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -1153,7 +1153,7 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(session.prompt.as_deref().unwrap_or(""))
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -1254,8 +1254,14 @@ impl SqliteStore {
             })
             .transpose()?;
 
+        let prompt = if row.prompt.is_empty() {
+            None
+        } else {
+            Some(row.prompt.clone())
+        };
+
         Ok(Session {
-            prompt: row.prompt.clone(),
+            prompt,
             context,
             spawned_from,
             creator,
@@ -6492,7 +6498,7 @@ mod tests {
 
     fn spawn_task() -> Session {
         Session::new(
-            "test prompt".to_string(),
+            Some("test prompt".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -6546,14 +6552,14 @@ mod tests {
         let store = create_test_store().await;
 
         let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        task.prompt = Some("v1".to_string());
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = spawn_task();
-        updated.prompt = "v2".to_string();
+        updated.prompt = Some("v2".to_string());
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -6568,14 +6574,14 @@ mod tests {
         let store = create_test_store().await;
 
         let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        task.prompt = Some("v1".to_string());
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut v2 = spawn_task();
-        v2.prompt = "v2".to_string();
+        v2.prompt = Some("v2".to_string());
         store
             .update_session(&task_id, v2, &ActorRef::test())
             .await
@@ -6585,8 +6591,8 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
-        assert_eq!(versions[0].item.prompt, "v1");
-        assert_eq!(versions[1].item.prompt, "v2");
+        assert_eq!(versions[0].item.prompt, Some("v1".to_string()));
+        assert_eq!(versions[1].item.prompt, Some("v2".to_string()));
     }
 
     #[tokio::test]
@@ -6615,14 +6621,14 @@ mod tests {
         let store = create_test_store().await;
 
         let mut task1 = spawn_task();
-        task1.prompt = "deploy to production".to_string();
+        task1.prompt = Some("deploy to production".to_string());
         store
             .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task2 = spawn_task();
-        task2.prompt = "run tests".to_string();
+        task2.prompt = Some("run tests".to_string());
         store
             .add_session(task2, Utc::now(), &ActorRef::test())
             .await
@@ -6631,7 +6637,10 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].1.item.prompt, "deploy to production");
+        assert_eq!(
+            tasks[0].1.item.prompt,
+            Some("deploy to production".to_string())
+        );
     }
 
     #[tokio::test]
@@ -6883,7 +6892,7 @@ mod tests {
     async fn task_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
         let task = Session::new(
-            "full test".to_string(),
+            Some("full test".to_string()),
             BundleSpec::None,
             None,
             Username::from("alice"),

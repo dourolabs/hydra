@@ -39,13 +39,14 @@ pub async fn run(
     let WorkerContext {
         request_context,
         variables,
-        prompt,
+        prompt: prompt_opt,
         model,
         build_cache,
         mcp_config,
         interactive,
         ..
     } = client.get_session_context(&job).await?;
+    let prompt = prompt_opt.unwrap_or_default();
     let mcp_config_json = mcp_config
         .map(|c| serde_json::to_string(&c))
         .transpose()

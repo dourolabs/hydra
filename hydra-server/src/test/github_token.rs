@@ -110,7 +110,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         .await?;
 
     let task = Session::new(
-        "prompt".to_string(),
+        Some("prompt".to_string()),
         BundleSpec::None,
         Some(issue_id),
         Username::from("test-creator"),
@@ -236,7 +236,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         .await?;
 
     let task = Session::new(
-        "prompt".to_string(),
+        Some("prompt".to_string()),
         BundleSpec::None,
         Some(issue_id),
         Username::from("test-creator"),
@@ -333,7 +333,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         .await?;
 
     let task = Session::new(
-        "prompt".to_string(),
+        Some("prompt".to_string()),
         BundleSpec::None,
         Some(issue_id),
         Username::from("test-creator"),

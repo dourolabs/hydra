@@ -76,7 +76,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "0".to_string(),
+                Some("0".to_string()),
                 BundleSpec::None,
                 None,
                 Username::from("test-creator"),

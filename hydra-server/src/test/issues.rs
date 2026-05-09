@@ -2036,7 +2036,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
 
     // Helper to create a session linked to this issue
     let make_session = || Session {
-        prompt: "0".to_string(),
+        prompt: Some("0".to_string()),
         context: BundleSpec::None,
         spawned_from: Some(issue_id.clone()),
         creator: Username::from("test-creator"),

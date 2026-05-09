@@ -4540,7 +4540,7 @@ mod tests {
         ));
 
         let base_task = Session::new(
-            "run build".into(),
+            Some("run build".into()),
             BundleSpec::None,
             Some(main_issue_id.clone()),
             Username::from("test-creator"),

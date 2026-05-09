@@ -401,7 +401,13 @@ impl MemoryStore {
 
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
+                let matches_prompt = latest
+                    .item
+                    .prompt
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(term);
                 let matches_status = format!("{:?}", latest.item.status)
                     .to_lowercase()
                     .contains(term);
@@ -2420,7 +2426,7 @@ mod tests {
 
     fn spawn_task() -> Session {
         Session::new(
-            "0".to_string(),
+            Some("0".to_string()),
             BundleSpec::None,
             None,
             Username::from("test-creator"),
@@ -3311,14 +3317,14 @@ mod tests {
         let store = MemoryStore::new();
 
         let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        task.prompt = Some("v1".to_string());
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = spawn_task();
-        updated.prompt = "v2".to_string();
+        updated.prompt = Some("v2".to_string());
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -3336,14 +3342,14 @@ mod tests {
         let store = MemoryStore::new();
 
         let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        task.prompt = Some("v1".to_string());
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut v2 = spawn_task();
-        v2.prompt = "v2".to_string();
+        v2.prompt = Some("v2".to_string());
         store
             .update_session(&task_id, v2, &ActorRef::test())
             .await
@@ -3351,8 +3357,8 @@ mod tests {
 
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
-        assert_eq!(versions[0].item.prompt, "v1");
-        assert_eq!(versions[1].item.prompt, "v2");
+        assert_eq!(versions[0].item.prompt, Some("v1".to_string()));
+        assert_eq!(versions[1].item.prompt, Some("v2".to_string()));
     }
 
     #[tokio::test]
@@ -3396,14 +3402,14 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
         let created_at = Utc::now() - Duration::seconds(60);
         let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        task.prompt = Some("v1".to_string());
         let (task_id, _) = store
             .add_session(task.clone(), created_at, &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = task.clone();
-        updated.prompt = "v2".to_string();
+        updated.prompt = Some("v2".to_string());
         store
             .update_session(&task_id, updated, &ActorRef::test())
             .await
@@ -3429,7 +3435,7 @@ mod tests {
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
         let mut running = store.get_session(&task_id, false).await.unwrap().item;
-        running.prompt = "v3".to_string();
+        running.prompt = Some("v3".to_string());
         store
             .update_session(&task_id, running, &ActorRef::test())
             .await
@@ -5256,21 +5262,21 @@ mod tests {
 
         // Create tasks with different prompts
         let mut task1 = spawn_task();
-        task1.prompt = "Fix authentication bug".to_string();
+        task1.prompt = Some("Fix authentication bug".to_string());
         let (task1_id, _) = store
             .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task2 = spawn_task();
-        task2.prompt = "Add new feature for login".to_string();
+        task2.prompt = Some("Add new feature for login".to_string());
         let (task2_id, _) = store
             .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task3 = spawn_task();
-        task3.prompt = "Refactor database layer".to_string();
+        task3.prompt = Some("Refactor database layer".to_string());
         let (task3_id, _) = store
             .add_session(task3, Utc::now(), &ActorRef::test())
             .await

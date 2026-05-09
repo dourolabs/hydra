@@ -681,7 +681,7 @@ fn make_dummy_patch() -> crate::domain::patches::Patch {
 
 fn make_dummy_task() -> crate::store::Session {
     crate::store::Session::new(
-        "test prompt".to_string(),
+        Some("test prompt".to_string()),
         crate::domain::sessions::BundleSpec::None,
         None,
         Username::from("test-creator"),

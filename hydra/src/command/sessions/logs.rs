@@ -111,7 +111,7 @@ mod tests {
             0,
             Utc::now(),
             Session::new(
-                "demo".to_string(),
+                Some("demo".to_string()),
                 hydra_common::sessions::BundleSpec::None,
                 None,
                 Username::from("test-creator"),

@@ -57,7 +57,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
         context, prompt, ..
     } = task;
 
-    assert_eq!(prompt, "0");
+    assert_eq!(prompt, Some("0".to_string()));
     assert_eq!(context, BundleSpec::None);
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
@@ -648,7 +648,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -922,7 +922,7 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -1001,7 +1001,7 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -1100,7 +1100,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -1160,7 +1160,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: context_spec.clone(),
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -1205,7 +1205,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    assert_eq!(body.prompt, "0");
+    assert_eq!(body.prompt, Some("0".to_string()));
     Ok(())
 }
 
@@ -1218,7 +1218,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),
@@ -1269,7 +1269,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
+                prompt: Some("0".to_string()),
                 context: BundleSpec::None,
                 spawned_from: None,
                 creator: Username::from("test-creator"),

@@ -404,7 +404,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     // Job endpoints
     let create_session_request = CreateSessionRequest::new(
-        "test prompt".to_string(),
+        Some("test prompt".to_string()),
         None,
         BundleSpec::None,
         HashMap::new(),

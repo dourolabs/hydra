@@ -106,8 +106,14 @@ impl AppState {
             .map_err(|source| CreateConversationError::Store { source })?;
 
         // 4. Create an interactive session
-        let session_request =
-            CreateSessionRequest::new(message, None, BundleSpec::None, HashMap::new(), None, true);
+        let session_request = CreateSessionRequest::new(
+            Some(message),
+            None,
+            BundleSpec::None,
+            HashMap::new(),
+            None,
+            true,
+        );
         let session_id = self
             .create_session(session_request, actor_ref.clone(), creator)
             .await
@@ -256,7 +262,7 @@ impl AppState {
 
         // Create a new interactive session
         let session_request = CreateSessionRequest::new(
-            String::new(),
+            None,
             None,
             BundleSpec::None,
             HashMap::new(),

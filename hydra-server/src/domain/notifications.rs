@@ -656,7 +656,7 @@ mod tests {
 
         // Create a Task with spawned_from pointing to the issue
         let task = crate::store::Session {
-            prompt: "test".to_string(),
+            prompt: Some("test".to_string()),
             context: crate::domain::sessions::BundleSpec::default(),
             spawned_from: Some(issue_id.clone()),
             creator: Username::from("alice"),
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn summary_session_created() {
         let task = crate::store::Session {
-            prompt: "test".to_string(),
+            prompt: Some("test".to_string()),
             context: crate::domain::sessions::BundleSpec::default(),
             spawned_from: None,
             creator: Username::from("alice"),
