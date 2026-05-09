@@ -596,6 +596,13 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError>;
 
+    /// Returns event summaries (count + last event preview) for multiple conversations
+    /// in a single batch operation. Conversations with no events are omitted from the result.
+    async fn get_conversation_event_summaries(
+        &self,
+        ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError>;
+
     /// Retrieves the stored session state blob for a conversation, if any.
     async fn get_conversation_session_state(
         &self,
@@ -1040,6 +1047,13 @@ pub(crate) fn object_kind_from_id(id: &HydraId) -> Result<ObjectKind, StoreError
             "unrecognized object id prefix: {s}"
         )))
     }
+}
+
+/// Summary of conversation events for batch fetching.
+#[derive(Debug, Clone)]
+pub struct ConversationEventSummary {
+    pub event_count: usize,
+    pub last_event_preview: Option<String>,
 }
 
 pub use memory_store::MemoryStore;

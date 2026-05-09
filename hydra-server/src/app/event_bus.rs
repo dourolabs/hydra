@@ -1698,6 +1698,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_conversation_events(id).await
     }
 
+    async fn get_conversation_event_summaries(
+        &self,
+        ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, crate::store::ConversationEventSummary>, StoreError> {
+        self.inner.get_conversation_event_summaries(ids).await
+    }
+
     async fn get_conversation_session_state(
         &self,
         id: &ConversationId,

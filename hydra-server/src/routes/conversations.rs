@@ -81,25 +81,22 @@ pub async fn list_conversations(
         .await
         .map_err(map_conversation_error)?;
 
+    let conversation_ids: Vec<_> = conversations.iter().map(|(id, _)| id.clone()).collect();
+    let event_summaries = state
+        .store()
+        .get_conversation_event_summaries(&conversation_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to fetch conversation event summaries");
+            ApiError::internal(format!("conversation store error: {err}"))
+        })?;
+
     let mut summaries = Vec::with_capacity(conversations.len());
-    // TODO: This is an N+1 query pattern — each conversation fetches its events individually.
-    // Add a batch store method (e.g. get_conversation_event_summaries) to fetch counts in one query.
     for (id, versioned) in conversations {
-        let (event_count, last_event_preview) = match state
-            .store()
-            .get_conversation_events(&id)
-            .await
-        {
-            Ok(events) => {
-                let count = events.len();
-                let preview = events.last().map(|v| event_preview(&v.item));
-                (count, preview)
-            }
-            Err(err) => {
-                warn!(conversation_id = %id, error = %err, "failed to fetch events for summary");
-                (0, None)
-            }
-        };
+        let (event_count, last_event_preview) = event_summaries
+            .get(&id)
+            .map(|s| (s.event_count, s.last_event_preview.clone()))
+            .unwrap_or((0, None));
         summaries.push(api_conversations::ConversationSummary::new(
             id,
             versioned.item.title,
@@ -365,26 +362,6 @@ pub async fn resume_conversation(
     Ok(Json(api_conversation))
 }
 
-fn event_preview(event: &DomainEvent) -> String {
-    match event {
-        DomainEvent::UserMessage { content, .. } => truncate_preview(content, "User: "),
-        DomainEvent::AssistantMessage { content, .. } => truncate_preview(content, "Assistant: "),
-        DomainEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
-        DomainEvent::Resumed { .. } => "Resumed".to_string(),
-        DomainEvent::Closed { .. } => "Closed".to_string(),
-    }
-}
-
-fn truncate_preview(content: &str, prefix: &str) -> String {
-    const MAX_LEN: usize = 100;
-    let remaining = MAX_LEN.saturating_sub(prefix.len());
-    if content.len() <= remaining {
-        format!("{prefix}{content}")
-    } else {
-        let truncated: String = content.chars().take(remaining).collect();
-        format!("{prefix}{truncated}…")
-    }
-}
 
 fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     match err {
@@ -490,7 +467,7 @@ mod tests {
             content: "Hello".to_string(),
             timestamp: chrono::Utc::now(),
         };
-        assert_eq!(event_preview(&event), "User: Hello");
+        assert_eq!(event.preview(), "User: Hello");
     }
 
     #[test]
@@ -500,7 +477,7 @@ mod tests {
             content: long_content,
             timestamp: chrono::Utc::now(),
         };
-        let preview = event_preview(&event);
+        let preview = event.preview();
         assert!(preview.len() <= 110); // prefix + 100 chars + ellipsis
         assert!(preview.ends_with('…'));
     }
@@ -513,16 +490,20 @@ mod tests {
             content,
             timestamp: chrono::Utc::now(),
         };
-        let preview = event_preview(&event);
+        let preview = event.preview();
         assert!(preview.starts_with("User: "));
         assert!(preview.ends_with('…'));
     }
 
     #[test]
     fn truncate_preview_at_char_boundary() {
-        // 'é' is 2 bytes; 47 * 2 = 94 bytes for 47 chars, remaining=94 for prefix "User: " (6 bytes)
+        // 'é' is 2 bytes; 47 * 2 = 94 bytes for 47 chars
         let content = "é".repeat(50);
-        let result = truncate_preview(&content, "User: ");
+        let event = DomainEvent::UserMessage {
+            content,
+            timestamp: chrono::Utc::now(),
+        };
+        let result = event.preview();
         // Should not panic, and should end with ellipsis
         assert!(result.ends_with('…'));
         assert!(result.starts_with("User: "));
@@ -533,6 +514,6 @@ mod tests {
         let event = DomainEvent::Closed {
             timestamp: chrono::Utc::now(),
         };
-        assert_eq!(event_preview(&event), "Closed");
+        assert_eq!(event.preview(), "Closed");
     }
 }

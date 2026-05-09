@@ -22,7 +22,7 @@ use crate::{
         task_status::{Status, TaskError},
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog},
+    store::{ConversationEventSummary, ReadOnlyStore, Store, StoreError, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -1420,6 +1420,13 @@ struct ConversationEventRow {
     event_data: Value,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationEventSummaryRow {
+    conversation_id: String,
+    event_count: i64,
+    last_event_data: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3728,6 +3735,60 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(results)
+    }
+
+    async fn get_conversation_event_summaries(
+        &self,
+        ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
+        let query = format!(
+            "SELECT e.conversation_id, COUNT(*) AS event_count, \
+             (SELECT e2.event_data FROM {TABLE_CONVERSATION_EVENTS_V2} e2 \
+              WHERE e2.conversation_id = e.conversation_id ORDER BY e2.id DESC LIMIT 1) AS last_event_data \
+             FROM {TABLE_CONVERSATION_EVENTS_V2} e \
+             WHERE e.conversation_id = ANY($1) \
+             GROUP BY e.conversation_id"
+        );
+
+        let rows = sqlx::query_as::<_, ConversationEventSummaryRow>(&query)
+            .bind(&id_strings)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let conv_id = row
+                .conversation_id
+                .parse::<ConversationId>()
+                .map_err(|e| StoreError::Internal(format!("invalid conversation id: {e}")))?;
+            let last_event_preview = row
+                .last_event_data
+                .map(|data| {
+                    serde_json::from_value::<ConversationEvent>(data)
+                        .map(|event| event.preview())
+                        .map_err(|e| {
+                            StoreError::Internal(format!(
+                                "failed to deserialize conversation event: {e}"
+                            ))
+                        })
+                })
+                .transpose()?;
+            result.insert(
+                conv_id,
+                ConversationEventSummary {
+                    event_count: row.event_count as usize,
+                    last_event_preview,
+                },
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_conversation_session_state(
