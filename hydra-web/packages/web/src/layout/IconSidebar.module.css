@@ -75,6 +75,12 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 15%, transparent);
 }
 
+.logoIcon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
 .navIcon {
   width: 20px;
   height: 20px;

@@ -3,6 +3,7 @@ import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import type { SSEConnectionState } from "../hooks/useSSE";
+import { HydraLogo } from "../components/icons/HydraLogo";
 import styles from "./IconSidebar.module.css";
 
 interface IconSidebarProps {
@@ -57,7 +58,7 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
       <div className={styles.top}>
         <Tooltip content="Dashboard" position="right">
           <Link to="/" className={styles.logo}>
-            H
+            <HydraLogo className={styles.logoIcon} />
           </Link>
         </Tooltip>
 
