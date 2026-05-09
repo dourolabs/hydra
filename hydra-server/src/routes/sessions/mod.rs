@@ -20,6 +20,7 @@ pub use hydra_common::api::v1::ApiError;
 pub mod context;
 pub mod kill;
 pub mod logs;
+pub mod relay;
 pub mod status;
 
 pub async fn create_session(

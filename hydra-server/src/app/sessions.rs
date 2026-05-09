@@ -948,6 +948,18 @@ impl AppState {
             .await
     }
 
+    pub(crate) async fn get_latest_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Session, StoreError> {
+        let versions = self.get_session_versions(session_id).await?;
+        versions
+            .into_iter()
+            .last()
+            .map(|v| v.item)
+            .ok_or_else(|| StoreError::SessionNotFound(session_id.clone()))
+    }
+
     pub async fn get_session(&self, session_id: &SessionId) -> Result<Session, StoreError> {
         let store = self.store.as_ref();
         store.get_session(session_id, false).await.map(|v| v.item)
