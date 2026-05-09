@@ -489,6 +489,40 @@ impl HydraClient {
         builder.bearer_auth(&self.auth_token)
     }
 
+    pub async fn connect_relay_websocket(&self, session_id: &SessionId) -> Result<RelayWebSocket> {
+        let mut ws_url = self.base_url.clone();
+        match ws_url.scheme() {
+            "https" => ws_url
+                .set_scheme("wss")
+                .map_err(|()| anyhow!("failed to set wss scheme"))?,
+            "http" => ws_url
+                .set_scheme("ws")
+                .map_err(|()| anyhow!("failed to set ws scheme"))?,
+            scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
+        }
+        ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
+
+        let auth_value = format!("Bearer {}", self.auth_token);
+        let request = tungstenite::http::Request::builder()
+            .uri(ws_url.as_str())
+            .header("Authorization", &auth_value)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .context("failed to build WebSocket request")?;
+
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
+            .await
+            .context("failed to connect to relay WebSocket")?;
+
+        Ok(ws_stream)
+    }
+
     /// Call `POST /v1/sessions` to create a new session.
     pub async fn create_session(
         &self,
@@ -2008,37 +2042,7 @@ impl HydraClientInterface for HydraClient {
     }
 
     async fn connect_relay_websocket(&self, session_id: &SessionId) -> Result<RelayWebSocket> {
-        let mut ws_url = self.base_url.clone();
-        match ws_url.scheme() {
-            "https" => ws_url
-                .set_scheme("wss")
-                .map_err(|()| anyhow!("failed to set wss scheme"))?,
-            "http" => ws_url
-                .set_scheme("ws")
-                .map_err(|()| anyhow!("failed to set ws scheme"))?,
-            scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
-        }
-        ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
-
-        let auth_value = format!("Bearer {}", self.auth_token);
-        let request = tungstenite::http::Request::builder()
-            .uri(ws_url.as_str())
-            .header("Authorization", &auth_value)
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tungstenite::handshake::client::generate_key(),
-            )
-            .body(())
-            .context("failed to build WebSocket request")?;
-
-        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
-            .await
-            .context("failed to connect to relay WebSocket")?;
-
-        Ok(ws_stream)
+        HydraClient::connect_relay_websocket(self, session_id).await
     }
 
     async fn create_session(
