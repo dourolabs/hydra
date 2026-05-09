@@ -43,7 +43,7 @@ function toSummaryRecord(
   task: Session,
 ): SessionSummaryRecord {
   const summary: SessionSummary = {
-    prompt: task.prompt.slice(0, 100),
+    prompt: task.prompt?.slice(0, 100) ?? null,
     spawned_from: task.spawned_from,
     creator: task.creator,
     status: task.status,
@@ -98,7 +98,7 @@ export function createSessionRoutes(store: Store): Hono {
     if (q) {
       const lower = q.toLowerCase();
       filtered = filtered.filter(({ entry }) =>
-        entry.data.prompt.toLowerCase().includes(lower),
+        (entry.data.prompt ?? "").toLowerCase().includes(lower),
       );
     }
     if (spawnedFrom) {

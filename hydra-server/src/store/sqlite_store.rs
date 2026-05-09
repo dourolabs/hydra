@@ -252,7 +252,7 @@ struct DocumentRow {
 struct TaskRow {
     id: String,
     version_number: i64,
-    prompt: String,
+    prompt: Option<String>,
     context: String,
     spawned_from: Option<String>,
     image: Option<String>,
@@ -1121,7 +1121,7 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(session.prompt.as_deref().unwrap_or(""))
+            .bind(session.prompt.as_deref())
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -1153,7 +1153,7 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(session.prompt.as_deref().unwrap_or(""))
+            .bind(session.prompt.as_deref())
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -1254,14 +1254,8 @@ impl SqliteStore {
             })
             .transpose()?;
 
-        let prompt = if row.prompt.is_empty() {
-            None
-        } else {
-            Some(row.prompt.clone())
-        };
-
         Ok(Session {
-            prompt,
+            prompt: row.prompt.clone(),
             context,
             spawned_from,
             creator,
