@@ -1608,6 +1608,10 @@ fn build_conversations_predicates_sqlite(
         ));
     }
 
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
     (predicates, bindings)
 }
 
@@ -3732,7 +3736,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
              FROM {TABLE_CONVERSATIONS} c
-             WHERE c.is_latest = 1 AND c.deleted = 0"
+             WHERE c.is_latest = 1"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) =
