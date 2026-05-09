@@ -255,7 +255,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 ServerEvent::IssueCreated { issue_id, .. } => issue_id.to_string(),
                 ServerEvent::IssueUpdated { issue_id, .. } => issue_id.to_string(),
                 ServerEvent::IssueDeleted { issue_id, .. } => issue_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("issue payload paired with non-issue event"),
             };
             if old.is_none() {
                 return format!("Issue {id} was created");
@@ -286,7 +286,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 ServerEvent::PatchCreated { patch_id, .. } => patch_id.to_string(),
                 ServerEvent::PatchUpdated { patch_id, .. } => patch_id.to_string(),
                 ServerEvent::PatchDeleted { patch_id, .. } => patch_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("patch payload paired with non-patch event"),
             };
             if old.is_none() {
                 return format!("Patch {id} was created");
@@ -307,7 +307,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             let id = match event {
                 ServerEvent::SessionCreated { session_id, .. } => session_id.to_string(),
                 ServerEvent::SessionUpdated { session_id, .. } => session_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("session payload paired with non-session event"),
             };
             if old.is_none() {
                 return format!("Session {id} was created");
@@ -328,7 +328,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 ServerEvent::DocumentCreated { document_id, .. } => document_id.to_string(),
                 ServerEvent::DocumentUpdated { document_id, .. } => document_id.to_string(),
                 ServerEvent::DocumentDeleted { document_id, .. } => document_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("document payload paired with non-document event"),
             };
             if old.is_none() {
                 return format!("Document {id} was created");
@@ -348,7 +348,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 ServerEvent::NotificationCreated {
                     notification_id, ..
                 } => notification_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("notification payload paired with non-notification event"),
             };
             format!("Notification {id} was created: {}", new.summary)
         }
@@ -360,7 +360,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 | ServerEvent::ConversationUpdated {
                     conversation_id, ..
                 } => conversation_id.to_string(),
-                _ => "unknown".to_string(),
+                _ => unreachable!("conversation payload paired with non-conversation event"),
             };
             if old.is_none() {
                 format!("Conversation {id} was created")
