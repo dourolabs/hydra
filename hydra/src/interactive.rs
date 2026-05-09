@@ -13,15 +13,14 @@ use tokio::{
     process::Command,
 };
 use tokio_tungstenite::tungstenite;
-use url::Url;
 
 use crate::claude_formatter::StreamFormatter;
+use crate::client::RelayWebSocket;
 
 /// Run an interactive Claude session, bridging between a relay WebSocket and
 /// Claude's stdin/stdout via `--input-format stream-json --output-format stream-json`.
 pub async fn run_interactive(
-    server_url: &Url,
-    auth_token: &str,
+    ws_stream: RelayWebSocket,
     session_id: &SessionId,
     model: Option<&str>,
     env: &HashMap<String, String>,
@@ -40,28 +39,6 @@ pub async fn run_interactive(
         ));
     }
 
-    // Build WebSocket URL from server HTTP URL.
-    let ws_url = build_ws_url(server_url, session_id)?;
-
-    // Connect to relay WebSocket with auth header.
-    println!("Connecting to relay WebSocket at {ws_url}");
-    let auth_value = format!("Bearer {auth_token}");
-    let request = tungstenite::http::Request::builder()
-        .uri(ws_url.as_str())
-        .header("Authorization", &auth_value)
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Sec-WebSocket-Version", "13")
-        .header(
-            "Sec-WebSocket-Key",
-            tungstenite::handshake::client::generate_key(),
-        )
-        .body(())
-        .context("failed to build WebSocket request")?;
-
-    let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
-        .await
-        .context("failed to connect to relay WebSocket")?;
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     println!("WebSocket connected, sending handshake");
@@ -182,7 +159,8 @@ pub async fn run_interactive(
     let mut stdout_reader = BufReader::new(claude_stdout);
 
     let mut _event_index: usize = catch_up.events.len();
-    let mut _claude_session_id: Option<String> = None;
+    let mut claude_session_id: Option<String> = None;
+    let _ = &session_id; // used for logging context
 
     // Relay loop: bidirectional message forwarding.
     let mut stdout_line = String::new();
@@ -199,10 +177,10 @@ pub async fn run_interactive(
                     }
                     Ok(_) => {
                         // Try to extract session_id from JSONL output.
-                        if _claude_session_id.is_none() {
+                        if claude_session_id.is_none() {
                             if let Some(sid) = extract_session_id(&stdout_line) {
                                 println!("Extracted Claude session_id: {sid}");
-                                _claude_session_id = Some(sid);
+                                claude_session_id = Some(sid);
                             }
                         }
 
@@ -332,22 +310,6 @@ pub async fn run_interactive(
     Ok(())
 }
 
-/// Build the WebSocket URL for the relay endpoint.
-fn build_ws_url(server_url: &Url, session_id: &SessionId) -> Result<Url> {
-    let mut ws_url = server_url.clone();
-    match ws_url.scheme() {
-        "https" => ws_url
-            .set_scheme("wss")
-            .map_err(|()| anyhow!("failed to set wss scheme"))?,
-        "http" => ws_url
-            .set_scheme("ws")
-            .map_err(|()| anyhow!("failed to set ws scheme"))?,
-        scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
-    }
-    ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
-    Ok(ws_url)
-}
-
 /// Build a stream-json input line for Claude's stdin.
 fn build_claude_input(content: &str) -> String {
     let input = serde_json::json!({
@@ -400,23 +362,6 @@ fn extract_assistant_text(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn build_ws_url_converts_http_to_ws() {
-        let server_url = Url::parse("http://localhost:8080").unwrap();
-        let session_id = SessionId::new();
-        let ws_url = build_ws_url(&server_url, &session_id).unwrap();
-        assert_eq!(ws_url.scheme(), "ws");
-        assert_eq!(ws_url.path(), format!("/v1/sessions/{session_id}/relay"));
-    }
-
-    #[test]
-    fn build_ws_url_converts_https_to_wss() {
-        let server_url = Url::parse("https://hydra.example.com").unwrap();
-        let session_id = SessionId::new();
-        let ws_url = build_ws_url(&server_url, &session_id).unwrap();
-        assert_eq!(ws_url.scheme(), "wss");
-    }
 
     #[test]
     fn build_claude_input_formats_correctly() {

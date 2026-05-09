@@ -1,11 +1,13 @@
 use std::{collections::HashMap, path::Path, process::Stdio, time::Instant};
 
 use crate::claude_formatter::StreamFormatter;
+use crate::client::RelayWebSocket;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use hydra_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
 };
+use hydra_common::SessionId;
 use serde_json::Value;
 use tokio::{
     fs,
@@ -56,6 +58,16 @@ pub trait WorkerCommands: Send + Sync {
         env: &HashMap<String, String>,
         output_path: &Path,
         mcp_config: Option<&str>,
+    ) -> Result<String>;
+
+    /// Run Claude in interactive mode, bridging a relay WebSocket with Claude's stdin/stdout.
+    async fn run_interactive(
+        &self,
+        ws_stream: RelayWebSocket,
+        session_id: &SessionId,
+        model: Option<&str>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
     ) -> Result<String>;
 }
 
@@ -307,6 +319,17 @@ impl WorkerCommands for CodexCommands {
         }
 
         result
+    }
+
+    async fn run_interactive(
+        &self,
+        _ws_stream: RelayWebSocket,
+        _session_id: &SessionId,
+        _model: Option<&str>,
+        _working_dir: &Path,
+        _env: &HashMap<String, String>,
+    ) -> Result<String> {
+        Err(anyhow!("interactive mode is not supported for Codex"))
     }
 }
 
@@ -563,6 +586,20 @@ impl WorkerCommands for ClaudeCommands {
         .await
         .with_context(|| "failed to execute claude for worker context")
     }
+
+    async fn run_interactive(
+        &self,
+        ws_stream: RelayWebSocket,
+        session_id: &SessionId,
+        model: Option<&str>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+    ) -> Result<String> {
+        crate::interactive::run_interactive(ws_stream, session_id, model, env, working_dir)
+            .await
+            .context("interactive claude session failed")?;
+        Ok("Interactive session ended".to_string())
+    }
 }
 
 #[async_trait]
@@ -585,6 +622,28 @@ impl WorkerCommands for ModelAwareCommands {
             None => {
                 self.codex
                     .run(prompt, model, working_dir, env, output_path, mcp_config)
+                    .await
+            }
+        }
+    }
+
+    async fn run_interactive(
+        &self,
+        ws_stream: RelayWebSocket,
+        session_id: &SessionId,
+        model: Option<&str>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+    ) -> Result<String> {
+        match model.filter(|value| is_claude_model(value)) {
+            Some(_) => {
+                self.claude
+                    .run_interactive(ws_stream, session_id, model, working_dir, env)
+                    .await
+            }
+            None => {
+                self.codex
+                    .run_interactive(ws_stream, session_id, model, working_dir, env)
                     .await
             }
         }

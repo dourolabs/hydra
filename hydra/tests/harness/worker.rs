@@ -4,8 +4,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
+use hydra::client::RelayWebSocket;
 use hydra::command::output::{CommandContext, ResolvedOutputFormat};
 use hydra::worker_commands::WorkerCommands;
 use hydra_common::{
@@ -140,6 +141,17 @@ impl WorkerCommands for BashCommands {
         }
 
         Ok(last_output)
+    }
+
+    async fn run_interactive(
+        &self,
+        _ws_stream: RelayWebSocket,
+        _session_id: &SessionId,
+        _model: Option<&str>,
+        _working_dir: &Path,
+        _env: &HashMap<String, String>,
+    ) -> Result<String> {
+        Err(anyhow!("interactive mode is not supported in test harness"))
     }
 }
 

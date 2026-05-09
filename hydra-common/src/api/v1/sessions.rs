@@ -283,9 +283,12 @@ pub struct WorkerContext {
     pub build_cache: Option<BuildCacheContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive: bool,
 }
 
 impl WorkerContext {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         request_context: Bundle,
         prompt: String,
@@ -293,6 +296,7 @@ impl WorkerContext {
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
         mcp_config: Option<McpConfig>,
+        interactive: bool,
     ) -> Self {
         Self {
             request_context,
@@ -301,6 +305,7 @@ impl WorkerContext {
             variables,
             build_cache,
             mcp_config,
+            interactive,
         }
     }
 }
@@ -862,6 +867,7 @@ mod tests {
             HashMap::new(),
             None,
             Some(mcp_config.clone()),
+            false,
         );
 
         let json = serde_json::to_value(&context).unwrap();

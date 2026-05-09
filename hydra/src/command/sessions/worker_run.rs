@@ -14,7 +14,6 @@ use hydra_common::{
     IssueId, SessionId,
 };
 use tempfile::Builder;
-use url::Url;
 
 use crate::build_cache::build_cache_client;
 use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
@@ -37,14 +36,6 @@ pub async fn run(
 ) -> Result<()> {
     let job = session;
 
-    // Fetch session metadata to check if this is an interactive chat session.
-    let session_record = client.get_session(&job).await?;
-    let is_interactive = session_record.session.interactive;
-
-    if is_interactive {
-        return run_interactive_session(client, &job, dest, use_tempdir).await;
-    }
-
     let WorkerContext {
         request_context,
         variables,
@@ -52,6 +43,7 @@ pub async fn run(
         model,
         build_cache,
         mcp_config,
+        interactive,
         ..
     } = client.get_session_context(&job).await?;
     let mcp_config_json = mcp_config
@@ -189,36 +181,71 @@ pub async fn run(
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
     let mut errors = Vec::new();
-    log_status("Phase: agent execution — starting");
     let agent_start = Instant::now();
-    let last_message = match commands
-        .run(
-            &prompt,
-            model.as_deref(),
-            &repo_path,
-            &execution_env,
-            &output_path,
-            mcp_config_json.as_deref(),
-        )
-        .await
-    {
-        Ok(message) => {
-            let elapsed = agent_start.elapsed().as_secs_f64();
-            log_status(format!(
-                "Phase: agent execution — completed successfully ({elapsed:.2}s)"
-            ));
-            message
+
+    let last_message = if interactive {
+        log_status("Phase: interactive agent execution — starting");
+        let ws_stream = client.connect_relay_websocket(&job).await?;
+        match commands
+            .run_interactive(
+                ws_stream,
+                &job,
+                model.as_deref(),
+                &repo_path,
+                &execution_env,
+            )
+            .await
+        {
+            Ok(message) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: interactive agent execution — completed ({elapsed:.2}s)"
+                ));
+                message
+            }
+            Err(err) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: interactive agent execution — failed ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+                errors
+                    .last()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "interactive session failed".to_string())
+            }
         }
-        Err(err) => {
-            let elapsed = agent_start.elapsed().as_secs_f64();
-            log_status(format!(
-                "Phase: agent execution — failed ({elapsed:.2}s): {err}"
-            ));
-            errors.push(err);
-            errors
-                .last()
-                .map(|err| err.to_string())
-                .unwrap_or_else(|| "worker command execution failed".to_string())
+    } else {
+        log_status("Phase: agent execution — starting");
+        match commands
+            .run(
+                &prompt,
+                model.as_deref(),
+                &repo_path,
+                &execution_env,
+                &output_path,
+                mcp_config_json.as_deref(),
+            )
+            .await
+        {
+            Ok(message) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: agent execution — completed successfully ({elapsed:.2}s)"
+                ));
+                message
+            }
+            Err(err) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: agent execution — failed ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+                errors
+                    .last()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "worker command execution failed".to_string())
+            }
         }
     };
 
@@ -378,89 +405,6 @@ pub async fn run(
     } else {
         Ok(())
     }
-}
-
-/// Run an interactive chat session. Skips git, documents, and cache phases.
-async fn run_interactive_session(
-    client: &dyn HydraClientInterface,
-    job: &SessionId,
-    dest: PathBuf,
-    use_tempdir: bool,
-) -> Result<()> {
-    log_status("Interactive session detected — skipping git/docs/cache phases");
-
-    let WorkerContext {
-        variables, model, ..
-    } = client.get_session_context(job).await?;
-
-    let dest = if use_tempdir {
-        let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
-        let tmp_path = tmp.keep();
-        log_status(format!("Using temporary directory: {}", tmp_path.display()));
-        tmp_path
-    } else {
-        ensure_clean_destination(&dest)?;
-        dest
-    };
-
-    let working_dir = dest.join("repo");
-    fs::create_dir_all(&working_dir)
-        .with_context(|| format!("failed to create working directory {working_dir:?}"))?;
-
-    let mut execution_env = variables;
-    ensure_color_output_env(&mut execution_env);
-
-    let server_url: Url = client.base_url().clone();
-    let auth_token = client.auth_token();
-
-    log_status("Phase: interactive agent execution — starting");
-    let agent_start = Instant::now();
-
-    let result = crate::interactive::run_interactive(
-        &server_url,
-        auth_token,
-        job,
-        model.as_deref(),
-        &execution_env,
-        &working_dir,
-    )
-    .await;
-
-    let elapsed = agent_start.elapsed().as_secs_f64();
-    let status_update = match &result {
-        Ok(()) => {
-            log_status(format!(
-                "Phase: interactive agent execution — completed ({elapsed:.2}s)"
-            ));
-            SessionStatusUpdate::Complete {
-                last_message: Some("Interactive session ended".to_string()),
-            }
-        }
-        Err(err) => {
-            log_status(format!(
-                "Phase: interactive agent execution — failed ({elapsed:.2}s): {err}"
-            ));
-            SessionStatusUpdate::Failed {
-                reason: err.to_string(),
-            }
-        }
-    };
-
-    log_status("Phase: status submission — starting");
-    let status_start = Instant::now();
-    if let Err(err) = submit_session_status(client, job, status_update).await {
-        let status_elapsed = status_start.elapsed().as_secs_f64();
-        log_status(format!(
-            "Phase: status submission — failed ({status_elapsed:.2}s)"
-        ));
-        return Err(err);
-    }
-    let status_elapsed = status_start.elapsed().as_secs_f64();
-    log_status(format!(
-        "Phase: status submission — completed ({status_elapsed:.2}s)"
-    ));
-
-    result
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
