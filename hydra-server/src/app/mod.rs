@@ -1,5 +1,6 @@
 mod agents;
 mod app_state;
+pub mod chat_relay;
 mod documents;
 pub mod event_bus;
 mod issues;

@@ -207,6 +207,55 @@ mod optional_bytes {
     }
 }
 
+/// Messages sent from the worker to the server over the relay WebSocket.
+///
+/// This enum distinguishes between conversation events (which get stored and
+/// broadcast) and session state uploads (binary blobs for resumption).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkerMessage {
+    /// A conversation event (user message, assistant message, suspending, etc.).
+    Event { event: ConversationEvent },
+    /// A session state upload for resumption support.
+    SessionStateUpload {
+        #[serde(with = "bytes_as_array")]
+        #[cfg_attr(feature = "ts", ts(type = "number[]"))]
+        data: Vec<u8>,
+    },
+}
+
+mod bytes_as_array {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<u8>::deserialize(deserializer)
+    }
+}
+
+/// Messages sent from the server to the worker over the relay WebSocket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+    /// Catch-up payload sent immediately after the worker connects.
+    CatchUp(WorkerCatchUp),
+    /// A conversation event forwarded to the worker (e.g., a user message).
+    Event { event: ConversationEvent },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +384,57 @@ mod tests {
         let req: CreateConversationRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.message, "Hello");
         assert_eq!(req.agent_name, None);
+    }
+
+    #[test]
+    fn worker_message_event_round_trip() {
+        let msg = WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "Hello!".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"event""#));
+    }
+
+    #[test]
+    fn worker_message_session_state_upload_round_trip() {
+        let msg = WorkerMessage::SessionStateUpload {
+            data: vec![10, 20, 30],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"session_state_upload""#));
+    }
+
+    #[test]
+    fn server_message_catch_up_round_trip() {
+        let msg = ServerMessage::CatchUp(WorkerCatchUp {
+            events: vec![ConversationEvent::UserMessage {
+                content: "hi".to_string(),
+                timestamp: Utc::now(),
+            }],
+            session_state: None,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn server_message_event_round_trip() {
+        let msg = ServerMessage::Event {
+            event: ConversationEvent::UserMessage {
+                content: "hello".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
     }
 }

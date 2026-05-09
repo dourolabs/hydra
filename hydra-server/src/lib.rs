@@ -390,6 +390,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/sessions/:session_id/context",
             get(routes::sessions::context::get_session_context),
         )
+        .route(
+            "/v1/sessions/:session_id/relay",
+            get(routes::sessions::relay::session_relay),
+        )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
         .route(

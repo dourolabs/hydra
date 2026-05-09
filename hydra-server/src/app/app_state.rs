@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
+use super::chat_relay::ChatRelayMap;
 use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 
 use super::ServiceState;
@@ -68,6 +69,7 @@ pub struct AppState {
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
     pub secret_manager: Arc<SecretManager>,
     pub device_sessions: Arc<DashMap<String, DeviceSession>>,
+    pub chat_relay_map: ChatRelayMap,
 }
 
 impl AppState {
@@ -90,6 +92,7 @@ impl AppState {
             policy_engine: Arc::new(policy_engine),
             secret_manager,
             device_sessions: Arc::new(DashMap::new()),
+            chat_relay_map: Arc::new(DashMap::new()),
         }
     }
 
