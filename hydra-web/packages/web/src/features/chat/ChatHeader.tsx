@@ -14,6 +14,8 @@ function statusLabel(status: ConversationStatus): string {
       return "Idle";
     case "closed":
       return "Closed";
+    default:
+      return status satisfies never;
   }
 }
 
@@ -27,7 +29,21 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
 
   const closeMutation = useMutation({
     mutationFn: () => apiClient.closeConversation(conversation.conversation_id),
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["conversation", conversation.conversation_id] });
+      const previous = queryClient.getQueryData<Conversation>(["conversation", conversation.conversation_id]);
+      queryClient.setQueryData<Conversation>(
+        ["conversation", conversation.conversation_id],
+        (old) => old ? { ...old, status: "closed" as const } : old,
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["conversation", conversation.conversation_id], context.previous);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["conversation", conversation.conversation_id] });
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       navigate("/chat");
@@ -36,7 +52,21 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
 
   const resumeMutation = useMutation({
     mutationFn: () => apiClient.resumeConversation(conversation.conversation_id),
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["conversation", conversation.conversation_id] });
+      const previous = queryClient.getQueryData<Conversation>(["conversation", conversation.conversation_id]);
+      queryClient.setQueryData<Conversation>(
+        ["conversation", conversation.conversation_id],
+        (old) => old ? { ...old, status: "active" as const } : old,
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["conversation", conversation.conversation_id], context.previous);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["conversation", conversation.conversation_id] });
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },

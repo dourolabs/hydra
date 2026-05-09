@@ -44,19 +44,15 @@
 }
 
 .center {
-  display: flex;
-  justify-content: center;
+  composes: center from "./page.module.css";
   align-items: center;
   flex: 1;
-  padding: var(--space-8);
 }
 
 .errorContainer {
-  padding: var(--space-4);
+  composes: errorContainer from "./page.module.css";
 }
 
 .error {
-  color: var(--color-status-failed);
-  padding: var(--space-4);
-  margin: 0;
+  composes: error from "./page.module.css";
 }

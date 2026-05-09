@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
+import type { Conversation, ConversationEvent } from "@hydra/api";
 import { useConversation, useConversationEvents } from "../features/chat/useConversations";
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
@@ -17,7 +18,7 @@ function NewChatPage() {
   const createMutation = useMutation({
     mutationFn: (message: string) =>
       apiClient.createConversation({ message }),
-    onSuccess: (conversation) => {
+    onSuccess: (conversation: Conversation) => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       navigate(`/chat/${conversation.conversation_id}`, { replace: true });
     },
@@ -55,7 +56,26 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const sendMutation = useMutation({
     mutationFn: (content: string) =>
       apiClient.sendMessage(conversationId, { content }),
-    onSuccess: () => {
+    onMutate: async (content) => {
+      await queryClient.cancelQueries({ queryKey: ["conversationEvents", conversationId] });
+      const previous = queryClient.getQueryData<ConversationEvent[]>(["conversationEvents", conversationId]);
+      const optimisticEvent: ConversationEvent = {
+        type: "user_message",
+        content,
+        timestamp: new Date().toISOString(),
+      };
+      queryClient.setQueryData<ConversationEvent[]>(
+        ["conversationEvents", conversationId],
+        (old) => [...(old ?? []), optimisticEvent],
+      );
+      return { previous };
+    },
+    onError: (_err, _content, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["conversationEvents", conversationId], context.previous);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["conversationEvents", conversationId] });
     },
   });
