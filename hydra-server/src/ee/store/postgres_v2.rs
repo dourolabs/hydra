@@ -3,7 +3,7 @@
 //! This store implementation uses the v2 tables with proper column definitions
 //! instead of JSONB payloads, providing better query performance and type safety.
 
-use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
 use crate::store::status_to_db_str;
 use crate::{
     domain::{
@@ -109,6 +109,9 @@ const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
 const TABLE_AUTH_TOKENS: &str = "metis.auth_tokens";
 const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
+const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
+const TABLE_CONVERSATION_EVENTS_V2: &str = "metis.conversation_events_v2";
+const TABLE_CONVERSATION_SESSION_STATE: &str = "metis.conversation_session_state";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -1168,6 +1171,74 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
         })
     }
+
+    // -------------------------------------------------------------------------
+    // Conversation helpers
+    // -------------------------------------------------------------------------
+
+    async fn insert_conversation_in_tx<'e, E>(
+        executor: E,
+        id: &ConversationId,
+        version_number: VersionNumber,
+        conversation: &Conversation,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for conversation '{id}'"))
+        })?;
+
+        let status_str = match conversation.status {
+            ConversationStatus::Active => "active",
+            ConversationStatus::Idle => "idle",
+            ConversationStatus::Closed => "closed",
+        };
+
+        let query = format!(
+            "INSERT INTO {TABLE_CONVERSATIONS_V2} \
+             (id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&conversation.title)
+            .bind(&conversation.agent_name)
+            .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
+            .bind(status_str)
+            .bind(conversation.creator.as_str())
+            .bind(conversation.deleted)
+            .bind(actor)
+            .execute(executor)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_conversation(row: &ConversationRow) -> Result<Conversation, StoreError> {
+        let status = match row.status.as_str() {
+            "active" => ConversationStatus::Active,
+            "idle" => ConversationStatus::Idle,
+            "closed" => ConversationStatus::Closed,
+            other => {
+                return Err(StoreError::Internal(format!(
+                    "invalid conversation status in database: {other}"
+                )));
+            }
+        };
+
+        Ok(Conversation {
+            title: row.title.clone(),
+            agent_name: row.agent_name.clone(),
+            active_session_id: row.active_session_id.as_deref().map(|s| s.into()),
+            status,
+            creator: Username::from(row.creator.as_str()),
+            deleted: row.deleted,
+        })
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1311,6 +1382,36 @@ struct DocumentRow {
     updated_at: DateTime<Utc>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationRow {
+    id: String,
+    version_number: i64,
+    title: Option<String>,
+    agent_name: Option<String>,
+    active_session_id: Option<String>,
+    status: String,
+    creator: String,
+    deleted: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationEventRow {
+    #[allow(dead_code)]
+    id: i64,
+    #[allow(dead_code)]
+    conversation_id: String,
+    version_number: i64,
+    event_data: Value,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3449,30 +3550,192 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_conversation(
         &self,
-        _id: &ConversationId,
+        id: &ConversationId,
     ) -> Result<Versioned<Conversation>, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        let query = format!(
+            "SELECT id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
+             FROM {TABLE_CONVERSATIONS_V2} \
+             WHERE id = $1 \
+             ORDER BY is_latest DESC, version_number DESC \
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, ConversationRow>(&query)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        if row.deleted {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for conversation '{}'",
+                row.id
+            ))
+        })?;
+        let conversation = Self::row_to_conversation(&row)?;
+        Ok(Versioned::with_optional_actor(
+            conversation,
+            version,
+            row.created_at,
+            parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
+        ))
     }
 
     async fn list_conversations(
         &self,
-        _query: &SearchConversationsQuery,
+        query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        let subquery = format!(
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, \
+             c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at, \
+             (SELECT MIN(c2.created_at) FROM {TABLE_CONVERSATIONS_V2} c2 WHERE c2.id = c.id) AS creation_time \
+             FROM {TABLE_CONVERSATIONS_V2} c \
+             WHERE c.is_latest = true"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+
+        let mut predicates = Vec::new();
+        let mut bindings = Vec::new();
+
+        predicates.push("deleted = false".to_string());
+
+        if let Some(ref status) = query.status {
+            let status_str = match ConversationStatus::from(*status) {
+                ConversationStatus::Active => "active",
+                ConversationStatus::Idle => "idle",
+                ConversationStatus::Closed => "closed",
+            };
+            predicates.push(format!("status = ${}", bindings.len() + 1));
+            bindings.push(status_str.to_string());
+        }
+
+        if let Some(ref creator) = query.creator {
+            let trimmed = creator.trim();
+            if !trimmed.is_empty() {
+                predicates.push(format!("LOWER(creator) = ${}", bindings.len() + 1));
+                bindings.push(trimmed.to_lowercase());
+            }
+        }
+
+        if let Some(ref q) = query.q {
+            let term = q.trim().to_lowercase();
+            if !term.is_empty() {
+                let idx = bindings.len() + 1;
+                predicates.push(format!(
+                    "(LOWER(id) LIKE ${idx} OR LOWER(COALESCE(title, '')) LIKE ${idx} OR LOWER(COALESCE(agent_name, '')) LIKE ${idx})"
+                ));
+                bindings.push(format!("%{term}%"));
+            }
+        }
+
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
+
+        let mut query_builder = sqlx::query_as::<_, ConversationRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for conversation '{}'",
+                    row.id
+                ))
+            })?;
+            let conversation = Self::row_to_conversation(&row)?;
+            let conversation_id = row.id.parse::<ConversationId>().map_err(|err| {
+                StoreError::Internal(format!("invalid conversation id stored in database: {err}"))
+            })?;
+            let versioned = Versioned::with_optional_actor(
+                conversation,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
+            );
+            results.push((conversation_id, versioned));
+        }
+
+        Ok(results)
     }
 
     async fn get_conversation_events(
         &self,
-        _id: &ConversationId,
+        id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        // Ensure conversation exists
+        self.get_conversation(id).await?;
+
+        let query = format!(
+            "SELECT id, conversation_id, version_number, event_data, actor, created_at \
+             FROM {TABLE_CONVERSATION_EVENTS_V2} \
+             WHERE conversation_id = $1 \
+             ORDER BY id"
+        );
+        let rows = sqlx::query_as::<_, ConversationEventRow>(&query)
+            .bind(id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(
+                    "invalid version number stored for conversation event".to_string(),
+                )
+            })?;
+            let event: ConversationEvent = serde_json::from_value(row.event_data).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize conversation event: {e}"))
+            })?;
+            results.push(Versioned::with_optional_actor(
+                event,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.created_at,
+            ));
+        }
+
+        Ok(results)
     }
 
     async fn get_conversation_session_state(
         &self,
-        _id: &ConversationId,
+        id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        // Ensure conversation exists
+        self.get_conversation(id).await?;
+
+        let query = format!(
+            "SELECT data FROM {TABLE_CONVERSATION_SESSION_STATE} WHERE conversation_id = $1"
+        );
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&query)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(row)
     }
 }
 
@@ -4396,36 +4659,129 @@ impl Store for PostgresStoreV2 {
 
     async fn add_conversation(
         &self,
-        _conversation: Conversation,
-        _actor: &ActorRef,
+        conversation: Conversation,
+        actor: &ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        let id = ConversationId::new();
+        let actor_json = actor_to_json(actor);
+        Self::insert_conversation_in_tx(&self.pool, &id, 1, &conversation, Some(&actor_json))
+            .await?;
+        Ok((id, 1))
     }
 
     async fn update_conversation(
         &self,
-        _id: &ConversationId,
-        _conversation: Conversation,
-        _actor: &ActorRef,
+        id: &ConversationId,
+        conversation: Conversation,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_CONVERSATIONS_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for conversation '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        Self::insert_conversation_in_tx(
+            &self.pool,
+            id,
+            next_version,
+            &conversation,
+            Some(&actor_json),
+        )
+        .await?;
+
+        Ok(next_version)
     }
 
     async fn append_conversation_event(
         &self,
-        _id: &ConversationId,
-        _event: ConversationEvent,
-        _actor: &ActorRef,
+        id: &ConversationId,
+        event: ConversationEvent,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        // Ensure conversation exists
+        let _ = self
+            .fetch_latest_version_number(TABLE_CONVERSATIONS_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+
+        // Get next event version
+        let latest_event_version = {
+            let query = format!(
+                "SELECT COALESCE(MAX(version_number), 0) FROM {TABLE_CONVERSATION_EVENTS_V2} WHERE conversation_id = $1"
+            );
+            sqlx::query_scalar::<_, i64>(&query)
+                .bind(id.as_ref())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?
+        };
+        let next_version = VersionNumber::try_from(latest_event_version + 1).map_err(|_| {
+            StoreError::Internal(format!(
+                "version number overflow for conversation event '{id}'"
+            ))
+        })?;
+
+        let event_data = serde_json::to_value(&event).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
+        })?;
+        let event_type = match &event {
+            ConversationEvent::UserMessage { .. } => "user_message",
+            ConversationEvent::AssistantMessage { .. } => "assistant_message",
+            ConversationEvent::Suspending { .. } => "suspending",
+            ConversationEvent::Resumed { .. } => "resumed",
+            ConversationEvent::Closed { .. } => "closed",
+        };
+        let actor_json = actor_to_json(actor);
+
+        let query = format!(
+            "INSERT INTO {TABLE_CONVERSATION_EVENTS_V2} \
+             (conversation_id, version_number, event_type, event_data, actor) \
+             VALUES ($1, $2, $3, $4, $5)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(
+                i64::try_from(next_version)
+                    .map_err(|_| StoreError::Internal("version number overflow".to_string()))?,
+            )
+            .bind(event_type)
+            .bind(&event_data)
+            .bind(&actor_json)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(next_version)
     }
 
     async fn store_conversation_session_state(
         &self,
-        _id: &ConversationId,
-        _data: Vec<u8>,
+        id: &ConversationId,
+        data: Vec<u8>,
     ) -> Result<(), StoreError> {
-        todo!("Postgres conversation store not yet implemented")
+        // Ensure conversation exists
+        let _ = self
+            .fetch_latest_version_number(TABLE_CONVERSATIONS_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_CONVERSATION_SESSION_STATE} (conversation_id, data) \
+             VALUES ($1, $2) \
+             ON CONFLICT (conversation_id) DO UPDATE SET data = $2, updated_at = NOW()"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(&data)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 }
 
