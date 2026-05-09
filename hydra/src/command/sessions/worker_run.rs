@@ -35,6 +35,7 @@ pub async fn run(
     _context: &CommandContext,
 ) -> Result<()> {
     let job = session;
+
     let WorkerContext {
         request_context,
         variables,
@@ -42,6 +43,7 @@ pub async fn run(
         model,
         build_cache,
         mcp_config,
+        interactive,
         ..
     } = client.get_session_context(&job).await?;
     let mcp_config_json = mcp_config
@@ -179,36 +181,71 @@ pub async fn run(
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
     let mut errors = Vec::new();
-    log_status("Phase: agent execution — starting");
     let agent_start = Instant::now();
-    let last_message = match commands
-        .run(
-            &prompt,
-            model.as_deref(),
-            &repo_path,
-            &execution_env,
-            &output_path,
-            mcp_config_json.as_deref(),
-        )
-        .await
-    {
-        Ok(message) => {
-            let elapsed = agent_start.elapsed().as_secs_f64();
-            log_status(format!(
-                "Phase: agent execution — completed successfully ({elapsed:.2}s)"
-            ));
-            message
+
+    let last_message = if interactive {
+        log_status("Phase: interactive agent execution — starting");
+        let ws_stream = client.connect_relay_websocket(&job).await?;
+        match commands
+            .run_interactive(
+                ws_stream,
+                &job,
+                model.as_deref(),
+                &repo_path,
+                &execution_env,
+            )
+            .await
+        {
+            Ok(message) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: interactive agent execution — completed ({elapsed:.2}s)"
+                ));
+                message
+            }
+            Err(err) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: interactive agent execution — failed ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+                errors
+                    .last()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "interactive session failed".to_string())
+            }
         }
-        Err(err) => {
-            let elapsed = agent_start.elapsed().as_secs_f64();
-            log_status(format!(
-                "Phase: agent execution — failed ({elapsed:.2}s): {err}"
-            ));
-            errors.push(err);
-            errors
-                .last()
-                .map(|err| err.to_string())
-                .unwrap_or_else(|| "worker command execution failed".to_string())
+    } else {
+        log_status("Phase: agent execution — starting");
+        match commands
+            .run(
+                &prompt,
+                model.as_deref(),
+                &repo_path,
+                &execution_env,
+                &output_path,
+                mcp_config_json.as_deref(),
+            )
+            .await
+        {
+            Ok(message) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: agent execution — completed successfully ({elapsed:.2}s)"
+                ));
+                message
+            }
+            Err(err) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: agent execution — failed ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+                errors
+                    .last()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "worker command execution failed".to_string())
+            }
         }
     };
 

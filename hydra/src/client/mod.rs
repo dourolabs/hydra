@@ -56,8 +56,12 @@ use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode
 use sse::SseEventStream;
 use std::path::Path;
 use std::pin::Pin;
+use tokio_tungstenite::{tungstenite, MaybeTlsStream};
 
 use crate::config::AppConfig;
+
+/// Type alias for a connected WebSocket stream to the relay endpoint.
+pub type RelayWebSocket = tokio_tungstenite::WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// HTTP client for interacting with the hydra-server REST API.
 #[derive(Clone)]
@@ -133,6 +137,9 @@ impl ResponseExt for Response {
 #[async_trait]
 pub trait HydraClientInterface: Send + Sync {
     fn base_url(&self) -> &Url;
+
+    /// Connect to the relay WebSocket for an interactive session.
+    async fn connect_relay_websocket(&self, session_id: &SessionId) -> Result<RelayWebSocket>;
 
     async fn create_session(&self, request: &CreateSessionRequest)
         -> Result<CreateSessionResponse>;
@@ -1998,6 +2005,40 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
 impl HydraClientInterface for HydraClient {
     fn base_url(&self) -> &Url {
         self.base_url()
+    }
+
+    async fn connect_relay_websocket(&self, session_id: &SessionId) -> Result<RelayWebSocket> {
+        let mut ws_url = self.base_url.clone();
+        match ws_url.scheme() {
+            "https" => ws_url
+                .set_scheme("wss")
+                .map_err(|()| anyhow!("failed to set wss scheme"))?,
+            "http" => ws_url
+                .set_scheme("ws")
+                .map_err(|()| anyhow!("failed to set ws scheme"))?,
+            scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
+        }
+        ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
+
+        let auth_value = format!("Bearer {}", self.auth_token);
+        let request = tungstenite::http::Request::builder()
+            .uri(ws_url.as_str())
+            .header("Authorization", &auth_value)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .body(())
+            .context("failed to build WebSocket request")?;
+
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
+            .await
+            .context("failed to connect to relay WebSocket")?;
+
+        Ok(ws_stream)
     }
 
     async fn create_session(

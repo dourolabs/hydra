@@ -8,6 +8,7 @@ vendored-openssl = [
     "git2/vendored-openssl",
     "openssl-sys/vendored",
     "hydra-common/vendored-openssl",
+    "tokio-tungstenite/native-tls-vendored",
 ]
 
 [[bin]]
@@ -43,6 +44,8 @@ shlex = "1.3"
 thiserror = "1.0"
 octocrab = "0.49"
 openssl-sys = { workspace = true }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+url = "2"
 
 [dev-dependencies]
 httpmock = "0.7"

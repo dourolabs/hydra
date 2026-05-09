@@ -10,4 +10,5 @@ export type WorkerContext = {
   variables: { [key in string]: string };
   build_cache?: BuildCacheContext | null;
   mcp_config?: JsonValue | null;
+  interactive?: boolean;
 };
