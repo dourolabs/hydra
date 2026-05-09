@@ -1009,6 +1009,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
                 mcp_config: None,
                 interactive: false,
                 conversation_id: None,
+                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,

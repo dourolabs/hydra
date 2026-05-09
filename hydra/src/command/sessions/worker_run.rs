@@ -45,6 +45,7 @@ pub async fn run(
         mcp_config,
         interactive,
         idle_timeout_secs,
+        conversation_resume_from,
         ..
     } = client.get_session_context(&job).await?;
     let mcp_config_json = mcp_config
@@ -196,6 +197,7 @@ pub async fn run(
                 &repo_path,
                 &execution_env,
                 idle_timeout,
+                conversation_resume_from,
             )
             .await
         {

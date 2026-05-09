@@ -694,6 +694,7 @@ fn make_dummy_task() -> crate::store::Session {
         None,
         false,
         None,
+        None,
         crate::store::Status::Created,
         None,
         None,

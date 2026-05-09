@@ -254,6 +254,15 @@ impl AppState {
             return Err(ResumeConversationError::AlreadyActive);
         }
 
+        // Get the current event count before appending Resumed — this tells the
+        // worker which events to skip during catch-up.
+        let current_events = self
+            .store()
+            .get_conversation_events(conversation_id)
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?;
+        let resume_from_event_index = current_events.len();
+
         // Create a new interactive session
         let session_request = CreateSessionRequest::new(
             String::new(),
@@ -267,6 +276,21 @@ impl AppState {
             .create_session(session_request, actor_ref.clone(), creator)
             .await
             .map_err(|source| ResumeConversationError::Session { source })?;
+
+        // Update the session with conversation_id and conversation_resume_from
+        // so the worker knows this is a resume and which events to skip.
+        let mut session = self
+            .store()
+            .get_session(&session_id, false)
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?
+            .item;
+        session.conversation_id = Some(conversation_id.clone());
+        session.conversation_resume_from = Some(resume_from_event_index);
+        self.store
+            .update_session_with_actor(&session_id, session, actor_ref.clone())
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?;
 
         // Append Resumed event
         let event = ConversationEvent::Resumed {

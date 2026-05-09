@@ -46,6 +46,7 @@ pub async fn get_session_context(
         task.mcp_config.clone(),
         task.interactive,
         idle_timeout_secs,
+        task.conversation_resume_from,
     );
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))

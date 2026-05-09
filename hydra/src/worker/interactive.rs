@@ -26,6 +26,7 @@ pub async fn run_interactive(
     env: &HashMap<String, String>,
     working_dir: &std::path::Path,
     idle_timeout: Duration,
+    conversation_resume_from: Option<usize>,
 ) -> Result<()> {
     // Validate auth credentials exist.
     let has_anthropic_key = env
@@ -44,9 +45,9 @@ pub async fn run_interactive(
 
     println!("WebSocket connected, sending handshake");
 
-    // Send WorkerConnect handshake (fresh, no resume).
+    // Send WorkerConnect handshake.
     let handshake = WorkerConnect::Fresh {
-        resume_from_event_index: None,
+        resume_from_event_index: conversation_resume_from,
     };
     let handshake_json =
         serde_json::to_string(&handshake).context("failed to serialize WorkerConnect")?;
@@ -79,6 +80,17 @@ pub async fn run_interactive(
         catch_up.events.len()
     );
 
+    // Extract Claude session_id from catch-up session_state for resumption.
+    let resume_session_id = catch_up
+        .session_state
+        .as_ref()
+        .and_then(|data| String::from_utf8(data.clone()).ok())
+        .filter(|s| !s.is_empty());
+
+    if let Some(ref sid) = resume_session_id {
+        println!("Resuming Claude session: {sid}");
+    }
+
     // Spawn Claude in long-lived interactive mode.
     let mut claude_args = vec![
         "--output-format".to_string(),
@@ -88,6 +100,10 @@ pub async fn run_interactive(
         "--dangerously-skip-permissions".to_string(),
         "--verbose".to_string(),
     ];
+    if let Some(ref sid) = resume_session_id {
+        claude_args.push("--resume".to_string());
+        claude_args.push(sid.clone());
+    }
     if let Some(model) = model {
         claude_args.push("--model".to_string());
         claude_args.push(model.to_string());
@@ -458,5 +474,88 @@ mod tests {
     fn extract_assistant_text_ignores_user_messages() {
         let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#;
         assert_eq!(extract_assistant_text(line), None);
+    }
+
+    #[test]
+    fn session_state_parses_as_utf8_session_id() {
+        let session_id = "abc-123-def";
+        let data = session_id.as_bytes().to_vec();
+        let parsed = String::from_utf8(data).ok().filter(|s| !s.is_empty());
+        assert_eq!(parsed, Some("abc-123-def".to_string()));
+    }
+
+    #[test]
+    fn session_state_none_yields_no_resume() {
+        let session_state: Option<Vec<u8>> = None;
+        let resume_id = session_state
+            .as_ref()
+            .and_then(|data| String::from_utf8(data.clone()).ok())
+            .filter(|s| !s.is_empty());
+        assert_eq!(resume_id, None);
+    }
+
+    #[test]
+    fn session_state_empty_yields_no_resume() {
+        let session_state: Option<Vec<u8>> = Some(vec![]);
+        let resume_id = session_state
+            .as_ref()
+            .and_then(|data| String::from_utf8(data.clone()).ok())
+            .filter(|s| !s.is_empty());
+        assert_eq!(resume_id, None);
+    }
+
+    #[test]
+    fn claude_args_include_resume_flag_when_session_id_present() {
+        let resume_session_id = Some("session-xyz".to_string());
+        let mut claude_args = vec![
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--input-format".to_string(),
+            "stream-json".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--verbose".to_string(),
+        ];
+        if let Some(ref sid) = resume_session_id {
+            claude_args.push("--resume".to_string());
+            claude_args.push(sid.clone());
+        }
+        assert!(claude_args.contains(&"--resume".to_string()));
+        assert!(claude_args.contains(&"session-xyz".to_string()));
+    }
+
+    #[test]
+    fn claude_args_omit_resume_flag_when_no_session_id() {
+        let resume_session_id: Option<String> = None;
+        let mut claude_args = vec![
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--input-format".to_string(),
+            "stream-json".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--verbose".to_string(),
+        ];
+        if let Some(ref sid) = resume_session_id {
+            claude_args.push("--resume".to_string());
+            claude_args.push(sid.clone());
+        }
+        assert!(!claude_args.contains(&"--resume".to_string()));
+    }
+
+    #[test]
+    fn worker_connect_handshake_with_resume() {
+        let handshake = WorkerConnect::Fresh {
+            resume_from_event_index: Some(5),
+        };
+        let json = serde_json::to_string(&handshake).unwrap();
+        assert!(json.contains("\"resume_from_event_index\":5"));
+    }
+
+    #[test]
+    fn worker_connect_handshake_without_resume() {
+        let handshake = WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        };
+        let json = serde_json::to_string(&handshake).unwrap();
+        assert!(!json.contains("resume_from_event_index\":5"));
     }
 }

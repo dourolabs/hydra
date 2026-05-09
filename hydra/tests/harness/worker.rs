@@ -151,6 +151,7 @@ impl WorkerCommands for BashCommands {
         _working_dir: &Path,
         _env: &HashMap<String, String>,
         _idle_timeout: std::time::Duration,
+        _conversation_resume_from: Option<usize>,
     ) -> Result<String> {
         Err(anyhow!("interactive mode is not supported in test harness"))
     }

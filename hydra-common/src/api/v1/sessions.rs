@@ -287,6 +287,11 @@ pub struct WorkerContext {
     pub interactive: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_timeout_secs: Option<u64>,
+    /// When resuming a conversation, the event index to resume from.
+    /// The worker sends this in the WorkerConnect handshake so the server
+    /// only replays events after this index and includes session state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_resume_from: Option<usize>,
 }
 
 impl WorkerContext {
@@ -300,6 +305,7 @@ impl WorkerContext {
         mcp_config: Option<McpConfig>,
         interactive: bool,
         idle_timeout_secs: Option<u64>,
+        conversation_resume_from: Option<usize>,
     ) -> Self {
         Self {
             request_context,
@@ -310,6 +316,7 @@ impl WorkerContext {
             mcp_config,
             interactive,
             idle_timeout_secs,
+            conversation_resume_from,
         }
     }
 }
@@ -873,6 +880,7 @@ mod tests {
             Some(mcp_config.clone()),
             false,
             None,
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -880,5 +888,47 @@ mod tests {
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
         assert_eq!(deserialized.mcp_config, Some(mcp_config));
+    }
+
+    #[test]
+    fn worker_context_serializes_conversation_resume_from() {
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            true,
+            None,
+            Some(42),
+        );
+
+        let json = serde_json::to_value(&context).unwrap();
+        assert_eq!(json.get("conversation_resume_from").unwrap(), &42);
+
+        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.conversation_resume_from, Some(42));
+    }
+
+    #[test]
+    fn worker_context_omits_conversation_resume_from_when_none() {
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            false,
+            None,
+            None,
+        );
+
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(json.get("conversation_resume_from").is_none());
+
+        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.conversation_resume_from, None);
     }
 }

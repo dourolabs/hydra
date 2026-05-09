@@ -36,6 +36,9 @@ pub struct Session {
     pub interactive: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<ConversationId>,
+    /// When resuming a conversation, the event index to resume from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_resume_from: Option<usize>,
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +71,7 @@ impl Session {
         mcp_config: Option<McpConfig>,
         interactive: bool,
         conversation_id: Option<ConversationId>,
+        conversation_resume_from: Option<usize>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -86,6 +90,7 @@ impl Session {
             mcp_config,
             interactive,
             conversation_id,
+            conversation_resume_from,
             status,
             last_message,
             error,
@@ -211,6 +216,7 @@ impl TryFrom<api::sessions::Session> for Session {
             mcp_config: value.mcp_config,
             interactive: value.interactive,
             conversation_id: value.conversation_id,
+            conversation_resume_from: None,
             status: value.status.try_into()?,
             last_message: value.last_message,
             error: value.error.map(TryInto::try_into).transpose()?,
@@ -290,6 +296,7 @@ mod tests {
             None,
             false,
             None,
+            None,
             Status::Created,
             None,
             None,
@@ -319,6 +326,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             Status::Created,
             None,

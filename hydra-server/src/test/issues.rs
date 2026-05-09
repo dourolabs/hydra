@@ -2049,6 +2049,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         mcp_config: None,
         interactive: false,
         conversation_id: None,
+        conversation_resume_from: None,
         status: Status::Created,
         last_message: None,
         error: None,
