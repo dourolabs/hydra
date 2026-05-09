@@ -17,7 +17,7 @@ use hydra_common::{
     },
 };
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct ConversationIdPath(pub ConversationId);
@@ -133,22 +133,35 @@ pub async fn list_conversations(
         .await
         .map_err(map_conversation_error)?;
 
-    let summaries: Vec<api_conversations::ConversationSummary> = conversations
-        .into_iter()
-        .map(|(id, versioned)| {
-            api_conversations::ConversationSummary::new(
-                id,
-                versioned.item.title,
-                versioned.item.agent_name,
-                versioned.item.status.into(),
-                0,
-                None,
-                versioned.item.creator.into(),
-                versioned.creation_time,
-                versioned.timestamp,
-            )
-        })
-        .collect();
+    let mut summaries = Vec::with_capacity(conversations.len());
+    for (id, versioned) in conversations {
+        let (event_count, last_event_preview) = match state
+            .store()
+            .get_conversation_events(&id)
+            .await
+        {
+            Ok(events) => {
+                let count = events.len();
+                let preview = events.last().map(|v| event_preview(&v.item));
+                (count, preview)
+            }
+            Err(err) => {
+                warn!(conversation_id = %id, error = %err, "failed to fetch events for summary");
+                (0, None)
+            }
+        };
+        summaries.push(api_conversations::ConversationSummary::new(
+            id,
+            versioned.item.title,
+            versioned.item.agent_name,
+            versioned.item.status.into(),
+            event_count,
+            last_event_preview,
+            versioned.item.creator.into(),
+            versioned.creation_time,
+            versioned.timestamp,
+        ));
+    }
 
     info!(returned = summaries.len(), "list_conversations completed");
     Ok(Json(summaries))
@@ -199,6 +212,26 @@ pub async fn get_conversation_events(
     Ok(Json(api_events))
 }
 
+fn event_preview(event: &DomainEvent) -> String {
+    match event {
+        DomainEvent::UserMessage { content, .. } => truncate_preview(content, "User: "),
+        DomainEvent::AssistantMessage { content, .. } => truncate_preview(content, "Assistant: "),
+        DomainEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
+        DomainEvent::Resumed { .. } => "Resumed".to_string(),
+        DomainEvent::Closed { .. } => "Closed".to_string(),
+    }
+}
+
+fn truncate_preview(content: &str, prefix: &str) -> String {
+    const MAX_LEN: usize = 100;
+    let remaining = MAX_LEN.saturating_sub(prefix.len());
+    if content.len() <= remaining {
+        format!("{prefix}{content}")
+    } else {
+        format!("{prefix}{}…", &content[..remaining.min(content.len())])
+    }
+}
+
 fn map_conversation_error(err: StoreError) -> ApiError {
     match err {
         StoreError::ConversationNotFound(id) => {
@@ -232,5 +265,90 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
             error!(error = %source, "failed to store session");
             ApiError::internal(format!("Failed to store session: {source}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hydra_common::{ConversationId, IssueId};
+
+    #[test]
+    fn map_conversation_error_not_found_returns_404() {
+        let id = ConversationId::new();
+        let err = StoreError::ConversationNotFound(id.clone());
+        let api_err = map_conversation_error(err);
+        assert_eq!(api_err.status().as_u16(), 404);
+        assert!(api_err.message().contains(&id.to_string()));
+    }
+
+    #[test]
+    fn map_conversation_error_internal_returns_500() {
+        let err = StoreError::Internal("db broke".to_string());
+        let api_err = map_conversation_error(err);
+        assert_eq!(api_err.status().as_u16(), 500);
+        assert!(api_err.message().contains("db broke"));
+    }
+
+    #[test]
+    fn map_create_session_error_issue_not_found_returns_404() {
+        let issue_id = IssueId::new();
+        let err = CreateSessionError::IssueLookup {
+            source: StoreError::IssueNotFound(issue_id.clone()),
+            issue_id: issue_id.clone(),
+        };
+        let api_err = map_create_session_error(err);
+        assert_eq!(api_err.status().as_u16(), 404);
+        assert!(api_err.message().contains(&issue_id.to_string()));
+    }
+
+    #[test]
+    fn map_create_session_error_store_returns_500() {
+        let err = CreateSessionError::Store {
+            source: StoreError::Internal("connection lost".to_string()),
+        };
+        let api_err = map_create_session_error(err);
+        assert_eq!(api_err.status().as_u16(), 500);
+        assert!(api_err.message().contains("connection lost"));
+    }
+
+    #[test]
+    fn map_create_session_error_issue_lookup_internal_returns_500() {
+        let issue_id = IssueId::new();
+        let err = CreateSessionError::IssueLookup {
+            source: StoreError::Internal("timeout".to_string()),
+            issue_id: issue_id.clone(),
+        };
+        let api_err = map_create_session_error(err);
+        assert_eq!(api_err.status().as_u16(), 500);
+    }
+
+    #[test]
+    fn event_preview_user_message() {
+        let event = DomainEvent::UserMessage {
+            content: "Hello".to_string(),
+            timestamp: chrono::Utc::now(),
+        };
+        assert_eq!(event_preview(&event), "User: Hello");
+    }
+
+    #[test]
+    fn event_preview_truncates_long_content() {
+        let long_content = "x".repeat(200);
+        let event = DomainEvent::UserMessage {
+            content: long_content,
+            timestamp: chrono::Utc::now(),
+        };
+        let preview = event_preview(&event);
+        assert!(preview.len() <= 110); // prefix + 100 chars + ellipsis
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn event_preview_closed() {
+        let event = DomainEvent::Closed {
+            timestamp: chrono::Utc::now(),
+        };
+        assert_eq!(event_preview(&event), "Closed");
     }
 }
