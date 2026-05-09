@@ -11,7 +11,9 @@ use crate::{
         secrets::SecretRef,
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
+    store::{
+        ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog,
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -353,6 +355,13 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
+        fail()
+    }
+
+    async fn get_conversation_event_summaries(
+        &self,
+        _ids: &[ConversationId],
+    ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
         fail()
     }
 
