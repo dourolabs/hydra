@@ -24,7 +24,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3"
 shellexpand = "3.1"
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "process", "fs", "io-util", "io-std", "time"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "process", "fs", "io-util", "io-std", "time", "signal"] }
 toml = "0.8"
 hydra-common = { path = "../hydra-common" }
 hydra-build-cache = { path = "../hydra-build-cache" }

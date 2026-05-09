@@ -45,32 +45,42 @@ async fn run_noninteractive(
         .await
         .context("failed to subscribe to events")?;
 
-    while let Some(event_result) = event_stream.next().await {
-        let sse_event = event_result.context("SSE stream error")?;
-        if sse_event.event_type != SseEventType::ConversationEventCreated {
-            continue;
-        }
-        let entity = sse_event
-            .as_entity_event()
-            .context("failed to parse entity event")?;
-        if !entity.entity_id.starts_with(&conversation_id.to_string()) {
-            continue;
-        }
+    let event_loop = async {
+        while let Some(event_result) = event_stream.next().await {
+            let sse_event = event_result.context("SSE stream error")?;
+            if sse_event.event_type != SseEventType::ConversationEventCreated {
+                continue;
+            }
+            let entity = sse_event
+                .as_entity_event()
+                .context("failed to parse entity event")?;
+            if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+                continue;
+            }
 
-        // Parse the conversation event from the entity payload.
-        if let Some(entity_value) = &entity.entity {
-            if let Ok(conv_event) =
-                serde_json::from_value::<ConversationEvent>(entity_value.clone())
-            {
-                match &conv_event {
-                    ConversationEvent::AssistantMessage { content, .. } => {
-                        println!("{content}");
-                        break;
+            // Parse the conversation event from the entity payload.
+            if let Some(entity_value) = &entity.entity {
+                if let Ok(conv_event) =
+                    serde_json::from_value::<ConversationEvent>(entity_value.clone())
+                {
+                    match &conv_event {
+                        ConversationEvent::AssistantMessage { content, .. } => {
+                            println!("{content}");
+                            break;
+                        }
+                        ConversationEvent::Closed { .. } => break,
+                        _ => {}
                     }
-                    ConversationEvent::Closed { .. } => break,
-                    _ => {}
                 }
             }
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        result = event_loop => { result?; }
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\nInterrupted.");
         }
     }
 
@@ -115,70 +125,80 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
         .context("failed to subscribe to events")?;
 
     // REPL loop: wait for assistant response, then read next user input.
-    loop {
-        // Wait for assistant response.
-        let mut got_response = false;
-        while let Some(event_result) = event_stream.next().await {
-            let sse_event = match event_result {
-                Ok(e) => e,
-                Err(err) => {
-                    eprintln!("SSE error: {err}");
-                    break;
+    let repl_loop = async {
+        loop {
+            // Wait for assistant response.
+            let mut got_response = false;
+            while let Some(event_result) = event_stream.next().await {
+                let sse_event = match event_result {
+                    Ok(e) => e,
+                    Err(err) => {
+                        eprintln!("SSE error: {err}");
+                        break;
+                    }
+                };
+                if sse_event.event_type != SseEventType::ConversationEventCreated {
+                    continue;
                 }
-            };
-            if sse_event.event_type != SseEventType::ConversationEventCreated {
-                continue;
-            }
-            let entity = match sse_event.as_entity_event() {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            if !entity.entity_id.starts_with(&conversation_id.to_string()) {
-                continue;
-            }
+                let entity = match sse_event.as_entity_event() {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+                    continue;
+                }
 
-            if let Some(entity_value) = &entity.entity {
-                if let Ok(conv_event) =
-                    serde_json::from_value::<ConversationEvent>(entity_value.clone())
-                {
-                    match &conv_event {
-                        ConversationEvent::AssistantMessage { content, .. } => {
-                            println!("{content}");
-                            got_response = true;
-                            break;
+                if let Some(entity_value) = &entity.entity {
+                    if let Ok(conv_event) =
+                        serde_json::from_value::<ConversationEvent>(entity_value.clone())
+                    {
+                        match &conv_event {
+                            ConversationEvent::AssistantMessage { content, .. } => {
+                                println!("{content}");
+                                got_response = true;
+                                break;
+                            }
+                            ConversationEvent::Closed { .. } => {
+                                eprintln!("Conversation closed by server.");
+                                return Ok(());
+                            }
+                            ConversationEvent::Suspending { reason, .. } => {
+                                eprintln!("Session suspending: {reason}");
+                            }
+                            _ => {}
                         }
-                        ConversationEvent::Closed { .. } => {
-                            eprintln!("Conversation closed by server.");
-                            return Ok(());
-                        }
-                        ConversationEvent::Suspending { reason, .. } => {
-                            eprintln!("Session suspending: {reason}");
-                        }
-                        _ => {}
                     }
                 }
             }
+
+            if !got_response {
+                eprintln!("Event stream ended.");
+                break;
+            }
+
+            // Read next user input.
+            eprint!("> ");
+            let next_message = match lines.next_line().await? {
+                Some(line) if !line.trim().is_empty() => line,
+                _ => break, // EOF or empty line on Ctrl+D
+            };
+
+            let send_request = SendMessageRequest {
+                content: next_message,
+            };
+            client
+                .send_message(&conversation_id, &send_request)
+                .await
+                .context("failed to send message")?;
         }
+        Ok::<(), anyhow::Error>(())
+    };
 
-        if !got_response {
-            eprintln!("Event stream ended.");
-            break;
+    tokio::select! {
+        result = repl_loop => { result?; }
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\nInterrupted.");
         }
-
-        // Read next user input.
-        eprint!("> ");
-        let next_message = match lines.next_line().await? {
-            Some(line) if !line.trim().is_empty() => line,
-            _ => break, // EOF or empty line on Ctrl+D
-        };
-
-        let send_request = SendMessageRequest {
-            content: next_message,
-        };
-        client
-            .send_message(&conversation_id, &send_request)
-            .await
-            .context("failed to send message")?;
     }
 
     // Best-effort close on exit.
