@@ -11,9 +11,7 @@ use crate::{
         secrets::SecretRef,
         users::{User, Username},
     },
-    store::{
-        ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog,
-    },
+    store::{ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
