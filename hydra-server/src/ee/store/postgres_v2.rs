@@ -3603,7 +3603,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let mut predicates = Vec::new();
         let mut bindings = Vec::new();
 
-        predicates.push("deleted = false".to_string());
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = false".to_string());
+        }
 
         if let Some(ref status) = query.status {
             let status_str = match ConversationStatus::from(*status) {
