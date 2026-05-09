@@ -1,3 +1,4 @@
+use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -12,14 +13,15 @@ use crate::domain::{
 use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, LabelId, NotificationId, PatchId, RepoName, SessionId, VersionNumber,
-    Versioned,
+    ConversationId, DocumentId, HydraId, LabelId, NotificationId, PatchId, RepoName, SessionId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
@@ -67,6 +69,16 @@ pub enum MutationPayload {
         new: Notification,
         actor: ActorRef,
     },
+    Conversation {
+        old: Option<Conversation>,
+        new: Conversation,
+        actor: ActorRef,
+    },
+    ConversationEvent {
+        conversation_id: ConversationId,
+        event: ConversationEvent,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -78,7 +90,9 @@ impl MutationPayload {
             | MutationPayload::Session { actor, .. }
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
-            | MutationPayload::Notification { actor, .. } => actor,
+            | MutationPayload::Notification { actor, .. }
+            | MutationPayload::Conversation { actor, .. }
+            | MutationPayload::ConversationEvent { actor, .. } => actor,
         }
     }
 }
@@ -102,6 +116,9 @@ pub enum EventType {
     LabelUpdated,
     LabelDeleted,
     NotificationCreated,
+    ConversationCreated,
+    ConversationUpdated,
+    ConversationEventCreated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -219,6 +236,27 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    ConversationCreated {
+        seq: u64,
+        conversation_id: ConversationId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    ConversationUpdated {
+        seq: u64,
+        conversation_id: ConversationId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    ConversationEventCreated {
+        seq: u64,
+        conversation_id: ConversationId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -239,7 +277,10 @@ impl ServerEvent {
             | ServerEvent::LabelCreated { seq, .. }
             | ServerEvent::LabelUpdated { seq, .. }
             | ServerEvent::LabelDeleted { seq, .. }
-            | ServerEvent::NotificationCreated { seq, .. } => *seq,
+            | ServerEvent::NotificationCreated { seq, .. }
+            | ServerEvent::ConversationCreated { seq, .. }
+            | ServerEvent::ConversationUpdated { seq, .. }
+            | ServerEvent::ConversationEventCreated { seq, .. } => *seq,
         }
     }
 
@@ -260,7 +301,10 @@ impl ServerEvent {
             | ServerEvent::LabelCreated { payload, .. }
             | ServerEvent::LabelUpdated { payload, .. }
             | ServerEvent::LabelDeleted { payload, .. }
-            | ServerEvent::NotificationCreated { payload, .. } => payload,
+            | ServerEvent::NotificationCreated { payload, .. }
+            | ServerEvent::ConversationCreated { payload, .. }
+            | ServerEvent::ConversationUpdated { payload, .. }
+            | ServerEvent::ConversationEventCreated { payload, .. } => payload,
         }
     }
 
@@ -294,6 +338,9 @@ impl ServerEvent {
             ServerEvent::LabelUpdated { .. } => EventType::LabelUpdated,
             ServerEvent::LabelDeleted { .. } => EventType::LabelDeleted,
             ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
+            ServerEvent::ConversationCreated { .. } => EventType::ConversationCreated,
+            ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
+            ServerEvent::ConversationEventCreated { .. } => EventType::ConversationEventCreated,
         }
     }
 }
@@ -556,6 +603,51 @@ impl EventBus {
         self.send(ServerEvent::NotificationCreated {
             seq: self.next_seq(),
             notification_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_conversation_created(
+        &self,
+        conversation_id: ConversationId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::ConversationCreated {
+            seq: self.next_seq(),
+            conversation_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_conversation_updated(
+        &self,
+        conversation_id: ConversationId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::ConversationUpdated {
+            seq: self.next_seq(),
+            conversation_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_conversation_event_created(
+        &self,
+        conversation_id: ConversationId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::ConversationEventCreated {
+            seq: self.next_seq(),
+            conversation_id,
             version,
             timestamp: Utc::now(),
             payload,
@@ -915,6 +1007,77 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.delete_user(username, &actor).await
+    }
+
+    // ---- Conversation mutations (inherent, with actor) ----
+
+    pub async fn add_conversation_with_actor(
+        &self,
+        conversation: Conversation,
+        actor: ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError> {
+        let (id, version) = self
+            .inner
+            .add_conversation(conversation.clone(), &actor)
+            .await?;
+        let payload = Arc::new(MutationPayload::Conversation {
+            old: None,
+            new: conversation,
+            actor,
+        });
+        self.event_bus
+            .emit_conversation_created(id.clone(), version, payload);
+        Ok((id, version))
+    }
+
+    pub async fn update_conversation_with_actor(
+        &self,
+        id: &ConversationId,
+        conversation: Conversation,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let old = self.inner.get_conversation(id).await.ok().map(|v| v.item);
+        let version = self
+            .inner
+            .update_conversation(id, conversation.clone(), &actor)
+            .await?;
+        let payload = Arc::new(MutationPayload::Conversation {
+            old,
+            new: conversation,
+            actor,
+        });
+        self.event_bus
+            .emit_conversation_updated(id.clone(), version, payload);
+        Ok(version)
+    }
+
+    pub async fn append_conversation_event_with_actor(
+        &self,
+        id: &ConversationId,
+        event: ConversationEvent,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let event_clone = event.clone();
+        let version = self
+            .inner
+            .append_conversation_event(id, event, &actor)
+            .await?;
+        let payload = Arc::new(MutationPayload::ConversationEvent {
+            conversation_id: id.clone(),
+            event: event_clone,
+            actor,
+        });
+        self.event_bus
+            .emit_conversation_event_created(id.clone(), version, payload);
+        Ok(version)
+    }
+
+    pub async fn store_conversation_session_state(
+        &self,
+        id: &ConversationId,
+        data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.inner.store_conversation_session_state(id, data).await
     }
 
     // ---- Notification mutations ----
@@ -1501,6 +1664,36 @@ impl ReadOnlyStore for StoreWithEvents {
         username: &Username,
     ) -> Result<Vec<SecretRef>, StoreError> {
         self.inner.list_user_secret_names(username).await
+    }
+
+    // ---- Conversation (read-only) ----
+
+    async fn get_conversation(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError> {
+        self.inner.get_conversation(id).await
+    }
+
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
+        self.inner.list_conversations(query).await
+    }
+
+    async fn get_conversation_events(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
+        self.inner.get_conversation_events(id).await
+    }
+
+    async fn get_conversation_session_state(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.inner.get_conversation_session_state(id).await
     }
 }
 

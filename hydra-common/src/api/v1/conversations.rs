@@ -2,6 +2,27 @@ use crate::{ConversationId, SessionId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SearchConversationsQuery {
+    /// Free-text search across conversation title, agent name, and ID.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Filter by conversation status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ConversationStatus>,
+    /// Filter by creator username.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    /// Maximum number of results to return.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -46,12 +67,36 @@ pub struct Conversation {
     pub conversation_id: ConversationId,
     pub title: Option<String>,
     pub agent_name: Option<String>,
-    pub events: Vec<ConversationEvent>,
     pub active_session_id: Option<SessionId>,
     pub status: ConversationStatus,
     pub creator: Username,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Conversation {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        conversation_id: ConversationId,
+        title: Option<String>,
+        agent_name: Option<String>,
+        active_session_id: Option<SessionId>,
+        status: ConversationStatus,
+        creator: Username,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            conversation_id,
+            title,
+            agent_name,
+            active_session_id,
+            status,
+            creator,
+            created_at,
+            updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +113,33 @@ pub struct ConversationSummary {
     pub creator: Username,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl ConversationSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        conversation_id: ConversationId,
+        title: Option<String>,
+        agent_name: Option<String>,
+        status: ConversationStatus,
+        event_count: usize,
+        last_event_preview: Option<String>,
+        creator: Username,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            conversation_id,
+            title,
+            agent_name,
+            status,
+            event_count,
+            last_event_preview,
+            creator,
+            created_at,
+            updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

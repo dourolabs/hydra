@@ -320,6 +320,9 @@ impl EventFilter {
                     }
                 }
             }
+            EntityId::Conversation(_) => {
+                // No ID filter for conversations yet
+            }
         }
 
         true
@@ -335,6 +338,8 @@ enum EntityId<'a> {
     Label(&'a LabelId),
     Document(&'a DocumentId),
     Notification(&'a NotificationId),
+    #[allow(dead_code)]
+    Conversation(&'a hydra_common::ConversationId),
 }
 
 /// Extracts the entity type category and typed entity ID from a ServerEvent.
@@ -366,6 +371,16 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         ServerEvent::NotificationCreated {
             notification_id, ..
         } => ("notifications", EntityId::Notification(notification_id)),
+
+        ServerEvent::ConversationCreated {
+            conversation_id, ..
+        }
+        | ServerEvent::ConversationUpdated {
+            conversation_id, ..
+        }
+        | ServerEvent::ConversationEventCreated {
+            conversation_id, ..
+        } => ("conversations", EntityId::Conversation(conversation_id)),
     }
 }
 
@@ -509,6 +524,27 @@ async fn serialize_entity(
                 api_notification,
             );
             serde_json::to_value(response).ok()?
+        }
+        MutationPayload::Conversation { new, .. } => {
+            let conversation_id: hydra_common::ConversationId = entity_id.parse().ok()?;
+            let creation_time = if version == 1 {
+                timestamp
+            } else {
+                state
+                    .store()
+                    .get_conversation(&conversation_id)
+                    .await
+                    .ok()
+                    .map(|v| v.creation_time)
+                    .unwrap_or(timestamp)
+            };
+            let api_conv = new.to_api(conversation_id, creation_time, timestamp);
+            serde_json::to_value(api_conv).ok()?
+        }
+        MutationPayload::ConversationEvent { event, .. } => {
+            let api_event: hydra_common::api::v1::conversations::ConversationEvent =
+                event.clone().into();
+            serde_json::to_value(api_event).ok()?
         }
     };
     Some(value)
@@ -726,6 +762,48 @@ async fn server_event_to_sse(
             SseEventType::NotificationCreated,
             "notification",
             notification_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::ConversationCreated {
+            conversation_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::ConversationCreated,
+            "conversation",
+            conversation_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::ConversationUpdated {
+            conversation_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::ConversationUpdated,
+            "conversation",
+            conversation_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::ConversationEventCreated {
+            conversation_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::ConversationEventCreated,
+            "conversation_event",
+            conversation_id.to_string(),
             *version,
             *timestamp,
             payload,

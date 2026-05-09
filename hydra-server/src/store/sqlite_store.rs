@@ -1,3 +1,4 @@
+use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
     agents::Agent,
@@ -14,6 +15,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
@@ -21,8 +23,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -3520,6 +3522,34 @@ impl ReadOnlyStore for SqliteStore {
             .map(|(name, internal)| SecretRef { name, internal })
             .collect())
     }
+
+    async fn get_conversation(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn list_conversations(
+        &self,
+        _query: &SearchConversationsQuery,
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn get_conversation_events(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn get_conversation_session_state(
+        &self,
+        _id: &ConversationId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
 }
 
 #[async_trait]
@@ -4353,6 +4383,40 @@ impl Store for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
         Ok(())
+    }
+
+    async fn add_conversation(
+        &self,
+        _conversation: Conversation,
+        _actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn update_conversation(
+        &self,
+        _id: &ConversationId,
+        _conversation: Conversation,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn append_conversation_event(
+        &self,
+        _id: &ConversationId,
+        _event: ConversationEvent,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        todo!("SQLite conversation store not yet implemented")
+    }
+
+    async fn store_conversation_session_state(
+        &self,
+        _id: &ConversationId,
+        _data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        todo!("SQLite conversation store not yet implemented")
     }
 }
 

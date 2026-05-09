@@ -1,6 +1,7 @@
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
+    conversations::{Conversation, ConversationEvent},
     documents::Document,
     issues::Issue,
     labels::Label,
@@ -12,14 +13,15 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName, SessionId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -215,6 +217,8 @@ pub(crate) fn session_status_log_from_versions(
 pub enum StoreError {
     #[error("Session not found: {0}")]
     SessionNotFound(SessionId),
+    #[error("Conversation not found: {0}")]
+    ConversationNotFound(ConversationId),
     #[error("Issue not found: {0}")]
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
@@ -566,6 +570,32 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns all object IDs associated with the given label.
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<HydraId>, StoreError>;
 
+    // ---- Conversation (read-only) ----
+
+    /// Retrieves a conversation by its ConversationId.
+    async fn get_conversation(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Versioned<Conversation>, StoreError>;
+
+    /// Lists conversations matching the query, returning summaries sorted by updated_at DESC.
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError>;
+
+    /// Retrieves conversation events by conversation ID.
+    async fn get_conversation_events(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError>;
+
+    /// Retrieves the stored session state blob for a conversation, if any.
+    async fn get_conversation_session_state(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
@@ -753,6 +783,40 @@ pub trait Store: ReadOnlyStore {
         id: &DocumentId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
+
+    // ---- Conversation mutations ----
+
+    /// Creates a new conversation in the store.
+    ///
+    /// The store generates and assigns the conversation ID.
+    async fn add_conversation(
+        &self,
+        conversation: Conversation,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber), StoreError>;
+
+    /// Updates an existing conversation. Takes the full conversation object.
+    async fn update_conversation(
+        &self,
+        id: &ConversationId,
+        conversation: Conversation,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Appends an event to a conversation's event stream.
+    async fn append_conversation_event(
+        &self,
+        id: &ConversationId,
+        event: ConversationEvent,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Stores a session state blob for a conversation (used for session resumption).
+    async fn store_conversation_session_state(
+        &self,
+        id: &ConversationId,
+        data: Vec<u8>,
+    ) -> Result<(), StoreError>;
 
     /// Adds a session to the store.
     ///
