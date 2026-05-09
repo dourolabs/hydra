@@ -261,14 +261,8 @@ impl AppState {
         }
 
         // Create a new interactive session
-        let session_request = CreateSessionRequest::new(
-            None,
-            None,
-            BundleSpec::None,
-            HashMap::new(),
-            None,
-            true,
-        );
+        let session_request =
+            CreateSessionRequest::new(None, None, BundleSpec::None, HashMap::new(), None, true);
         let session_id = self
             .create_session(session_request, actor_ref.clone(), creator)
             .await
