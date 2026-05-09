@@ -12,8 +12,12 @@ use axum::{
 };
 use hydra_common::{
     ConversationId,
-    api::v1::{ApiError, conversations as api_conversations},
+    api::v1::{
+        ApiError, conversations as api_conversations,
+        sessions::{BundleSpec, CreateSessionRequest},
+    },
 };
+use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
