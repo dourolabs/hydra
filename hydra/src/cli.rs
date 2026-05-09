@@ -111,19 +111,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::users::UsersCommand,
     },
-    /// Chat with a Codex agent that can call the hydra CLI.
+    /// Chat with an agent via the Hydra conversation API.
     Chat {
-        /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
+        /// Send a single message, print the response, and exit.
         #[arg(long = "prompt", value_name = "PROMPT")]
         prompt: Option<String>,
 
-        /// Optional Codex model override (e.g. gpt-4o).
-        #[arg(long = "model", value_name = "MODEL")]
-        model: Option<String>,
-
-        /// Allow the agent to run commands without prompting (maps to Codex --full-auto).
-        #[arg(long = "full-auto")]
-        full_auto: bool,
+        /// Agent to use for the conversation.
+        #[arg(long = "agent", value_name = "AGENT")]
+        agent: Option<String>,
     },
 }
 
@@ -213,7 +209,7 @@ pub async fn resolve_client(
 pub async fn dispatch(
     cli: Cli,
     client: &dyn HydraClientInterface,
-    server_url: &str,
+    _server_url: &str,
     context: &CommandContext,
 ) -> Result<()> {
     let command = match cli.command {
@@ -240,11 +236,9 @@ pub async fn dispatch(
         }
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
-        Commands::Chat {
-            prompt,
-            model,
-            full_auto,
-        } => command::chat::run(server_url, prompt, model, full_auto, context).await?,
+        Commands::Chat { prompt, agent } => {
+            command::chat::run(client, prompt, agent, context).await?
+        }
     }
 
     Ok(())
