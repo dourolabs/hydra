@@ -160,7 +160,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
-    let result = dispatch(cli, &client, &server_url, &context).await;
+    let result = dispatch(cli, &client, &context).await;
     if let Err(ref err) = result {
         if is_broken_pipe(err) {
             std::process::exit(0);
@@ -209,7 +209,6 @@ pub async fn resolve_client(
 pub async fn dispatch(
     cli: Cli,
     client: &dyn HydraClientInterface,
-    _server_url: &str,
     context: &CommandContext,
 ) -> Result<()> {
     let command = match cli.command {
