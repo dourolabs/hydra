@@ -1,6 +1,7 @@
 use crate::test_utils::{spawn_test_server, test_client};
 use hydra_common::api::v1::conversations::{
-    Conversation, ConversationSummary, CreateConversationRequest,
+    Conversation, ConversationEvent, ConversationSummary, CreateConversationRequest,
+    SendMessageRequest,
 };
 use reqwest::StatusCode;
 
@@ -153,6 +154,365 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["type"], "user_message");
     assert_eq!(events[0]["content"], "What is Rust?");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_message_returns_event() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create a conversation
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Send a message
+    let msg_request = SendMessageRequest {
+        content: "Follow-up message".to_string(),
+    };
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/messages",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .json(&msg_request)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let event: ConversationEvent = response.json().await?;
+    match event {
+        ConversationEvent::UserMessage { content, .. } => {
+            assert_eq!(content, "Follow-up message");
+        }
+        other => panic!("expected UserMessage, got {other:?}"),
+    }
+
+    // Verify events list now has 2 events
+    let events: Vec<serde_json::Value> = client
+        .get(format!(
+            "{}/v1/conversations/{}/events",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(events.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and close a conversation
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    // Try to send a message — should fail with 409
+    let msg_request = SendMessageRequest {
+        content: "Should fail".to_string(),
+    };
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/messages",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .json(&msg_request)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn close_conversation_sets_status_closed() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let closed: Conversation = response.json().await?;
+    assert_eq!(
+        closed.status,
+        hydra_common::api::v1::conversations::ConversationStatus::Closed
+    );
+    assert!(closed.active_session_id.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn close_already_closed_conversation_is_idempotent() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Close twice
+    client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Close the conversation
+    client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    // Resume it
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/resume",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let resumed: Conversation = response.json().await?;
+    assert_eq!(
+        resumed.status,
+        hydra_common::api::v1::conversations::ConversationStatus::Active
+    );
+    assert!(resumed.active_session_id.is_some());
+    // New session should be different from the original
+    assert_ne!(resumed.active_session_id, created.active_session_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_active_conversation_returns_409() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Try to resume an already-active conversation — should fail with 409
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/resume",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // 1. Create
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        created.status,
+        hydra_common::api::v1::conversations::ConversationStatus::Active
+    );
+
+    // 2. Send message
+    let msg_request = SendMessageRequest {
+        content: "First message".to_string(),
+    };
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/messages",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .json(&msg_request)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 3. Close
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/close",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 4. Resume
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/resume",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 5. Send another message after resume
+    let msg_request = SendMessageRequest {
+        content: "After resume".to_string(),
+    };
+    let response = client
+        .post(format!(
+            "{}/v1/conversations/{}/messages",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .json(&msg_request)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify all events are recorded
+    let events: Vec<serde_json::Value> = client
+        .get(format!(
+            "{}/v1/conversations/{}/events",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    // Events: UserMessage("Hello"), UserMessage("First message"), Closed, Resumed, UserMessage("After resume")
+    assert_eq!(events.len(), 5);
+    assert_eq!(events[0]["type"], "user_message");
+    assert_eq!(events[1]["type"], "user_message");
+    assert_eq!(events[2]["type"], "closed");
+    assert_eq!(events[3]["type"], "resumed");
+    assert_eq!(events[4]["type"], "user_message");
 
     Ok(())
 }

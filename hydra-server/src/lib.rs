@@ -417,6 +417,18 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/conversations/:conversation_id/events",
             get(routes::conversations::get_conversation_events),
         )
+        .route(
+            "/v1/conversations/:conversation_id/messages",
+            post(routes::conversations::send_message),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/close",
+            post(routes::conversations::close_conversation),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/resume",
+            post(routes::conversations::resume_conversation),
+        )
         .route("/v1/events", get(routes::events::get_events))
         .route(
             "/v1/notifications",
