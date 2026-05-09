@@ -50,6 +50,8 @@ const TABLE_NOTIFICATIONS: &str = "notifications";
 const TABLE_AUTH_TOKENS: &str = "auth_tokens";
 const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
+const TABLE_CONVERSATIONS: &str = "conversations";
+const TABLE_CONVERSATION_EVENTS: &str = "conversation_events";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -134,6 +136,34 @@ fn parse_relationship_row(
         target_kind,
         rel_type,
     })
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationRow {
+    id: String,
+    version_number: i64,
+    title: Option<String>,
+    agent_name: Option<String>,
+    active_session_id: Option<String>,
+    status: String,
+    creator: String,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationEventRow {
+    #[allow(dead_code)]
+    id: String,
+    version_number: i64,
+    event_data: String,
+    actor: Option<String>,
+    created_at: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -567,6 +597,80 @@ impl SqliteStore {
             row.github_user_id.map(|id| id as u64),
             row.deleted,
         )
+    }
+
+    // ---- Conversation helpers ----
+
+    fn row_to_conversation(row: &ConversationRow) -> Result<Conversation, StoreError> {
+        let status = match row.status.as_str() {
+            "active" => crate::domain::conversations::ConversationStatus::Active,
+            "idle" => crate::domain::conversations::ConversationStatus::Idle,
+            "closed" => crate::domain::conversations::ConversationStatus::Closed,
+            other => {
+                return Err(StoreError::Internal(format!(
+                    "unknown conversation status: {other}"
+                )))
+            }
+        };
+        Ok(Conversation {
+            title: row.title.clone(),
+            agent_name: row.agent_name.clone(),
+            active_session_id: row
+                .active_session_id
+                .as_deref()
+                .map(|s| s.parse::<SessionId>())
+                .transpose()
+                .map_err(|e| {
+                    StoreError::Internal(format!("invalid session id in conversation: {e}"))
+                })?,
+            status,
+            creator: Username::from(row.creator.clone()),
+            deleted: row.deleted,
+        })
+    }
+
+    fn conversation_status_str(
+        status: &crate::domain::conversations::ConversationStatus,
+    ) -> &'static str {
+        match status {
+            crate::domain::conversations::ConversationStatus::Active => "active",
+            crate::domain::conversations::ConversationStatus::Idle => "idle",
+            crate::domain::conversations::ConversationStatus::Closed => "closed",
+        }
+    }
+
+    async fn insert_conversation_in_tx<'e, E>(
+        executor: E,
+        id: &ConversationId,
+        version_number: VersionNumber,
+        conversation: &Conversation,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for conversation '{id}'"))
+        })?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+        ))
+        .bind(id.as_ref())
+        .bind(version_number)
+        .bind(&conversation.title)
+        .bind(&conversation.agent_name)
+        .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
+        .bind(Self::conversation_status_str(&conversation.status))
+        .bind(conversation.creator.as_str())
+        .bind(conversation.deleted)
+        .bind(actor)
+        .execute(executor)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
     // ---- Issue helpers ----
@@ -1456,6 +1560,55 @@ impl SqliteStore {
 
         Ok(())
     }
+}
+
+/// Build WHERE predicates and bindings for conversations queries (SQLite `?N` placeholders).
+fn build_conversations_predicates_sqlite(
+    query: &SearchConversationsQuery,
+) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(status) = &query.status {
+        let status_str = match status {
+            hydra_common::api::v1::conversations::ConversationStatus::Active => "active",
+            hydra_common::api::v1::conversations::ConversationStatus::Idle => "idle",
+            hydra_common::api::v1::conversations::ConversationStatus::Closed => "closed",
+        };
+        bindings.push(status_str.to_string());
+        predicates.push(format!("status = ?{}", bindings.len()));
+    }
+
+    if let Some(creator) = query
+        .creator
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(creator.to_lowercase());
+        predicates.push(format!("LOWER(creator) = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        bindings.push(pattern.clone()); // id
+        bindings.push(pattern.clone()); // title
+        bindings.push(pattern); // agent_name
+        predicates.push(format!(
+            "(LOWER(id) LIKE ?{s0} OR LOWER(COALESCE(title,'')) LIKE ?{s1} OR LOWER(COALESCE(agent_name,'')) LIKE ?{s2})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+        ));
+    }
+
+    (predicates, bindings)
 }
 
 /// Build WHERE predicates and bindings for issues queries (SQLite `?N` placeholders).
@@ -3525,31 +3678,181 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_conversation(
         &self,
-        _id: &ConversationId,
-        _include_deleted: bool,
+        id: &ConversationId,
+        include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        let row = sqlx::query_as::<_, ConversationRow>(&format!(
+            "SELECT id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
+             FROM {TABLE_CONVERSATIONS}
+             WHERE id = ?1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        let conversation = Self::row_to_conversation(&row)?;
+
+        if conversation.deleted && !include_deleted {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for conversation '{}'",
+                row.id
+            ))
+        })?;
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
+
+        Ok(Versioned::with_optional_actor(
+            conversation,
+            version,
+            timestamp,
+            parse_actor_json_string(row.actor.as_deref())?,
+            creation_time,
+        ))
     }
 
     async fn list_conversations(
         &self,
-        _query: &SearchConversationsQuery,
+        query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        let subquery = format!(
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
+             FROM {TABLE_CONVERSATIONS} c
+             WHERE c.is_latest = 1 AND c.deleted = 0"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let (mut predicates, mut bindings) =
+            build_conversations_predicates_sqlite(query);
+
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "updated_at",
+            "id",
+        )?;
+
+        let mut query_builder = sqlx::query_as::<_, ConversationRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut conversations = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for conversation '{}'",
+                    row.id
+                ))
+            })?;
+            let conversation = Self::row_to_conversation(&row)?;
+            let conversation_id = row.id.parse::<ConversationId>().map_err(|err| {
+                StoreError::Internal(format!(
+                    "invalid conversation id stored in database: {err}"
+                ))
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(timestamp);
+            let versioned = Versioned::with_optional_actor(
+                conversation,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                creation_time,
+            );
+            conversations.push((conversation_id, versioned));
+        }
+
+        Ok(conversations)
     }
 
     async fn get_conversation_events(
         &self,
-        _id: &ConversationId,
+        id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        // Verify conversation exists
+        let _conv = self.get_conversation(id, false).await?;
+
+        let rows = sqlx::query_as::<_, ConversationEventRow>(&format!(
+            "SELECT id, version_number, event_data, actor, created_at
+             FROM {TABLE_CONVERSATION_EVENTS}
+             WHERE id = ?1
+             ORDER BY version_number ASC"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            let event: ConversationEvent =
+                serde_json::from_str(&row.event_data).map_err(|e| {
+                    StoreError::Internal(format!(
+                        "failed to deserialize conversation event: {e}"
+                    ))
+                })?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(
+                    "invalid version number for conversation event".to_string(),
+                )
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            events.push(Versioned::with_optional_actor(
+                event,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        Ok(events)
     }
 
     async fn get_conversation_session_state(
         &self,
-        _id: &ConversationId,
+        id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        // Verify conversation exists
+        let _conv = self.get_conversation(id, false).await?;
+
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&format!(
+            "SELECT session_state FROM {TABLE_CONVERSATIONS}
+             WHERE id = ?1 AND is_latest = 1 AND session_state IS NOT NULL"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(row)
     }
 }
 
@@ -4388,36 +4691,139 @@ impl Store for SqliteStore {
 
     async fn add_conversation(
         &self,
-        _conversation: Conversation,
-        _actor: &ActorRef,
+        conversation: Conversation,
+        actor: &ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        let id = ConversationId::new();
+        let actor_json = actor_to_json_string(actor);
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json))
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok((id, 1))
     }
 
     async fn update_conversation(
         &self,
-        _id: &ConversationId,
-        _conversation: Conversation,
-        _actor: &ActorRef,
+        id: &ConversationId,
+        conversation: Conversation,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_CONVERSATIONS, id.as_ref())
+            .await?
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for conversation '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query(&format!(
+            "UPDATE {TABLE_CONVERSATIONS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        Self::insert_conversation_in_tx(
+            &mut *tx,
+            id,
+            next_version,
+            &conversation,
+            Some(&actor_json),
+        )
+        .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
     }
 
     async fn append_conversation_event(
         &self,
-        _id: &ConversationId,
-        _event: ConversationEvent,
-        _actor: &ActorRef,
+        id: &ConversationId,
+        event: ConversationEvent,
+        actor: &ActorRef,
     ) -> Result<ConversationEventId, StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        // Verify conversation exists
+        let _conv = self.get_conversation(id, false).await?;
+
+        // Get next event version number for this conversation
+        let latest_event_version = self
+            .fetch_latest_version_number(TABLE_CONVERSATION_EVENTS, id.as_ref())
+            .await?
+            .unwrap_or(0);
+        let next_version = latest_event_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!(
+                "event version number overflow for conversation '{id}'"
+            ))
+        })?;
+
+        // Event index is version - 1 (0-based)
+        let event_index = usize::try_from(next_version.saturating_sub(1)).map_err(|_| {
+            StoreError::Internal(format!(
+                "event index overflow for conversation '{id}'"
+            ))
+        })?;
+
+        let event_data = serde_json::to_string(&event).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
+        })?;
+        let event_type = match &event {
+            ConversationEvent::UserMessage { .. } => "user_message",
+            ConversationEvent::AssistantMessage { .. } => "assistant_message",
+            ConversationEvent::Suspending { .. } => "suspending",
+            ConversationEvent::Resumed { .. } => "resumed",
+            ConversationEvent::Closed { .. } => "closed",
+        };
+        let actor_json = actor_to_json_string(actor);
+        let version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!(
+                "event version number overflow for conversation '{id}'"
+            ))
+        })?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_CONVERSATION_EVENTS} (id, version_number, event_type, event_data, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5)"
+        ))
+        .bind(id.as_ref())
+        .bind(version_i64)
+        .bind(event_type)
+        .bind(&event_data)
+        .bind(&actor_json)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(ConversationEventId {
+            conversation_id: id.clone(),
+            event_index,
+        })
     }
 
     async fn store_conversation_session_state(
         &self,
-        _id: &ConversationId,
-        _data: Vec<u8>,
+        id: &ConversationId,
+        data: Vec<u8>,
     ) -> Result<(), StoreError> {
-        todo!("SQLite conversation store not yet implemented")
+        // Verify conversation exists
+        let _conv = self.get_conversation(id, false).await?;
+
+        // Update the session_state on the latest version row
+        sqlx::query(&format!(
+            "UPDATE {TABLE_CONVERSATIONS} SET session_state = ?1 WHERE id = ?2 AND is_latest = 1"
+        ))
+        .bind(&data)
+        .bind(id.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 }
 
@@ -8108,5 +8514,228 @@ mod tests {
 
         let flags = get_task_is_latest_flags(&store, &task_id).await;
         assert_eq!(flags, vec![(1, 0), (2, 0), (3, 1)]);
+    }
+
+    // ---- Conversation tests ----
+
+    fn sample_conversation() -> Conversation {
+        Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            active_session_id: None,
+            status: crate::domain::conversations::ConversationStatus::Active,
+            creator: Username::from("testuser".to_string()),
+            deleted: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn conversation_crud_round_trip() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+
+        let (id, version) = store
+            .add_conversation(conversation.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_versioned(&fetched, &conversation, 1);
+    }
+
+    #[tokio::test]
+    async fn conversation_update_bumps_version() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+
+        let (id, _) = store
+            .add_conversation(conversation, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = sample_conversation();
+        updated.title = Some("Updated title".to_string());
+        updated.status = crate::domain::conversations::ConversationStatus::Idle;
+
+        let v2 = store
+            .update_conversation(&id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_versioned(&fetched, &updated, 2);
+    }
+
+    #[tokio::test]
+    async fn conversation_not_found() {
+        let store = create_test_store().await;
+        let fake_id = ConversationId::new();
+        let result = store.get_conversation(&fake_id, false).await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn conversation_events_round_trip() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+        let (id, _) = store
+            .add_conversation(conversation, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event1 = ConversationEvent::UserMessage {
+            content: "Hello".to_string(),
+            timestamp: Utc::now(),
+        };
+        let eid1 = store
+            .append_conversation_event(&id, event1.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(eid1.conversation_id, id);
+        assert_eq!(eid1.event_index, 0);
+
+        let event2 = ConversationEvent::AssistantMessage {
+            content: "Hi there!".to_string(),
+            timestamp: Utc::now(),
+        };
+        let eid2 = store
+            .append_conversation_event(&id, event2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(eid2.conversation_id, id);
+        assert_eq!(eid2.event_index, 1);
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].item, event1);
+        assert_eq!(events[0].version, 1);
+        assert_eq!(events[1].item, event2);
+        assert_eq!(events[1].version, 2);
+    }
+
+    #[tokio::test]
+    async fn conversation_session_state_round_trip() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+        let (id, _) = store
+            .add_conversation(conversation, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Initially no session state
+        let state = store.get_conversation_session_state(&id).await.unwrap();
+        assert!(state.is_none());
+
+        // Store some state
+        let blob = vec![1, 2, 3, 4, 5];
+        store
+            .store_conversation_session_state(&id, blob.clone())
+            .await
+            .unwrap();
+
+        let state = store.get_conversation_session_state(&id).await.unwrap();
+        assert_eq!(state, Some(blob));
+    }
+
+    #[tokio::test]
+    async fn list_conversations_filters_by_status() {
+        let store = create_test_store().await;
+        let mut conv1 = sample_conversation();
+        conv1.status = crate::domain::conversations::ConversationStatus::Active;
+        let mut conv2 = sample_conversation();
+        conv2.status = crate::domain::conversations::ConversationStatus::Closed;
+
+        store
+            .add_conversation(conv1, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_conversation(conv2, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let query = SearchConversationsQuery {
+            status: Some(
+                hydra_common::api::v1::conversations::ConversationStatus::Active,
+            ),
+            ..Default::default()
+        };
+        let results = store.list_conversations(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].1.item.status,
+            crate::domain::conversations::ConversationStatus::Active,
+        );
+    }
+
+    #[tokio::test]
+    async fn list_conversations_filters_by_creator() {
+        let store = create_test_store().await;
+        let mut conv1 = sample_conversation();
+        conv1.creator = Username::from("alice".to_string());
+        let mut conv2 = sample_conversation();
+        conv2.creator = Username::from("bob".to_string());
+
+        store
+            .add_conversation(conv1, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_conversation(conv2, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let query = SearchConversationsQuery {
+            creator: Some("alice".to_string()),
+            ..Default::default()
+        };
+        let results = store.list_conversations(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.creator, Username::from("alice".to_string()));
+    }
+
+    #[tokio::test]
+    async fn list_conversations_text_search() {
+        let store = create_test_store().await;
+        let mut conv1 = sample_conversation();
+        conv1.title = Some("Meeting notes".to_string());
+        let mut conv2 = sample_conversation();
+        conv2.title = Some("Code review".to_string());
+
+        store
+            .add_conversation(conv1, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_conversation(conv2, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let query = SearchConversationsQuery {
+            q: Some("meeting".to_string()),
+            ..Default::default()
+        };
+        let results = store.list_conversations(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].1.item.title,
+            Some("Meeting notes".to_string()),
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_events_on_nonexistent_conversation() {
+        let store = create_test_store().await;
+        let fake_id = ConversationId::new();
+        let event = ConversationEvent::UserMessage {
+            content: "test".to_string(),
+            timestamp: Utc::now(),
+        };
+        let result = store
+            .append_conversation_event(&fake_id, event, &ActorRef::test())
+            .await;
+        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 }
