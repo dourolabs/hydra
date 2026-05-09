@@ -1233,7 +1233,15 @@ impl PostgresStoreV2 {
         Ok(Conversation {
             title: row.title.clone(),
             agent_name: row.agent_name.clone(),
-            active_session_id: row.active_session_id.as_deref().map(|s| s.into()),
+            active_session_id: row
+                .active_session_id
+                .as_deref()
+                .map(|s| {
+                    SessionId::from_str(s).map_err(|e| {
+                        StoreError::Internal(format!("invalid active_session_id: {e}"))
+                    })
+                })
+                .transpose()?,
             status,
             creator: Username::from(row.creator.as_str()),
             deleted: row.deleted,
