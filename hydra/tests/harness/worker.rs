@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use hydra::client::RelayWebSocket;
 use hydra::command::output::{CommandContext, ResolvedOutputFormat};
-use hydra::worker_commands::WorkerCommands;
+use hydra::worker::commands::WorkerCommands;
 use hydra_common::{
     constants::{ENV_HYDRA_ISSUE_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN},
     patches::SearchPatchesQuery,

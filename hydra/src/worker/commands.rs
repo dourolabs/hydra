@@ -595,7 +595,7 @@ impl WorkerCommands for ClaudeCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<String> {
-        crate::interactive::run_interactive(ws_stream, session_id, model, env, working_dir)
+        super::interactive::run_interactive(ws_stream, session_id, model, env, working_dir)
             .await
             .context("interactive claude session failed")?;
         Ok("Interactive session ended".to_string())
