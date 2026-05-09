@@ -1,5 +1,4 @@
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::conversations::ConversationEvent as DomainEvent;
 use crate::{
     app::{
         AppState, CloseConversationError, CreateConversationError, CreateSessionError,
@@ -16,7 +15,7 @@ use hydra_common::{
     ConversationId,
     api::v1::{ApiError, conversations as api_conversations},
 };
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub struct ConversationIdPath(pub ConversationId);
@@ -222,7 +221,6 @@ pub async fn resume_conversation(
     Ok(Json(api_conversation))
 }
 
-
 fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     match err {
         CreateConversationError::Store { source } => map_conversation_error(source),
@@ -294,6 +292,7 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::conversations::ConversationEvent as DomainEvent;
     use hydra_common::{ConversationId, IssueId};
 
     #[test]

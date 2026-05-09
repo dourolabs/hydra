@@ -6,6 +6,10 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
+    api::v1::conversations::{
+        Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
+        CreateConversationRequest, SendMessageRequest,
+    },
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
     api::v1::labels::{
@@ -49,8 +53,8 @@ use hydra_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    ActorId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RelativeVersionNumber,
-    RepoName, SessionId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId,
+    RelativeVersionNumber, RepoName, SessionId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
@@ -313,6 +317,22 @@ pub trait HydraClientInterface: Send + Sync {
         -> Result<()>;
 
     async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()>;
+
+    async fn create_conversation(
+        &self,
+        request: &CreateConversationRequest,
+    ) -> Result<ApiConversation>;
+    async fn send_message(
+        &self,
+        conversation_id: &ConversationId,
+        request: &SendMessageRequest,
+    ) -> Result<ApiConversationEvent>;
+    async fn get_conversation_events(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<ApiConversationEvent>>;
+    async fn close_conversation(&self, conversation_id: &ConversationId)
+        -> Result<ApiConversation>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -1926,6 +1946,94 @@ impl HydraClient {
             .context("failed to decode list relations response")
     }
 
+    /// Call `POST /v1/conversations` to create a new conversation.
+    pub async fn create_conversation(
+        &self,
+        request: &CreateConversationRequest,
+    ) -> Result<ApiConversation> {
+        let url = self.endpoint("/v1/conversations")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create conversation request")?
+            .error_for_status_with_body("hydra-server rejected create conversation request")
+            .await?;
+
+        response
+            .json::<ApiConversation>()
+            .await
+            .context("failed to decode create conversation response")
+    }
+
+    /// Call `POST /v1/conversations/:id/messages` to send a message.
+    pub async fn send_message(
+        &self,
+        conversation_id: &ConversationId,
+        request: &SendMessageRequest,
+    ) -> Result<ApiConversationEvent> {
+        let path = format!("/v1/conversations/{conversation_id}/messages");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit send message request")?
+            .error_for_status_with_body("hydra-server rejected send message request")
+            .await?;
+
+        response
+            .json::<ApiConversationEvent>()
+            .await
+            .context("failed to decode send message response")
+    }
+
+    /// Call `GET /v1/conversations/:id/events` to list conversation events.
+    pub async fn get_conversation_events(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<ApiConversationEvent>> {
+        let path = format!("/v1/conversations/{conversation_id}/events");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch conversation events")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while fetching conversation events",
+            )
+            .await?;
+
+        response
+            .json::<Vec<ApiConversationEvent>>()
+            .await
+            .context("failed to decode conversation events response")
+    }
+
+    /// Call `POST /v1/conversations/:id/close` to close a conversation.
+    pub async fn close_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        let path = format!("/v1/conversations/{conversation_id}/close");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .send()
+            .await
+            .context("failed to submit close conversation request")?
+            .error_for_status_with_body("hydra-server rejected close conversation request")
+            .await?;
+
+        response
+            .json::<ApiConversation>()
+            .await
+            .context("failed to decode close conversation response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -2409,6 +2517,35 @@ impl HydraClientInterface for HydraClient {
 
     async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
         HydraClient::create_relation(self, request).await
+    }
+
+    async fn create_conversation(
+        &self,
+        request: &CreateConversationRequest,
+    ) -> Result<ApiConversation> {
+        HydraClient::create_conversation(self, request).await
+    }
+
+    async fn send_message(
+        &self,
+        conversation_id: &ConversationId,
+        request: &SendMessageRequest,
+    ) -> Result<ApiConversationEvent> {
+        HydraClient::send_message(self, conversation_id, request).await
+    }
+
+    async fn get_conversation_events(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<ApiConversationEvent>> {
+        HydraClient::get_conversation_events(self, conversation_id).await
+    }
+
+    async fn close_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        HydraClient::close_conversation(self, conversation_id).await
     }
 }
 

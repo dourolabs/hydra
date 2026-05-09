@@ -1,249 +1,251 @@
-use std::{
-    env,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    process::Stdio,
+use anyhow::{Context, Result};
+use futures::StreamExt;
+use hydra_common::api::v1::{
+    conversations::{ConversationEvent, CreateConversationRequest, SendMessageRequest},
+    events::{EventsQuery, SseEventType},
 };
+use tokio::io::{AsyncBufReadExt, BufReader};
 
-use anyhow::{anyhow, bail, Context, Result};
-use hydra_common::constants::ENV_HYDRA_SERVER_URL;
-use tokio::{io::AsyncWriteExt, process::Command};
-
-use crate::command::output::CommandContext;
-
-const CHAT_PRIMER: &str = r#"
-You are the "hydra chat" issue-management assistant. Your role is to help the user manage
-their work in Hydra: creating issues, checking pending tasks, reviewing patches and design
-documents, and managing issue states. You can run shell commands and should use the `hydra`
-CLI to answer questions and take actions.
-
-## Primary behaviors
-
-### 1. Delegate work via issues — do not do work yourself
-If the user asks for something to be done (e.g., "fix the login bug", "add a feature"),
-create an issue for it — do NOT attempt the work yourself.
-- Confirm the issue description with the user before creating it.
-- Create the issue: `hydra issues create "<description>"`
-
-### 2. Show pending work for the user
-- Identify the current user: `hydra users info` (no arguments — returns the logged-in user).
-- List their assigned issues: `hydra issues list --assignee <username>`
-- Filter by status if useful: `hydra issues list --assignee <username> --status open`
-
-### 3. Help review patches and design documents
-
-**Patches:**
-- List patches: `hydra patches list`
-- Read a patch: `hydra patches describe <PATCH_ID>`
-- Submit a review: `hydra patches review <PATCH_ID> --author <username> --contents '<review text>' [--approve]`
-- Help the user read the patch, understand changes, and compose a review.
-
-**Design documents:**
-Documents are reviewed through a tracking issue, NOT directly on the document.
-- Read the document: `hydra documents get --path /designs/<slug>.md`
-- If the design is approved, close the review issue:
-  `hydra issues update <review-issue-id> --status closed`
-- If the design is not approved, fail the review issue with feedback:
-  `hydra issues update <review-issue-id> --status failed --progress 'Feedback: ...'`
-
-### 4. Manage failed / dropped states
-If the user wants to fail an issue that is part of a broader plan:
-- `hydra issues update <ISSUE_ID> --status failed --progress 'Feedback: <user feedback>'`
-- Warn the user: marking an issue as failed triggers the parent issue's agent to replan
-  around the failure, and any child issues that depend on the failed issue will be dropped.
-- Always explain this consequence and get confirmation before acting.
-
-### 5. Investigate issue status via jobs
-When the user asks "what's going on with issue X?":
-- Look up jobs: `hydra jobs list --from <ISSUE_ID>`
-- Check logs: `hydra jobs logs <JOB_ID>` (or `hydra jobs logs <ISSUE_ID>` for the latest job)
-
-## CLI quick reference
-
-Issues:   hydra issues list | describe | create | update
-Patches:  hydra patches list | describe | create | review | update
-Documents: hydra documents list | get | put | sync | push
-Sessions: hydra sessions list | logs | create | kill
-Users:    hydra users info
-
-## Guidelines
-1. Always use the CLI to answer questions — do not guess.
-2. Ask for confirmation before mutating data (creating issues, submitting reviews, changing statuses).
-3. Keep responses concise and reference evidence gathered from CLI output.
-"#;
-
-const INTERACTIVE_GREETING: &str =
-    "The user will chat with you live. Greet them and briefly explain that you can help with issue management — creating issues, checking pending work, reviewing patches and documents, and managing issue states. Wait for their first instruction before acting.";
+use crate::{client::HydraClientInterface, command::output::CommandContext};
 
 pub async fn run(
-    server_url: &str,
+    client: &dyn HydraClientInterface,
     prompt: Option<String>,
-    model: Option<String>,
-    full_auto: bool,
+    agent: Option<String>,
     _context: &CommandContext,
 ) -> Result<()> {
-    let working_dir = env::current_dir().context("failed to resolve current directory")?;
-    let hydra_bin_dir = resolve_current_hydra_dir()?;
-    let path_override = prepend_path_with(&hydra_bin_dir)?;
-
     match prompt {
-        Some(prompt) => {
-            run_noninteractive(
-                &working_dir,
-                server_url,
-                &prompt,
-                model.as_deref(),
-                full_auto,
-                &path_override,
-            )
-            .await
-        }
-        None => {
-            run_interactive(
-                &working_dir,
-                server_url,
-                model.as_deref(),
-                full_auto,
-                &path_override,
-            )
-            .await
-        }
+        Some(prompt) => run_noninteractive(client, &prompt, agent).await,
+        None => run_interactive(client, agent).await,
     }
-}
-
-async fn run_interactive(
-    working_dir: &Path,
-    server_url: &str,
-    model: Option<&str>,
-    full_auto: bool,
-    path_override: &OsString,
-) -> Result<()> {
-    let prompt = build_prompt(INTERACTIVE_GREETING, server_url);
-
-    let mut cmd = Command::new("codex");
-    if full_auto {
-        cmd.arg("--full-auto");
-    }
-    cmd.arg("--cd");
-    cmd.arg(working_dir);
-    if let Some(model) = model {
-        cmd.arg("--model");
-        cmd.arg(model);
-    }
-    // enable network access for the hydra command.
-    // TODO: this sandboxing lets codex also mess with files in the current dir, which is weird.
-    cmd.arg("-c");
-    cmd.arg("sandbox_workspace_write.network_access=true");
-    cmd.arg("--sandbox");
-    cmd.arg("workspace-write");
-    cmd.arg(prompt);
-    cmd.stdin(Stdio::inherit());
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-    cmd.env(ENV_HYDRA_SERVER_URL, server_url);
-    cmd.env("PATH", path_override);
-
-    let status = cmd
-        .status()
-        .await
-        .context("failed to start interactive codex session")?;
-    if !status.success() {
-        bail!("codex exited with status {status}");
-    }
-
-    Ok(())
 }
 
 async fn run_noninteractive(
-    working_dir: &Path,
-    server_url: &str,
+    client: &dyn HydraClientInterface,
     prompt: &str,
-    model: Option<&str>,
-    full_auto: bool,
-    path_override: &OsString,
+    agent: Option<String>,
 ) -> Result<()> {
-    let prompt = build_prompt(prompt, server_url);
-
-    let mut cmd = Command::new("codex");
-    cmd.arg("exec");
-    if full_auto {
-        cmd.arg("--full-auto");
-    }
-    cmd.arg("--cd");
-    cmd.arg(working_dir);
-    if let Some(model) = &model {
-        cmd.arg("--model");
-        cmd.arg(model);
-    }
-    // enable network access for the hydra command.
-    // TODO: this sandboxing lets codex also mess with files in the current dir, which is weird.
-    cmd.arg("-c");
-    cmd.arg("sandbox_workspace_write.network_access=true");
-    cmd.arg("--sandbox");
-    cmd.arg("workspace-write");
-    cmd.arg("-");
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-    cmd.env(ENV_HYDRA_SERVER_URL, server_url);
-    cmd.env("PATH", path_override);
-
-    let mut child = cmd.spawn().context("failed to start codex chat session")?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("failed to open stdin for codex process"))?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .await
-            .context("failed to send prompt to codex")?;
-    }
-
-    let status = child
-        .wait()
+    let request = CreateConversationRequest {
+        message: prompt.to_string(),
+        agent_name: agent,
+    };
+    let conversation = client
+        .create_conversation(&request)
         .await
-        .context("failed waiting for codex chat process to finish")?;
-    if !status.success() {
-        bail!("codex exited with status {status}");
+        .context("failed to create conversation")?;
+    let conversation_id = &conversation.conversation_id;
+
+    // Subscribe to SSE events and wait for the assistant response.
+    let query = EventsQuery {
+        types: Some("conversation_event_created".to_string()),
+        ..Default::default()
+    };
+    let mut event_stream = client
+        .subscribe_events(&query, None)
+        .await
+        .context("failed to subscribe to events")?;
+
+    while let Some(event_result) = event_stream.next().await {
+        let sse_event = event_result.context("SSE stream error")?;
+        if sse_event.event_type != SseEventType::ConversationEventCreated {
+            continue;
+        }
+        let entity = sse_event
+            .as_entity_event()
+            .context("failed to parse entity event")?;
+        if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+            continue;
+        }
+
+        // Parse the conversation event from the entity payload.
+        if let Some(entity_value) = &entity.entity {
+            if let Ok(conv_event) =
+                serde_json::from_value::<ConversationEvent>(entity_value.clone())
+            {
+                match &conv_event {
+                    ConversationEvent::AssistantMessage { content, .. } => {
+                        println!("{content}");
+                        break;
+                    }
+                    ConversationEvent::Closed { .. } => break,
+                    _ => {}
+                }
+            }
+        }
     }
 
+    // Best-effort close.
+    let _ = client.close_conversation(conversation_id).await;
     Ok(())
 }
 
-fn build_prompt(user_prompt: &str, server_url: &str) -> String {
-    format!(
-        "{primer}\n\nHydra server URL: {server_url}\n\nUser request:\n{user_prompt}\n",
-        primer = CHAT_PRIMER.trim(),
-        server_url = server_url.trim(),
-        user_prompt = user_prompt.trim()
-    )
-}
+async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String>) -> Result<()> {
+    eprintln!("Starting interactive chat session. Press Ctrl+C or Ctrl+D to exit.");
+    eprint!("> ");
 
-fn resolve_current_hydra_dir() -> Result<PathBuf> {
-    let exe = env::current_exe().context("failed to resolve running hydra binary")?;
-    exe.parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("running hydra binary has no parent directory"))
-}
+    // Read the first message from stdin.
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    let first_message = match lines.next_line().await? {
+        Some(line) if !line.trim().is_empty() => line,
+        _ => {
+            eprintln!("No input received. Exiting.");
+            return Ok(());
+        }
+    };
 
-fn prepend_path_with(dir: &Path) -> Result<OsString> {
-    let mut entries = vec![dir.to_path_buf()];
-    if let Some(existing) = env::var_os("PATH") {
-        entries.extend(env::split_paths(&existing));
+    let request = CreateConversationRequest {
+        message: first_message,
+        agent_name: agent,
+    };
+    let conversation = client
+        .create_conversation(&request)
+        .await
+        .context("failed to create conversation")?;
+    let conversation_id = conversation.conversation_id.clone();
+
+    // Subscribe to SSE events for this conversation.
+    let query = EventsQuery {
+        types: Some("conversation_event_created".to_string()),
+        ..Default::default()
+    };
+    let mut event_stream = client
+        .subscribe_events(&query, None)
+        .await
+        .context("failed to subscribe to events")?;
+
+    // REPL loop: wait for assistant response, then read next user input.
+    loop {
+        // Wait for assistant response.
+        let mut got_response = false;
+        while let Some(event_result) = event_stream.next().await {
+            let sse_event = match event_result {
+                Ok(e) => e,
+                Err(err) => {
+                    eprintln!("SSE error: {err}");
+                    break;
+                }
+            };
+            if sse_event.event_type != SseEventType::ConversationEventCreated {
+                continue;
+            }
+            let entity = match sse_event.as_entity_event() {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+                continue;
+            }
+
+            if let Some(entity_value) = &entity.entity {
+                if let Ok(conv_event) =
+                    serde_json::from_value::<ConversationEvent>(entity_value.clone())
+                {
+                    match &conv_event {
+                        ConversationEvent::AssistantMessage { content, .. } => {
+                            println!("{content}");
+                            got_response = true;
+                            break;
+                        }
+                        ConversationEvent::Closed { .. } => {
+                            eprintln!("Conversation closed by server.");
+                            return Ok(());
+                        }
+                        ConversationEvent::Suspending { reason, .. } => {
+                            eprintln!("Session suspending: {reason}");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if !got_response {
+            eprintln!("Event stream ended.");
+            break;
+        }
+
+        // Read next user input.
+        eprint!("> ");
+        let next_message = match lines.next_line().await? {
+            Some(line) if !line.trim().is_empty() => line,
+            _ => break, // EOF or empty line on Ctrl+D
+        };
+
+        let send_request = SendMessageRequest {
+            content: next_message,
+        };
+        client
+            .send_message(&conversation_id, &send_request)
+            .await
+            .context("failed to send message")?;
     }
-    env::join_paths(entries).context("failed to construct PATH for codex session")
+
+    // Best-effort close on exit.
+    let _ = client.close_conversation(&conversation_id).await;
+    eprintln!("Chat session ended.");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_prompt;
+    use super::*;
+    use hydra_common::api::v1::conversations::ConversationEvent;
 
     #[test]
-    fn prompt_includes_context() {
-        let prompt = build_prompt("list jobs", "http://example.com");
-        assert!(prompt.contains("issue-management assistant"));
-        assert!(prompt.contains("http://example.com"));
-        assert!(prompt.contains("list jobs"));
+    fn create_conversation_request_serializes_correctly() {
+        let request = CreateConversationRequest {
+            message: "hello".to_string(),
+            agent_name: Some("test-agent".to_string()),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["message"], "hello");
+        assert_eq!(json["agent_name"], "test-agent");
+    }
+
+    #[test]
+    fn create_conversation_request_without_agent() {
+        let request = CreateConversationRequest {
+            message: "hello".to_string(),
+            agent_name: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"message\":\"hello\""));
+        assert!(!json.contains("agent_name"));
+    }
+
+    #[test]
+    fn send_message_request_serializes_correctly() {
+        let request = SendMessageRequest {
+            content: "test message".to_string(),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["content"], "test message");
+    }
+
+    #[test]
+    fn assistant_message_event_deserializes() {
+        let json = serde_json::json!({
+            "type": "assistant_message",
+            "content": "Hello! How can I help?",
+            "timestamp": "2026-01-01T00:00:00Z"
+        });
+        let event: ConversationEvent = serde_json::from_value(json).unwrap();
+        match event {
+            ConversationEvent::AssistantMessage { content, .. } => {
+                assert_eq!(content, "Hello! How can I help?");
+            }
+            _ => panic!("expected AssistantMessage"),
+        }
+    }
+
+    #[test]
+    fn closed_event_deserializes() {
+        let json = serde_json::json!({
+            "type": "closed",
+            "timestamp": "2026-01-01T00:00:00Z"
+        });
+        let event: ConversationEvent = serde_json::from_value(json).unwrap();
+        assert!(matches!(event, ConversationEvent::Closed { .. }));
     }
 }
