@@ -1442,19 +1442,27 @@ impl ReadOnlyStore for MemoryStore {
     async fn get_conversation(
         &self,
         id: &ConversationId,
+        include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let versions = self
             .conversations
             .get(id)
             .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
-        Self::latest_versioned(versions.value())
-            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))
+        let versioned = Self::latest_versioned(versions.value())
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
         let search_term = query
             .q
             .as_ref()
@@ -1477,6 +1485,10 @@ impl ReadOnlyStore for MemoryStore {
                 let versions = entry.value();
                 let versioned = Self::latest_versioned(versions)?;
                 let conv = &versioned.item;
+
+                if !include_deleted && conv.deleted {
+                    return None;
+                }
 
                 if let Some(status) = status_filter {
                     if conv.status != status {
@@ -7257,7 +7269,7 @@ mod tests {
             .unwrap();
         assert_eq!(version, 1);
 
-        let fetched = store.get_conversation(&id).await.unwrap();
+        let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
         assert_eq!(fetched.item.agent_name.as_deref(), Some("test-agent"));
         assert_eq!(fetched.version, 1);
@@ -7267,7 +7279,7 @@ mod tests {
     async fn get_conversation_not_found() {
         let store = MemoryStore::new();
         let id = hydra_common::ConversationId::new();
-        let result = store.get_conversation(&id).await;
+        let result = store.get_conversation(&id, false).await;
         assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 
@@ -7293,7 +7305,7 @@ mod tests {
         assert_eq!(version, 2);
 
         // Verify persistence
-        let fetched = store.get_conversation(&id).await.unwrap();
+        let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.status, ConversationStatus::Idle);
         assert_eq!(fetched.item.title.as_deref(), Some("New title"));
         assert!(fetched.item.active_session_id.is_some());
@@ -7447,5 +7459,79 @@ mod tests {
 
         let result = store.store_conversation_session_state(&id, vec![1]).await;
         assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn list_conversations_excludes_deleted() {
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // Conversation should be visible in list initially
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].1.item.deleted);
+
+        // Soft-delete the conversation
+        let mut deleted_conv = sample_conversation();
+        deleted_conv.deleted = true;
+        store
+            .update_conversation(&id, deleted_conv, &test_actor())
+            .await
+            .unwrap();
+
+        // Deleted conversation should not appear in default list
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+
+        // Deleted conversation should appear with include_deleted=true
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                include_deleted: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_filters_deleted() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // Conversation is accessible when not deleted
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
+
+        // Soft-delete the conversation
+        let mut deleted_conv = sample_conversation();
+        deleted_conv.deleted = true;
+        store
+            .update_conversation(&id, deleted_conv, &test_actor())
+            .await
+            .unwrap();
+
+        // get_conversation with include_deleted=false should return ConversationNotFound
+        let err = store.get_conversation(&id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationNotFound(_)));
+
+        // get_conversation with include_deleted=true should return the deleted conversation
+        let fetched = store.get_conversation(&id, true).await.unwrap();
+        assert!(fetched.item.deleted);
     }
 }

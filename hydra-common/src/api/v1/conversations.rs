@@ -23,6 +23,9 @@ pub struct SearchConversationsQuery {
     /// Filter by creator username.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator: Option<String>,
+    /// Include soft-deleted conversations in results.
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
     /// Maximum number of results to return.
     #[serde(default)]
     pub limit: Option<u32>,

@@ -1036,7 +1036,12 @@ impl StoreWithEvents {
         conversation: Conversation,
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        let old = self.inner.get_conversation(id).await.ok().map(|v| v.item);
+        let old = self
+            .inner
+            .get_conversation(id, true)
+            .await
+            .ok()
+            .map(|v| v.item);
         let version = self
             .inner
             .update_conversation(id, conversation.clone(), &actor)
@@ -1674,8 +1679,9 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn get_conversation(
         &self,
         id: &ConversationId,
+        include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
-        self.inner.get_conversation(id).await
+        self.inner.get_conversation(id, include_deleted).await
     }
 
     async fn list_conversations(

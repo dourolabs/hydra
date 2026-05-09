@@ -337,6 +337,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_conversation(
         &self,
         _id: &ConversationId,
+        _include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         fail()
     }

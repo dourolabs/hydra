@@ -573,9 +573,15 @@ pub trait ReadOnlyStore: Send + Sync {
     // ---- Conversation (read-only) ----
 
     /// Retrieves a conversation by its ConversationId.
+    ///
+    /// # Arguments
+    /// * `id` - The ConversationId to look up
+    /// * `include_deleted` - If true, returns the conversation even if it has been soft-deleted.
+    ///   If false, returns `StoreError::ConversationNotFound` for deleted conversations.
     async fn get_conversation(
         &self,
         id: &ConversationId,
+        include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError>;
 
     /// Lists conversations matching the query, returning summaries sorted by updated_at DESC.
