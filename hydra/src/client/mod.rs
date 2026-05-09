@@ -133,6 +133,7 @@ impl ResponseExt for Response {
 #[async_trait]
 pub trait HydraClientInterface: Send + Sync {
     fn base_url(&self) -> &Url;
+    fn auth_token(&self) -> &str;
 
     async fn create_session(&self, request: &CreateSessionRequest)
         -> Result<CreateSessionResponse>;
@@ -1998,6 +1999,10 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
 impl HydraClientInterface for HydraClient {
     fn base_url(&self) -> &Url {
         self.base_url()
+    }
+
+    fn auth_token(&self) -> &str {
+        &self.auth_token
     }
 
     async fn create_session(

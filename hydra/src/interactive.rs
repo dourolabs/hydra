@@ -1,0 +1,477 @@
+use std::{collections::HashMap, process::Stdio};
+
+use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
+use futures::{SinkExt, StreamExt};
+use hydra_common::{
+    api::v1::conversations::{ConversationEvent, ServerMessage, WorkerConnect, WorkerMessage},
+    constants::{ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN},
+    SessionId,
+};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::Command,
+};
+use tokio_tungstenite::tungstenite;
+use url::Url;
+
+use crate::claude_formatter::StreamFormatter;
+
+/// Run an interactive Claude session, bridging between a relay WebSocket and
+/// Claude's stdin/stdout via `--input-format stream-json --output-format stream-json`.
+pub async fn run_interactive(
+    server_url: &Url,
+    auth_token: &str,
+    session_id: &SessionId,
+    model: Option<&str>,
+    env: &HashMap<String, String>,
+    working_dir: &std::path::Path,
+) -> Result<()> {
+    // Validate auth credentials exist.
+    let has_anthropic_key = env
+        .get(ENV_ANTHROPIC_API_KEY)
+        .is_some_and(|v| !v.trim().is_empty());
+    let has_oauth_token = env
+        .get(ENV_CLAUDE_CODE_OAUTH_TOKEN)
+        .is_some_and(|v| !v.trim().is_empty());
+    if !has_anthropic_key && !has_oauth_token {
+        return Err(anyhow!(
+            "Either {ENV_CLAUDE_CODE_OAUTH_TOKEN} or {ENV_ANTHROPIC_API_KEY} must be provided"
+        ));
+    }
+
+    // Build WebSocket URL from server HTTP URL.
+    let ws_url = build_ws_url(server_url, session_id)?;
+
+    // Connect to relay WebSocket with auth header.
+    println!("Connecting to relay WebSocket at {ws_url}");
+    let auth_value = format!("Bearer {auth_token}");
+    let request = tungstenite::http::Request::builder()
+        .uri(ws_url.as_str())
+        .header("Authorization", &auth_value)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
+        .body(())
+        .context("failed to build WebSocket request")?;
+
+    let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
+        .await
+        .context("failed to connect to relay WebSocket")?;
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+
+    println!("WebSocket connected, sending handshake");
+
+    // Send WorkerConnect handshake (fresh, no resume).
+    let handshake = WorkerConnect::Fresh {
+        resume_from_event_index: None,
+    };
+    let handshake_json =
+        serde_json::to_string(&handshake).context("failed to serialize WorkerConnect")?;
+    ws_sender
+        .send(tungstenite::Message::Text(handshake_json))
+        .await
+        .context("failed to send WorkerConnect handshake")?;
+
+    // Receive WorkerCatchUp response.
+    let catch_up_msg = ws_receiver
+        .next()
+        .await
+        .ok_or_else(|| anyhow!("WebSocket closed before catch-up"))?
+        .context("WebSocket error during catch-up")?;
+
+    let catch_up_text = match catch_up_msg {
+        tungstenite::Message::Text(text) => text,
+        other => return Err(anyhow!("expected text catch-up message, got {other:?}")),
+    };
+
+    let server_msg: ServerMessage =
+        serde_json::from_str(&catch_up_text).context("failed to parse catch-up message")?;
+    let catch_up = match server_msg {
+        ServerMessage::CatchUp(cu) => cu,
+        other => return Err(anyhow!("expected CatchUp message, got {other:?}")),
+    };
+
+    println!(
+        "Catch-up received: {} events to replay",
+        catch_up.events.len()
+    );
+
+    // Spawn Claude in long-lived interactive mode.
+    let mut claude_args = vec![
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--input-format".to_string(),
+        "stream-json".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+        "--verbose".to_string(),
+    ];
+    if let Some(model) = model {
+        claude_args.push("--model".to_string());
+        claude_args.push(model.to_string());
+    }
+
+    eprintln!("Claude CLI args (interactive): {claude_args:?}");
+
+    let mut command = Command::new("claude");
+    command
+        .args(&claude_args)
+        .current_dir(working_dir)
+        .envs(env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+
+    let mut child = command
+        .spawn()
+        .context("failed to spawn claude in interactive mode")?;
+
+    let pid = child.id().unwrap_or(0);
+    println!("Claude interactive process spawned (PID: {pid})");
+
+    let mut claude_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture stdin for claude"))?;
+    let claude_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture stdout for claude"))?;
+    let claude_stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture stderr for claude"))?;
+
+    // Spawn stderr reader (log to stderr).
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(claude_stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => eprint!("{line}"),
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Feed catch-up user messages to Claude's stdin.
+    for event in &catch_up.events {
+        if let ConversationEvent::UserMessage { content, .. } = event {
+            let input_line = build_claude_input(content);
+            claude_stdin
+                .write_all(input_line.as_bytes())
+                .await
+                .context("failed to write catch-up message to claude stdin")?;
+            claude_stdin
+                .flush()
+                .await
+                .context("failed to flush catch-up message to claude stdin")?;
+            println!("Fed catch-up user message to Claude stdin");
+        }
+    }
+
+    // Set up stdout reader with StreamFormatter.
+    let mut stdout_reader = BufReader::new(claude_stdout);
+
+    let mut _event_index: usize = catch_up.events.len();
+    let mut _claude_session_id: Option<String> = None;
+
+    // Relay loop: bidirectional message forwarding.
+    let mut stdout_line = String::new();
+    let mut formatter = StreamFormatter::new();
+
+    loop {
+        tokio::select! {
+            // Claude stdout -> Server: parse stream-json, send assistant messages.
+            read_result = stdout_reader.read_line(&mut stdout_line) => {
+                match read_result {
+                    Ok(0) => {
+                        println!("Claude stdout EOF (PID: {pid})");
+                        break;
+                    }
+                    Ok(_) => {
+                        // Try to extract session_id from JSONL output.
+                        if _claude_session_id.is_none() {
+                            if let Some(sid) = extract_session_id(&stdout_line) {
+                                println!("Extracted Claude session_id: {sid}");
+                                _claude_session_id = Some(sid);
+                            }
+                        }
+
+                        // Process with StreamFormatter for logging.
+                        let formatted_lines = formatter.handle_line(&stdout_line);
+                        for line in &formatted_lines {
+                            print!("{line}");
+                        }
+
+                        // Extract assistant text and send to server.
+                        if let Some(text) = extract_assistant_text(&stdout_line) {
+                            if !text.is_empty() {
+                                let event = ConversationEvent::AssistantMessage {
+                                    content: text,
+                                    timestamp: Utc::now(),
+                                };
+                                let msg = WorkerMessage::Event { event };
+                                let json = serde_json::to_string(&msg)
+                                    .context("failed to serialize worker message")?;
+                                if ws_sender
+                                    .send(tungstenite::Message::Text(json))
+                                    .await
+                                    .is_err()
+                                {
+                                    println!("WebSocket closed while sending assistant message");
+                                    break;
+                                }
+                            }
+                        }
+
+                        stdout_line.clear();
+                    }
+                    Err(err) => {
+                        eprintln!("Error reading Claude stdout: {err}");
+                        break;
+                    }
+                }
+            }
+
+            // Server -> Claude: receive user messages from WebSocket.
+            ws_msg = ws_receiver.next() => {
+                match ws_msg {
+                    Some(Ok(tungstenite::Message::Text(text))) => {
+                        match serde_json::from_str::<ServerMessage>(&text) {
+                            Ok(ServerMessage::Event { event }) => {
+                                _event_index += 1;
+                                if let ConversationEvent::UserMessage { content, .. } = event {
+                                    let input_line = build_claude_input(&content);
+                                    if claude_stdin
+                                        .write_all(input_line.as_bytes())
+                                        .await
+                                        .is_err()
+                                    {
+                                        eprintln!("Failed to write to Claude stdin (process may have exited)");
+                                        break;
+                                    }
+                                    if claude_stdin.flush().await.is_err() {
+                                        eprintln!("Failed to flush Claude stdin");
+                                        break;
+                                    }
+                                    println!("Forwarded user message to Claude stdin");
+                                }
+                            }
+                            Ok(ServerMessage::CatchUp(_)) => {
+                                eprintln!("Unexpected CatchUp message during relay loop");
+                            }
+                            Err(err) => {
+                                eprintln!("Failed to parse server message: {err}");
+                            }
+                        }
+                    }
+                    Some(Ok(tungstenite::Message::Ping(data))) => {
+                        let _ = ws_sender
+                            .send(tungstenite::Message::Pong(data))
+                            .await;
+                    }
+                    Some(Ok(tungstenite::Message::Close(_))) | None => {
+                        println!("WebSocket closed by server");
+                        break;
+                    }
+                    Some(Ok(_)) => {
+                        // Ignore binary, pong, etc.
+                    }
+                    Some(Err(err)) => {
+                        eprintln!("WebSocket error: {err}");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Clean shutdown: terminate Claude process.
+    println!("Shutting down interactive session");
+
+    #[cfg(unix)]
+    if let Some(pgid) = child.id() {
+        // SIGTERM the process group.
+        unsafe {
+            libc::kill(-(pgid as i32), libc::SIGTERM);
+        }
+    }
+
+    // Give Claude a chance to exit gracefully.
+    match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(status)) => {
+            println!("Claude process exited with status: {status}");
+        }
+        Ok(Err(err)) => {
+            eprintln!("Error waiting for Claude process: {err}");
+        }
+        Err(_) => {
+            eprintln!("Claude process did not exit within 5s, force killing");
+            #[cfg(unix)]
+            if let Some(pgid) = child.id() {
+                unsafe {
+                    libc::kill(-(pgid as i32), libc::SIGKILL);
+                }
+            }
+            let _ = child.kill().await;
+        }
+    }
+
+    // Close WebSocket.
+    let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
+
+    Ok(())
+}
+
+/// Build the WebSocket URL for the relay endpoint.
+fn build_ws_url(server_url: &Url, session_id: &SessionId) -> Result<Url> {
+    let mut ws_url = server_url.clone();
+    match ws_url.scheme() {
+        "https" => ws_url
+            .set_scheme("wss")
+            .map_err(|()| anyhow!("failed to set wss scheme"))?,
+        "http" => ws_url
+            .set_scheme("ws")
+            .map_err(|()| anyhow!("failed to set ws scheme"))?,
+        scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
+    }
+    ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
+    Ok(ws_url)
+}
+
+/// Build a stream-json input line for Claude's stdin.
+fn build_claude_input(content: &str) -> String {
+    let input = serde_json::json!({
+        "type": "user",
+        "session_id": "",
+        "parent_tool_use_id": null,
+        "message": {
+            "role": "user",
+            "content": content
+        }
+    });
+    format!("{input}\n")
+}
+
+/// Extract the `session_id` field from a Claude JSONL output line.
+fn extract_session_id(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    value
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Extract assistant text content from a Claude stream-json output line.
+/// Returns Some(text) if the line is an assistant message with text content.
+fn extract_assistant_text(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type")?.as_str()? != "assistant" {
+        return None;
+    }
+    let content = value.get("message")?.get("content")?.as_array()?;
+
+    let mut text_parts = Vec::new();
+    for chunk in content {
+        if chunk.get("type")?.as_str()? == "text" {
+            if let Some(text) = chunk.get("text").and_then(|v| v.as_str()) {
+                text_parts.push(text.to_string());
+            }
+        }
+    }
+
+    if text_parts.is_empty() {
+        None
+    } else {
+        Some(text_parts.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_ws_url_converts_http_to_ws() {
+        let server_url = Url::parse("http://localhost:8080").unwrap();
+        let session_id = SessionId::new();
+        let ws_url = build_ws_url(&server_url, &session_id).unwrap();
+        assert_eq!(ws_url.scheme(), "ws");
+        assert_eq!(ws_url.path(), format!("/v1/sessions/{session_id}/relay"));
+    }
+
+    #[test]
+    fn build_ws_url_converts_https_to_wss() {
+        let server_url = Url::parse("https://hydra.example.com").unwrap();
+        let session_id = SessionId::new();
+        let ws_url = build_ws_url(&server_url, &session_id).unwrap();
+        assert_eq!(ws_url.scheme(), "wss");
+    }
+
+    #[test]
+    fn build_claude_input_formats_correctly() {
+        let input = build_claude_input("Hello, Claude!");
+        let parsed: serde_json::Value = serde_json::from_str(&input).unwrap();
+        assert_eq!(parsed["type"], "user");
+        assert_eq!(parsed["session_id"], "");
+        assert!(parsed["parent_tool_use_id"].is_null());
+        assert_eq!(parsed["message"]["role"], "user");
+        assert_eq!(parsed["message"]["content"], "Hello, Claude!");
+    }
+
+    #[test]
+    fn extract_session_id_from_output() {
+        let line = r#"{"type":"assistant","session_id":"abc-123","message":{"content":[]}}"#;
+        assert_eq!(extract_session_id(line), Some("abc-123".to_string()));
+    }
+
+    #[test]
+    fn extract_session_id_returns_none_for_empty() {
+        let line = r#"{"type":"assistant","session_id":"","message":{"content":[]}}"#;
+        assert_eq!(extract_session_id(line), None);
+    }
+
+    #[test]
+    fn extract_session_id_returns_none_when_missing() {
+        let line = r#"{"type":"assistant","message":{"content":[]}}"#;
+        assert_eq!(extract_session_id(line), None);
+    }
+
+    #[test]
+    fn extract_assistant_text_from_text_block() {
+        let line =
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}"#;
+        assert_eq!(extract_assistant_text(line), Some("Hello!".to_string()));
+    }
+
+    #[test]
+    fn extract_assistant_text_skips_tool_use() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#;
+        assert_eq!(extract_assistant_text(line), None);
+    }
+
+    #[test]
+    fn extract_assistant_text_multiple_blocks() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Part 1"},{"type":"text","text":"Part 2"}]}}"#;
+        assert_eq!(
+            extract_assistant_text(line),
+            Some("Part 1\nPart 2".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_assistant_text_ignores_user_messages() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#;
+        assert_eq!(extract_assistant_text(line), None);
+    }
+}
