@@ -160,7 +160,6 @@ fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     }
 }
 
-
 fn map_conversation_error(err: StoreError) -> ApiError {
     match err {
         StoreError::ConversationNotFound(id) => {
