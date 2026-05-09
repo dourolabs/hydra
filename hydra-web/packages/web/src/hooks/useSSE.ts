@@ -4,6 +4,7 @@ import type {
   EntityEventData,
   IssueSummaryRecord,
   SessionSummaryRecord,
+  ConversationSummary,
   ListIssuesResponse,
   ListSessionsResponse,
 } from "@hydra/api";
@@ -25,6 +26,9 @@ const ENTITY_EVENT_TYPES = [
   "label_created",
   "label_updated",
   "label_deleted",
+  "conversation_created",
+  "conversation_updated",
+  "conversation_event_created",
 ] as const;
 
 const MAX_BACKOFF_MS = 30_000;
@@ -105,6 +109,24 @@ function upsertBatchSession(qc: QueryClient, entityId: string, record: SessionSu
   upsertInList(qc, ["sessions", "batch"], sessionList, wrapSessions, sessionRecordId, entityId, record);
 }
 
+// Conversation list is a flat ConversationSummary[] (no wrapper object)
+const conversationRecordId = (r: ConversationSummary) => r.conversation_id;
+
+/** Upsert a conversation summary into the conversations list cache. */
+function upsertBatchConversation(qc: QueryClient, entityId: string, record: ConversationSummary) {
+  qc.setQueriesData<ConversationSummary[]>({ queryKey: ["conversations"] }, (old) => {
+    if (!old) return old;
+    const idx = old.findIndex((c) => conversationRecordId(c) === entityId);
+    if (idx >= 0) {
+      const updated = [...old];
+      updated[idx] = record;
+      return updated;
+    }
+    return [...old, record];
+  });
+}
+
+
 // ---------------------------------------------------------------------------
 // Targeted cache invalidation — used on resync and visibility change to
 // refresh only the page-level and tree-level caches instead of all caches.
@@ -128,6 +150,9 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["paginatedDocuments"] });
   // Labels
   qc.invalidateQueries({ queryKey: ["labels"] });
+  // Conversations
+  qc.invalidateQueries({ queryKey: ["conversations"] });
+  qc.invalidateQueries({ queryKey: ["conversationEvents"] });
 }
 
 /**
@@ -220,6 +245,18 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
+      } else if (entity_type === "conversation" || eventType.startsWith("conversation_")) {
+        if (eventType === "conversation_event_created") {
+          // Invalidate conversation events list for this conversation
+          queryClient.invalidateQueries({ queryKey: ["conversationEvents", entity_id] });
+          // Also invalidate the conversations list since event counts / previews change
+          queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        } else {
+          // conversation_created or conversation_updated
+          const record = entity as unknown as ConversationSummary;
+          queryClient.invalidateQueries({ queryKey: ["conversation", entity_id] });
+          upsertBatchConversation(queryClient, entity_id, record);
+        }
       }
     },
     [queryClient],
@@ -239,7 +276,7 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource("/api/v1/events?types=issues,sessions,patches,documents,labels");
+    const es = new EventSource("/api/v1/events?types=issues,sessions,patches,documents,labels,conversations");
     esRef.current = es;
 
     es.onopen = () => {
