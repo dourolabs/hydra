@@ -220,28 +220,9 @@ pub enum WorkerMessage {
     Event { event: ConversationEvent },
     /// A session state upload for resumption support.
     SessionStateUpload {
-        #[serde(with = "bytes_as_array")]
         #[cfg_attr(feature = "ts", ts(type = "number[]"))]
         data: Vec<u8>,
     },
-}
-
-mod bytes_as_array {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Vec::<u8>::deserialize(deserializer)
-    }
 }
 
 /// Messages sent from the server to the worker over the relay WebSocket.

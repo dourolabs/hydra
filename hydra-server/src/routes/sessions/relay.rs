@@ -129,18 +129,13 @@ async fn handle_relay_socket(
             return;
         }
     };
-    if ws_sender
-        .send(Message::Text(catch_up_json))
-        .await
-        .is_err()
-    {
+    if ws_sender.send(Message::Text(catch_up_json)).await.is_err() {
         warn!(%session_id, "failed to send catch-up, WebSocket closed");
         return;
     }
 
     // Step 3: Register relay in ChatRelayMap.
-    let (mut user_msg_rx, _broadcast_rx) =
-        chat_relay::register_relay(&state.chat_relay_map, session_id.clone());
+    let mut user_msg_rx = chat_relay::register_relay(&state.chat_relay_map, session_id.clone());
 
     info!(%session_id, "relay registered, starting relay loop");
 
@@ -316,19 +311,4 @@ async fn handle_worker_event(
     }
 
     Ok(())
-}
-
-/// Helper to get the latest session from the store.
-impl AppState {
-    pub(crate) async fn get_latest_session(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<crate::domain::sessions::Session, StoreError> {
-        let versions = self.get_session_versions(session_id).await?;
-        versions
-            .into_iter()
-            .last()
-            .map(|v| v.item)
-            .ok_or_else(|| StoreError::SessionNotFound(session_id.clone()))
-    }
 }
