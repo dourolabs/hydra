@@ -676,7 +676,7 @@ impl PostgresStoreV2 {
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(session.prompt.as_deref().unwrap_or(""))
+            .bind(session.prompt.as_deref())
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
@@ -748,14 +748,8 @@ impl PostgresStoreV2 {
             }
         };
 
-        let prompt = if row.prompt.is_empty() {
-            None
-        } else {
-            Some(row.prompt.clone())
-        };
-
         Ok(Session {
-            prompt,
+            prompt: row.prompt.clone(),
             context,
             spawned_from,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
@@ -1353,7 +1347,7 @@ struct PatchRow {
 struct TaskRow {
     id: String,
     version_number: i64,
-    prompt: String,
+    prompt: Option<String>,
     context: Value,
     spawned_from: Option<String>,
     image: Option<String>,

@@ -231,6 +231,7 @@ describe("Sessions", () => {
       rev: "main",
     },
     issue_id: null,
+    interactive: false,
   };
 
   it("round-trip: create → get → list → versions → kill", async () => {
