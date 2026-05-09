@@ -491,6 +491,8 @@ pub struct JobSection {
     pub cpu_request: String,
     #[serde(default = "default_memory_request")]
     pub memory_request: String,
+    #[serde(default = "default_interactive_idle_timeout_secs")]
+    pub interactive_idle_timeout_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -749,6 +751,10 @@ const fn default_connect_timeout_secs() -> u64 {
 
 const fn default_idle_timeout_secs() -> u64 {
     300
+}
+
+const fn default_interactive_idle_timeout_secs() -> u64 {
+    600
 }
 
 fn default_kubeconfig_path() -> String {

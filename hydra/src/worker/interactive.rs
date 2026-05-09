@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::Stdio};
+use std::{collections::HashMap, process::Stdio, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
@@ -25,6 +25,7 @@ pub async fn run_interactive(
     model: Option<&str>,
     env: &HashMap<String, String>,
     working_dir: &std::path::Path,
+    idle_timeout: Duration,
 ) -> Result<()> {
     // Validate auth credentials exist.
     let has_anthropic_key = env
@@ -165,6 +166,10 @@ pub async fn run_interactive(
     // Relay loop: bidirectional message forwarding.
     let mut stdout_line = String::new();
     let mut formatter = StreamFormatter::new();
+    let mut idle_suspended = false;
+
+    let idle_deadline = tokio::time::sleep(idle_timeout);
+    tokio::pin!(idle_deadline);
 
     loop {
         tokio::select! {
@@ -228,6 +233,8 @@ pub async fn run_interactive(
                             Ok(ServerMessage::Event { event }) => {
                                 _event_index += 1;
                                 if let ConversationEvent::UserMessage { content, .. } = event {
+                                    // Reset idle timer on user input.
+                                    idle_deadline.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                                     let input_line = build_claude_input(&content);
                                     if claude_stdin
                                         .write_all(input_line.as_bytes())
@@ -270,11 +277,44 @@ pub async fn run_interactive(
                     }
                 }
             }
+
+            // Idle timeout: suspend the session when no user input is received.
+            _ = &mut idle_deadline => {
+                println!("Idle timeout reached ({idle_timeout:?}), suspending session");
+
+                // Send Suspending event.
+                let suspending_event = ConversationEvent::Suspending {
+                    reason: "idle_timeout".to_string(),
+                    timestamp: Utc::now(),
+                };
+                let suspending_msg = WorkerMessage::Event { event: suspending_event };
+                if let Ok(json) = serde_json::to_string(&suspending_msg) {
+                    let _ = ws_sender.send(tungstenite::Message::Text(json)).await;
+                }
+
+                // Upload session state if we have a Claude session_id.
+                if let Some(ref sid) = claude_session_id {
+                    let state_upload = WorkerMessage::SessionStateUpload {
+                        data: sid.as_bytes().to_vec(),
+                    };
+                    if let Ok(json) = serde_json::to_string(&state_upload) {
+                        let _ = ws_sender.send(tungstenite::Message::Text(json)).await;
+                    }
+                    println!("Uploaded session state for resumption");
+                }
+
+                idle_suspended = true;
+                break;
+            }
         }
     }
 
     // Clean shutdown: terminate Claude process.
-    println!("Shutting down interactive session");
+    if idle_suspended {
+        println!("Shutting down interactive session (idle timeout)");
+    } else {
+        println!("Shutting down interactive session");
+    }
 
     #[cfg(unix)]
     if let Some(pgid) = child.id() {

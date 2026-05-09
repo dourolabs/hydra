@@ -285,6 +285,8 @@ pub struct WorkerContext {
     pub mcp_config: Option<McpConfig>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interactive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
 }
 
 impl WorkerContext {
@@ -297,6 +299,7 @@ impl WorkerContext {
         build_cache: Option<BuildCacheContext>,
         mcp_config: Option<McpConfig>,
         interactive: bool,
+        idle_timeout_secs: Option<u64>,
     ) -> Self {
         Self {
             request_context,
@@ -306,6 +309,7 @@ impl WorkerContext {
             build_cache,
             mcp_config,
             interactive,
+            idle_timeout_secs,
         }
     }
 }
@@ -868,6 +872,7 @@ mod tests {
             None,
             Some(mcp_config.clone()),
             false,
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();

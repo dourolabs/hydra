@@ -32,6 +32,11 @@ pub async fn get_session_context(
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
 
     let build_cache = state.config.build_cache.to_context();
+    let idle_timeout_secs = if task.interactive {
+        Some(state.config.job.interactive_idle_timeout_secs)
+    } else {
+        None
+    };
     let context = v1::sessions::WorkerContext::new(
         resolved.context.bundle.into(),
         task.prompt,
@@ -40,6 +45,7 @@ pub async fn get_session_context(
         build_cache,
         task.mcp_config.clone(),
         task.interactive,
+        idle_timeout_secs,
     );
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
