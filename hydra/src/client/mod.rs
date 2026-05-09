@@ -490,10 +490,7 @@ impl HydraClient {
     }
 
     /// Connect to the relay WebSocket for a session.
-    pub async fn connect_relay_websocket(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<RelayWebSocket> {
+    pub async fn connect_relay_websocket(&self, session_id: &SessionId) -> Result<RelayWebSocket> {
         let mut ws_url = self.base_url.clone();
         match ws_url.scheme() {
             "https" => ws_url
