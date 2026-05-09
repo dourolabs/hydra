@@ -22,7 +22,7 @@ use crate::git::{
     clone_repo, commit_changes, configure_repo, fetch_remote, push_branch, resolve_head_oid,
     stage_all_changes, workdir_diff,
 };
-use crate::worker_commands::WorkerCommands;
+use crate::worker::commands::WorkerCommands;
 use crate::{client::HydraClientInterface, command::output::CommandContext};
 
 pub async fn run(
