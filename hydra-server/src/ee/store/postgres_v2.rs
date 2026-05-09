@@ -7771,4 +7771,141 @@ mod tests {
             .collect();
         assert_eq!(sessions, HashSet::from([task_a_id, task_b_id]));
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn conversation_round_trip_v2(pool: PgStorePool) {
+        use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+
+        let store = PostgresStoreV2::new(pool);
+
+        // -- Add a conversation --
+        let conv = Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            active_session_id: Some(SessionId::new()),
+            status: ConversationStatus::Active,
+            creator: Username::from("alice"),
+            deleted: false,
+        };
+        let (conv_id, version) = store
+            .add_conversation(conv.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        // -- Fetch and verify fields --
+        let fetched = store.get_conversation(&conv_id).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.title, conv.title);
+        assert_eq!(fetched.item.agent_name, conv.agent_name);
+        assert_eq!(fetched.item.status, ConversationStatus::Active);
+        assert_eq!(fetched.item.creator, conv.creator);
+        assert!(!fetched.item.deleted);
+
+        // -- List conversations --
+        let list = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        let ids: Vec<_> = list.iter().map(|(id, _)| id.clone()).collect();
+        assert!(ids.contains(&conv_id));
+
+        // -- Update conversation --
+        let updated_conv = Conversation {
+            title: Some("Updated title".to_string()),
+            agent_name: conv.agent_name.clone(),
+            active_session_id: conv.active_session_id.clone(),
+            status: ConversationStatus::Idle,
+            creator: conv.creator.clone(),
+            deleted: false,
+        };
+        let v2 = store
+            .update_conversation(&conv_id, updated_conv.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let fetched2 = store.get_conversation(&conv_id).await.unwrap();
+        assert_eq!(fetched2.version, 2);
+        assert_eq!(fetched2.item.title.as_deref(), Some("Updated title"));
+        assert_eq!(fetched2.item.status, ConversationStatus::Idle);
+
+        // -- Append events --
+        let event1 = ConversationEvent::UserMessage {
+            content: "Hello".to_string(),
+            timestamp: Utc::now(),
+        };
+        let ev1_ver = store
+            .append_conversation_event(&conv_id, event1.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(ev1_ver, 1);
+
+        let event2 = ConversationEvent::AssistantMessage {
+            content: "Hi there!".to_string(),
+            timestamp: Utc::now(),
+        };
+        let ev2_ver = store
+            .append_conversation_event(&conv_id, event2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(ev2_ver, 2);
+
+        let events = store.get_conversation_events(&conv_id).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].item, event1);
+        assert_eq!(events[1].item, event2);
+
+        // -- Session state round-trip --
+        let state_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        store
+            .store_conversation_session_state(&conv_id, state_data.clone())
+            .await
+            .unwrap();
+        let fetched_state = store
+            .get_conversation_session_state(&conv_id)
+            .await
+            .unwrap();
+        assert_eq!(fetched_state, Some(state_data));
+
+        // Overwrite session state
+        let state_data2 = vec![0xCA, 0xFE];
+        store
+            .store_conversation_session_state(&conv_id, state_data2.clone())
+            .await
+            .unwrap();
+        let fetched_state2 = store
+            .get_conversation_session_state(&conv_id)
+            .await
+            .unwrap();
+        assert_eq!(fetched_state2, Some(state_data2));
+
+        // -- Deletion filtering --
+        let deleted_conv = Conversation {
+            title: updated_conv.title.clone(),
+            agent_name: updated_conv.agent_name.clone(),
+            active_session_id: updated_conv.active_session_id.clone(),
+            status: updated_conv.status,
+            creator: updated_conv.creator.clone(),
+            deleted: true,
+        };
+        store
+            .update_conversation(&conv_id, deleted_conv, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // get_conversation should return NotFound for deleted conversations
+        let result = store.get_conversation(&conv_id).await;
+        assert!(result.is_err());
+
+        // list_conversations should exclude deleted conversations
+        let list_after = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        let ids_after: Vec<_> = list_after.iter().map(|(id, _)| id.clone()).collect();
+        assert!(!ids_after.contains(&conv_id));
+    }
 }

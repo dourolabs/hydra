@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS metis.conversations_v2 (
     title TEXT,
     agent_name TEXT,
     active_session_id TEXT,
-    session_state BYTEA,
     status TEXT NOT NULL DEFAULT 'active',
     creator TEXT NOT NULL,
     deleted BOOLEAN NOT NULL DEFAULT FALSE,
