@@ -2,6 +2,7 @@ use hydra_common::{RelativeVersionNumber, VersionNumber, api::v1::ApiError};
 
 pub mod agents;
 pub mod auth;
+pub mod conversations;
 pub mod documents;
 pub mod events;
 pub mod github;

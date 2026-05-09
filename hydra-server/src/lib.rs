@@ -404,6 +404,19 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/users/:username/secrets/:name",
             put(routes::secrets::set_secret).delete(routes::secrets::delete_secret),
         )
+        .route(
+            "/v1/conversations",
+            get(routes::conversations::list_conversations)
+                .post(routes::conversations::create_conversation),
+        )
+        .route(
+            "/v1/conversations/:conversation_id",
+            get(routes::conversations::get_conversation),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/events",
+            get(routes::conversations::get_conversation_events),
+        )
         .route("/v1/events", get(routes::events::get_events))
         .route(
             "/v1/notifications",
