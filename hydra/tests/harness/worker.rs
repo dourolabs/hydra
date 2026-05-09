@@ -150,6 +150,7 @@ impl WorkerCommands for BashCommands {
         _model: Option<&str>,
         _working_dir: &Path,
         _env: &HashMap<String, String>,
+        _idle_timeout: std::time::Duration,
     ) -> Result<String> {
         Err(anyhow!("interactive mode is not supported in test harness"))
     }

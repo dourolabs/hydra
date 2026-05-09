@@ -44,6 +44,7 @@ pub async fn run(
         build_cache,
         mcp_config,
         interactive,
+        idle_timeout_secs,
         ..
     } = client.get_session_context(&job).await?;
     let mcp_config_json = mcp_config
@@ -186,6 +187,7 @@ pub async fn run(
     let last_message = if interactive {
         log_status("Phase: interactive agent execution — starting");
         let ws_stream = client.connect_relay_websocket(&job).await?;
+        let idle_timeout = std::time::Duration::from_secs(idle_timeout_secs.unwrap_or(600));
         match commands
             .run_interactive(
                 ws_stream,
@@ -193,6 +195,7 @@ pub async fn run(
                 model.as_deref(),
                 &repo_path,
                 &execution_env,
+                idle_timeout,
             )
             .await
         {

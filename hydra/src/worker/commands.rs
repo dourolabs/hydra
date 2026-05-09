@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, process::Stdio, time::Instant};
+use std::{collections::HashMap, path::Path, process::Stdio, time::Duration, time::Instant};
 
 use crate::claude_formatter::StreamFormatter;
 use crate::client::RelayWebSocket;
@@ -68,6 +68,7 @@ pub trait WorkerCommands: Send + Sync {
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
+        idle_timeout: Duration,
     ) -> Result<String>;
 }
 
@@ -328,6 +329,7 @@ impl WorkerCommands for CodexCommands {
         _model: Option<&str>,
         _working_dir: &Path,
         _env: &HashMap<String, String>,
+        _idle_timeout: Duration,
     ) -> Result<String> {
         Err(anyhow!("interactive mode is not supported for Codex"))
     }
@@ -594,10 +596,18 @@ impl WorkerCommands for ClaudeCommands {
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
+        idle_timeout: Duration,
     ) -> Result<String> {
-        super::interactive::run_interactive(ws_stream, session_id, model, env, working_dir)
-            .await
-            .context("interactive claude session failed")?;
+        super::interactive::run_interactive(
+            ws_stream,
+            session_id,
+            model,
+            env,
+            working_dir,
+            idle_timeout,
+        )
+        .await
+        .context("interactive claude session failed")?;
         Ok("Interactive session ended".to_string())
     }
 }
@@ -634,16 +644,17 @@ impl WorkerCommands for ModelAwareCommands {
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
+        idle_timeout: Duration,
     ) -> Result<String> {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
-                    .run_interactive(ws_stream, session_id, model, working_dir, env)
+                    .run_interactive(ws_stream, session_id, model, working_dir, env, idle_timeout)
                     .await
             }
             None => {
                 self.codex
-                    .run_interactive(ws_stream, session_id, model, working_dir, env)
+                    .run_interactive(ws_stream, session_id, model, working_dir, env, idle_timeout)
                     .await
             }
         }

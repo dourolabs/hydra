@@ -816,6 +816,7 @@ fn render_server_config(
             memory_limit: "1Gi".to_string(),
             cpu_request: "500m".to_string(),
             memory_request: "1Gi".to_string(),
+            interactive_idle_timeout_secs: 600,
         },
         storage: StorageConfig::Sqlite {
             sqlite_path: db_path.display().to_string(),

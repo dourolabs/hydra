@@ -74,6 +74,7 @@ pub fn test_app_config() -> AppConfig {
             memory_limit: "1Gi".to_string(),
             cpu_request: "500m".to_string(),
             memory_request: "1Gi".to_string(),
+            interactive_idle_timeout_secs: 600,
         },
         storage: StorageConfig::default(),
         job_engine: JobEngineConfig::default(),
