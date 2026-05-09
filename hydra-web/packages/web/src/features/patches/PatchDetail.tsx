@@ -125,7 +125,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
       >
         <div className={styles.sectionBody}>
           {activeTab === "diff" && (
-            <DiffViewer diff={patch.diff} maxLines={500} />
+            <DiffViewer diff={patch.diff} />
           )}
           {activeTab === "reviews" && (
             <ReviewsList reviews={patch.reviews} />
