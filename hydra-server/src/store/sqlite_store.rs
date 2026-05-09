@@ -23,8 +23,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -4407,7 +4407,7 @@ impl Store for SqliteStore {
         _id: &ConversationId,
         _event: ConversationEvent,
         _actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
+    ) -> Result<ConversationEventId, StoreError> {
         todo!("SQLite conversation store not yet implemented")
     }
 

@@ -20,8 +20,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -809,7 +809,7 @@ pub trait Store: ReadOnlyStore {
         id: &ConversationId,
         event: ConversationEvent,
         actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError>;
+    ) -> Result<ConversationEventId, StoreError>;
 
     /// Stores a session state blob for a conversation (used for session resumption).
     async fn store_conversation_session_state(

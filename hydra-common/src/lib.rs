@@ -22,10 +22,12 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, form, issues, labels, login, logs, merge_queues, notifications,
-    patches, repositories, secrets, session_status, sessions, task_status, users, version, whoami,
+    agents, conversations, documents, events, form, issues, labels, login, logs, merge_queues,
+    notifications, patches, repositories, secrets, session_status, sessions, task_status, users,
+    version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
+pub use conversations::ConversationEventId;
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, NotificationId, PatchId,
@@ -77,6 +79,7 @@ mod ts_export {
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
+        crate::ConversationEventId::export_all(&cfg).expect("ConversationEventId");
         crate::Rgb::export_all(&cfg).expect("Rgb");
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");

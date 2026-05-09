@@ -20,8 +20,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, LabelId, NotificationId, PatchId, RepoName, SessionId,
-    VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, LabelId, NotificationId, PatchId,
+    RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
@@ -1056,9 +1056,9 @@ impl StoreWithEvents {
         id: &ConversationId,
         event: ConversationEvent,
         actor: ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
+    ) -> Result<ConversationEventId, StoreError> {
         let event_clone = event.clone();
-        let version = self
+        let result = self
             .inner
             .append_conversation_event(id, event, &actor)
             .await?;
@@ -1067,9 +1067,12 @@ impl StoreWithEvents {
             event: event_clone,
             actor,
         });
-        self.event_bus
-            .emit_conversation_event_created(id.clone(), version, payload);
-        Ok(version)
+        self.event_bus.emit_conversation_event_created(
+            id.clone(),
+            result.event_index as u64,
+            payload,
+        );
+        Ok(result)
     }
 
     pub async fn store_conversation_session_state(
