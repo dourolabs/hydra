@@ -134,6 +134,8 @@ pub async fn list_conversations(
         .map_err(map_conversation_error)?;
 
     let mut summaries = Vec::with_capacity(conversations.len());
+    // TODO: This is an N+1 query pattern — each conversation fetches its events individually.
+    // Add a batch store method (e.g. get_conversation_event_summaries) to fetch counts in one query.
     for (id, versioned) in conversations {
         let (event_count, last_event_preview) = match state
             .store()
@@ -228,7 +230,8 @@ fn truncate_preview(content: &str, prefix: &str) -> String {
     if content.len() <= remaining {
         format!("{prefix}{content}")
     } else {
-        format!("{prefix}{}…", &content[..remaining.min(content.len())])
+        let truncated: String = content.chars().take(remaining).collect();
+        format!("{prefix}{truncated}…")
     }
 }
 
@@ -342,6 +345,29 @@ mod tests {
         let preview = event_preview(&event);
         assert!(preview.len() <= 110); // prefix + 100 chars + ellipsis
         assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn event_preview_truncates_multibyte_without_panic() {
+        // Content with multi-byte chars (emoji = 4 bytes each) that would panic with byte slicing
+        let content = "🎉".repeat(50);
+        let event = DomainEvent::UserMessage {
+            content,
+            timestamp: chrono::Utc::now(),
+        };
+        let preview = event_preview(&event);
+        assert!(preview.starts_with("User: "));
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_preview_at_char_boundary() {
+        // 'é' is 2 bytes; 47 * 2 = 94 bytes for 47 chars, remaining=94 for prefix "User: " (6 bytes)
+        let content = "é".repeat(50);
+        let result = truncate_preview(&content, "User: ");
+        // Should not panic, and should end with ellipsis
+        assert!(result.ends_with('…'));
+        assert!(result.starts_with("User: "));
     }
 
     #[test]
