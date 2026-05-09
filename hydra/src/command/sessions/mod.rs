@@ -4,7 +4,7 @@ use crate::{
         output::{render_session_records, CommandContext, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
-    worker_commands::ModelAwareCommands,
+    worker::commands::ModelAwareCommands,
 };
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
