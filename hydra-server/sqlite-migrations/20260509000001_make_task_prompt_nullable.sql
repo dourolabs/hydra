@@ -47,3 +47,5 @@ ALTER TABLE tasks_v2_new RENAME TO tasks_v2;
 CREATE INDEX IF NOT EXISTS tasks_v2_spawned_from_idx ON tasks_v2 (spawned_from);
 CREATE INDEX IF NOT EXISTS tasks_v2_status_idx ON tasks_v2 (status);
 CREATE INDEX IF NOT EXISTS tasks_v2_latest_idx ON tasks_v2 (id, version_number DESC);
+CREATE INDEX IF NOT EXISTS tasks_v2_latest_id_idx ON tasks_v2 (id) WHERE is_latest = 1;
+CREATE INDEX IF NOT EXISTS tasks_v2_latest_pagination_idx ON tasks_v2 (created_at DESC, id DESC) WHERE is_latest = 1;

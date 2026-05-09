@@ -5155,7 +5155,7 @@ mod tests {
             dependencies,
             patches,
             Some(Form {
-                prompt: Some("Please review and respond".to_string()),
+                prompt: "Please review and respond".to_string(),
                 fields: vec![
                     Field {
                         key: "name".to_string(),
