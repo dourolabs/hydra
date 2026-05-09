@@ -952,12 +952,7 @@ impl AppState {
         &self,
         session_id: &SessionId,
     ) -> Result<Session, StoreError> {
-        let versions = self.get_session_versions(session_id).await?;
-        versions
-            .into_iter()
-            .last()
-            .map(|v| v.item)
-            .ok_or_else(|| StoreError::SessionNotFound(session_id.clone()))
+        self.get_session(session_id).await
     }
 
     pub async fn get_session(&self, session_id: &SessionId) -> Result<Session, StoreError> {
