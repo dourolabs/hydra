@@ -5377,6 +5377,9 @@ mod tests {
             .await
             .unwrap();
 
+        // Sleep to ensure the update gets a distinct timestamp (SQLite has ms precision).
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
         // Update issue A so its updated_at becomes the most recent.
         let mut updated_a = sample_issue(vec![]);
         updated_a.description = "updated A".to_string();
