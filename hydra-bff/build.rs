@@ -16,6 +16,15 @@ fn main() {
             frontend_dir.display()
         );
     }
+    // If dist already exists with content, skip the build (e.g., CI downloads pre-built artifacts).
+    let dist_dir = frontend_dir.join("packages/web/dist");
+    if dist_dir.join("index.html").exists() {
+        println!("cargo:rerun-if-changed=../hydra-web/packages/web/src");
+        println!("cargo:rerun-if-changed=../hydra-web/packages/web/index.html");
+        println!("cargo:rerun-if-changed=../hydra-web/packages/web/vite.config.ts");
+        return;
+    }
+
     // Install dependencies if needed.
     if !frontend_dir.join("node_modules").exists() {
         println!("cargo:warning=Installing frontend dependencies...");
