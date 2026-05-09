@@ -4694,6 +4694,14 @@ impl Store for SqliteStore {
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Clear is_latest on any previous version (no-op for new entities)
+        sqlx::query(&format!(
+            "UPDATE {TABLE_CONVERSATIONS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
         Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json)).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
