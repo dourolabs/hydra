@@ -362,7 +362,6 @@ pub async fn resume_conversation(
     Ok(Json(api_conversation))
 }
 
-
 fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     match err {
         CreateConversationError::Store { source } => map_conversation_error(source),
