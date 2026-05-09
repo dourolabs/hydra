@@ -1,8 +1,10 @@
-use crate::app::chat_relay;
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::conversations::{ConversationEvent as DomainEvent, ConversationStatus};
+use crate::domain::conversations::ConversationEvent as DomainEvent;
 use crate::{
-    app::{AppState, CreateConversationError, CreateSessionError},
+    app::{
+        AppState, CloseConversationError, CreateConversationError, CreateSessionError,
+        ResumeConversationError, SendMessageError,
+    },
     store::StoreError,
 };
 use axum::{
@@ -12,12 +14,8 @@ use axum::{
 };
 use hydra_common::{
     ConversationId,
-    api::v1::{
-        ApiError, conversations as api_conversations,
-        sessions::{BundleSpec, CreateSessionRequest},
-    },
+    api::v1::{ApiError, conversations as api_conversations},
 };
-use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -170,49 +168,12 @@ pub async fn send_message(
 ) -> Result<Json<api_conversations::ConversationEvent>, ApiError> {
     info!(conversation_id = %conversation_id, "send_message invoked");
 
-    let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Verify conversation is Active
-    if versioned.item.status != ConversationStatus::Active {
-        return Err(ApiError::conflict(format!(
-            "conversation '{conversation_id}' is not active (status: {:?}). Resume the conversation first.",
-            versioned.item.status
-        )));
-    }
-
-    // Append UserMessage event
-    let event = DomainEvent::UserMessage {
-        content: payload.content.clone(),
-        timestamp: chrono::Utc::now(),
-    };
     let actor_ref = ActorRef::from(&actor);
-    state
-        .store
-        .append_conversation_event_with_actor(&conversation_id, event.clone(), actor_ref)
+    let api_event = state
+        .send_message(&conversation_id, payload.content, actor_ref)
         .await
-        .map_err(map_conversation_error)?;
+        .map_err(map_send_message_error)?;
 
-    // Forward to worker via ChatRelayMap if connected
-    if let Some(session_id) = &versioned.item.active_session_id {
-        let api_event: api_conversations::ConversationEvent = event.clone().into();
-        match chat_relay::send_to_worker(&state.chat_relay_map, session_id, api_event).await {
-            Ok(()) => {
-                info!(conversation_id = %conversation_id, session_id = %session_id, "message forwarded to worker");
-            }
-            Err(chat_relay::SendToWorkerError::NoRelay) => {
-                info!(conversation_id = %conversation_id, session_id = %session_id, "no relay connected, worker will catch up");
-            }
-            Err(err) => {
-                warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to forward message to worker");
-            }
-        }
-    }
-
-    let api_event: api_conversations::ConversationEvent = event.into();
     info!(conversation_id = %conversation_id, "send_message completed");
     Ok(Json(api_event))
 }
@@ -224,63 +185,12 @@ pub async fn close_conversation(
 ) -> Result<Json<api_conversations::Conversation>, ApiError> {
     info!(conversation_id = %conversation_id, "close_conversation invoked");
 
-    let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Idempotent: if already Closed, return as-is
-    if versioned.item.status == ConversationStatus::Closed {
-        let api_conversation = versioned.item.to_api(
-            conversation_id.clone(),
-            versioned.creation_time,
-            versioned.timestamp,
-        );
-        info!(conversation_id = %conversation_id, "close_conversation no-op (already closed)");
-        return Ok(Json(api_conversation));
-    }
-
     let actor_ref = ActorRef::from(&actor);
-
-    // Append Closed event
-    let event = DomainEvent::Closed {
-        timestamp: chrono::Utc::now(),
-    };
-    state
-        .store
-        .append_conversation_event_with_actor(&conversation_id, event, actor_ref.clone())
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Kill session if active
-    if let Some(session_id) = &versioned.item.active_session_id {
-        match state.job_engine.kill_job(session_id).await {
-            Ok(()) => {
-                info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
-            }
-            Err(err) => {
-                warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to kill session (may already be stopped)");
-            }
-        }
-    }
-
-    // Update conversation status
-    let mut updated = versioned.item;
-    updated.status = ConversationStatus::Closed;
-    updated.active_session_id = None;
-    state
-        .store
-        .update_conversation_with_actor(&conversation_id, updated, actor_ref)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Return updated conversation
     let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
+        .close_conversation(&conversation_id, actor_ref)
         .await
-        .map_err(map_conversation_error)?;
+        .map_err(map_close_conversation_error)?;
+
     let api_conversation = versioned.item.to_api(
         conversation_id.clone(),
         versioned.creation_time,
@@ -298,70 +208,20 @@ pub async fn resume_conversation(
 ) -> Result<Json<api_conversations::Conversation>, ApiError> {
     info!(conversation_id = %conversation_id, "resume_conversation invoked");
 
-    let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Verify not already Active
-    if versioned.item.status == ConversationStatus::Active {
-        return Err(ApiError::conflict(format!(
-            "conversation '{conversation_id}' is already active"
-        )));
-    }
-
     let creator = actor.creator.clone();
     let actor_ref = ActorRef::from(&actor);
-
-    // Create a new interactive session
-    let session_request = CreateSessionRequest::new(
-        String::new(),
-        None,
-        BundleSpec::None,
-        HashMap::new(),
-        None,
-        true,
-    );
-    let session_id = state
-        .create_session(session_request, actor_ref.clone(), creator)
-        .await
-        .map_err(map_create_session_error)?;
-
-    // Append Resumed event
-    let event = DomainEvent::Resumed {
-        session_id: session_id.clone(),
-        timestamp: chrono::Utc::now(),
-    };
-    state
-        .store
-        .append_conversation_event_with_actor(&conversation_id, event, actor_ref.clone())
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Update conversation status
-    let mut updated = versioned.item;
-    updated.status = ConversationStatus::Active;
-    updated.active_session_id = Some(session_id.clone());
-    state
-        .store
-        .update_conversation_with_actor(&conversation_id, updated, actor_ref)
-        .await
-        .map_err(map_conversation_error)?;
-
-    // Return updated conversation
     let versioned = state
-        .store()
-        .get_conversation(&conversation_id, false)
+        .resume_conversation(&conversation_id, actor_ref, creator)
         .await
-        .map_err(map_conversation_error)?;
+        .map_err(map_resume_conversation_error)?;
+
     let api_conversation = versioned.item.to_api(
         conversation_id.clone(),
         versioned.creation_time,
         versioned.timestamp,
     );
 
-    info!(conversation_id = %conversation_id, session_id = %session_id, "resume_conversation completed");
+    info!(conversation_id = %conversation_id, "resume_conversation completed");
     Ok(Json(api_conversation))
 }
 
@@ -403,6 +263,31 @@ fn map_conversation_error(err: StoreError) -> ApiError {
             error!(error = %other, "conversation store operation failed");
             ApiError::internal(format!("conversation store error: {other}"))
         }
+    }
+}
+
+fn map_send_message_error(err: SendMessageError) -> ApiError {
+    match err {
+        SendMessageError::Store { source } => map_conversation_error(source),
+        SendMessageError::NotActive { status } => ApiError::conflict(format!(
+            "conversation is not active (status: {status:?}). Resume the conversation first."
+        )),
+    }
+}
+
+fn map_close_conversation_error(err: CloseConversationError) -> ApiError {
+    match err {
+        CloseConversationError::Store { source } => map_conversation_error(source),
+    }
+}
+
+fn map_resume_conversation_error(err: ResumeConversationError) -> ApiError {
+    match err {
+        ResumeConversationError::Store { source } => map_conversation_error(source),
+        ResumeConversationError::AlreadyActive => {
+            ApiError::conflict("conversation is already active".to_string())
+        }
+        ResumeConversationError::Session { source } => map_create_session_error(source),
     }
 }
 
