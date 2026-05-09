@@ -12,13 +12,13 @@ interface DiffLine {
   content: string;
 }
 
-function parseDiff(diff: string, maxLines: number): { lines: DiffLine[]; truncated: boolean } {
+function parseDiff(diff: string, maxLines?: number): { lines: DiffLine[]; truncated: boolean } {
   const rawLines = diff.split("\n");
   const lines: DiffLine[] = [];
   let count = 0;
 
   for (const raw of rawLines) {
-    if (count >= maxLines) {
+    if (maxLines !== undefined && count >= maxLines) {
       return { lines, truncated: true };
     }
 
@@ -39,7 +39,7 @@ function parseDiff(diff: string, maxLines: number): { lines: DiffLine[]; truncat
   return { lines, truncated: false };
 }
 
-export function DiffViewer({ diff, maxLines = 200, className }: DiffViewerProps) {
+export function DiffViewer({ diff, maxLines, className }: DiffViewerProps) {
   const { lines, truncated } = useMemo(() => parseDiff(diff, maxLines), [diff, maxLines]);
 
   if (lines.length === 0) {
