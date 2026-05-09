@@ -1,25 +1,19 @@
-.chatLayout {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  max-width: 960px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-@media (max-width: 768px) {
-  .chatLayout {
-    max-width: 100%;
-  }
-}
-
-.newHeader {
+.header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
 }
 
 .back {
@@ -41,18 +35,27 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-.center {
-  composes: center from "./page.module.css";
+.status {
+  display: flex;
   align-items: center;
-  flex: 1;
+  gap: var(--space-1);
+  flex-shrink: 0;
 }
 
-.errorContainer {
-  composes: errorContainer from "./page.module.css";
+.statusLabel {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
 }
 
-.error {
-  composes: error from "./page.module.css";
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
