@@ -2,14 +2,14 @@ use std::{collections::HashMap, process::Stdio, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use futures::{SinkExt, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use hydra_common::{
     api::v1::conversations::{ConversationEvent, ServerMessage, WorkerConnect, WorkerMessage},
     constants::{ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN},
     SessionId,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     process::Command,
 };
 use tokio_tungstenite::tungstenite;
@@ -159,11 +159,77 @@ pub async fn run_interactive(
     // Set up stdout reader with StreamFormatter.
     let mut stdout_reader = BufReader::new(claude_stdout);
 
-    let mut _event_index: usize = catch_up.events.len();
     let mut claude_session_id: Option<String> = None;
     let _ = &session_id; // used for logging context
 
     // Relay loop: bidirectional message forwarding.
+    let idle_suspended = relay_loop(
+        &mut ws_sender,
+        &mut ws_receiver,
+        &mut claude_stdin,
+        &mut stdout_reader,
+        idle_timeout,
+        &mut claude_session_id,
+    )
+    .await?;
+
+    // Clean shutdown: terminate Claude process.
+    if idle_suspended {
+        println!("Shutting down interactive session (idle timeout)");
+    } else {
+        println!("Shutting down interactive session");
+    }
+
+    #[cfg(unix)]
+    if let Some(pgid) = child.id() {
+        // SIGTERM the process group.
+        unsafe {
+            libc::kill(-(pgid as i32), libc::SIGTERM);
+        }
+    }
+
+    // Give Claude a chance to exit gracefully.
+    match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(status)) => {
+            println!("Claude process exited with status: {status}");
+        }
+        Ok(Err(err)) => {
+            eprintln!("Error waiting for Claude process: {err}");
+        }
+        Err(_) => {
+            eprintln!("Claude process did not exit within 5s, force killing");
+            #[cfg(unix)]
+            if let Some(pgid) = child.id() {
+                unsafe {
+                    libc::kill(-(pgid as i32), libc::SIGKILL);
+                }
+            }
+            let _ = child.kill().await;
+        }
+    }
+
+    // Close WebSocket.
+    let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
+
+    Ok(())
+}
+
+/// Core relay loop: bidirectional message forwarding between WebSocket and Claude
+/// stdin/stdout. Returns `Ok(true)` if idle-suspended, `Ok(false)` if exited normally.
+async fn relay_loop<St, Si, W, R>(
+    ws_sender: &mut Si,
+    ws_receiver: &mut St,
+    claude_stdin: &mut W,
+    stdout_reader: &mut BufReader<R>,
+    idle_timeout: Duration,
+    claude_session_id: &mut Option<String>,
+) -> Result<bool>
+where
+    St: Stream<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
+    Si: Sink<tungstenite::Message> + Unpin,
+    W: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
+{
     let mut stdout_line = String::new();
     let mut formatter = StreamFormatter::new();
     let mut idle_suspended = false;
@@ -177,7 +243,7 @@ pub async fn run_interactive(
             read_result = stdout_reader.read_line(&mut stdout_line) => {
                 match read_result {
                     Ok(0) => {
-                        println!("Claude stdout EOF (PID: {pid})");
+                        println!("Claude stdout EOF");
                         break;
                     }
                     Ok(_) => {
@@ -185,7 +251,7 @@ pub async fn run_interactive(
                         if claude_session_id.is_none() {
                             if let Some(sid) = extract_session_id(&stdout_line) {
                                 println!("Extracted Claude session_id: {sid}");
-                                claude_session_id = Some(sid);
+                                *claude_session_id = Some(sid);
                             }
                         }
 
@@ -231,7 +297,6 @@ pub async fn run_interactive(
                     Some(Ok(tungstenite::Message::Text(text))) => {
                         match serde_json::from_str::<ServerMessage>(&text) {
                             Ok(ServerMessage::Event { event }) => {
-                                _event_index += 1;
                                 if let ConversationEvent::UserMessage { content, .. } = event {
                                     // Reset idle timer on user input.
                                     idle_deadline.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
@@ -293,7 +358,7 @@ pub async fn run_interactive(
                 }
 
                 // Upload session state if we have a Claude session_id.
-                if let Some(ref sid) = claude_session_id {
+                if let Some(ref sid) = *claude_session_id {
                     let state_upload = WorkerMessage::SessionStateUpload {
                         data: sid.as_bytes().to_vec(),
                     };
@@ -309,45 +374,7 @@ pub async fn run_interactive(
         }
     }
 
-    // Clean shutdown: terminate Claude process.
-    if idle_suspended {
-        println!("Shutting down interactive session (idle timeout)");
-    } else {
-        println!("Shutting down interactive session");
-    }
-
-    #[cfg(unix)]
-    if let Some(pgid) = child.id() {
-        // SIGTERM the process group.
-        unsafe {
-            libc::kill(-(pgid as i32), libc::SIGTERM);
-        }
-    }
-
-    // Give Claude a chance to exit gracefully.
-    match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
-        Ok(Ok(status)) => {
-            println!("Claude process exited with status: {status}");
-        }
-        Ok(Err(err)) => {
-            eprintln!("Error waiting for Claude process: {err}");
-        }
-        Err(_) => {
-            eprintln!("Claude process did not exit within 5s, force killing");
-            #[cfg(unix)]
-            if let Some(pgid) = child.id() {
-                unsafe {
-                    libc::kill(-(pgid as i32), libc::SIGKILL);
-                }
-            }
-            let _ = child.kill().await;
-        }
-    }
-
-    // Close WebSocket.
-    let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
-
-    Ok(())
+    Ok(idle_suspended)
 }
 
 /// Build a stream-json input line for Claude's stdin.
@@ -458,5 +485,268 @@ mod tests {
     fn extract_assistant_text_ignores_user_messages() {
         let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#;
         assert_eq!(extract_assistant_text(line), None);
+    }
+
+    // Helper to collect all messages sent to the ws sink.
+    fn collect_ws_messages(
+        rx: &mut futures::channel::mpsc::UnboundedReceiver<tungstenite::Message>,
+    ) -> Vec<tungstenite::Message> {
+        let mut messages = Vec::new();
+        while let Ok(Some(msg)) = rx.try_next() {
+            messages.push(msg);
+        }
+        messages
+    }
+
+    fn parse_worker_message(msg: &tungstenite::Message) -> WorkerMessage {
+        match msg {
+            tungstenite::Message::Text(t) => serde_json::from_str(t).unwrap(),
+            other => panic!("expected text message, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_idle_timeout_fires_when_no_input() {
+        tokio::time::pause();
+
+        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+        let mut ws_receiver =
+            futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
+
+        // Keep _stdout_write alive so reads block (pending), not EOF.
+        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
+        let mut stdout_reader = BufReader::new(stdout_read);
+        let mut claude_stdin = tokio::io::sink();
+        let mut session_id = None;
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+        )
+        .await
+        .unwrap();
+
+        assert!(result, "should return true for idle suspended");
+
+        drop(ws_sender);
+        let messages = collect_ws_messages(&mut ws_rx);
+        assert_eq!(messages.len(), 1);
+        match parse_worker_message(&messages[0]) {
+            WorkerMessage::Event {
+                event: ConversationEvent::Suspending { reason, .. },
+            } => {
+                assert_eq!(reason, "idle_timeout");
+            }
+            other => panic!("expected Suspending event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_idle_timeout_resets_on_user_message() {
+        tokio::time::pause();
+
+        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+
+        // Send one UserMessage, then go pending (no more messages).
+        let user_msg = ServerMessage::Event {
+            event: ConversationEvent::UserMessage {
+                content: "test input".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let user_msg_json = serde_json::to_string(&user_msg).unwrap();
+        let mut ws_receiver = futures::stream::iter(vec![Ok::<_, tungstenite::Error>(
+            tungstenite::Message::Text(user_msg_json),
+        )])
+        .chain(futures::stream::pending());
+
+        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
+        let mut stdout_reader = BufReader::new(stdout_read);
+
+        // Use duplex for stdin so we can verify the message was forwarded.
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
+        let mut claude_stdin = stdin_write;
+        let mut session_id = None;
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+        )
+        .await
+        .unwrap();
+
+        assert!(result, "should eventually idle-suspend");
+
+        // Verify the user message was forwarded to Claude stdin.
+        drop(claude_stdin);
+        let mut buf = String::new();
+        let mut reader = BufReader::new(&mut stdin_read);
+        reader.read_line(&mut buf).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&buf).unwrap();
+        assert_eq!(parsed["type"], "user");
+        assert_eq!(parsed["message"]["content"], "test input");
+
+        // Verify Suspending event was sent.
+        drop(ws_sender);
+        let messages = collect_ws_messages(&mut ws_rx);
+        assert_eq!(messages.len(), 1);
+        match parse_worker_message(&messages[0]) {
+            WorkerMessage::Event {
+                event: ConversationEvent::Suspending { reason, .. },
+            } => {
+                assert_eq!(reason, "idle_timeout");
+            }
+            other => panic!("expected Suspending event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_state_upload_sent_on_timeout() {
+        tokio::time::pause();
+
+        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+        let mut ws_receiver =
+            futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
+
+        // Write a session_id line to stdout, then keep it open (pending reads).
+        let (stdout_read, mut stdout_write) = tokio::io::duplex(4096);
+        let session_line =
+            r#"{"type":"assistant","session_id":"test-session-123","message":{"content":[]}}"#;
+        stdout_write
+            .write_all(format!("{session_line}\n").as_bytes())
+            .await
+            .unwrap();
+        // Don't drop stdout_write — keep it alive so further reads are pending.
+
+        let mut claude_stdin = tokio::io::sink();
+        let mut stdout_reader = BufReader::new(stdout_read);
+        let mut session_id = None;
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+        )
+        .await
+        .unwrap();
+
+        assert!(result, "should idle-suspend");
+        assert_eq!(session_id.as_deref(), Some("test-session-123"));
+
+        drop(ws_sender);
+        let messages = collect_ws_messages(&mut ws_rx);
+        assert_eq!(
+            messages.len(),
+            2,
+            "expected Suspending + SessionStateUpload"
+        );
+
+        // First message: Suspending event.
+        match parse_worker_message(&messages[0]) {
+            WorkerMessage::Event {
+                event: ConversationEvent::Suspending { reason, .. },
+            } => {
+                assert_eq!(reason, "idle_timeout");
+            }
+            other => panic!("expected Suspending event, got {other:?}"),
+        }
+
+        // Second message: SessionStateUpload with session_id bytes.
+        match parse_worker_message(&messages[1]) {
+            WorkerMessage::SessionStateUpload { data } => {
+                assert_eq!(data, b"test-session-123");
+            }
+            other => panic!("expected SessionStateUpload, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_session_state_upload_without_session_id() {
+        tokio::time::pause();
+
+        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+        let mut ws_receiver =
+            futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
+
+        // No session_id emitted — stdout stays pending.
+        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
+        let mut stdout_reader = BufReader::new(stdout_read);
+        let mut claude_stdin = tokio::io::sink();
+        let mut session_id = None;
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+        )
+        .await
+        .unwrap();
+
+        assert!(result, "should idle-suspend");
+        assert!(session_id.is_none());
+
+        drop(ws_sender);
+        let messages = collect_ws_messages(&mut ws_rx);
+        assert_eq!(messages.len(), 1, "only Suspending, no SessionStateUpload");
+        match parse_worker_message(&messages[0]) {
+            WorkerMessage::Event {
+                event: ConversationEvent::Suspending { reason, .. },
+            } => {
+                assert_eq!(reason, "idle_timeout");
+            }
+            other => panic!("expected Suspending event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_claude_stdout_eof_exits_without_suspending() {
+        tokio::time::pause();
+
+        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+        let mut ws_receiver =
+            futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
+
+        // Close stdout immediately — EOF.
+        let (stdout_read, stdout_write) = tokio::io::duplex(1024);
+        drop(stdout_write);
+        let mut stdout_reader = BufReader::new(stdout_read);
+        let mut claude_stdin = tokio::io::sink();
+        let mut session_id = None;
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+        )
+        .await
+        .unwrap();
+
+        assert!(!result, "should return false (not idle suspended)");
+
+        drop(ws_sender);
+        let messages = collect_ws_messages(&mut ws_rx);
+        assert!(messages.is_empty(), "no Suspending event should be sent");
     }
 }
