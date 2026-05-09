@@ -3683,8 +3683,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        // Ensure conversation exists
-        self.get_conversation(id).await?;
+        // Ensure conversation exists (exclude deleted)
+        self.get_conversation(id, false).await?;
 
         let query = format!(
             "SELECT id, conversation_id, version_number, event_data, actor, created_at \
@@ -3724,8 +3724,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        // Ensure conversation exists
-        self.get_conversation(id).await?;
+        // Ensure conversation exists (exclude deleted)
+        self.get_conversation(id, false).await?;
 
         let query = format!(
             "SELECT data FROM {TABLE_CONVERSATION_SESSION_STATE} WHERE conversation_id = $1"
@@ -4719,11 +4719,24 @@ impl Store for PostgresStoreV2 {
                 .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?
         };
 
-        // Get next event version and event_index atomically within the transaction
+        // Get next event version and event_index atomically within the transaction.
+        // Lock existing event rows to serialize concurrent appends. The UNIQUE
+        // constraint on (conversation_id, version_number) provides a safety net.
+        let _lock_rows = {
+            let query = format!(
+                "SELECT id FROM {TABLE_CONVERSATION_EVENTS_V2} \
+                 WHERE conversation_id = $1 FOR UPDATE"
+            );
+            sqlx::query_scalar::<_, i64>(&query)
+                .bind(id.as_ref())
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?
+        };
         let latest_event_version = {
             let query = format!(
                 "SELECT COALESCE(MAX(version_number), 0) FROM {TABLE_CONVERSATION_EVENTS_V2} \
-                 WHERE conversation_id = $1 FOR UPDATE"
+                 WHERE conversation_id = $1"
             );
             sqlx::query_scalar::<_, i64>(&query)
                 .bind(id.as_ref())
@@ -7814,7 +7827,7 @@ mod tests {
         assert_eq!(version, 1);
 
         // -- Fetch and verify fields --
-        let fetched = store.get_conversation(&conv_id).await.unwrap();
+        let fetched = store.get_conversation(&conv_id, false).await.unwrap();
         assert_eq!(fetched.version, 1);
         assert_eq!(fetched.item.title, conv.title);
         assert_eq!(fetched.item.agent_name, conv.agent_name);
@@ -7845,7 +7858,7 @@ mod tests {
             .unwrap();
         assert_eq!(v2, 2);
 
-        let fetched2 = store.get_conversation(&conv_id).await.unwrap();
+        let fetched2 = store.get_conversation(&conv_id, false).await.unwrap();
         assert_eq!(fetched2.version, 2);
         assert_eq!(fetched2.item.title.as_deref(), Some("Updated title"));
         assert_eq!(fetched2.item.status, ConversationStatus::Idle);
@@ -7855,21 +7868,23 @@ mod tests {
             content: "Hello".to_string(),
             timestamp: Utc::now(),
         };
-        let ev1_ver = store
+        let ev1_id = store
             .append_conversation_event(&conv_id, event1.clone(), &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(ev1_ver, 1);
+        assert_eq!(ev1_id.conversation_id, conv_id);
+        assert_eq!(ev1_id.event_index, 0);
 
         let event2 = ConversationEvent::AssistantMessage {
             content: "Hi there!".to_string(),
             timestamp: Utc::now(),
         };
-        let ev2_ver = store
+        let ev2_id = store
             .append_conversation_event(&conv_id, event2.clone(), &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(ev2_ver, 2);
+        assert_eq!(ev2_id.conversation_id, conv_id);
+        assert_eq!(ev2_id.event_index, 1);
 
         let events = store.get_conversation_events(&conv_id).await.unwrap();
         assert_eq!(events.len(), 2);
@@ -7914,9 +7929,13 @@ mod tests {
             .await
             .unwrap();
 
-        // get_conversation should return NotFound for deleted conversations
-        let result = store.get_conversation(&conv_id).await;
+        // get_conversation should return NotFound for deleted conversations (include_deleted=false)
+        let result = store.get_conversation(&conv_id, false).await;
         assert!(result.is_err());
+
+        // get_conversation with include_deleted=true should still return it
+        let result = store.get_conversation(&conv_id, true).await;
+        assert!(result.is_ok());
 
         // list_conversations should exclude deleted conversations
         let list_after = store
