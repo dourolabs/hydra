@@ -84,6 +84,7 @@ impl AppState {
         override_session_settings: Option<SessionSettings>,
         actor: ActorRef,
         creator: Username,
+        conversation_id: Option<hydra_common::ConversationId>,
     ) -> Result<SessionId, CreateSessionError> {
         let env_vars = request.variables;
 
@@ -174,8 +175,8 @@ impl AppState {
             memory_limit,
             secrets,
             None,
-            false,
-            None,
+            request.interactive,
+            conversation_id,
             Status::Created,
             None,
             None,
@@ -1270,6 +1271,73 @@ mod tests {
             .item
             .status;
         assert_eq!(status, Status::Failed);
+    }
+
+    #[tokio::test]
+    async fn create_session_passes_interactive_and_conversation_id() {
+        use hydra_common::{ConversationId, api::v1::sessions::CreateSessionRequest};
+
+        let state = state_with_default_model("default-model");
+
+        // Non-interactive session (issue-based): interactive=false, conversation_id=None
+        let request = CreateSessionRequest::new(
+            "do stuff".to_string(),
+            None,
+            hydra_common::api::v1::sessions::BundleSpec::None,
+            std::collections::HashMap::new(),
+            None,
+            false,
+        );
+        let session_id = state
+            .create_session(
+                request,
+                None,
+                ActorRef::test(),
+                Username::from("creator"),
+                None,
+            )
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        assert!(
+            !session.interactive,
+            "issue session should not be interactive"
+        );
+        assert_eq!(
+            session.conversation_id, None,
+            "issue session should have no conversation_id"
+        );
+
+        // Interactive session (conversation-based): interactive=true, conversation_id=Some(...)
+        let conv_id = ConversationId::new();
+        let request = CreateSessionRequest::new(
+            "hello".to_string(),
+            None,
+            hydra_common::api::v1::sessions::BundleSpec::None,
+            std::collections::HashMap::new(),
+            None,
+            true,
+        );
+        let session_id = state
+            .create_session(
+                request,
+                None,
+                ActorRef::test(),
+                Username::from("creator"),
+                Some(conv_id.clone()),
+            )
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        assert!(
+            session.interactive,
+            "conversation session should be interactive"
+        );
+        assert_eq!(
+            session.conversation_id,
+            Some(conv_id),
+            "conversation session should have conversation_id"
+        );
     }
 
     #[test]
