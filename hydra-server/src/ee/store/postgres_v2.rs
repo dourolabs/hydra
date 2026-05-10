@@ -5421,6 +5421,32 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn task_interactive_and_conversation_id_round_trip(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let conv_id = ConversationId::new();
+        let mut task = sample_session();
+        task.interactive = true;
+        task.conversation_id = Some(conv_id.clone());
+
+        let (task_id, _) = store
+            .add_session(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_session(&task_id, false).await.unwrap();
+        assert!(
+            fetched.item.interactive,
+            "interactive must be persisted as true"
+        );
+        assert_eq!(
+            fetched.item.conversation_id,
+            Some(conv_id),
+            "conversation_id must be persisted"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn issue_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
 
