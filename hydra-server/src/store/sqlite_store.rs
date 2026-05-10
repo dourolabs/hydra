@@ -279,6 +279,10 @@ struct TaskRow {
     start_time: Option<String>,
     #[sqlx(default)]
     end_time: Option<String>,
+    #[sqlx(default)]
+    interactive: bool,
+    #[sqlx(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1131,8 +1135,8 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1157,14 +1161,16 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
+            .bind(session.interactive)
+            .bind(session.conversation_id.as_ref().map(|c| c.as_ref()))
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1188,6 +1194,8 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
+            .bind(session.interactive)
+            .bind(session.conversation_id.as_ref().map(|c| c.as_ref()))
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1282,8 +1290,15 @@ impl SqliteStore {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mcp_config,
-            interactive: false,
-            conversation_id: None,
+            interactive: row.interactive,
+            conversation_id: row
+                .conversation_id
+                .as_deref()
+                .map(|c| {
+                    c.parse::<ConversationId>()
+                        .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
+                })
+                .transpose()?,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -2833,7 +2848,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at,
-                 creation_time, start_time, end_time
+                 creation_time, start_time, end_time, interactive, conversation_id
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -2858,7 +2873,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -2971,7 +2986,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -6932,6 +6947,32 @@ mod tests {
         let mut expected = task.clone();
         expected.creation_time = Some(now);
         assert_eq!(fetched.item, expected, "Task must round-trip all fields");
+    }
+
+    #[tokio::test]
+    async fn task_interactive_and_conversation_id_round_trip() {
+        let store = create_test_store().await;
+        let conv_id = ConversationId::new();
+        let mut task = spawn_task();
+        task.interactive = true;
+        task.conversation_id = Some(conv_id.clone());
+
+        let now = Utc::now();
+        let (task_id, _) = store
+            .add_session(task.clone(), now, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_session(&task_id, false).await.unwrap();
+        assert!(
+            fetched.item.interactive,
+            "interactive must be persisted as true"
+        );
+        assert_eq!(
+            fetched.item.conversation_id,
+            Some(conv_id),
+            "conversation_id must be persisted"
+        );
     }
 
     #[tokio::test]

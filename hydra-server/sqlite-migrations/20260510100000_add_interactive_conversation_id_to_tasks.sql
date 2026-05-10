@@ -1,0 +1,2 @@
+ALTER TABLE tasks_v2 ADD COLUMN interactive BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE tasks_v2 ADD COLUMN conversation_id TEXT;
