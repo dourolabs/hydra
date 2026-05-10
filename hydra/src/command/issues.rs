@@ -1444,7 +1444,7 @@ async fn create_issue(
         false,
         form,
         None,
-        feedback.and_then(|f| if f.trim().is_empty() { None } else { Some(f) }),
+        feedback,
     );
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
     let label_names: Vec<String> = labels
