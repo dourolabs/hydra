@@ -28,6 +28,9 @@ RUN cargo install cargo-chef --locked
 
 WORKDIR /app
 COPY . .
+# Exclude hydra-single-player so its embedded-frontend feature doesn't
+# leak into the dependency recipe via workspace feature unification.
+RUN sed -i '/"hydra-single-player",/d' Cargo.toml
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: Build Rust binary ───────────────────────────────────
@@ -42,9 +45,10 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the full project
 COPY . .
-# Copy SPA build output so RustEmbed derive (enabled via workspace feature unification) can find it.
-COPY --from=spa-build /app/hydra-web/packages/web/dist /app/hydra-web/packages/web/dist
-ENV SKIP_FRONTEND_BUILD=1
+# Exclude hydra-single-player from the workspace so that its
+# embedded-frontend feature on hydra-bff is not activated via
+# Cargo workspace feature unification.
+RUN sed -i '/"hydra-single-player",/d' Cargo.toml
 RUN cargo build --bin hydra-bff-server --release
 
 # ── Stage 4: Runtime ─────────────────────────────────────────────
