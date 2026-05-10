@@ -6,7 +6,7 @@ use tower_http::trace::TraceLayer;
 use crate::proxy;
 use crate::state::BffState;
 use crate::upstream::Upstream;
-use crate::{auth, frontend, sse};
+use crate::{auth, frontend, sse, ws_proxy};
 
 /// Build the complete BFF router with all routes.
 ///
@@ -28,6 +28,15 @@ pub fn build_bff_router<U: Upstream>(state: BffState<U>) -> Router {
         .route(
             "/api/v1/events",
             get(sse::sse_relay::<U>).post(sse::sse_relay::<U>),
+        )
+        // WebSocket relay endpoints must be registered before the wildcard routes
+        .route(
+            "/api/v1/sessions/{session_id}/relay",
+            get(ws_proxy::api_ws_relay::<U>),
+        )
+        .route(
+            "/v1/sessions/{session_id}/relay",
+            get(ws_proxy::v1_ws_relay::<U>),
         )
         .nest("/api/v1", api_routes)
         .nest("/v1", v1_routes)

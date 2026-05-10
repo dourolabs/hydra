@@ -6,6 +6,7 @@ pub mod router;
 pub mod sse;
 pub mod state;
 pub mod upstream;
+pub mod ws_proxy;
 
 pub use config::{BffConfig, FrontendAssets};
 pub use router::build_bff_router;

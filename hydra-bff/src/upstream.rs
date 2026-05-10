@@ -34,6 +34,12 @@ pub trait Upstream: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
         self.forward(request)
     }
+
+    /// Return the base URL for upstream WebSocket connections (e.g. `ws://host:port`).
+    /// Returns `None` for in-process upstreams where WebSocket proxying is not needed.
+    fn ws_base_url(&self) -> Option<String> {
+        None
+    }
 }
 
 /// In-process upstream that calls the inner Axum router via `oneshot()`.
@@ -152,6 +158,19 @@ impl HttpUpstream {
     }
 }
 
+impl HttpUpstream {
+    /// Convert the HTTP base URL to a WebSocket URL.
+    fn to_ws_url(base_url: &str) -> String {
+        if let Some(rest) = base_url.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = base_url.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            base_url.to_string()
+        }
+    }
+}
+
 impl Upstream for HttpUpstream {
     fn forward(
         &self,
@@ -169,5 +188,9 @@ impl Upstream for HttpUpstream {
             self.base_url.clone(),
             request,
         )
+    }
+
+    fn ws_base_url(&self) -> Option<String> {
+        Some(Self::to_ws_url(&self.base_url))
     }
 }
