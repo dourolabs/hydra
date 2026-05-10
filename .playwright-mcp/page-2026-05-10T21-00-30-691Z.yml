@@ -1,0 +1,84 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e133]:
+      - navigation "Breadcrumb" [ref=e134]:
+        - link "Dashboard" [ref=e136] [cursor=pointer]:
+          - /url: /
+        - generic [ref=e137]:
+          - text: /
+          - link "Issue i-ygspnw" [ref=e138] [cursor=pointer]:
+            - /url: /issues/i-ygspnw
+        - generic [ref=e139]: /
+        - generic [ref=e140]: Patch p-noowil
+      - generic [ref=e141]:
+        - generic [ref=e142]:
+          - heading "Improve Makefile with help target and functional clean target" [level=2] [ref=e143]
+          - generic [ref=e144]: Merged
+        - generic [ref=e145]:
+          - generic [ref=e146]:
+            - generic [ref=e147]: Branch
+            - generic [ref=e148]:
+              - text: hydra/i-ygspnw/head
+              - button "Copy to clipboard" [ref=e149] [cursor=pointer]:
+                - img [ref=e150]
+          - generic [ref=e153]:
+            - generic [ref=e154]: Base
+            - generic [ref=e155]: main
+          - generic [ref=e156]:
+            - generic [ref=e157]: Repository
+            - generic [ref=e158]: dourolabs/hydra-test-fixture
+          - generic [ref=e159]:
+            - generic [ref=e160]: GitHub
+            - link "dourolabs/hydra-test-fixture#15 ↗" [ref=e162] [cursor=pointer]:
+              - /url: https://github.com/dourolabs/hydra-test-fixture/pull/15
+        - generic [ref=e163]:
+          - generic [ref=e164]: Description
+          - paragraph [ref=e168]:
+            - text: "Adds a self-documenting help target (using grep/awk on ## comments) as the default goal, and makes the clean target actually remove common build artifacts (build/, dist/, target/, .o, .pyc,"
+            - strong [ref=e169]: pycache
+            - text: ) instead of just printing a message.
+        - generic [ref=e170]:
+          - tablist [ref=e172]:
+            - tab "Diff" [ref=e173] [cursor=pointer]
+            - tab "Reviews" [active] [selected] [ref=e174] [cursor=pointer]
+            - tab "Activity" [ref=e175] [cursor=pointer]
+            - tab "Metadata" [ref=e176] [cursor=pointer]
+          - list [ref=e213]:
+            - listitem [ref=e214]:
+              - generic [ref=e215]:
+                - generic "pm" [ref=e216]: P
+                - generic [ref=e217]: pm
+                - generic [ref=e218]: Approved
+                - generic [ref=e219]: 5/10/2026, 9:00:15 PM
+              - generic [ref=e221]:
+                - paragraph [ref=e222]: LGTM. Clean, well-structured change.
+                - list [ref=e223]:
+                  - listitem [ref=e224]: The self-documenting help target uses the standard grep/awk pattern — good choice.
+                  - listitem [ref=e225]: Setting .DEFAULT_GOAL := help is the right default for discoverability.
+                  - listitem [ref=e226]:
+                    - text: The clean target now actually removes common build artifacts (build/, dist/, target/, .o, .pyc,
+                    - strong [ref=e227]: pycache
+                    - text: ), which is a clear improvement over the no-op echo.
+                  - listitem [ref=e228]: "Minor note: the find + xargs pipeline could break on filenames with spaces (no -print0/-0), but for build artifacts like .o and .pyc this is negligible risk."
+                - paragraph [ref=e229]: Approved.

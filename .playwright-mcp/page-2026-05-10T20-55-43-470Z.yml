@@ -1,0 +1,50 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e84]:
+      - navigation "Breadcrumb" [ref=e85]:
+        - link "Dashboard" [ref=e87] [cursor=pointer]:
+          - /url: /?selected=your-issues
+        - generic [ref=e88]: /
+        - generic [ref=e89]: Issue i-ieawfp
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - heading "Add a Code of Conduct section to the CONTRIBUTING.md in hydra-test-fixture" [level=1] [ref=e93]
+          - generic [ref=e94]:
+            - button "Give Feedback" [ref=e95] [cursor=pointer]
+            - button "In Progress" [ref=e96] [cursor=pointer]:
+              - generic [ref=e97]: In Progress
+              - img [ref=e99]
+            - generic [ref=e101]: 12s
+        - generic [ref=e102]:
+          - generic [ref=e103]: task
+          - button "Edit labels" [ref=e105] [cursor=pointer]: + Add label
+        - paragraph [ref=e108]: Update the CONTRIBUTING.md file in the dourolabs/hydra-test-fixture repo to add a Code of Conduct section with guidelines for respectful collaboration.
+        - generic [ref=e109]:
+          - tablist [ref=e111]:
+            - tab "Related Issues" [selected] [ref=e112] [cursor=pointer]
+            - tab "Sessions" [ref=e113] [cursor=pointer]
+            - tab "Patches" [ref=e114] [cursor=pointer]
+            - tab "Activity" [ref=e115] [cursor=pointer]
+            - tab "Metadata" [ref=e116] [cursor=pointer]
+          - paragraph [ref=e120]: No related issues.

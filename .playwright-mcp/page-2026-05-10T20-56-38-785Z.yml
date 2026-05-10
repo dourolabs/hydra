@@ -1,0 +1,42 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e55]:
+      - tablist [ref=e57]:
+        - tab "Chat" [selected] [ref=e58] [cursor=pointer]
+        - tab "Details" [ref=e59] [cursor=pointer]
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - button "← Chat" [ref=e64] [cursor=pointer]
+            - heading "Untitled conversation" [level=2] [ref=e65]
+            - generic [ref=e66]:
+              - generic [ref=e67]: Running
+              - generic [ref=e68]: Active
+          - button "End Chat" [ref=e70] [cursor=pointer]
+        - generic [ref=e73]:
+          - generic [ref=e74]: Hello, what is 2+2?
+          - generic [ref=e75]: 5/10/2026, 8:56:36 PM
+        - generic [ref=e76]:
+          - textbox "Type a message..." [ref=e77]
+          - button "Send" [disabled] [ref=e78]

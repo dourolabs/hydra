@@ -1,0 +1,61 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e42]: Issues
+          - list [ref=e43]:
+            - button "Your Issues" [ref=e44] [cursor=pointer]:
+              - generic [ref=e45]: Your Issues
+            - button "Assigned to You" [ref=e46] [cursor=pointer]:
+              - generic [ref=e47]: Assigned to You
+            - button "All Issues" [ref=e48] [cursor=pointer]:
+              - generic [ref=e49]: All Issues
+            - listitem [ref=e50]: Artifacts
+            - button "Patches" [ref=e51] [cursor=pointer]:
+              - generic [ref=e52]: Patches
+            - button "Documents" [ref=e53] [cursor=pointer]:
+              - generic [ref=e54]: Documents
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - button "Collapse filter sidebar" [ref=e57] [cursor=pointer]: ◀
+            - generic [ref=e58]:
+              - img [ref=e60]
+              - textbox "Search..." [ref=e63]
+          - generic [ref=e64]:
+            - button "Status ▼" [ref=e66] [cursor=pointer]:
+              - text: Status
+              - generic [ref=e67]: ▼
+            - button "Label ▼" [ref=e69] [cursor=pointer]:
+              - text: Label
+              - generic [ref=e70]: ▼
+          - list [ref=e72]:
+            - button "Add a Code of Conduct section to the CONTRIBUTING.md in hydra-test-fixture swe 1s" [ref=e73] [cursor=pointer]:
+              - generic [ref=e74]:
+                - generic [ref=e77]: Add a Code of Conduct section to the CONTRIBUTING.md in hydra-test-fixture
+                - generic "swe" [ref=e79]: S
+                - button "Archive":
+                  - img
+                - generic [ref=e81]: 1s
+      - button "+ Create Issue" [ref=e82] [cursor=pointer]

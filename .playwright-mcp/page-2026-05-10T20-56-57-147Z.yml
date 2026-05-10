@@ -1,0 +1,49 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e99]:
+      - tablist [ref=e101]:
+        - tab "Chat" [selected] [ref=e102] [cursor=pointer]
+        - tab "Details" [ref=e103] [cursor=pointer]
+      - generic [ref=e105]:
+        - generic [ref=e106]:
+          - generic [ref=e107]:
+            - button "← Chat" [ref=e108] [cursor=pointer]
+            - heading "Untitled conversation" [level=2] [ref=e109]
+            - generic [ref=e110]:
+              - generic [ref=e111]: Closed
+              - generic [ref=e112]: Closed
+          - button "Resume" [ref=e114] [cursor=pointer]
+        - generic [ref=e115]:
+          - generic [ref=e117]:
+            - generic [ref=e118]: Hello, what is 2+2?
+            - generic [ref=e119]: 5/10/2026, 8:56:36 PM
+          - generic [ref=e121]:
+            - paragraph [ref=e123]: "4"
+            - generic [ref=e124]: 5/10/2026, 8:56:40 PM
+          - generic [ref=e125]:
+            - generic [ref=e126]: Conversation closed
+            - generic [ref=e127]: 5/10/2026, 8:56:47 PM
+        - generic [ref=e128]:
+          - textbox "Resume to continue" [disabled] [ref=e129]
+          - button "Send" [disabled] [ref=e130]
