@@ -1196,10 +1196,17 @@ impl PostgresStoreV2 {
             ConversationStatus::Closed => "closed",
         };
 
+        let session_settings_json =
+            serde_json::to_value(&conversation.session_settings).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to serialize conversation session_settings: {e}"
+                ))
+            })?;
+
         let query = format!(
             "INSERT INTO {TABLE_CONVERSATIONS_V2} \
-             (id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+             (id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -1207,6 +1214,7 @@ impl PostgresStoreV2 {
             .bind(&conversation.title)
             .bind(&conversation.agent_name)
             .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
+            .bind(&session_settings_json)
             .bind(status_str)
             .bind(conversation.creator.as_str())
             .bind(conversation.deleted)
@@ -1229,6 +1237,12 @@ impl PostgresStoreV2 {
                 )));
             }
         };
+        let session_settings: crate::domain::issues::SessionSettings =
+            serde_json::from_value(row.session_settings.clone()).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize conversation session_settings: {e}"
+                ))
+            })?;
 
         Ok(Conversation {
             title: row.title.clone(),
@@ -1244,6 +1258,7 @@ impl PostgresStoreV2 {
                 .transpose()?,
             status,
             creator: Username::from(row.creator.as_str()),
+            session_settings,
             deleted: row.deleted,
         })
     }
@@ -1399,6 +1414,7 @@ struct ConversationRow {
     title: Option<String>,
     agent_name: Option<String>,
     active_session_id: Option<String>,
+    session_settings: Value,
     status: String,
     creator: String,
     deleted: bool,
@@ -3569,7 +3585,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -3607,7 +3623,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, \
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.session_settings, \
              c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at, \
              (SELECT MIN(c2.created_at) FROM {TABLE_CONVERSATIONS_V2} c2 WHERE c2.id = c.id) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} c \
@@ -7889,6 +7905,17 @@ mod tests {
             active_session_id: Some(SessionId::new()),
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
+            session_settings: SessionSettings {
+                repo_name: Some(RepoName::from_str("org/repo").unwrap()),
+                remote_url: Some("https://git.example.com/org/repo.git".to_string()),
+                image: Some("img:v1".to_string()),
+                model: Some("claude-3".to_string()),
+                branch: Some("main".to_string()),
+                max_retries: Some(3),
+                cpu_limit: Some("2".to_string()),
+                memory_limit: Some("4Gi".to_string()),
+                secrets: Some(vec!["conv-secret".to_string()]),
+            },
             deleted: false,
         };
         let (conv_id, version) = store
@@ -7904,6 +7931,7 @@ mod tests {
         assert_eq!(fetched.item.agent_name, conv.agent_name);
         assert_eq!(fetched.item.status, ConversationStatus::Active);
         assert_eq!(fetched.item.creator, conv.creator);
+        assert_eq!(fetched.item.session_settings, conv.session_settings);
         assert!(!fetched.item.deleted);
 
         // -- List conversations --
@@ -7921,6 +7949,7 @@ mod tests {
             active_session_id: conv.active_session_id.clone(),
             status: ConversationStatus::Idle,
             creator: conv.creator.clone(),
+            session_settings: Default::default(),
             deleted: false,
         };
         let v2 = store
@@ -7993,6 +8022,7 @@ mod tests {
             active_session_id: updated_conv.active_session_id.clone(),
             status: updated_conv.status,
             creator: updated_conv.creator.clone(),
+            session_settings: Default::default(),
             deleted: true,
         };
         store

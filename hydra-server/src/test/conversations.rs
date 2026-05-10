@@ -13,6 +13,7 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     let request = CreateConversationRequest {
         message: "Hello, agent!".to_string(),
         agent_name: Some("test-agent".to_string()),
+        session_settings: None,
     };
 
     let response = client
@@ -41,6 +42,7 @@ async fn get_conversation_returns_created_conversation() -> anyhow::Result<()> {
     let request = CreateConversationRequest {
         message: "test message".to_string(),
         agent_name: None,
+        session_settings: None,
     };
 
     let created: Conversation = client
@@ -95,6 +97,7 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
     let request = CreateConversationRequest {
         message: "Hello!".to_string(),
         agent_name: None,
+        session_settings: None,
     };
 
     client
@@ -130,6 +133,7 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
     let request = CreateConversationRequest {
         message: "What is Rust?".to_string(),
         agent_name: None,
+        session_settings: None,
     };
 
     let created: Conversation = client
@@ -167,6 +171,7 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -224,6 +229,7 @@ async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()>
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -269,6 +275,7 @@ async fn close_conversation_sets_status_closed() -> anyhow::Result<()> {
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -306,6 +313,7 @@ async fn close_already_closed_conversation_is_idempotent() -> anyhow::Result<()>
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -347,6 +355,7 @@ async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -397,6 +406,7 @@ async fn resume_active_conversation_returns_409() -> anyhow::Result<()> {
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -430,6 +440,7 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
     let create_request = CreateConversationRequest {
         message: "Hello".to_string(),
         agent_name: None,
+        session_settings: None,
     };
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))

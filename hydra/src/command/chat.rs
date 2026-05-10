@@ -28,6 +28,7 @@ async fn run_noninteractive(
     let request = CreateConversationRequest {
         message: prompt.to_string(),
         agent_name: agent,
+        session_settings: None,
     };
     let conversation = client
         .create_conversation(&request)
@@ -107,6 +108,7 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
     let request = CreateConversationRequest {
         message: first_message,
         agent_name: agent,
+        session_settings: None,
     };
     let conversation = client
         .create_conversation(&request)
@@ -217,6 +219,7 @@ mod tests {
         let request = CreateConversationRequest {
             message: "hello".to_string(),
             agent_name: Some("test-agent".to_string()),
+            session_settings: None,
         };
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["message"], "hello");
@@ -228,6 +231,7 @@ mod tests {
         let request = CreateConversationRequest {
             message: "hello".to_string(),
             agent_name: None,
+            session_settings: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("\"message\":\"hello\""));

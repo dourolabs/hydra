@@ -7276,6 +7276,7 @@ mod tests {
             active_session_id: None,
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
+            session_settings: Default::default(),
             deleted: false,
         }
     }

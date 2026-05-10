@@ -1,3 +1,4 @@
+use super::issues::SessionSettings;
 use crate::{ConversationId, SessionId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,6 +82,8 @@ pub struct Conversation {
     pub active_session_id: Option<SessionId>,
     pub status: ConversationStatus,
     pub creator: Username,
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -94,6 +97,7 @@ impl Conversation {
         active_session_id: Option<SessionId>,
         status: ConversationStatus,
         creator: Username,
+        session_settings: SessionSettings,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -104,6 +108,7 @@ impl Conversation {
             active_session_id,
             status,
             creator,
+            session_settings,
             created_at,
             updated_at,
         }
@@ -160,6 +165,8 @@ pub struct CreateConversationRequest {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_settings: Option<SessionSettings>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +254,7 @@ pub enum ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn conversation_event_user_message_round_trip() {
@@ -372,6 +380,37 @@ mod tests {
         let req: CreateConversationRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.message, "Hello");
         assert_eq!(req.agent_name, None);
+        assert_eq!(req.session_settings, None);
+    }
+
+    #[test]
+    fn create_conversation_request_with_session_settings_round_trip() {
+        let req = CreateConversationRequest {
+            message: "Hello".to_string(),
+            agent_name: Some("my-agent".to_string()),
+            session_settings: Some(SessionSettings {
+                repo_name: Some(crate::RepoName::from_str("org/repo").unwrap()),
+                ..Default::default()
+            }),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let deserialized: CreateConversationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, deserialized);
+        assert!(json.contains("session_settings"));
+        assert!(json.contains("org/repo"));
+    }
+
+    #[test]
+    fn create_conversation_request_without_session_settings_omits_field() {
+        let req = CreateConversationRequest {
+            message: "Hello".to_string(),
+            agent_name: None,
+            session_settings: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("session_settings"));
+        let deserialized: CreateConversationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, deserialized);
     }
 
     #[test]
