@@ -5,6 +5,10 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use hydra_common::{
     agents::AgentRecord,
+    api::v1::conversations::{
+        Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
+        ConversationSummary as ApiConversationSummary,
+    },
     api::v1::notifications::{
         ListNotificationsResponse, MarkReadResponse, NotificationResponse, UnreadCountResponse,
     },
@@ -1151,6 +1155,136 @@ pub fn render_relations(
                         "{:<source_w$}  {:<rel_w$}  {}",
                         relation.source_id, relation.rel_type, relation.target_id
                     )?;
+                }
+            }
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn render_conversation_records(
+    format: ResolvedOutputFormat,
+    conversation: &ApiConversation,
+    events: &[ApiConversationEvent],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            #[derive(serde::Serialize)]
+            struct ConversationWithEvents<'a> {
+                #[serde(flatten)]
+                conversation: &'a ApiConversation,
+                events: &'a [ApiConversationEvent],
+            }
+            serde_json::to_writer(
+                &mut *writer,
+                &ConversationWithEvents {
+                    conversation,
+                    events,
+                },
+            )?;
+            writer.write_all(b"\n")?;
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            writeln!(writer, "Conversation {}", conversation.conversation_id)?;
+            writeln!(
+                writer,
+                "Title: {}",
+                conversation.title.as_deref().unwrap_or("-")
+            )?;
+            writeln!(
+                writer,
+                "Agent: {}",
+                conversation.agent_name.as_deref().unwrap_or("-")
+            )?;
+            writeln!(writer, "Status: {:?}", conversation.status)?;
+            writeln!(writer, "Creator: {}", conversation.creator)?;
+            writeln!(writer, "Created: {}", conversation.created_at)?;
+            writeln!(writer, "Updated: {}", conversation.updated_at)?;
+            if let Some(ref session_id) = conversation.active_session_id {
+                writeln!(writer, "Active Session: {session_id}")?;
+            }
+
+            if !events.is_empty() {
+                writeln!(writer)?;
+                writeln!(writer, "Transcript:")?;
+                for event in events {
+                    match event {
+                        ApiConversationEvent::UserMessage { content, timestamp } => {
+                            writeln!(writer, "  [{timestamp}] user: {content}")?;
+                        }
+                        ApiConversationEvent::AssistantMessage { content, timestamp } => {
+                            writeln!(writer, "  [{timestamp}] assistant: {content}")?;
+                        }
+                        ApiConversationEvent::Suspending { reason, timestamp } => {
+                            writeln!(writer, "  [{timestamp}] suspending: {reason}")?;
+                        }
+                        ApiConversationEvent::Resumed {
+                            session_id,
+                            timestamp,
+                        } => {
+                            writeln!(writer, "  [{timestamp}] resumed: session {session_id}")?;
+                        }
+                        ApiConversationEvent::Closed { timestamp } => {
+                            writeln!(writer, "  [{timestamp}] closed")?;
+                        }
+                    }
+                }
+            }
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn render_conversation_summary_records(
+    format: ResolvedOutputFormat,
+    conversations: &[ApiConversationSummary],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for conversation in conversations {
+                serde_json::to_writer(&mut *writer, conversation)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            if conversations.is_empty() {
+                writeln!(writer, "No conversations found.")?;
+                writer.flush()?;
+                return Ok(());
+            }
+
+            for (index, conversation) in conversations.iter().enumerate() {
+                writeln!(
+                    writer,
+                    "Conversation {} ({:?})",
+                    conversation.conversation_id, conversation.status
+                )?;
+                writeln!(
+                    writer,
+                    "  Title: {}",
+                    conversation.title.as_deref().unwrap_or("-")
+                )?;
+                writeln!(
+                    writer,
+                    "  Agent: {}",
+                    conversation.agent_name.as_deref().unwrap_or("-")
+                )?;
+                writeln!(writer, "  Creator: {}", conversation.creator)?;
+                writeln!(writer, "  Events: {}", conversation.event_count)?;
+                if let Some(ref preview) = conversation.last_event_preview {
+                    writeln!(writer, "  Last: {preview}")?;
+                }
+                writeln!(writer, "  Created: {}", conversation.created_at)?;
+                writeln!(writer, "  Updated: {}", conversation.updated_at)?;
+
+                if index + 1 < conversations.len() {
+                    writeln!(writer)?;
                 }
             }
             writer.flush()?;
