@@ -84,9 +84,9 @@ pub enum ServerCommand {
         /// Number of lines to show (default: 50).
         #[arg(short = 'n', long, default_value_t = 50)]
         lines: usize,
-        /// Follow log output (like tail -f).
-        #[arg(short, long)]
-        follow: bool,
+        /// Stream log output (like tail -f).
+        #[arg(short = 'w', long = "watch")]
+        watch: bool,
     },
     /// Restart the local hydra server (stop + start).
     Restart {
@@ -107,7 +107,7 @@ pub fn run(command: ServerCommand) -> Result<()> {
         ServerCommand::Start { log_level } => cmd_start(log_level),
         ServerCommand::Stop => cmd_stop(),
         ServerCommand::Status => cmd_status(),
-        ServerCommand::Logs { lines, follow } => cmd_logs(lines, follow),
+        ServerCommand::Logs { lines, watch } => cmd_logs(lines, watch),
         ServerCommand::Restart { log_level } => cmd_restart(log_level),
     }
 }
@@ -224,7 +224,7 @@ fn cmd_init(config_file: Option<PathBuf>, log_level: Option<LogLevel>, force: bo
     println!("Next steps:");
     println!("  hydra issues list              # list issues");
     println!("  hydra server status             # check server status");
-    println!("  hydra server logs --follow      # watch server logs");
+    println!("  hydra server logs --watch       # watch server logs");
     println!("  hydra server stop               # stop the server");
 
     Ok(())
@@ -1255,7 +1255,7 @@ fn is_server_process_alive() -> bool {
 // logs
 // ---------------------------------------------------------------------------
 
-fn cmd_logs(lines: usize, follow: bool) -> Result<()> {
+fn cmd_logs(lines: usize, watch: bool) -> Result<()> {
     let log_path = expand_path(LOG_FILE_PATH);
     if !log_path.exists() {
         println!("No log file found at {}", log_path.display());
@@ -1263,7 +1263,7 @@ fn cmd_logs(lines: usize, follow: bool) -> Result<()> {
         return Ok(());
     }
 
-    if follow {
+    if watch {
         // Use tail -f for following.
         let status = Command::new("tail")
             .args(["-n", &lines.to_string(), "-f"])

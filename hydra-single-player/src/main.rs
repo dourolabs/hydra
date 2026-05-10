@@ -160,14 +160,14 @@ mod tests {
     #[test]
     fn parse_server_logs_with_options() {
         let sp_cli =
-            SinglePlayerCli::try_parse_from(["hydra", "server", "logs", "-n", "100", "--follow"])
+            SinglePlayerCli::try_parse_from(["hydra", "server", "logs", "-n", "100", "--watch"])
                 .expect("parse");
         match sp_cli.command {
             Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Logs { lines, follow },
+                command: ServerCommand::Logs { lines, watch },
             }) => {
                 assert_eq!(lines, 100);
-                assert!(follow);
+                assert!(watch);
             }
             _ => panic!("expected Server Logs"),
         }
