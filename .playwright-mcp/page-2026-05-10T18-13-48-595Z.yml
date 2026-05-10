@@ -1,0 +1,31 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - button "← Chat" [ref=e51] [cursor=pointer]
+        - heading "New conversation" [level=2] [ref=e52]
+      - paragraph [ref=e55]: No messages yet. Send a message to start the conversation.
+      - generic [ref=e56]:
+        - textbox "Type a message..." [ref=e57]
+        - button "Send" [disabled] [ref=e58]
