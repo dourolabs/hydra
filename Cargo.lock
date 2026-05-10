@@ -2200,6 +2200,7 @@ dependencies = [
  "http 1.4.0",
  "hydra-common",
  "hydra-server",
+ "hyper 1.8.1",
  "mime_guess",
  "reqwest",
  "rust-embed",

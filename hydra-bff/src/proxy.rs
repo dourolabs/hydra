@@ -105,9 +105,17 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
     let method = original.method().clone();
     tracing::info!(method = %method, upstream_path = %uri, "proxying request to upstream");
 
-    // Decompose the original request into parts and body, preserving extensions
-    // (e.g. hyper's OnUpgrade needed for WebSocket upgrades).
+    // Decompose the original request into parts and body.
+    // We must preserve hyper's OnUpgrade extension (needed for WebSocket upgrades)
+    // but clear axum's internal routing extensions (MatchedPath, path params,
+    // OriginalUri) which would confuse the inner router when using InProcessUpstream.
     let (mut parts, body) = original.into_parts();
+
+    let mut clean_extensions = http::Extensions::new();
+    if let Some(on_upgrade) = parts.extensions.remove::<hyper::upgrade::OnUpgrade>() {
+        clean_extensions.insert(on_upgrade);
+    }
+    parts.extensions = clean_extensions;
 
     parts.uri = match uri.parse() {
         Ok(u) => u,
@@ -212,6 +220,97 @@ mod tests {
             response.status(),
             StatusCode::UNAUTHORIZED,
             "GET /api/v1/whoami should return 401 without a cookie"
+        );
+    }
+
+    /// Build a single-player BFF (with auto_login_token) backed by an in-process
+    /// hydra-server, with the test actor seeded in the store.
+    async fn test_bff_singleplayer() -> Router {
+        use hydra_common::ActorRef;
+
+        let handles = hydra_server::test_utils::test_state_handles();
+        let token = hydra_server::test_utils::test_auth_token();
+        let actor = hydra_server::test_utils::test_actor();
+        handles
+            .store
+            .add_actor(actor, &ActorRef::test())
+            .await
+            .expect("failed to seed test actor");
+        let inner_app = hydra_server::build_router(&handles.state).with_state(handles.state);
+        let upstream = InProcessUpstream::new(inner_app);
+        let config = BffConfig {
+            cookie_secure: false,
+            frontend_assets: FrontendAssets::None,
+        };
+        let bff_state = BffState::new(upstream, config, Some(token));
+        crate::build_bff_router(bff_state)
+    }
+
+    #[tokio::test]
+    async fn parameterized_route_works_in_single_player_mode() {
+        let app = test_bff_singleplayer().await;
+
+        // Create an issue via POST /api/v1/issues
+        let create_body = serde_json::json!({
+            "issue": {
+                "type": "task",
+                "title": "BFF proxy test issue",
+                "description": "Testing parameterized routes through BFF",
+                "creator": "test-creator",
+                "progress": "",
+                "status": "open",
+                "todo_list": [],
+                "dependencies": [],
+                "patches": []
+            }
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/issues")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(req).await.unwrap();
+        let status = response.status();
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body_text = String::from_utf8_lossy(&body_bytes);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "POST /api/v1/issues should succeed in single-player mode: {body_text}"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let issue_id = body["issue_id"]
+            .as_str()
+            .expect("response should contain issue_id");
+
+        // GET the issue by ID via /api/v1/issues/:id — this is the parameterized
+        // route that would fail before the extension-clearing fix.
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/api/v1/issues/{issue_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/v1/issues/:id should succeed in single-player mode (parameterized route)"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            body["issue"]["title"].as_str(),
+            Some("BFF proxy test issue"),
+            "returned issue should have the correct title"
         );
     }
 }
