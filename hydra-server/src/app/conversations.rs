@@ -75,6 +75,7 @@ impl AppState {
         &self,
         message: String,
         agent_name: Option<String>,
+        session_settings: crate::domain::issues::SessionSettings,
         actor_ref: ActorRef,
         creator: Username,
     ) -> Result<(ConversationId, Versioned<Conversation>), CreateConversationError> {
@@ -85,6 +86,7 @@ impl AppState {
             active_session_id: None,
             status: ConversationStatus::Active,
             creator: creator.clone(),
+            session_settings,
             deleted: false,
         };
 

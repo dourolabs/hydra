@@ -2,6 +2,7 @@
 import type { ConversationId } from "./ConversationId";
 import type { ConversationStatus } from "./ConversationStatus";
 import type { SessionId } from "./SessionId";
+import type { SessionSettings } from "./SessionSettings";
 import type { Username } from "./Username";
 
-export type Conversation = { conversation_id: ConversationId, title: string | null, agent_name: string | null, active_session_id: SessionId | null, status: ConversationStatus, creator: Username, created_at: string, updated_at: string, };
+export type Conversation = { conversation_id: ConversationId, title: string | null, agent_name: string | null, active_session_id: SessionId | null, status: ConversationStatus, creator: Username, session_settings?: SessionSettings, created_at: string, updated_at: string, };

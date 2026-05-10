@@ -1,3 +1,4 @@
+use super::issues::SessionSettings;
 use super::users::Username;
 use hydra_common::api::v1 as api;
 use hydra_common::{ConversationId, SessionId};
@@ -20,6 +21,8 @@ pub struct Conversation {
     #[serde(default)]
     pub status: ConversationStatus,
     pub creator: Username,
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
     #[serde(default)]
     pub deleted: bool,
 }
@@ -155,6 +158,7 @@ impl From<api::conversations::Conversation> for Conversation {
             active_session_id: value.active_session_id,
             status: value.status.into(),
             creator: value.creator.into(),
+            session_settings: value.session_settings.into(),
             deleted: false,
         }
     }
@@ -175,6 +179,7 @@ impl Conversation {
             self.active_session_id.clone(),
             self.status.into(),
             self.creator.clone().into(),
+            self.session_settings.clone().into(),
             created_at,
             updated_at,
         )

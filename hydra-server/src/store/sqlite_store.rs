@@ -148,6 +148,7 @@ struct ConversationRow {
     title: Option<String>,
     agent_name: Option<String>,
     active_session_id: Option<String>,
+    session_settings: String,
     status: String,
     creator: String,
     deleted: bool,
@@ -622,6 +623,12 @@ impl SqliteStore {
                 )));
             }
         };
+        let session_settings: crate::domain::issues::SessionSettings =
+            serde_json::from_str(&row.session_settings).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize conversation session_settings: {e}"
+                ))
+            })?;
         Ok(Conversation {
             title: row.title.clone(),
             agent_name: row.agent_name.clone(),
@@ -635,6 +642,7 @@ impl SqliteStore {
                 })?,
             status,
             creator: Username::from(row.creator.clone()),
+            session_settings,
             deleted: row.deleted,
         })
     }
@@ -663,15 +671,23 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for conversation '{id}'"))
         })?;
 
+        let session_settings_json =
+            serde_json::to_string(&conversation.session_settings).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to serialize conversation session_settings: {e}"
+                ))
+            })?;
+
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
         .bind(&conversation.title)
         .bind(&conversation.agent_name)
         .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
+        .bind(&session_settings_json)
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
         .bind(conversation.deleted)
@@ -3696,7 +3712,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let row = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, active_session_id, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -3743,7 +3759,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.session_settings, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
              FROM {TABLE_CONVERSATIONS} c
              WHERE c.is_latest = 1"
@@ -8599,6 +8615,7 @@ mod tests {
             active_session_id: None,
             status: crate::domain::conversations::ConversationStatus::Active,
             creator: Username::from("testuser".to_string()),
+            session_settings: Default::default(),
             deleted: false,
         }
     }

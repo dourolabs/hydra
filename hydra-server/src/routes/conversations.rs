@@ -46,8 +46,15 @@ pub async fn create_conversation(
     let creator = actor.creator.clone();
     let actor_ref = ActorRef::from(&actor);
 
+    let session_settings = payload.session_settings.map(Into::into).unwrap_or_default();
     let (conversation_id, versioned) = state
-        .create_conversation(payload.message, payload.agent_name, actor_ref, creator)
+        .create_conversation(
+            payload.message,
+            payload.agent_name,
+            session_settings,
+            actor_ref,
+            creator,
+        )
         .await
         .map_err(map_create_conversation_error)?;
 
