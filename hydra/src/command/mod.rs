@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod caches;
 pub mod chat;
+pub mod conversations;
 pub mod documents;
 pub mod issues;
 pub mod notifications;

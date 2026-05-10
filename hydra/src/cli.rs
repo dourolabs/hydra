@@ -111,6 +111,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::users::UsersCommand,
     },
+    /// Manage conversations.
+    Conversations {
+        #[command(subcommand)]
+        command: command::conversations::ConversationsCommand,
+    },
     /// Chat with an agent via the Hydra conversation API.
     Chat {
         /// Send a single message, print the response, and exit.
@@ -235,6 +240,9 @@ pub async fn dispatch(
         }
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
+        Commands::Conversations { command } => {
+            command::conversations::run(client, command, context).await?
+        }
         Commands::Chat { prompt, agent } => {
             command::chat::run(client, prompt, agent, context).await?
         }

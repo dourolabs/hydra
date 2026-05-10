@@ -8,7 +8,8 @@ use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
         Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
-        CreateConversationRequest, SendMessageRequest,
+        ConversationSummary as ApiConversationSummary, CreateConversationRequest,
+        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
     },
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
@@ -333,6 +334,23 @@ pub trait HydraClientInterface: Send + Sync {
     ) -> Result<Vec<ApiConversationEvent>>;
     async fn close_conversation(&self, conversation_id: &ConversationId)
         -> Result<ApiConversation>;
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<ApiConversationSummary>>;
+    async fn get_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation>;
+    async fn update_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        request: &UpdateConversationRequest,
+    ) -> Result<ApiConversation>;
+    async fn delete_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -2034,6 +2052,96 @@ impl HydraClient {
             .context("failed to decode close conversation response")
     }
 
+    /// Call `GET /v1/conversations` to list conversations.
+    pub async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<ApiConversationSummary>> {
+        let url = self.endpoint("/v1/conversations")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch conversations")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while listing conversations",
+            )
+            .await?;
+
+        response
+            .json::<Vec<ApiConversationSummary>>()
+            .await
+            .context("failed to decode list conversations response")
+    }
+
+    /// Call `GET /v1/conversations/:id` to get a conversation.
+    pub async fn get_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        let path = format!("/v1/conversations/{conversation_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch conversation")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while fetching conversation",
+            )
+            .await?;
+
+        response
+            .json::<ApiConversation>()
+            .await
+            .context("failed to decode conversation response")
+    }
+
+    /// Call `PATCH /v1/conversations/:id` to update a conversation.
+    pub async fn update_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        request: &UpdateConversationRequest,
+    ) -> Result<ApiConversation> {
+        let path = format!("/v1/conversations/{conversation_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.patch(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update conversation request")?
+            .error_for_status_with_body("hydra-server rejected update conversation request")
+            .await?;
+
+        response
+            .json::<ApiConversation>()
+            .await
+            .context("failed to decode update conversation response")
+    }
+
+    /// Call `DELETE /v1/conversations/:id` to soft-delete a conversation.
+    pub async fn delete_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        let path = format!("/v1/conversations/{conversation_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete conversation request")?
+            .error_for_status_with_body("hydra-server rejected delete conversation request")
+            .await?;
+
+        response
+            .json::<ApiConversation>()
+            .await
+            .context("failed to decode delete conversation response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -2546,6 +2654,35 @@ impl HydraClientInterface for HydraClient {
         conversation_id: &ConversationId,
     ) -> Result<ApiConversation> {
         HydraClient::close_conversation(self, conversation_id).await
+    }
+
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<ApiConversationSummary>> {
+        HydraClient::list_conversations(self, query).await
+    }
+
+    async fn get_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        HydraClient::get_conversation(self, conversation_id).await
+    }
+
+    async fn update_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        request: &UpdateConversationRequest,
+    ) -> Result<ApiConversation> {
+        HydraClient::update_conversation(self, conversation_id, request).await
+    }
+
+    async fn delete_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        HydraClient::delete_conversation(self, conversation_id).await
     }
 }
 
