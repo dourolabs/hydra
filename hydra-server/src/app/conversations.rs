@@ -246,6 +246,65 @@ impl AppState {
         Ok(versioned)
     }
 
+    pub async fn update_conversation_metadata(
+        &self,
+        conversation_id: &ConversationId,
+        title: Option<String>,
+        actor_ref: ActorRef,
+    ) -> Result<Versioned<Conversation>, CloseConversationError> {
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        let mut updated = versioned.item;
+        if let Some(title) = title {
+            updated.title = Some(title);
+        }
+
+        self.store
+            .update_conversation_with_actor(conversation_id, updated, actor_ref)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        Ok(versioned)
+    }
+
+    pub async fn delete_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        actor_ref: ActorRef,
+    ) -> Result<Versioned<Conversation>, CloseConversationError> {
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        let mut updated = versioned.item;
+        updated.deleted = true;
+
+        self.store
+            .update_conversation_with_actor(conversation_id, updated, actor_ref)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, true)
+            .await
+            .map_err(|source| CloseConversationError::Store { source })?;
+
+        Ok(versioned)
+    }
+
     pub async fn resume_conversation(
         &self,
         conversation_id: &ConversationId,

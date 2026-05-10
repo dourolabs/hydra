@@ -411,7 +411,9 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         )
         .route(
             "/v1/conversations/:conversation_id",
-            get(routes::conversations::get_conversation),
+            get(routes::conversations::get_conversation)
+                .patch(routes::conversations::update_conversation)
+                .delete(routes::conversations::delete_conversation),
         )
         .route(
             "/v1/conversations/:conversation_id/events",
