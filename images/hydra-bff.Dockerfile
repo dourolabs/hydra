@@ -42,6 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the full project
 COPY . .
+ENV SKIP_FRONTEND_BUILD=1
 RUN cargo build --bin hydra-bff-server --release
 
 # ── Stage 4: Runtime ─────────────────────────────────────────────
