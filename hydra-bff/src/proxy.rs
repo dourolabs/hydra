@@ -104,30 +104,13 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
 
     let method = original.method().clone();
     tracing::info!(method = %method, upstream_path = %uri, "proxying request to upstream");
-    let mut builder = Request::builder().method(&method).uri(&uri);
 
-    // Set the Authorization header: either override with token or pass through.
-    if let Some(token) = override_token {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
-    }
+    // Decompose the original request into parts and body, preserving extensions
+    // (e.g. hyper's OnUpgrade needed for WebSocket upgrades).
+    let (mut parts, body) = original.into_parts();
 
-    for (name, value) in original.headers() {
-        if name == header::HOST || name == header::COOKIE {
-            continue;
-        }
-        // Skip Authorization if we're overriding it.
-        if name == header::AUTHORIZATION
-            && builder
-                .headers_ref()
-                .is_some_and(|h| h.contains_key(header::AUTHORIZATION))
-        {
-            continue;
-        }
-        builder = builder.header(name, value);
-    }
-
-    let internal_req = match builder.body(original.into_body()) {
-        Ok(req) => req,
+    parts.uri = match uri.parse() {
+        Ok(u) => u,
         Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -136,6 +119,20 @@ pub(crate) async fn forward_to_upstream<U: Upstream>(
                 .into_response();
         }
     };
+
+    // Strip headers that should not be forwarded.
+    parts.headers.remove(header::HOST);
+    parts.headers.remove(header::COOKIE);
+
+    // Set the Authorization header: either override with token or pass through.
+    if let Some(token) = override_token {
+        parts.headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+    }
+
+    let internal_req = Request::from_parts(parts, body);
 
     match bff.upstream.forward(internal_req).await {
         Ok(response) => {
