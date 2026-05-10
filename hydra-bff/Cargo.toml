@@ -15,6 +15,7 @@ axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
 time = "0.3"
 http = "1"
+hyper = "1"
 hydra-common = { path = "../hydra-common" }
 mime_guess = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
