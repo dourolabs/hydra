@@ -15,8 +15,8 @@ Create a high-level issue in the dashboard and verify that the PM agent picks it
 1. Navigate to the issues page at `http://localhost:8080`
 2. Click the "Create issue" button
 3. Fill in the issue creation form:
-   - Title: "Improve documentation for hydra-test-fixture"
-   - Description: "The hydra-test-fixture repo needs documentation improvements. Please update the README to add a Troubleshooting section, add a Code of Conduct section to CONTRIBUTING.md, and create a CHANGELOG.md file."
+   - Title: "Make a small improvement to the hydra-test-fixture repo"
+   - Description: "Find something in the dourolabs/hydra-test-fixture repo that could be improved and make the change. Pick any file and make a minor quality improvement — for example, improving documentation, fixing formatting, or adding helpful comments. Use your judgment to decide what to change."
 4. Submit the issue form (do not assign to a specific agent -- let PM handle it)
 5. Click on the newly created issue to open the issue detail page
 6. Wait for the PM agent to pick up the issue (poll the issue detail page for session activity)
