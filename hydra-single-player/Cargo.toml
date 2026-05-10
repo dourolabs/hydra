@@ -38,6 +38,9 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
+[build-dependencies]
+fs2 = "0.4"
+
 [dev-dependencies]
 hydra-server = { path = "../hydra-server", features = ["test-utils"] }
 reqwest = { version = "0.12", features = ["json", "cookies"] }

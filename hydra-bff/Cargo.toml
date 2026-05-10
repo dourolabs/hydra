@@ -27,6 +27,9 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
+[build-dependencies]
+fs2 = "0.4"
+
 [dev-dependencies]
 hydra-server = { path = "../hydra-server", features = ["test-utils"] }
 tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
