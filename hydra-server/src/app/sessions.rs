@@ -1306,10 +1306,7 @@ mod tests {
             .expect("create_session should succeed");
 
         let store = state.store.as_ref();
-        let session = store
-            .get_session(&session_id, false)
-            .await
-            .unwrap();
+        let session = store.get_session(&session_id, false).await.unwrap();
         assert_eq!(
             session.item.model.as_deref(),
             Some("opus"),
