@@ -204,6 +204,53 @@ pub async fn close_conversation(
     Ok(Json(api_conversation))
 }
 
+pub async fn update_conversation(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    ConversationIdPath(conversation_id): ConversationIdPath,
+    Json(payload): Json<api_conversations::UpdateConversationRequest>,
+) -> Result<Json<api_conversations::Conversation>, ApiError> {
+    info!(conversation_id = %conversation_id, "update_conversation invoked");
+
+    let actor_ref = ActorRef::from(&actor);
+    let versioned = state
+        .update_conversation_metadata(&conversation_id, payload.title, actor_ref)
+        .await
+        .map_err(map_close_conversation_error)?;
+
+    let api_conversation = versioned.item.to_api(
+        conversation_id.clone(),
+        versioned.creation_time,
+        versioned.timestamp,
+    );
+
+    info!(conversation_id = %conversation_id, "update_conversation completed");
+    Ok(Json(api_conversation))
+}
+
+pub async fn delete_conversation(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    ConversationIdPath(conversation_id): ConversationIdPath,
+) -> Result<Json<api_conversations::Conversation>, ApiError> {
+    info!(conversation_id = %conversation_id, "delete_conversation invoked");
+
+    let actor_ref = ActorRef::from(&actor);
+    let versioned = state
+        .delete_conversation(&conversation_id, actor_ref)
+        .await
+        .map_err(map_close_conversation_error)?;
+
+    let api_conversation = versioned.item.to_api(
+        conversation_id.clone(),
+        versioned.creation_time,
+        versioned.timestamp,
+    );
+
+    info!(conversation_id = %conversation_id, "delete_conversation completed");
+    Ok(Json(api_conversation))
+}
+
 pub async fn resume_conversation(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

@@ -1,7 +1,7 @@
 use crate::test_utils::{spawn_test_server, test_client};
 use hydra_common::api::v1::conversations::{
     Conversation, ConversationEvent, ConversationSummary, CreateConversationRequest,
-    SendMessageRequest,
+    SendMessageRequest, UpdateConversationRequest,
 };
 use reqwest::StatusCode;
 
@@ -524,6 +524,134 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
     assert_eq!(events[2]["type"], "closed");
     assert_eq!(events[3]["type"], "resumed");
     assert_eq!(events[4]["type"], "user_message");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_conversation_sets_title() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+        session_settings: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let update_request = UpdateConversationRequest {
+        title: Some("New Title".to_string()),
+    };
+    let response = client
+        .patch(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .json(&update_request)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated: Conversation = response.json().await?;
+    assert_eq!(updated.title.as_deref(), Some("New Title"));
+    assert_eq!(updated.conversation_id, created.conversation_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_conversation_not_found_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let fake_id = hydra_common::ConversationId::new();
+    let update_request = UpdateConversationRequest {
+        title: Some("Title".to_string()),
+    };
+    let response = client
+        .patch(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            fake_id
+        ))
+        .json(&update_request)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_conversation_soft_deletes() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let create_request = CreateConversationRequest {
+        message: "Hello".to_string(),
+        agent_name: None,
+        session_settings: None,
+    };
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&create_request)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .delete(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let deleted: Conversation = response.json().await?;
+    assert_eq!(deleted.conversation_id, created.conversation_id);
+
+    // Verify the conversation is no longer returned by GET (which excludes deleted)
+    let response = client
+        .get(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_conversation_not_found_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let fake_id = hydra_common::ConversationId::new();
+    let response = client
+        .delete(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            fake_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }
