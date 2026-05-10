@@ -129,6 +129,9 @@ impl AppState {
         let memory_limit = session_settings
             .as_ref()
             .and_then(|settings| settings.memory_limit.clone());
+        let secrets = session_settings
+            .as_ref()
+            .and_then(|settings| settings.secrets.clone());
 
         if let Some(settings) = session_settings {
             if let Some(remote_url) = settings.remote_url.clone() {
@@ -169,7 +172,7 @@ impl AppState {
             env_vars,
             cpu_limit,
             memory_limit,
-            None,
+            secrets,
             None,
             false,
             None,

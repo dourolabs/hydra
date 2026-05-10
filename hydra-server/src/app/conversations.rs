@@ -391,6 +391,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_conversation_applies_session_settings_secrets() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings {
+            secrets: Some(vec!["GH_TOKEN".to_string()]),
+            ..Default::default()
+        };
+
+        let (_conversation_id, versioned) = state
+            .create_conversation(
+                "hello".to_string(),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session_id = versioned.item.active_session_id.as_ref().unwrap();
+        let session = state.store().get_session(session_id, false).await.unwrap();
+        assert_eq!(session.item.secrets, Some(vec!["GH_TOKEN".to_string()]));
+    }
+
+    #[tokio::test]
     async fn resume_conversation_applies_session_settings() {
         let state = state_with_default_model("default-model");
         let settings = SessionSettings {
