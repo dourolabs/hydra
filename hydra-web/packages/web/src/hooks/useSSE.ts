@@ -249,6 +249,8 @@ export function useSSE(): SSEConnectionState {
         if (eventType === "conversation_event_created") {
           // Invalidate conversation events list for this conversation
           queryClient.invalidateQueries({ queryKey: ["conversationEvents", entity_id] });
+          // Invalidate conversation detail so status badge updates
+          queryClient.invalidateQueries({ queryKey: ["conversation", entity_id] });
           // Also invalidate the conversations list since event counts / previews change
           queryClient.invalidateQueries({ queryKey: ["conversations"] });
         } else {
