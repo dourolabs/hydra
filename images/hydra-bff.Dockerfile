@@ -24,7 +24,7 @@ RUN pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --fi
 
 # ── Stage 2: Cargo chef planner ──────────────────────────────────
 FROM rust:1.88.0 AS planner
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --locked
 
 WORKDIR /app
 COPY . .
@@ -32,7 +32,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: Build Rust binary ───────────────────────────────────
 FROM rust:1.88.0 AS builder
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --locked
 
 WORKDIR /app
 
