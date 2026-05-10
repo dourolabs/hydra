@@ -1,0 +1,102 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - link [ref=e23] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e24]
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e42]: Issues
+          - list [ref=e43]:
+            - button "Your Issues" [ref=e44] [cursor=pointer]:
+              - generic [ref=e45]: Your Issues
+            - button "Assigned to You" [ref=e46] [cursor=pointer]:
+              - generic [ref=e47]: Assigned to You
+            - button "All Issues" [ref=e48] [cursor=pointer]:
+              - generic [ref=e49]: All Issues
+            - listitem [ref=e50]: Artifacts
+            - button "Patches" [ref=e51] [cursor=pointer]:
+              - generic [ref=e52]: Patches
+            - button "Documents" [ref=e53] [cursor=pointer]:
+              - generic [ref=e54]: Documents
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - button "Collapse filter sidebar" [ref=e57] [cursor=pointer]: ◀
+            - generic [ref=e58]:
+              - img [ref=e60]
+              - textbox "Search..." [ref=e63]
+          - generic [ref=e64]:
+            - button "Status ▼" [ref=e66] [cursor=pointer]:
+              - text: Status
+              - generic [ref=e67]: ▼
+            - button "Label ▼" [ref=e69] [cursor=pointer]:
+              - text: Label
+              - generic [ref=e70]: ▼
+          - generic [ref=e72]: No items yet.
+      - button "+ Create Issue" [ref=e73] [cursor=pointer]
+      - dialog "Create Issue" [ref=e75]:
+        - generic [ref=e76]:
+          - heading "Create Issue" [level=2] [ref=e77]
+          - button "Close" [ref=e78] [cursor=pointer]: ✕
+        - generic [ref=e80]:
+          - generic [ref=e81]:
+            - generic [ref=e82]: Title
+            - textbox "Title" [ref=e83]:
+              - /placeholder: Short summary (optional)
+              - text: Make a small improvement to the hydra-test-fixture repo
+          - generic [ref=e85]:
+            - generic [ref=e86]: Description
+            - textbox "Description" [ref=e87]:
+              - /placeholder: Describe the issue...
+              - text: Find something in the dourolabs/hydra-test-fixture repo that could be improved and make the change. Pick any file and make a minor quality improvement — for example, improving documentation, fixing formatting, or adding helpful comments. Use your judgment to decide what to change.
+          - generic [ref=e99]:
+            - generic [ref=e100]:
+              - generic [ref=e101]: Type
+              - generic [ref=e102]:
+                - combobox "Type" [ref=e103] [cursor=pointer]:
+                  - option "Task" [selected]
+                  - option "Bug"
+                  - option "Feature"
+                  - option "Chore"
+                - generic: ▾
+            - generic [ref=e104]:
+              - generic [ref=e105]: Assignee
+              - generic [ref=e106]:
+                - combobox "Assignee" [ref=e107] [cursor=pointer]:
+                  - option "Unassigned" [selected]
+                - generic: ▾
+            - generic [ref=e108]:
+              - generic [ref=e109]: Repository
+              - generic [ref=e110]:
+                - combobox "Repository" [ref=e111] [cursor=pointer]:
+                  - option "None"
+                  - option "dourolabs/hydra-test-fixture" [selected]
+                - generic: ▾
+          - generic [ref=e88]:
+            - generic [ref=e89]: Labels
+            - textbox "Add labels..." [ref=e91]
+          - generic [ref=e92]:
+            - generic [ref=e93]:
+              - button "Hide options" [active] [ref=e112] [cursor=pointer]
+              - generic [ref=e95]: Ctrl+Enter to submit
+            - generic [ref=e96]:
+              - button "Cancel" [ref=e97] [cursor=pointer]
+              - button "Create Issue" [ref=e98] [cursor=pointer]

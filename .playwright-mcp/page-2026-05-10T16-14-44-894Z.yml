@@ -1,0 +1,97 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e8]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+      - link [ref=e15] [cursor=pointer]:
+        - /url: /chat
+        - img [ref=e16]
+      - link [ref=e19] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e20]
+      - generic [ref=e22]:
+        - link [active] [ref=e23] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e24]
+        - tooltip "Settings"
+    - generic [ref=e30]:
+      - generic "test-agent" [ref=e32]: TA
+      - button "Logout" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+  - main [ref=e37]:
+    - generic [ref=e172]:
+      - generic [ref=e173]:
+        - generic [ref=e175]:
+          - generic [ref=e176]: Repositories
+          - button "Add Repository" [ref=e177] [cursor=pointer]
+        - button "dourolabs/hydra-test-fixture Edit Delete" [ref=e181] [cursor=pointer]:
+          - generic [ref=e182]: ▸
+          - generic [ref=e183]: dourolabs/hydra-test-fixture
+          - generic [ref=e184]:
+            - button "Edit" [ref=e185]
+            - button "Delete" [ref=e186]
+      - generic [ref=e187]:
+        - generic [ref=e189]:
+          - generic [ref=e190]: Agents
+          - button "Add Agent" [ref=e191] [cursor=pointer]
+        - generic [ref=e193]:
+          - button "pm assignment Edit Delete" [ref=e195] [cursor=pointer]:
+            - generic [ref=e196]: ▸
+            - generic [ref=e197]: pm
+            - generic [ref=e198]: assignment
+            - generic [ref=e199]:
+              - button "Edit" [ref=e200]
+              - button "Delete" [ref=e201]
+          - button "reviewer Edit Delete" [ref=e203] [cursor=pointer]:
+            - generic [ref=e204]: ▸
+            - generic [ref=e205]: reviewer
+            - generic [ref=e206]:
+              - button "Edit" [ref=e207]
+              - button "Delete" [ref=e208]
+          - button "swe Edit Delete" [ref=e210] [cursor=pointer]:
+            - generic [ref=e211]: ▸
+            - generic [ref=e212]: swe
+            - generic [ref=e213]:
+              - button "Edit" [ref=e214]
+              - button "Delete" [ref=e215]
+      - generic [ref=e217]:
+        - generic [ref=e219]:
+          - generic [ref=e220]: Secrets
+          - button "Add Secret" [ref=e221] [cursor=pointer]
+        - generic [ref=e223]:
+          - generic [ref=e225]:
+            - generic [ref=e226]:
+              - generic [ref=e227]: GH_TOKEN
+              - generic [ref=e228]: GitHub Token
+              - generic [ref=e229]: Automatically provided from your GitHub login. You can override it below if needed.
+            - generic [ref=e230]:
+              - generic [ref=e231]: Configured
+              - generic [ref=e232]:
+                - button "Update" [ref=e233] [cursor=pointer]
+                - button "Delete" [ref=e234] [cursor=pointer]
+          - generic [ref=e236]:
+            - generic [ref=e237]:
+              - generic [ref=e238]: OPENAI_API_KEY
+              - generic [ref=e239]: OpenAI API Key
+            - generic [ref=e240]:
+              - generic [ref=e241]: Not set
+              - button "Set" [ref=e243] [cursor=pointer]
+          - generic [ref=e245]:
+            - generic [ref=e246]:
+              - generic [ref=e247]: ANTHROPIC_API_KEY
+              - generic [ref=e248]: Anthropic API Key
+            - generic [ref=e249]:
+              - generic [ref=e250]: Not set
+              - button "Set" [ref=e252] [cursor=pointer]
+          - generic [ref=e254]:
+            - generic [ref=e255]:
+              - generic [ref=e256]: CLAUDE_CODE_OAUTH_TOKEN
+              - generic [ref=e257]: Claude Code OAuth Token
+            - generic [ref=e258]:
+              - generic [ref=e259]: Not set
+              - button "Set" [ref=e261] [cursor=pointer]
+      - generic [ref=e262]: 0.14.0
