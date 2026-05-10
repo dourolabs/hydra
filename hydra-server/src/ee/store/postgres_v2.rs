@@ -670,8 +670,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -695,6 +695,8 @@ impl PostgresStoreV2 {
             .bind(session.creation_time)
             .bind(session.start_time)
             .bind(session.end_time)
+            .bind(session.interactive)
+            .bind(session.conversation_id.as_ref().map(|c| c.as_ref()))
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -760,8 +762,15 @@ impl PostgresStoreV2 {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mcp_config: row.mcp_config.clone(),
-            interactive: false,
-            conversation_id: None,
+            interactive: row.interactive,
+            conversation_id: row
+                .conversation_id
+                .as_deref()
+                .map(|c| {
+                    c.parse::<ConversationId>()
+                        .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
+                })
+                .transpose()?,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -1388,6 +1397,10 @@ struct TaskRow {
     start_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     end_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    interactive: bool,
+    #[sqlx(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2694,7 +2707,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2731,7 +2744,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2864,7 +2877,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
