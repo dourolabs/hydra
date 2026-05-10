@@ -30,7 +30,7 @@ pub async fn create_session(
 ) -> Result<Json<v1::sessions::CreateSessionResponse>, ApiError> {
     info!("create_session invoked");
     let session_id = state
-        .create_session(payload, ActorRef::from(&actor), actor.creator.clone())
+        .create_session(payload, None, ActorRef::from(&actor), actor.creator.clone())
         .await
         .map_err(|err| match err {
             CreateSessionError::TaskResolution(err) => ApiError::from(err),

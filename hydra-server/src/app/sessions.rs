@@ -81,6 +81,7 @@ impl AppState {
     pub async fn create_session(
         &self,
         request: api::sessions::CreateSessionRequest,
+        override_session_settings: Option<SessionSettings>,
         actor: ActorRef,
         creator: Username,
     ) -> Result<SessionId, CreateSessionError> {
@@ -98,10 +99,21 @@ impl AppState {
             }
             None => None,
         };
-        let session_settings = issue
-            .as_ref()
-            .map(|issue| self.apply_session_settings_defaults(issue.item.session_settings.clone()))
-            .filter(|settings| !SessionSettings::is_default(settings));
+        let session_settings = if let Some(settings) = override_session_settings {
+            let settings = self.apply_session_settings_defaults(settings);
+            if SessionSettings::is_default(&settings) {
+                None
+            } else {
+                Some(settings)
+            }
+        } else {
+            issue
+                .as_ref()
+                .map(|issue| {
+                    self.apply_session_settings_defaults(issue.item.session_settings.clone())
+                })
+                .filter(|settings| !SessionSettings::is_default(settings))
+        };
 
         let mut context: BundleSpec = request.context.into();
         let image = session_settings
