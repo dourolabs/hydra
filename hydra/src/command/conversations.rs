@@ -104,19 +104,10 @@ pub async fn run(
             include_deleted,
             limit,
         } => {
-            let trimmed_query = query.and_then(|q| {
-                let t = q.trim();
-                if t.is_empty() { None } else { Some(t.to_string()) }
-            });
-            let trimmed_creator = creator.and_then(|c| {
-                let t = c.trim();
-                if t.is_empty() { None } else { Some(t.to_string()) }
-            });
-
             let search_query = SearchConversationsQuery {
-                q: trimmed_query,
+                q: query,
                 status: status.map(Into::into),
-                creator: trimmed_creator,
+                creator,
                 include_deleted: if include_deleted { Some(true) } else { None },
                 limit: Some(limit),
                 cursor: None,
@@ -128,7 +119,11 @@ pub async fn run(
                 .context("failed to list conversations")?;
 
             let mut buffer = Vec::new();
-            render_conversation_summary_records(context.output_format, &conversations, &mut buffer)?;
+            render_conversation_summary_records(
+                context.output_format,
+                &conversations,
+                &mut buffer,
+            )?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
@@ -167,12 +162,7 @@ pub async fn run(
                 .context("failed to create conversation")?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(
-                context.output_format,
-                &conversation,
-                &[],
-                &mut buffer,
-            )?;
+            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
@@ -184,12 +174,7 @@ pub async fn run(
                 .with_context(|| format!("failed to update conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(
-                context.output_format,
-                &conversation,
-                &[],
-                &mut buffer,
-            )?;
+            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
@@ -200,12 +185,7 @@ pub async fn run(
                 .with_context(|| format!("failed to delete conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(
-                context.output_format,
-                &conversation,
-                &[],
-                &mut buffer,
-            )?;
+            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
