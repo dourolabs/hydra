@@ -10,6 +10,11 @@ fn main() {
         return;
     }
 
+    // Allow skipping the frontend build in Docker where assets are built separately.
+    if std::env::var("SKIP_FRONTEND_BUILD").is_ok() {
+        return;
+    }
+
     let frontend_dir = Path::new("../hydra-web");
 
     // The embedded-frontend feature is enabled, so the frontend source must be present.
