@@ -218,6 +218,35 @@ async fn handle_relay_socket(
     }
 
     // Step 5: Cleanup on disconnect.
+    // Update conversation status to Idle if it's still Active, so the frontend
+    // reflects that the session is no longer running.
+    match state.store().get_conversation(&conversation_id, false).await {
+        Ok(versioned) => {
+            let mut conversation = versioned.item;
+            if conversation.status == ConversationStatus::Active {
+                conversation.status = ConversationStatus::Idle;
+                conversation.active_session_id = None;
+                let actor_ref = ActorRef::from(&actor);
+                if let Err(err) = state
+                    .store
+                    .update_conversation_with_actor(
+                        &conversation_id,
+                        conversation,
+                        actor_ref,
+                    )
+                    .await
+                {
+                    error!(%session_id, %conversation_id, error = %err, "failed to update conversation status on disconnect");
+                } else {
+                    info!(%session_id, %conversation_id, "conversation status set to Idle (WebSocket closed)");
+                }
+            }
+        }
+        Err(err) => {
+            error!(%session_id, %conversation_id, error = %err, "failed to load conversation for status cleanup");
+        }
+    }
+
     chat_relay::unregister_relay(&state.chat_relay_map, &session_id);
     info!(%session_id, "relay unregistered");
 }
