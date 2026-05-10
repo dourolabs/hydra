@@ -523,9 +523,14 @@ impl HydraClient {
         }
         ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
 
+        let host_header = match ws_url.port() {
+            Some(port) => format!("{}:{}", ws_url.host_str().unwrap_or_default(), port),
+            None => ws_url.host_str().unwrap_or_default().to_string(),
+        };
         let auth_value = format!("Bearer {}", self.auth_token);
         let request = tungstenite::http::Request::builder()
             .uri(ws_url.as_str())
+            .header("Host", &host_header)
             .header("Authorization", &auth_value)
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
