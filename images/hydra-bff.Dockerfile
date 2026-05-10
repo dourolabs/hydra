@@ -42,6 +42,8 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the full project
 COPY . .
+# Copy SPA build output so RustEmbed derive (enabled via workspace feature unification) can find it.
+COPY --from=spa-build /app/hydra-web/packages/web/dist /app/hydra-web/packages/web/dist
 ENV SKIP_FRONTEND_BUILD=1
 RUN cargo build --bin hydra-bff-server --release
 
