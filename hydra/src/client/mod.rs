@@ -338,10 +338,7 @@ pub trait HydraClientInterface: Send + Sync {
         &self,
         query: &SearchConversationsQuery,
     ) -> Result<Vec<ApiConversationSummary>>;
-    async fn get_conversation(
-        &self,
-        conversation_id: &ConversationId,
-    ) -> Result<ApiConversation>;
+    async fn get_conversation(&self, conversation_id: &ConversationId) -> Result<ApiConversation>;
     async fn update_conversation(
         &self,
         conversation_id: &ConversationId,
@@ -2663,10 +2660,7 @@ impl HydraClientInterface for HydraClient {
         HydraClient::list_conversations(self, query).await
     }
 
-    async fn get_conversation(
-        &self,
-        conversation_id: &ConversationId,
-    ) -> Result<ApiConversation> {
+    async fn get_conversation(&self, conversation_id: &ConversationId) -> Result<ApiConversation> {
         HydraClient::get_conversation(self, conversation_id).await
     }
 
