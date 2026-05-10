@@ -110,7 +110,15 @@ impl AppState {
             .or(request.image);
         let model = session_settings
             .as_ref()
-            .and_then(|settings| settings.model.clone());
+            .and_then(|settings| settings.model.clone())
+            .or_else(|| {
+                self.config
+                    .job
+                    .default_model
+                    .as_deref()
+                    .and_then(non_empty)
+                    .map(|s| s.to_string())
+            });
         let cpu_limit = session_settings
             .as_ref()
             .and_then(|settings| settings.cpu_limit.clone());
@@ -1278,6 +1286,35 @@ mod tests {
         let resolved = state.apply_session_settings_defaults(session_settings);
 
         assert_eq!(resolved.model.as_deref(), Some("custom-model"));
+    }
+
+    #[tokio::test]
+    async fn create_session_without_issue_gets_default_model() {
+        let state = state_with_default_model("opus");
+        let request = hydra_common::api::v1::sessions::CreateSessionRequest::new(
+            "hello".to_string(),
+            Some("worker:latest".to_string()),
+            hydra_common::api::v1::sessions::BundleSpec::None,
+            std::collections::HashMap::new(),
+            None,
+            false,
+        );
+
+        let session_id = state
+            .create_session(request, ActorRef::test(), Username::from("test-creator"))
+            .await
+            .expect("create_session should succeed");
+
+        let store = state.store.as_ref();
+        let session = store
+            .get_session(&session_id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            session.item.model.as_deref(),
+            Some("opus"),
+            "conversation session without issue should get default_model from config"
+        );
     }
 
     #[tokio::test]
