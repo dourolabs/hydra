@@ -112,7 +112,13 @@ impl AppState {
             CreateSessionRequest::new(message, None, BundleSpec::None, HashMap::new(), None, true);
         let settings = conversation.session_settings.clone();
         let session_id = self
-            .create_session(session_request, Some(settings), actor_ref.clone(), creator)
+            .create_session(
+                session_request,
+                Some(settings),
+                actor_ref.clone(),
+                creator,
+                Some(conversation_id.clone()),
+            )
             .await
             .map_err(|source| CreateConversationError::Session { source })?;
 
@@ -268,7 +274,13 @@ impl AppState {
         );
         let settings = versioned.item.session_settings.clone();
         let session_id = self
-            .create_session(session_request, Some(settings), actor_ref.clone(), creator)
+            .create_session(
+                session_request,
+                Some(settings),
+                actor_ref.clone(),
+                creator,
+                Some(conversation_id.clone()),
+            )
             .await
             .map_err(|source| ResumeConversationError::Session { source })?;
 
@@ -415,6 +427,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_conversation_sets_interactive_and_conversation_id() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, versioned) = state
+            .create_conversation(
+                "hello".to_string(),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session_id = versioned.item.active_session_id.as_ref().unwrap();
+        let session = state.store().get_session(session_id, false).await.unwrap();
+        assert!(
+            session.item.interactive,
+            "conversation session should be interactive"
+        );
+        assert_eq!(
+            session.item.conversation_id,
+            Some(conversation_id),
+            "conversation session should have conversation_id set"
+        );
+    }
+
+    #[tokio::test]
     async fn resume_conversation_applies_session_settings() {
         let state = state_with_default_model("default-model");
         let settings = SessionSettings {
@@ -453,5 +494,48 @@ mod tests {
         let session_id = resumed.item.active_session_id.as_ref().unwrap();
         let session = state.store().get_session(session_id, false).await.unwrap();
         assert_eq!(session.item.model.as_deref(), Some("custom-model"));
+    }
+
+    #[tokio::test]
+    async fn resume_conversation_sets_interactive_and_conversation_id() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                "hello".to_string(),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        let resumed = state
+            .resume_conversation(
+                &conversation_id,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session_id = resumed.item.active_session_id.as_ref().unwrap();
+        let session = state.store().get_session(session_id, false).await.unwrap();
+        assert!(
+            session.item.interactive,
+            "resumed conversation session should be interactive"
+        );
+        assert_eq!(
+            session.item.conversation_id,
+            Some(conversation_id),
+            "resumed conversation session should have conversation_id set"
+        );
     }
 }
