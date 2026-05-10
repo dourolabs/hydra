@@ -1,5 +1,8 @@
+use std::fs::File;
 use std::path::Path;
 use std::process::Command;
+
+use fs2::FileExt;
 
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -23,6 +26,14 @@ fn main() {
     println!("cargo:rerun-if-changed=../hydra-web/packages/web/vite.config.ts");
     println!("cargo:rerun-if-changed=../hydra-web/packages/ui/src");
     println!("cargo:rerun-if-changed=../hydra-web/packages/api/src");
+
+    // Acquire an exclusive file lock to prevent concurrent pnpm builds from
+    // racing on shared output directories (e.g., ui/dist, web/dist).
+    let lock_path = web_dir.join(".build-lock");
+    let lock_file = File::create(&lock_path).expect("failed to create build lock file");
+    lock_file
+        .lock_exclusive()
+        .expect("failed to acquire build lock");
 
     // Install dependencies if needed, then build.
     let status = Command::new("pnpm")
@@ -54,6 +65,9 @@ fn main() {
             panic!("Failed to run pnpm build: {e}");
         }
     }
+
+    // Lock is released when lock_file is dropped.
+    drop(lock_file);
 }
 
 /// Ensure the dist directory exists (even if empty) so that rust-embed

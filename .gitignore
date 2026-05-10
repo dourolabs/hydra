@@ -10,3 +10,6 @@ target/
 hydra-common/bindings/
 node_modules/
 package-lock.json
+
+# Build lock file used to serialize concurrent frontend builds
+.build-lock

@@ -1683,6 +1683,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2186,6 +2196,7 @@ version = "0.14.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "fs2",
  "http 1.4.0",
  "hydra-common",
  "hydra-server",
@@ -2320,6 +2331,7 @@ dependencies = [
  "axum-extra",
  "base64 0.22.1",
  "clap",
+ "fs2",
  "getrandom 0.2.17",
  "http 1.4.0",
  "hydra",
@@ -3757,7 +3769,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.36",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3794,9 +3806,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

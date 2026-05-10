@@ -1,5 +1,8 @@
+use std::fs::File;
 use std::path::Path;
 use std::process::Command;
+
+use fs2::FileExt;
 
 fn main() {
     // Only build frontend assets when the embedded-frontend feature is enabled.
@@ -16,6 +19,15 @@ fn main() {
             frontend_dir.display()
         );
     }
+
+    // Acquire an exclusive file lock to prevent concurrent pnpm builds from
+    // racing on shared output directories (e.g., ui/dist, web/dist).
+    let lock_path = frontend_dir.join(".build-lock");
+    let lock_file = File::create(&lock_path).expect("failed to create build lock file");
+    lock_file
+        .lock_exclusive()
+        .expect("failed to acquire build lock");
+
     // Install dependencies if needed.
     if !frontend_dir.join("node_modules").exists() {
         println!("cargo:warning=Installing frontend dependencies...");
@@ -55,6 +67,9 @@ fn main() {
             panic!("Failed to run frontend build: {e}");
         }
     }
+
+    // Lock is released when lock_file is dropped.
+    drop(lock_file);
 
     // Tell cargo to re-run if the frontend source changes.
     println!("cargo:rerun-if-changed=../hydra-web/packages/web/src");
