@@ -24,11 +24,6 @@ fn main() {
     println!("cargo:rerun-if-changed=../hydra-web/packages/ui/src");
     println!("cargo:rerun-if-changed=../hydra-web/packages/api/src");
 
-    // If dist already exists with content, skip the build.
-    if dist_dir.join("index.html").exists() {
-        return;
-    }
-
     // Install dependencies if needed, then build.
     let status = Command::new("pnpm")
         .args(["install", "--frozen-lockfile"])
