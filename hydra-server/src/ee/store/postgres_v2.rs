@@ -7905,7 +7905,17 @@ mod tests {
             active_session_id: Some(SessionId::new()),
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
-            session_settings: Default::default(),
+            session_settings: SessionSettings {
+                repo_name: Some(RepoName::from_str("org/repo").unwrap()),
+                remote_url: Some("https://git.example.com/org/repo.git".to_string()),
+                image: Some("img:v1".to_string()),
+                model: Some("claude-3".to_string()),
+                branch: Some("main".to_string()),
+                max_retries: Some(3),
+                cpu_limit: Some("2".to_string()),
+                memory_limit: Some("4Gi".to_string()),
+                secrets: Some(vec!["conv-secret".to_string()]),
+            },
             deleted: false,
         };
         let (conv_id, version) = store
@@ -7921,6 +7931,7 @@ mod tests {
         assert_eq!(fetched.item.agent_name, conv.agent_name);
         assert_eq!(fetched.item.status, ConversationStatus::Active);
         assert_eq!(fetched.item.creator, conv.creator);
+        assert_eq!(fetched.item.session_settings, conv.session_settings);
         assert!(!fetched.item.deleted);
 
         // -- List conversations --
