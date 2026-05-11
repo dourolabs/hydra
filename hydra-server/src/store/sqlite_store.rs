@@ -35,8 +35,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::{
-    ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskError,
-    TaskStatusLog,
+    ConversationEventSummary, InteractiveOptions, ReadOnlyStore, Session, Status, Store,
+    StoreError, TaskError, TaskStatusLog,
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
@@ -1161,8 +1161,8 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .bind(session.interactive)
-            .bind(session.conversation_id.as_ref().map(|c| c.as_ref()))
+            .bind(session.interactive.is_some())
+            .bind(session.conversation_id().map(|c| c.as_ref()))
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1194,8 +1194,8 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .bind(session.interactive)
-            .bind(session.conversation_id.as_ref().map(|c| c.as_ref()))
+            .bind(session.interactive.is_some())
+            .bind(session.conversation_id().map(|c| c.as_ref()))
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1278,6 +1278,24 @@ impl SqliteStore {
             })
             .transpose()?;
 
+        let conversation_id = row
+            .conversation_id
+            .as_deref()
+            .map(|c| {
+                c.parse::<ConversationId>()
+                    .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
+            })
+            .transpose()?;
+        let interactive = if row.interactive {
+            Some(InteractiveOptions {
+                conversation_id,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            })
+        } else {
+            None
+        };
+
         Ok(Session {
             prompt: row.prompt.clone(),
             context,
@@ -1290,15 +1308,7 @@ impl SqliteStore {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mcp_config,
-            interactive: row.interactive,
-            conversation_id: row
-                .conversation_id
-                .as_deref()
-                .map(|c| {
-                    c.parse::<ConversationId>()
-                        .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
-                })
-                .transpose()?,
+            interactive,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -6534,7 +6544,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             None,
             Status::Created,
             None,
@@ -6927,7 +6936,6 @@ mod tests {
             Some(
                 serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
             ),
-            false,
             None,
             Status::Pending,
             Some("last msg".to_string()),
@@ -6954,8 +6962,11 @@ mod tests {
         let store = create_test_store().await;
         let conv_id = ConversationId::new();
         let mut task = spawn_task();
-        task.interactive = true;
-        task.conversation_id = Some(conv_id.clone());
+        task.interactive = Some(InteractiveOptions {
+            conversation_id: Some(conv_id.clone()),
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
+        });
 
         let now = Utc::now();
         let (task_id, _) = store
@@ -6965,11 +6976,11 @@ mod tests {
 
         let fetched = store.get_session(&task_id, false).await.unwrap();
         assert!(
-            fetched.item.interactive,
+            fetched.item.is_interactive(),
             "interactive must be persisted as true"
         );
         assert_eq!(
-            fetched.item.conversation_id,
+            fetched.item.conversation_id().cloned(),
             Some(conv_id),
             "conversation_id must be persisted"
         );

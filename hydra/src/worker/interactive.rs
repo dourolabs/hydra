@@ -19,6 +19,11 @@ use crate::client::RelayWebSocket;
 
 /// Run an interactive Claude session, bridging between a relay WebSocket and
 /// Claude's stdin/stdout via `--input-format stream-json --output-format stream-json`.
+///
+/// When `conversation_resume_from` is `Some(n)`, the worker sends it as
+/// `resume_from_event_index` in the WorkerConnect handshake so the server
+/// responds with a catch-up that includes `session_state` for restoring the
+/// prior Claude session via `claude --resume <session_id>`.
 pub async fn run_interactive(
     ws_stream: RelayWebSocket,
     session_id: &SessionId,
@@ -26,6 +31,7 @@ pub async fn run_interactive(
     env: &HashMap<String, String>,
     working_dir: &std::path::Path,
     idle_timeout: Duration,
+    conversation_resume_from: Option<usize>,
 ) -> Result<()> {
     // Validate auth credentials exist.
     let has_anthropic_key = env
@@ -44,9 +50,10 @@ pub async fn run_interactive(
 
     println!("WebSocket connected, sending handshake");
 
-    // Send WorkerConnect handshake (fresh, no resume).
+    // Send WorkerConnect handshake. If this is a resume, include the event
+    // index so the server skips replayed events and ships session_state.
     let handshake = WorkerConnect::Fresh {
-        resume_from_event_index: None,
+        resume_from_event_index: conversation_resume_from,
     };
     let handshake_json =
         serde_json::to_string(&handshake).context("failed to serialize WorkerConnect")?;
@@ -79,19 +86,16 @@ pub async fn run_interactive(
         catch_up.events.len()
     );
 
-    // Spawn Claude in long-lived interactive mode.
-    let mut claude_args = vec![
-        "--output-format".to_string(),
-        "stream-json".to_string(),
-        "--input-format".to_string(),
-        "stream-json".to_string(),
-        "--dangerously-skip-permissions".to_string(),
-        "--verbose".to_string(),
-    ];
-    if let Some(model) = model {
-        claude_args.push("--model".to_string());
-        claude_args.push(model.to_string());
+    // The idle-timeout upload writes the Claude session_id as UTF-8 bytes, so
+    // parse it back the same way. Empty strings are treated as no session.
+    let resume_session_id = parse_session_state(catch_up.session_state.as_deref());
+
+    if let Some(ref sid) = resume_session_id {
+        println!("Resuming Claude session: {sid}");
     }
+
+    // Spawn Claude in long-lived interactive mode.
+    let claude_args = build_claude_args(model, resume_session_id.as_deref());
 
     eprintln!("Claude CLI args (interactive): {claude_args:?}");
 
@@ -377,6 +381,37 @@ where
     Ok(idle_suspended)
 }
 
+/// Parse the catch-up `session_state` blob into a Claude session_id. The
+/// idle-timeout upload stores the session_id as UTF-8 bytes; empty or invalid
+/// payloads mean "no resume available."
+fn parse_session_state(session_state: Option<&[u8]>) -> Option<String> {
+    session_state
+        .map(|data| std::str::from_utf8(data).ok().map(|s| s.to_string()))?
+        .filter(|s| !s.is_empty())
+}
+
+/// Build the Claude CLI argument list. When `resume_session_id` is provided,
+/// `--resume <id>` is appended so Claude restores the prior conversation.
+fn build_claude_args(model: Option<&str>, resume_session_id: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--input-format".to_string(),
+        "stream-json".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+        "--verbose".to_string(),
+    ];
+    if let Some(sid) = resume_session_id {
+        args.push("--resume".to_string());
+        args.push(sid.to_string());
+    }
+    if let Some(model) = model {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+    args
+}
+
 /// Build a stream-json input line for Claude's stdin.
 fn build_claude_input(content: &str) -> String {
     let input = serde_json::json!({
@@ -479,6 +514,54 @@ mod tests {
             extract_assistant_text(line),
             Some("Part 1\nPart 2".to_string())
         );
+    }
+
+    #[test]
+    fn parse_session_state_returns_utf8_session_id() {
+        let bytes = b"abc-123-def";
+        assert_eq!(
+            parse_session_state(Some(bytes)),
+            Some("abc-123-def".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_session_state_returns_none_for_none_input() {
+        assert_eq!(parse_session_state(None), None);
+    }
+
+    #[test]
+    fn parse_session_state_returns_none_for_empty_payload() {
+        assert_eq!(parse_session_state(Some(&[])), None);
+    }
+
+    #[test]
+    fn build_claude_args_includes_resume_when_session_id_present() {
+        let args = build_claude_args(None, Some("sess-xyz"));
+        assert!(args.iter().any(|a| a == "--resume"));
+        assert!(args.iter().any(|a| a == "sess-xyz"));
+    }
+
+    #[test]
+    fn build_claude_args_omits_resume_when_no_session_id() {
+        let args = build_claude_args(None, None);
+        assert!(!args.iter().any(|a| a == "--resume"));
+    }
+
+    #[test]
+    fn build_claude_args_includes_model_when_set() {
+        let args = build_claude_args(Some("opus"), None);
+        assert!(args.iter().any(|a| a == "--model"));
+        assert!(args.iter().any(|a| a == "opus"));
+    }
+
+    #[test]
+    fn worker_connect_serializes_resume_from_event_index() {
+        let handshake = WorkerConnect::Fresh {
+            resume_from_event_index: Some(5),
+        };
+        let json = serde_json::to_string(&handshake).unwrap();
+        assert!(json.contains("\"resume_from_event_index\":5"));
     }
 
     #[test]
