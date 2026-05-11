@@ -162,7 +162,8 @@ impl ConversationSummary {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct CreateConversationRequest {
-    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -386,7 +387,7 @@ mod tests {
     fn create_conversation_request_without_agent_name() {
         let json = r#"{"message":"Hello"}"#;
         let req: CreateConversationRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.message, "Hello");
+        assert_eq!(req.message.as_deref(), Some("Hello"));
         assert_eq!(req.agent_name, None);
         assert_eq!(req.session_settings, None);
     }
@@ -394,7 +395,7 @@ mod tests {
     #[test]
     fn create_conversation_request_with_session_settings_round_trip() {
         let req = CreateConversationRequest {
-            message: "Hello".to_string(),
+            message: Some("Hello".to_string()),
             agent_name: Some("my-agent".to_string()),
             session_settings: Some(SessionSettings {
                 repo_name: Some(crate::RepoName::from_str("org/repo").unwrap()),
@@ -411,7 +412,7 @@ mod tests {
     #[test]
     fn create_conversation_request_without_session_settings_omits_field() {
         let req = CreateConversationRequest {
-            message: "Hello".to_string(),
+            message: Some("Hello".to_string()),
             agent_name: None,
             session_settings: None,
         };
@@ -419,6 +420,27 @@ mod tests {
         assert!(!json.contains("session_settings"));
         let deserialized: CreateConversationRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req, deserialized);
+    }
+
+    #[test]
+    fn create_conversation_request_without_message_round_trip() {
+        let req = CreateConversationRequest {
+            message: None,
+            agent_name: None,
+            session_settings: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("message"));
+        let deserialized: CreateConversationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, deserialized);
+    }
+
+    #[test]
+    fn create_conversation_request_deserializes_empty_object() {
+        let req: CreateConversationRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(req.message, None);
+        assert_eq!(req.agent_name, None);
+        assert_eq!(req.session_settings, None);
     }
 
     #[test]
