@@ -56,13 +56,20 @@ async fn create_conversation_without_message_starts_with_zero_events() -> anyhow
     assert_eq!(response.status(), StatusCode::OK);
     let conversation: Conversation = response.json().await?;
     assert!(!conversation.conversation_id.as_ref().is_empty());
-    assert!(
-        conversation.active_session_id.is_some(),
-        "expected active_session_id to be set"
-    );
     assert_eq!(
         conversation.status,
         hydra_common::api::v1::conversations::ConversationStatus::Active
+    );
+
+    let sessions: ListSessionsResponse = client
+        .get(format!("{}/v1/sessions", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        !sessions.sessions.is_empty(),
+        "expected create_conversation to create a session"
     );
 
     let events: Vec<serde_json::Value> = client
