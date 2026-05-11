@@ -7273,7 +7273,6 @@ mod tests {
         Conversation {
             title: Some("Test conversation".to_string()),
             agent_name: Some("test-agent".to_string()),
-            active_session_id: None,
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
             session_settings: Default::default(),
@@ -7321,7 +7320,6 @@ mod tests {
         let mut updated_conv = sample_conversation();
         updated_conv.status = ConversationStatus::Idle;
         updated_conv.title = Some("New title".to_string());
-        updated_conv.active_session_id = Some(SessionId::new());
 
         let version = store
             .update_conversation(&id, updated_conv, &test_actor())
@@ -7333,7 +7331,6 @@ mod tests {
         let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.status, ConversationStatus::Idle);
         assert_eq!(fetched.item.title.as_deref(), Some("New title"));
-        assert!(fetched.item.active_session_id.is_some());
         assert_eq!(fetched.version, 2);
     }
 

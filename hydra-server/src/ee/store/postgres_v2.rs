@@ -1214,15 +1214,14 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_CONVERSATIONS_V2} \
-             (id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+             (id, version_number, title, agent_name, session_settings, status, creator, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
             .bind(&conversation.title)
             .bind(&conversation.agent_name)
-            .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
             .bind(&session_settings_json)
             .bind(status_str)
             .bind(conversation.creator.as_str())
@@ -1256,15 +1255,6 @@ impl PostgresStoreV2 {
         Ok(Conversation {
             title: row.title.clone(),
             agent_name: row.agent_name.clone(),
-            active_session_id: row
-                .active_session_id
-                .as_deref()
-                .map(|s| {
-                    SessionId::from_str(s).map_err(|e| {
-                        StoreError::Internal(format!("invalid active_session_id: {e}"))
-                    })
-                })
-                .transpose()?,
             status,
             creator: Username::from(row.creator.as_str()),
             session_settings,
@@ -1426,7 +1416,6 @@ struct ConversationRow {
     version_number: i64,
     title: Option<String>,
     agent_name: Option<String>,
-    active_session_id: Option<String>,
     session_settings: Value,
     status: String,
     creator: String,
@@ -3598,7 +3587,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -3636,7 +3625,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.session_settings, \
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, \
              c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at, \
              (SELECT MIN(c2.created_at) FROM {TABLE_CONVERSATIONS_V2} c2 WHERE c2.id = c.id) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} c \
@@ -7941,7 +7930,6 @@ mod tests {
         let conv = Conversation {
             title: Some("Test conversation".to_string()),
             agent_name: Some("test-agent".to_string()),
-            active_session_id: Some(SessionId::new()),
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
             session_settings: SessionSettings {
@@ -7985,7 +7973,6 @@ mod tests {
         let updated_conv = Conversation {
             title: Some("Updated title".to_string()),
             agent_name: conv.agent_name.clone(),
-            active_session_id: conv.active_session_id.clone(),
             status: ConversationStatus::Idle,
             creator: conv.creator.clone(),
             session_settings: Default::default(),
@@ -8058,7 +8045,6 @@ mod tests {
         let deleted_conv = Conversation {
             title: updated_conv.title.clone(),
             agent_name: updated_conv.agent_name.clone(),
-            active_session_id: updated_conv.active_session_id.clone(),
             status: updated_conv.status,
             creator: updated_conv.creator.clone(),
             session_settings: Default::default(),
