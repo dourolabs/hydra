@@ -2,6 +2,7 @@ pub mod automations;
 pub mod config;
 pub mod context;
 pub mod integrations;
+pub mod readiness;
 pub mod registry;
 pub mod restrictions;
 pub mod runner;
