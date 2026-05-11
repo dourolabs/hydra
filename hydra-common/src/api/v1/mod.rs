@@ -22,5 +22,6 @@ pub mod task_status;
 pub mod users;
 pub mod version;
 pub mod whoami;
+pub mod workflows;
 
 pub use error::ApiError;
