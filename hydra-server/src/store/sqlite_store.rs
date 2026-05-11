@@ -4208,8 +4208,7 @@ impl ReadOnlyStore for SqliteStore {
              (SELECT MIN(created_at) FROM {TABLE_WORKFLOWS} WHERE workflow_id = w.workflow_id) AS creation_time
              FROM {TABLE_WORKFLOWS} w
              INNER JOIN {TABLE_WORKFLOW_ISSUES} wi ON wi.workflow_id = w.workflow_id
-             WHERE wi.issue_id = ?1 AND w.is_latest = 1
-             LIMIT 1"
+             WHERE wi.issue_id = ?1 AND w.is_latest = 1"
         ))
         .bind(issue_id.as_ref())
         .fetch_optional(&self.pool)
@@ -5233,20 +5232,47 @@ impl Store for SqliteStore {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Reject cross-workflow conflicts before INSERT: each issue_id is
+        // owned by at most one workflow. The SELECT runs inside the same
+        // transaction as the INSERT, so both see consistent state.
+        let existing_workflow_id: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT workflow_id FROM {TABLE_WORKFLOW_ISSUES} WHERE issue_id = ?1"
+        ))
+        .bind(issue_id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if let Some(existing) = existing_workflow_id {
+            if existing == workflow_id.as_ref() {
+                return Ok(());
+            }
+            let existing_workflow_id = existing.parse().map_err(|e| {
+                StoreError::Internal(format!(
+                    "invalid workflow_id '{existing}' stored in workflow_issues: {e}"
+                ))
+            })?;
+            return Err(StoreError::ChildIssueAlreadyInWorkflow {
+                issue_id: issue_id.clone(),
+                existing_workflow_id,
+            });
+        }
+
         // Atomically: insert only if a latest workflow row exists for ?1.
         // SQLite doesn't allow data-modifying CTEs, so we run the conditional
         // INSERT and (only if it inserted nothing) follow up with an existence
-        // check inside the same transaction. The TOCTOU race is gone because
-        // the existence check is now part of the INSERT statement itself; the
-        // follow-up SELECT only distinguishes "workflow missing" from
-        // "row already present" for the idempotency case.
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // check inside the same transaction. The TOCTOU race against the
+        // workflows table is gone because the existence check is part of the
+        // INSERT statement itself; the follow-up SELECT only distinguishes
+        // "workflow missing" from a concurrent insert that beat us.
         let inserted: Option<i64> = sqlx::query_scalar(&format!(
             "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
              SELECT ?1, ?2, ?3 \
              FROM {TABLE_WORKFLOWS} \
              WHERE workflow_id = ?1 AND is_latest = 1 \
-             ON CONFLICT (workflow_id, issue_id) DO NOTHING \
+             ON CONFLICT (issue_id) DO NOTHING \
              RETURNING 1"
         ))
         .bind(workflow_id.as_ref())
@@ -9767,7 +9793,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn insert_workflow_issue_is_idempotent() {
+        async fn insert_workflow_issue_is_idempotent_for_same_workflow() {
             let store = create_test_store().await;
             let workflow_id = WorkflowId::new();
             let child = IssueId::new();
@@ -9844,6 +9870,56 @@ mod tests {
                     .await
                     .unwrap();
             assert_eq!(count, 0, "no dangling workflow_issues row should be left");
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_rejects_different_workflow_for_same_issue() {
+            let store = create_test_store().await;
+            let wf_a = WorkflowId::new();
+            let wf_b = WorkflowId::new();
+            let child = IssueId::new();
+            for id in [&wf_a, &wf_b] {
+                store
+                    .upsert_workflow(
+                        workflow_with(
+                            id.clone(),
+                            IssueId::new(),
+                            "develop",
+                            None,
+                            WorkflowStatus::Active,
+                        ),
+                        &ActorRef::test(),
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            store
+                .insert_workflow_issue(&wf_a, &child, "develop")
+                .await
+                .unwrap();
+
+            let err = store
+                .insert_workflow_issue(&wf_b, &child, "develop")
+                .await
+                .unwrap_err();
+            match err {
+                StoreError::ChildIssueAlreadyInWorkflow {
+                    issue_id,
+                    existing_workflow_id,
+                } => {
+                    assert_eq!(issue_id, child);
+                    assert_eq!(existing_workflow_id, wf_a);
+                }
+                other => panic!("unexpected error: {other:?}"),
+            }
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.item.workflow_id, wf_a);
         }
     }
 }
