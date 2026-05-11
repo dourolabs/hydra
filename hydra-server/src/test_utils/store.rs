@@ -10,8 +10,12 @@ use crate::{
         patches::Patch,
         secrets::SecretRef,
         users::{User, Username},
+        workflows::Workflow,
     },
-    store::{ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
+    store::{
+        ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog,
+        WorkflowFilter,
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -23,7 +27,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned, WorkflowId,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -369,6 +373,27 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Option<Vec<u8>>, StoreError> {
         fail()
     }
+
+    async fn get_workflow(
+        &self,
+        _workflow_id: &WorkflowId,
+    ) -> Result<Versioned<Workflow>, StoreError> {
+        fail()
+    }
+
+    async fn list_workflows(
+        &self,
+        _filter: &WorkflowFilter,
+    ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
+        fail()
+    }
+
+    async fn find_workflow_by_issue_id(
+        &self,
+        _issue_id: &IssueId,
+    ) -> Result<Option<Versioned<Workflow>>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -657,6 +682,23 @@ impl Store for FailingStore {
         &self,
         _id: &ConversationId,
         _data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn upsert_workflow(
+        &self,
+        _workflow: Workflow,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn insert_workflow_issue(
+        &self,
+        _workflow_id: &WorkflowId,
+        _issue_id: &IssueId,
+        _state_id: &str,
     ) -> Result<(), StoreError> {
         fail()
     }
