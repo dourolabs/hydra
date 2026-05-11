@@ -5233,29 +5233,45 @@ impl Store for SqliteStore {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_WORKFLOWS} WHERE workflow_id = ?1"
-        ))
-        .bind(workflow_id.as_ref())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists == 0 {
-            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
-        }
-
-        sqlx::query(&format!(
-            "INSERT OR IGNORE INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id)
-             VALUES (?1, ?2, ?3)"
+        // Atomically: insert only if a latest workflow row exists for ?1.
+        // SQLite doesn't allow data-modifying CTEs, so we run the conditional
+        // INSERT and (only if it inserted nothing) follow up with an existence
+        // check inside the same transaction. The TOCTOU race is gone because
+        // the existence check is now part of the INSERT statement itself; the
+        // follow-up SELECT only distinguishes "workflow missing" from
+        // "row already present" for the idempotency case.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let inserted: Option<i64> = sqlx::query_scalar(&format!(
+            "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
+             SELECT ?1, ?2, ?3 \
+             FROM {TABLE_WORKFLOWS} \
+             WHERE workflow_id = ?1 AND is_latest = 1 \
+             ON CONFLICT (workflow_id, issue_id) DO NOTHING \
+             RETURNING 1"
         ))
         .bind(workflow_id.as_ref())
         .bind(issue_id.as_ref())
         .bind(state_id)
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
 
+        if inserted.is_none() {
+            let already_present: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(1) FROM {TABLE_WORKFLOW_ISSUES} \
+                 WHERE workflow_id = ?1 AND issue_id = ?2"
+            ))
+            .bind(workflow_id.as_ref())
+            .bind(issue_id.as_ref())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+            if already_present == 0 {
+                return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+            }
+        }
+
+        tx.commit().await.map_err(map_sqlx_error)?;
         Ok(())
     }
 }
@@ -9784,6 +9800,50 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_rejects_when_latest_row_flipped() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            // Demote the only workflow row so nothing matches is_latest = 1.
+            sqlx::query("UPDATE workflows SET is_latest = 0 WHERE workflow_id = ?1")
+                .bind(workflow_id.as_ref())
+                .execute(&store.pool)
+                .await
+                .unwrap();
+
+            let err = store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+
+            let count: i64 =
+                sqlx::query_scalar("SELECT COUNT(1) FROM workflow_issues WHERE workflow_id = ?1")
+                    .bind(workflow_id.as_ref())
+                    .fetch_one(&store.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(count, 0, "no dangling workflow_issues row should be left");
         }
     }
 }

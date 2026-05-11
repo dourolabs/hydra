@@ -5238,29 +5238,34 @@ impl Store for PostgresStoreV2 {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
-        let exists_query =
-            format!("SELECT EXISTS(SELECT 1 FROM {TABLE_WORKFLOWS_V2} WHERE id = $1 LIMIT 1)");
-        let exists: bool = sqlx::query_scalar(&exists_query)
-            .bind(workflow_id.as_ref())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        if !exists {
-            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
-        }
-
+        // Atomically: insert only if a latest workflow row exists for $1.
+        // The CTE lets us distinguish "workflow missing" from "row already
+        // present" — the second `EXISTS` reports rows preexisting from a
+        // prior call that succeeded against a still-latest workflow.
         let query = format!(
-            "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (workflow_id, issue_id) DO NOTHING"
+            "WITH inserted AS ( \
+                 INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
+                 SELECT $1, $2, $3 \
+                 FROM {TABLE_WORKFLOWS_V2} \
+                 WHERE id = $1 AND is_latest = true \
+                 ON CONFLICT (workflow_id, issue_id) DO NOTHING \
+                 RETURNING 1 \
+             ) \
+             SELECT \
+                 EXISTS(SELECT 1 FROM inserted) AS inserted, \
+                 EXISTS(SELECT 1 FROM {TABLE_WORKFLOW_ISSUES} \
+                        WHERE workflow_id = $1 AND issue_id = $2) AS already_present"
         );
-        sqlx::query(&query)
+        let (inserted, already_present): (bool, bool) = sqlx::query_as::<_, (bool, bool)>(&query)
             .bind(workflow_id.as_ref())
             .bind(issue_id.as_ref())
             .bind(state_id)
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
+        if !inserted && !already_present {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
         Ok(())
     }
 }
@@ -8838,6 +8843,52 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn insert_workflow_issue_rejects_when_latest_row_flipped(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool.clone());
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            // Demote the only workflow row so nothing matches is_latest = true.
+            sqlx::query("UPDATE metis.workflows_v2 SET is_latest = false WHERE id = $1")
+                .bind(workflow_id.as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            let err = store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(1) FROM metis.workflow_issues WHERE workflow_id = $1",
+            )
+            .bind(workflow_id.as_ref())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 0, "no dangling workflow_issues row should be left");
         }
 
         /// Returns a `Workflow` populated across every field that lands in the
