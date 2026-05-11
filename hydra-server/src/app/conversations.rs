@@ -560,15 +560,14 @@ mod tests {
             events.len()
         );
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert!(
             session.item.interactive,
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id,
-            Some(conversation_id),
+            session.item.conversation_id.as_ref(),
+            Some(&conversation_id),
             "conversation session should have conversation_id set"
         );
     }
