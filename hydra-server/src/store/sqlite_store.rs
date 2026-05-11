@@ -5233,29 +5233,43 @@ impl Store for SqliteStore {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_WORKFLOWS} WHERE workflow_id = ?1"
-        ))
-        .bind(workflow_id.as_ref())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists == 0 {
-            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
-        }
-
+        // Atomically condition the insert on the workflow row existing as the
+        // latest version, so we cannot race with a delete or version bump and
+        // leave a dangling reverse-index row behind. SQLite does not allow DML
+        // inside a CTE (unlike Postgres), so we run the conditional INSERT and
+        // the follow-up existence probe inside a single transaction. The probe
+        // disambiguates "workflow missing" from "insert was a no-op because
+        // the (workflow_id, issue_id) row was already present".
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
         sqlx::query(&format!(
-            "INSERT OR IGNORE INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id)
-             VALUES (?1, ?2, ?3)"
+            "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
+             SELECT ?1, ?2, ?3 \
+             FROM {TABLE_WORKFLOWS} \
+             WHERE workflow_id = ?1 AND is_latest = 1 \
+             ON CONFLICT (workflow_id, issue_id) DO NOTHING"
         ))
         .bind(workflow_id.as_ref())
         .bind(issue_id.as_ref())
         .bind(state_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
 
+        let already_present: i64 = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_WORKFLOW_ISSUES} \
+             WHERE workflow_id = ?1 AND issue_id = ?2)"
+        ))
+        .bind(workflow_id.as_ref())
+        .bind(issue_id.as_ref())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        if already_present == 0 {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
         Ok(())
     }
 }

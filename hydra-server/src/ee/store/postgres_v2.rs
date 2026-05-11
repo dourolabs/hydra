@@ -5238,29 +5238,36 @@ impl Store for PostgresStoreV2 {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
-        let exists_query =
-            format!("SELECT EXISTS(SELECT 1 FROM {TABLE_WORKFLOWS_V2} WHERE id = $1 LIMIT 1)");
-        let exists: bool = sqlx::query_scalar(&exists_query)
-            .bind(workflow_id.as_ref())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        if !exists {
-            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
-        }
-
+        // Atomically condition the insert on the workflow row existing as the
+        // latest version, so we cannot race with a delete or version bump and
+        // leave a dangling reverse-index row behind. The CTE lets us tell
+        // "workflow missing" apart from "insert was a no-op because the
+        // (workflow_id, issue_id) row was already present".
         let query = format!(
-            "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (workflow_id, issue_id) DO NOTHING"
+            "WITH inserted AS ( \
+                 INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
+                 SELECT $1, $2, $3 \
+                 FROM {TABLE_WORKFLOWS_V2} \
+                 WHERE id = $1 AND is_latest = true \
+                 ON CONFLICT (workflow_id, issue_id) DO NOTHING \
+                 RETURNING 1 \
+             ) \
+             SELECT \
+                 EXISTS(SELECT 1 FROM inserted) AS inserted, \
+                 EXISTS(SELECT 1 FROM {TABLE_WORKFLOW_ISSUES} \
+                        WHERE workflow_id = $1 AND issue_id = $2) AS already_present"
         );
-        sqlx::query(&query)
+        let row: (bool, bool) = sqlx::query_as(&query)
             .bind(workflow_id.as_ref())
             .bind(issue_id.as_ref())
             .bind(state_id)
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
+        let (inserted, already_present) = row;
+        if !inserted && !already_present {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
         Ok(())
     }
 }
@@ -8838,6 +8845,63 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        /// Regression test: if the workflow's latest row has been flipped to
+        /// `is_latest = false` (simulating a concurrent supersession or
+        /// deletion), `insert_workflow_issue` must reject the call with
+        /// `WorkflowNotFound` rather than silently writing a dangling
+        /// reverse-index row pointing at a stale version.
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn insert_workflow_issue_requires_latest_workflow(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            // Flip the latest row to non-latest directly via the pool. This
+            // simulates the post-supersession state without needing a second
+            // upsert (which would just insert a new latest row).
+            sqlx::query(&format!(
+                "UPDATE {TABLE_WORKFLOWS_V2} SET is_latest = false WHERE id = $1"
+            ))
+            .bind(workflow_id.as_ref())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+            let err = store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+
+            // Confirm no dangling row was written for either the (workflow,
+            // child) pair or the workflow at large.
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {TABLE_WORKFLOW_ISSUES} WHERE workflow_id = $1"
+            ))
+            .bind(workflow_id.as_ref())
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 0);
         }
 
         /// Returns a `Workflow` populated across every field that lands in the
