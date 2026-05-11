@@ -20,6 +20,7 @@ import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStor
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
+import { useAgents } from "../hooks/useAgents";
 import styles from "./DashboardPage.module.css";
 
 const VALID_FILTERS = ["your-issues", "assigned", "all", "patches", "documents"];
@@ -223,13 +224,17 @@ export function DashboardPage() {
   const assignedEnabled = !!username;
   const { data: assignedCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
 
+  const { data: agents } = useAgents();
   const assignees = useMemo(() => {
     const set = new Set<string>();
     for (const record of issues) {
       if (record.issue.assignee) set.add(record.issue.assignee);
     }
+    for (const agent of agents ?? []) {
+      set.add(agent.name);
+    }
     return Array.from(set).sort();
-  }, [issues]);
+  }, [issues, agents]);
 
   // Per-issue tree construction via relationships API
   const {
