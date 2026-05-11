@@ -1307,6 +1307,7 @@ impl StoreWithEvents {
 
     // ---- Workflow mutations (inherent, with actor) ----
 
+    // TODO(workflow-engine): emit events once the engine automation subscribes
     pub async fn upsert_workflow_with_actor(
         &self,
         workflow: Workflow,
@@ -1315,6 +1316,7 @@ impl StoreWithEvents {
         self.inner.upsert_workflow(workflow, &actor).await
     }
 
+    // TODO(workflow-engine): emit events once the engine automation subscribes
     pub async fn insert_workflow_issue(
         &self,
         workflow_id: &WorkflowId,
