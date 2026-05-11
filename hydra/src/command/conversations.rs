@@ -48,9 +48,9 @@ pub enum ConversationsCommand {
     },
     /// Create a new conversation.
     Create {
-        /// Initial message to send.
+        /// Initial message to send. If omitted, the conversation starts with no events.
         #[arg(long, value_name = "MESSAGE")]
-        message: String,
+        message: Option<String>,
 
         /// Agent name for the conversation.
         #[arg(long = "agent", value_name = "AGENT")]

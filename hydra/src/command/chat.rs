@@ -26,7 +26,7 @@ async fn run_noninteractive(
     agent: Option<String>,
 ) -> Result<()> {
     let request = CreateConversationRequest {
-        message: prompt.to_string(),
+        message: Some(prompt.to_string()),
         agent_name: agent,
         session_settings: None,
     };
@@ -106,7 +106,7 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
     };
 
     let request = CreateConversationRequest {
-        message: first_message,
+        message: Some(first_message),
         agent_name: agent,
         session_settings: None,
     };
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn create_conversation_request_serializes_correctly() {
         let request = CreateConversationRequest {
-            message: "hello".to_string(),
+            message: Some("hello".to_string()),
             agent_name: Some("test-agent".to_string()),
             session_settings: None,
         };
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn create_conversation_request_without_agent() {
         let request = CreateConversationRequest {
-            message: "hello".to_string(),
+            message: Some("hello".to_string()),
             agent_name: None,
             session_settings: None,
         };

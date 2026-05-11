@@ -73,7 +73,7 @@ pub enum ResumeConversationError {
 impl AppState {
     pub async fn create_conversation(
         &self,
-        message: String,
+        message: Option<String>,
         agent_name: Option<String>,
         session_settings: crate::domain::issues::SessionSettings,
         actor_ref: ActorRef,
@@ -97,19 +97,27 @@ impl AppState {
             .await
             .map_err(|source| CreateConversationError::Store { source })?;
 
-        // 3. Append the first UserMessage event
-        let event = ConversationEvent::UserMessage {
-            content: message.clone(),
-            timestamp: chrono::Utc::now(),
-        };
-        self.store
-            .append_conversation_event_with_actor(&conversation_id, event, actor_ref.clone())
-            .await
-            .map_err(|source| CreateConversationError::Store { source })?;
+        // 3. Append the first UserMessage event if a message was provided
+        if let Some(content) = message.as_ref() {
+            let event = ConversationEvent::UserMessage {
+                content: content.clone(),
+                timestamp: chrono::Utc::now(),
+            };
+            self.store
+                .append_conversation_event_with_actor(&conversation_id, event, actor_ref.clone())
+                .await
+                .map_err(|source| CreateConversationError::Store { source })?;
+        }
 
         // 4. Create an interactive session, applying conversation session_settings
-        let session_request =
-            CreateSessionRequest::new(message, None, BundleSpec::None, HashMap::new(), None, true);
+        let session_request = CreateSessionRequest::new(
+            message.unwrap_or_default(),
+            None,
+            BundleSpec::None,
+            HashMap::new(),
+            None,
+            true,
+        );
         let settings = conversation.session_settings.clone();
         let session_id = self
             .create_session(
@@ -394,7 +402,7 @@ mod tests {
 
         let (_conversation_id, versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -416,7 +424,7 @@ mod tests {
 
         let (_conversation_id, versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -441,7 +449,7 @@ mod tests {
 
         let (_conversation_id, versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -471,7 +479,7 @@ mod tests {
 
         let (_conversation_id, versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -492,7 +500,7 @@ mod tests {
 
         let (conversation_id, versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -500,6 +508,48 @@ mod tests {
             )
             .await
             .unwrap();
+
+        let session_id = versioned.item.active_session_id.as_ref().unwrap();
+        let session = state.store().get_session(session_id, false).await.unwrap();
+        assert!(
+            session.item.interactive,
+            "conversation session should be interactive"
+        );
+        assert_eq!(
+            session.item.conversation_id,
+            Some(conversation_id),
+            "conversation session should have conversation_id set"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_conversation_with_no_message_starts_with_zero_events() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, versioned) = state
+            .create_conversation(
+                None,
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(versioned.item.status, ConversationStatus::Active);
+
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "expected zero events, got {}",
+            events.len()
+        );
 
         let session_id = versioned.item.active_session_id.as_ref().unwrap();
         let session = state.store().get_session(session_id, false).await.unwrap();
@@ -524,7 +574,7 @@ mod tests {
 
         let (conversation_id, _versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),
@@ -562,7 +612,7 @@ mod tests {
 
         let (conversation_id, _versioned) = state
             .create_conversation(
-                "hello".to_string(),
+                Some("hello".to_string()),
                 None,
                 settings,
                 ActorRef::test(),

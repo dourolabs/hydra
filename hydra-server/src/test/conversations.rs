@@ -11,7 +11,7 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     let client = test_client();
 
     let request = CreateConversationRequest {
-        message: "Hello, agent!".to_string(),
+        message: Some("Hello, agent!".to_string()),
         agent_name: Some("test-agent".to_string()),
         session_settings: None,
     };
@@ -35,12 +35,50 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
 }
 
 #[tokio::test]
+async fn create_conversation_without_message_starts_with_zero_events() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let response = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&serde_json::json!({}))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let conversation: Conversation = response.json().await?;
+    assert!(!conversation.conversation_id.as_ref().is_empty());
+    assert!(
+        conversation.active_session_id.is_some(),
+        "expected active_session_id to be set"
+    );
+    assert_eq!(
+        conversation.status,
+        hydra_common::api::v1::conversations::ConversationStatus::Active
+    );
+
+    let events: Vec<serde_json::Value> = client
+        .get(format!(
+            "{}/v1/conversations/{}/events",
+            server.base_url(),
+            conversation.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(events.is_empty(), "expected zero events, got {events:?}");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_conversation_returns_created_conversation() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
     let request = CreateConversationRequest {
-        message: "test message".to_string(),
+        message: Some("test message".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -95,7 +133,7 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
     let client = test_client();
 
     let request = CreateConversationRequest {
-        message: "Hello!".to_string(),
+        message: Some("Hello!".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -131,7 +169,7 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
     let client = test_client();
 
     let request = CreateConversationRequest {
-        message: "What is Rust?".to_string(),
+        message: Some("What is Rust?".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -169,7 +207,7 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
 
     // Create a conversation
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -227,7 +265,7 @@ async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()>
 
     // Create and close a conversation
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -273,7 +311,7 @@ async fn close_conversation_sets_status_closed() -> anyhow::Result<()> {
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -311,7 +349,7 @@ async fn close_already_closed_conversation_is_idempotent() -> anyhow::Result<()>
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -353,7 +391,7 @@ async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -404,7 +442,7 @@ async fn resume_active_conversation_returns_409() -> anyhow::Result<()> {
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -438,7 +476,7 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
 
     // 1. Create
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -534,7 +572,7 @@ async fn update_conversation_sets_title() -> anyhow::Result<()> {
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
@@ -597,7 +635,7 @@ async fn delete_conversation_soft_deletes() -> anyhow::Result<()> {
     let client = test_client();
 
     let create_request = CreateConversationRequest {
-        message: "Hello".to_string(),
+        message: Some("Hello".to_string()),
         agent_name: None,
         session_settings: None,
     };
