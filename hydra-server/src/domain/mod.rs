@@ -11,3 +11,4 @@ pub mod sessions;
 pub mod task_status;
 pub mod users;
 pub mod whoami;
+pub mod workflows;
