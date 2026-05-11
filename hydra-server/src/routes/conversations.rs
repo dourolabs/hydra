@@ -340,6 +340,9 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
             error!(error = %source, "failed to store session");
             ApiError::internal(format!("Failed to store session: {source}"))
         }
+        CreateSessionError::PromptRequired => {
+            ApiError::bad_request("non-interactive sessions require a prompt".to_string())
+        }
     }
 }
 

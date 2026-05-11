@@ -70,7 +70,7 @@ export function createSessionRoutes(store: Store): Hono {
     const id = generateId("session");
     const now = new Date().toISOString();
     const task: Session = {
-      prompt: body.prompt,
+      prompt: body.prompt ?? "",
       context: body.context,
       spawned_from: body.issue_id,
       creator: DEV_USERNAME,

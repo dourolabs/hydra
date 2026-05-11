@@ -42,6 +42,8 @@ pub enum CreateSessionError {
         #[source]
         source: StoreError,
     },
+    #[error("non-interactive sessions require a prompt")]
+    PromptRequired,
 }
 
 #[derive(Debug, Error)]
@@ -163,8 +165,16 @@ impl AppState {
             }
         }
 
+        // Non-interactive sessions require a prompt; interactive sessions may
+        // omit it (the worker iterates the conversation event log instead).
+        let prompt = match (request.prompt, request.interactive) {
+            (Some(p), _) => p,
+            (None, true) => String::new(),
+            (None, false) => return Err(CreateSessionError::PromptRequired),
+        };
+
         let session = Session::new(
-            request.prompt,
+            prompt,
             context,
             request.issue_id.clone(),
             creator,
@@ -1281,7 +1291,7 @@ mod tests {
 
         // Non-interactive session (issue-based): interactive=false, conversation_id=None
         let request = CreateSessionRequest::new(
-            "do stuff".to_string(),
+            Some("do stuff".to_string()),
             None,
             hydra_common::api::v1::sessions::BundleSpec::None,
             std::collections::HashMap::new(),
@@ -1311,7 +1321,7 @@ mod tests {
         // Interactive session (conversation-based): interactive=true, conversation_id=Some(...)
         let conv_id = ConversationId::new();
         let request = CreateSessionRequest::new(
-            "hello".to_string(),
+            Some("hello".to_string()),
             None,
             hydra_common::api::v1::sessions::BundleSpec::None,
             std::collections::HashMap::new(),

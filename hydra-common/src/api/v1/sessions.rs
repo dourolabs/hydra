@@ -116,7 +116,8 @@ fn default_status() -> Status {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateSessionRequest {
-    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default)]
@@ -131,7 +132,7 @@ pub struct CreateSessionRequest {
 
 impl CreateSessionRequest {
     pub fn new(
-        prompt: String,
+        prompt: Option<String>,
         image: Option<String>,
         context: BundleSpec,
         variables: HashMap<String, String>,

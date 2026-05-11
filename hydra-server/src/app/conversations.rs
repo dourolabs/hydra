@@ -110,14 +110,8 @@ impl AppState {
         }
 
         // 4. Create an interactive session, applying conversation session_settings
-        let session_request = CreateSessionRequest::new(
-            message.unwrap_or_default(),
-            None,
-            BundleSpec::None,
-            HashMap::new(),
-            None,
-            true,
-        );
+        let session_request =
+            CreateSessionRequest::new(message, None, BundleSpec::None, HashMap::new(), None, true);
         let settings = conversation.session_settings.clone();
         let session_id = self
             .create_session(
@@ -331,14 +325,8 @@ impl AppState {
         }
 
         // Create a new interactive session, applying conversation session_settings
-        let session_request = CreateSessionRequest::new(
-            String::new(),
-            None,
-            BundleSpec::None,
-            HashMap::new(),
-            None,
-            true,
-        );
+        let session_request =
+            CreateSessionRequest::new(None, None, BundleSpec::None, HashMap::new(), None, true);
         let settings = versioned.item.session_settings.clone();
         let session_id = self
             .create_session(

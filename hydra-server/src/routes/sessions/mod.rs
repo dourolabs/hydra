@@ -57,6 +57,9 @@ pub async fn create_session(
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))
             }
+            CreateSessionError::PromptRequired => {
+                ApiError::bad_request("non-interactive sessions require a prompt".to_string())
+            }
         })?;
 
     info!(
