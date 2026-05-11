@@ -1,5 +1,4 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
-use crate::domain::workflows::Workflow;
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
     agents::Agent,
@@ -25,7 +24,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned, WorkflowId,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -37,7 +36,7 @@ use std::str::FromStr;
 
 use super::{
     ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskError,
-    TaskStatusLog, WorkflowFilter,
+    TaskStatusLog,
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
@@ -3952,27 +3951,6 @@ impl ReadOnlyStore for SqliteStore {
 
         Ok(row)
     }
-
-    async fn get_workflow(
-        &self,
-        _workflow_id: &WorkflowId,
-    ) -> Result<Versioned<Workflow>, StoreError> {
-        unimplemented!("SqliteStore::get_workflow is not yet implemented")
-    }
-
-    async fn list_workflows(
-        &self,
-        _filter: &WorkflowFilter,
-    ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
-        unimplemented!("SqliteStore::list_workflows is not yet implemented")
-    }
-
-    async fn find_workflow_by_issue_id(
-        &self,
-        _issue_id: &IssueId,
-    ) -> Result<Option<Versioned<Workflow>>, StoreError> {
-        unimplemented!("SqliteStore::find_workflow_by_issue_id is not yet implemented")
-    }
 }
 
 #[async_trait]
@@ -4948,23 +4926,6 @@ impl Store for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         Ok(())
-    }
-
-    async fn upsert_workflow(
-        &self,
-        _workflow: Workflow,
-        _actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
-        unimplemented!("SqliteStore::upsert_workflow is not yet implemented")
-    }
-
-    async fn insert_workflow_issue(
-        &self,
-        _workflow_id: &WorkflowId,
-        _issue_id: &IssueId,
-        _state_id: &str,
-    ) -> Result<(), StoreError> {
-        unimplemented!("SqliteStore::insert_workflow_issue is not yet implemented")
     }
 }
 

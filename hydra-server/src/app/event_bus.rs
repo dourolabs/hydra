@@ -1,5 +1,4 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
-use crate::domain::workflows::Workflow;
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -11,9 +10,7 @@ use crate::domain::{
     secrets::SecretRef,
     users::{User, Username},
 };
-use crate::store::{
-    ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog, WorkflowFilter,
-};
+use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
@@ -24,7 +21,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, LabelId, NotificationId, PatchId,
-    RepoName, SessionId, VersionNumber, Versioned, WorkflowId,
+    RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
@@ -1713,27 +1710,6 @@ impl ReadOnlyStore for StoreWithEvents {
         id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.inner.get_conversation_session_state(id).await
-    }
-
-    async fn get_workflow(
-        &self,
-        workflow_id: &WorkflowId,
-    ) -> Result<Versioned<Workflow>, StoreError> {
-        self.inner.get_workflow(workflow_id).await
-    }
-
-    async fn list_workflows(
-        &self,
-        filter: &WorkflowFilter,
-    ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
-        self.inner.list_workflows(filter).await
-    }
-
-    async fn find_workflow_by_issue_id(
-        &self,
-        issue_id: &IssueId,
-    ) -> Result<Option<Versioned<Workflow>>, StoreError> {
-        self.inner.find_workflow_by_issue_id(issue_id).await
     }
 }
 

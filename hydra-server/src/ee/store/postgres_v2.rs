@@ -21,11 +21,8 @@ use crate::{
         sessions::{BundleSpec, Session},
         task_status::{Status, TaskError},
         users::{User, Username},
-        workflows::Workflow,
     },
-    store::{
-        ConversationEventSummary, ReadOnlyStore, Store, StoreError, TaskStatusLog, WorkflowFilter,
-    },
+    store::{ConversationEventSummary, ReadOnlyStore, Store, StoreError, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -39,7 +36,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, Rgb, SessionId, VersionNumber, Versioned, WorkflowId,
+    PatchId, RepoName, Rgb, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -3841,27 +3838,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         Ok(row)
     }
-
-    async fn get_workflow(
-        &self,
-        _workflow_id: &WorkflowId,
-    ) -> Result<Versioned<Workflow>, StoreError> {
-        unimplemented!("PostgresStoreV2::get_workflow is not yet implemented")
-    }
-
-    async fn list_workflows(
-        &self,
-        _filter: &WorkflowFilter,
-    ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
-        unimplemented!("PostgresStoreV2::list_workflows is not yet implemented")
-    }
-
-    async fn find_workflow_by_issue_id(
-        &self,
-        _issue_id: &IssueId,
-    ) -> Result<Option<Versioned<Workflow>>, StoreError> {
-        unimplemented!("PostgresStoreV2::find_workflow_by_issue_id is not yet implemented")
-    }
 }
 
 #[async_trait]
@@ -4937,23 +4913,6 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         Ok(())
-    }
-
-    async fn upsert_workflow(
-        &self,
-        _workflow: Workflow,
-        _actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
-        unimplemented!("PostgresStoreV2::upsert_workflow is not yet implemented")
-    }
-
-    async fn insert_workflow_issue(
-        &self,
-        _workflow_id: &WorkflowId,
-        _issue_id: &IssueId,
-        _state_id: &str,
-    ) -> Result<(), StoreError> {
-        unimplemented!("PostgresStoreV2::insert_workflow_issue is not yet implemented")
     }
 }
 
