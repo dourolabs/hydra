@@ -2418,8 +2418,19 @@ impl Store for MemoryStore {
         if !self.workflows.contains_key(workflow_id) {
             return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
         }
-        self.workflow_issues
-            .insert(issue_id.clone(), workflow_id.clone());
+        match self.workflow_issues.entry(issue_id.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                if entry.get() != workflow_id {
+                    return Err(StoreError::ChildIssueAlreadyInWorkflow {
+                        issue_id: issue_id.clone(),
+                        existing_workflow_id: entry.get().clone(),
+                    });
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(workflow_id.clone());
+            }
+        }
         Ok(())
     }
 }
@@ -8127,7 +8138,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn insert_workflow_issue_is_idempotent() {
+        async fn insert_workflow_issue_is_idempotent_for_same_workflow() {
             let store = MemoryStore::new();
             let workflow_id = WorkflowId::new();
             let child = IssueId::new();
@@ -8160,6 +8171,57 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_rejects_different_workflow_for_same_issue() {
+            let store = MemoryStore::new();
+            let first_workflow_id = WorkflowId::new();
+            let second_workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+
+            for workflow_id in [&first_workflow_id, &second_workflow_id] {
+                store
+                    .upsert_workflow(
+                        workflow_with(
+                            workflow_id.clone(),
+                            IssueId::new(),
+                            "develop",
+                            None,
+                            WorkflowStatus::Active,
+                        ),
+                        &test_actor(),
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            store
+                .insert_workflow_issue(&first_workflow_id, &child, "develop")
+                .await
+                .unwrap();
+
+            let err = store
+                .insert_workflow_issue(&second_workflow_id, &child, "develop")
+                .await
+                .unwrap_err();
+            match err {
+                StoreError::ChildIssueAlreadyInWorkflow {
+                    issue_id,
+                    existing_workflow_id,
+                } => {
+                    assert_eq!(issue_id, child);
+                    assert_eq!(existing_workflow_id, first_workflow_id);
+                }
+                other => panic!("unexpected error: {other:?}"),
+            }
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.item.workflow_id, first_workflow_id);
         }
     }
 }
