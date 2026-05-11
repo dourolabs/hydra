@@ -68,6 +68,11 @@ pub enum TemplateError {
 
     #[error("placeholder '{{{{previous_step.progress}}}}' used without previous step in scope")]
     PreviousStepMissing,
+
+    #[error(
+        "initial state's '{field}' references '{{{{previous_step.*}}}}', but no previous step exists on workflow creation"
+    )]
+    InitialStateUsesPreviousStep { field: String },
 }
 
 /// Variables available when rendering a template string.
@@ -138,6 +143,40 @@ pub fn validate_template(template: &WorkflowTemplate) -> Result<(), TemplateErro
         return Err(TemplateError::InitialStateUnknown(
             template.initial_state.clone(),
         ));
+    }
+
+    // The initial state runs with no previous step in scope (see
+    // `enter_state` in `app/workflows.rs`, which passes `None` for
+    // `previous_step_progress` on `create_workflow`). Reject any template
+    // that would fail at first run because the initial state references
+    // `{{previous_step.*}}` in a field the engine renders.
+    if let Some(initial_state) = template
+        .states
+        .iter()
+        .find(|s| s.id == template.initial_state)
+        && let StateEntryAction::CreateIssue {
+            title_template,
+            description_template,
+            session_settings,
+            ..
+        } = &initial_state.on_enter
+    {
+        reject_previous_step(title_template, "title_template")?;
+        reject_previous_step(description_template, "description_template")?;
+        if let Some(settings) = session_settings {
+            if let Some(s) = &settings.repo_name {
+                reject_previous_step(s, "session_settings.repo_name")?;
+            }
+            if let Some(s) = &settings.branch {
+                reject_previous_step(s, "session_settings.branch")?;
+            }
+            if let Some(s) = &settings.image {
+                reject_previous_step(s, "session_settings.image")?;
+            }
+            if let Some(s) = &settings.model {
+                reject_previous_step(s, "session_settings.model")?;
+            }
+        }
     }
 
     for transition in &template.transitions {
@@ -244,6 +283,21 @@ pub fn resolve_context(
 
 static PLACEHOLDER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}").expect("valid regex"));
+
+/// Return [`TemplateError::InitialStateUsesPreviousStep`] if `text` contains
+/// any `{{previous_step.*}}` placeholder. The match is on the parsed key, so
+/// the literal word "previous_step" appearing in surrounding prose is fine.
+fn reject_previous_step(text: &str, field: &str) -> Result<(), TemplateError> {
+    for caps in PLACEHOLDER_RE.captures_iter(text) {
+        let key = caps.get(1).expect("captured key").as_str();
+        if key.starts_with("previous_step.") {
+            return Err(TemplateError::InitialStateUsesPreviousStep {
+                field: field.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
 
 /// Render a template string by substituting the supported placeholders.
 ///
@@ -631,6 +685,106 @@ transitions:
             err,
             TemplateError::ContextParamRequiredWithDefault(n) if n == "branch"
         ));
+    }
+
+    /// Build a two-state template whose initial state's `CreateIssue` fields
+    /// can be customized by the caller; the second state is a `noop`
+    /// terminal sink so the rest of the validator stays happy.
+    fn initial_create_issue_template(
+        title_template: &str,
+        description_template: &str,
+        session_settings: Option<SessionSettingsTemplate>,
+    ) -> WorkflowTemplate {
+        WorkflowTemplate::new(
+            "Tiny".to_string(),
+            "test".to_string(),
+            vec![],
+            vec![
+                WorkflowState::new(
+                    "develop".to_string(),
+                    "Development".to_string(),
+                    false,
+                    StateEntryAction::CreateIssue {
+                        issue_type: IssueType::Task,
+                        title_template: title_template.to_string(),
+                        description_template: description_template.to_string(),
+                        assignee: None,
+                        form: None,
+                        session_settings,
+                    },
+                    None,
+                ),
+                WorkflowState::new(
+                    "merged".to_string(),
+                    "Merged".to_string(),
+                    true,
+                    StateEntryAction::Noop,
+                    Some(IssueStatus::Closed),
+                ),
+            ],
+            vec![WorkflowTransition::new(
+                "develop".to_string(),
+                "merged".to_string(),
+                TransitionTrigger::OnChildStatus {
+                    status: IssueStatus::Closed,
+                },
+                Some("Done".to_string()),
+            )],
+            "develop".to_string(),
+        )
+    }
+
+    #[test]
+    fn initial_state_description_using_previous_step_fails_validation() {
+        let template = initial_create_issue_template("t", "{{previous_step.progress}}", None);
+        let err = validate_template(&template).unwrap_err();
+        assert!(matches!(
+            err,
+            TemplateError::InitialStateUsesPreviousStep { field } if field == "description_template"
+        ));
+    }
+
+    #[test]
+    fn initial_state_title_using_previous_step_fails_validation() {
+        let template = initial_create_issue_template("{{ previous_step.progress }}", "d", None);
+        let err = validate_template(&template).unwrap_err();
+        assert!(matches!(
+            err,
+            TemplateError::InitialStateUsesPreviousStep { field } if field == "title_template"
+        ));
+    }
+
+    #[test]
+    fn initial_state_session_settings_branch_using_previous_step_fails_validation() {
+        let mut settings = SessionSettingsTemplate::default();
+        settings.branch = Some("feature-{{previous_step.progress}}".to_string());
+        let template = initial_create_issue_template("t", "d", Some(settings));
+        let err = validate_template(&template).unwrap_err();
+        assert!(matches!(
+            err,
+            TemplateError::InitialStateUsesPreviousStep { field } if field == "session_settings.branch"
+        ));
+    }
+
+    #[test]
+    fn initial_state_without_previous_step_validates() {
+        let mut settings = SessionSettingsTemplate::default();
+        settings.repo_name = Some("dourolabs/hydra".to_string());
+        settings.branch = Some("main".to_string());
+        let template = initial_create_issue_template(
+            "{{workflow.name}}",
+            "Plain description with the words previous_step in prose.",
+            Some(settings),
+        );
+        validate_template(&template).expect("no previous_step placeholder: valid");
+    }
+
+    #[test]
+    fn non_initial_state_may_use_previous_step() {
+        // The existing PATCH_REVIEW_YAML fixture has a non-initial `fix`
+        // state whose description_template references previous_step.progress.
+        // Validation must still succeed.
+        parse_template(PATCH_REVIEW_YAML).expect("non-initial previous_step is allowed");
     }
 
     #[test]
