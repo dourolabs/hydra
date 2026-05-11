@@ -448,18 +448,6 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/notifications/read-all",
             post(routes::notifications::mark_all_read),
         )
-        .route(
-            "/v1/workflows",
-            get(routes::workflows::list_workflows).post(routes::workflows::create_workflow),
-        )
-        .route(
-            "/v1/workflows/:workflow_id",
-            get(routes::workflows::get_workflow).delete(routes::workflows::cancel_workflow),
-        )
-        .route(
-            "/v1/workflows/:workflow_id/transition",
-            post(routes::workflows::transition_workflow),
-        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::auth::require_auth,

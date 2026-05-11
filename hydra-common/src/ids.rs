@@ -12,7 +12,6 @@ const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const CONVERSATION_PREFIX: &str = "c-";
 const NOTIFICATION_PREFIX: &str = "nf-";
-const WORKFLOW_PREFIX: &str = "w-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydraIdError {
@@ -92,12 +91,6 @@ pub struct LabelId(String);
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct ConversationId(String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-#[serde(transparent)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, type = "string"))]
-pub struct WorkflowId(String);
-
 impl HydraId {
     pub fn as_issue_id(&self) -> Option<IssueId> {
         IssueId::try_from(self.clone()).ok()
@@ -127,10 +120,6 @@ impl HydraId {
         ConversationId::try_from(self.clone()).ok()
     }
 
-    pub fn as_workflow_id(&self) -> Option<WorkflowId> {
-        WorkflowId::try_from(self.clone()).ok()
-    }
-
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
         // Check longer prefixes first to avoid ambiguity (e.g., "nf-" before single-char prefixes)
         if value.starts_with(NOTIFICATION_PREFIX) {
@@ -147,8 +136,6 @@ impl HydraId {
             SessionId::validate_str(value)
         } else if value.starts_with(CONVERSATION_PREFIX) {
             ConversationId::validate_str(value)
-        } else if value.starts_with(WORKFLOW_PREFIX) {
-            WorkflowId::validate_str(value)
         } else {
             Err(HydraIdError::InvalidPrefix(value.to_string()))
         }
@@ -403,40 +390,6 @@ impl<'de> Deserialize<'de> for ConversationId {
     }
 }
 
-impl WorkflowId {
-    pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
-        generate_with_prefix(WORKFLOW_PREFIX, random_len).map(Self)
-    }
-
-    pub fn new() -> Self {
-        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
-    }
-
-    pub const fn prefix() -> &'static str {
-        WORKFLOW_PREFIX
-    }
-
-    fn validate_str(value: &str) -> Result<(), HydraIdError> {
-        validate_with_prefix(value, WORKFLOW_PREFIX)
-    }
-}
-
-impl Default for WorkflowId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'de> Deserialize<'de> for WorkflowId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        WorkflowId::try_from(value).map_err(de::Error::custom)
-    }
-}
-
 impl TryFrom<String> for HydraId {
     type Error = HydraIdError;
 
@@ -509,15 +462,6 @@ impl TryFrom<String> for ConversationId {
     }
 }
 
-impl TryFrom<String> for WorkflowId {
-    type Error = HydraIdError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        WorkflowId::validate_str(&value)?;
-        Ok(Self(value))
-    }
-}
-
 impl TryFrom<HydraId> for IssueId {
     type Error = HydraIdError;
 
@@ -574,14 +518,6 @@ impl TryFrom<HydraId> for ConversationId {
     }
 }
 
-impl TryFrom<HydraId> for WorkflowId {
-    type Error = HydraIdError;
-
-    fn try_from(value: HydraId) -> Result<Self, Self::Error> {
-        Self::try_from(value.0)
-    }
-}
-
 impl From<IssueId> for HydraId {
     fn from(value: IssueId) -> Self {
         Self(value.0)
@@ -624,12 +560,6 @@ impl From<ConversationId> for HydraId {
     }
 }
 
-impl From<WorkflowId> for HydraId {
-    fn from(value: WorkflowId) -> Self {
-        Self(value.0)
-    }
-}
-
 impl From<IssueId> for String {
     fn from(value: IssueId) -> Self {
         value.0
@@ -668,12 +598,6 @@ impl From<LabelId> for String {
 
 impl From<ConversationId> for String {
     fn from(value: ConversationId) -> Self {
-        value.0
-    }
-}
-
-impl From<WorkflowId> for String {
-    fn from(value: WorkflowId) -> Self {
         value.0
     }
 }
@@ -732,12 +656,6 @@ impl fmt::Display for ConversationId {
     }
 }
 
-impl fmt::Display for WorkflowId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 impl AsRef<str> for HydraId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -781,12 +699,6 @@ impl AsRef<str> for LabelId {
 }
 
 impl AsRef<str> for ConversationId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for WorkflowId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -849,14 +761,6 @@ impl FromStr for LabelId {
 }
 
 impl FromStr for ConversationId {
-    type Err = HydraIdError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.to_string().try_into()
-    }
-}
-
-impl FromStr for WorkflowId {
     type Err = HydraIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -956,80 +860,5 @@ mod tests {
         let serialized = serde_json::to_string(&document_id).expect("serialize");
         let deserialized: DocumentId = serde_json::from_str(&serialized).expect("deserialize");
         assert_eq!(deserialized, document_id);
-    }
-
-    #[test]
-    fn workflow_id_uses_expected_prefix_and_length() {
-        let workflow_id = WorkflowId::generate(MIN_RANDOM_LEN).expect("valid length");
-        assert!(workflow_id.as_ref().starts_with(WorkflowId::prefix()));
-        assert_eq!(
-            workflow_id.as_ref().len(),
-            WorkflowId::prefix().len() + MIN_RANDOM_LEN
-        );
-    }
-
-    #[test]
-    fn workflow_id_generate_six_starts_with_w_dash() {
-        let workflow_id = WorkflowId::generate(6).expect("valid length");
-        assert!(workflow_id.as_ref().starts_with("w-"));
-    }
-
-    #[test]
-    fn workflow_id_rejects_invalid_prefix() {
-        let err = WorkflowId::try_from("x-invalid".to_string()).expect_err("expected error");
-        match err {
-            HydraIdError::InvalidPrefix(_) => {}
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn workflow_id_rejects_invalid_length() {
-        let err = WorkflowId::try_from(format!("{}abc", WorkflowId::prefix()))
-            .expect_err("expected invalid length");
-        match err {
-            HydraIdError::InvalidLength { .. } => {}
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn workflow_id_rejects_invalid_characters() {
-        let err =
-            WorkflowId::try_from("w-ABC!".to_string()).expect_err("expected invalid characters");
-        match err {
-            HydraIdError::InvalidCharacters => {}
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn workflow_id_round_trips_through_serde() {
-        let workflow_id = WorkflowId::new();
-        let serialized = serde_json::to_string(&workflow_id).expect("serialize");
-        let deserialized: WorkflowId = serde_json::from_str(&serialized).expect("deserialize");
-        assert_eq!(deserialized, workflow_id);
-    }
-
-    #[test]
-    fn hydra_id_converts_to_workflow_id() {
-        let workflow_id = WorkflowId::new();
-        let hydra_id: HydraId = workflow_id.clone().into();
-        let converted = hydra_id.as_workflow_id().expect("workflow id");
-        assert_eq!(converted, workflow_id);
-    }
-
-    #[test]
-    fn hydra_id_validate_str_accepts_workflow_id() {
-        HydraId::validate_str("w-abcdef").expect("valid workflow id");
-    }
-
-    #[test]
-    fn hydra_id_validate_str_rejects_invalid_workflow_id() {
-        let err = HydraId::validate_str("w-ABC!").expect_err("expected error");
-        match err {
-            HydraIdError::InvalidCharacters => {}
-            other => panic!("unexpected error: {other:?}"),
-        }
     }
 }

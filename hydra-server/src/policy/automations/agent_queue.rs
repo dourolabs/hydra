@@ -1,14 +1,13 @@
 #[cfg(test)]
-use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueType};
+use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
 use crate::{
     app::AppState,
     domain::{
-        issues::{Issue, IssueStatus},
+        issues::{Issue, IssueDependencyType, IssueStatus},
         sessions::BundleSpec,
     },
-    policy::readiness,
     store::{Session, Status, StoreError},
 };
 use anyhow::Context;
@@ -243,23 +242,28 @@ impl AgentQueue {
             return Ok(SpawnResult::Skipped);
         }
 
-        // Compute guard conditions. The generic readiness predicate
-        // (non-terminal status + dependencies satisfied + no parent task
-        // running) lives in `policy::readiness` so the workflow engine
-        // can reuse it. Capacity and existing-session checks stay here
-        // because they are specific to per-agent session spawning.
+        // Compute guard conditions.
+        let is_terminal = matches!(
+            issue.status,
+            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
+        );
+        let is_ready = state
+            .is_issue_ready(issue_id)
+            .await
+            .context("failed to determine if issue is ready")?;
         let active_tasks = task_state.running_tasks + task_state.pending_tasks;
         let max_simultaneous = self.agent.max_simultaneous as usize;
         let at_capacity = max_simultaneous == 0 || active_tasks >= max_simultaneous;
         let has_active_session = task_state.existing_issue_ids.contains(issue_id);
-        let ready_for_next_step =
-            readiness::is_issue_ready_for_next_step(state, issue_id, issue).await?;
+        let parent_running = parent_has_running_task(state, issue).await?;
 
         // Determine whether to skip this issue.
-        // Feedback bypasses the readiness check (terminal status, dependency
-        // readiness, parent-running). Active session and capacity checks are
-        // always enforced.
-        if at_capacity || has_active_session || (!has_feedback && !ready_for_next_step) {
+        // Feedback bypasses terminal status, dependency readiness, and parent running checks.
+        // Active session and capacity checks are always enforced.
+        if at_capacity
+            || has_active_session
+            || (!has_feedback && (is_terminal || !is_ready || parent_running))
+        {
             return Ok(SpawnResult::Skipped);
         }
 
@@ -390,6 +394,28 @@ pub(crate) async fn agent_task_state(
     }
 
     Ok(task_state)
+}
+
+pub(crate) async fn parent_has_running_task(
+    state: &AppState,
+    issue: &Issue,
+) -> Result<bool, StoreError> {
+    for dependency in issue
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+    {
+        for task_id in state.get_sessions_for_issue(&dependency.issue_id).await? {
+            if matches!(
+                state.get_session(&task_id).await?.status,
+                Status::Pending | Status::Running
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]

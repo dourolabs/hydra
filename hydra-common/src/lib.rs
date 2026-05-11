@@ -24,14 +24,14 @@ pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, conversations, documents, events, form, issues, labels, login, logs, merge_queues,
     notifications, patches, repositories, secrets, session_status, sessions, task_status, users,
-    version, whoami, workflows,
+    version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use conversations::ConversationEventId;
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, NotificationId, PatchId,
-    SessionId, WorkflowId,
+    SessionId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
@@ -78,7 +78,6 @@ mod ts_export {
         crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
-        crate::WorkflowId::export_all(&cfg).expect("WorkflowId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::ConversationEventId::export_all(&cfg).expect("ConversationEventId");
         crate::Rgb::export_all(&cfg).expect("Rgb");
@@ -285,22 +284,5 @@ mod ts_export {
         crate::conversations::WorkerCatchUp::export_all(&cfg).expect("WorkerCatchUp");
         crate::conversations::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
         crate::conversations::ServerMessage::export_all(&cfg).expect("ServerMessage");
-
-        // API v1: workflows
-        crate::workflows::WorkflowTemplate::export_all(&cfg).expect("WorkflowTemplate");
-        crate::workflows::ContextParam::export_all(&cfg).expect("ContextParam");
-        crate::workflows::WorkflowState::export_all(&cfg).expect("WorkflowState");
-        crate::workflows::StateEntryAction::export_all(&cfg).expect("StateEntryAction");
-        crate::workflows::SessionSettingsTemplate::export_all(&cfg)
-            .expect("SessionSettingsTemplate");
-        crate::workflows::WorkflowTransition::export_all(&cfg).expect("WorkflowTransition");
-        crate::workflows::TransitionTrigger::export_all(&cfg).expect("TransitionTrigger");
-        crate::workflows::WorkflowStatus::export_all(&cfg).expect("WorkflowStatus");
-        crate::workflows::Workflow::export_all(&cfg).expect("Workflow");
-        crate::workflows::WorkflowHistoryEntry::export_all(&cfg).expect("WorkflowHistoryEntry");
-        crate::workflows::StartWorkflowRequest::export_all(&cfg).expect("StartWorkflowRequest");
-        crate::workflows::TransitionWorkflowRequest::export_all(&cfg)
-            .expect("TransitionWorkflowRequest");
-        crate::workflows::ListWorkflowsQuery::export_all(&cfg).expect("ListWorkflowsQuery");
     }
 }

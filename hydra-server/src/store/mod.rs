@@ -10,7 +10,6 @@ use crate::domain::{
     secrets::SecretRef,
     task_status::Event,
     users::{User, Username},
-    workflows::{Workflow, WorkflowStatus},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -22,7 +21,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned, WorkflowId,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -147,20 +146,6 @@ pub struct ObjectRelationship {
     pub rel_type: RelationshipType,
 }
 
-/// Filter for [`ReadOnlyStore::list_workflows`].
-///
-/// All set fields are ANDed together. `associated_issue_id` matches workflows
-/// that have a row for the given issue in the `workflow_issues` reverse index
-/// (i.e., the issue was created by any state of the workflow, including
-/// historical re-entries of the same state).
-#[derive(Debug, Default, Clone)]
-pub struct WorkflowFilter {
-    pub status: Option<WorkflowStatus>,
-    pub tracking_issue_id: Option<IssueId>,
-    pub active_issue_id: Option<IssueId>,
-    pub associated_issue_id: Option<IssueId>,
-}
-
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
@@ -282,13 +267,6 @@ pub enum StoreError {
     InvalidAuthToken,
     #[error("A document already exists at this path")]
     DocumentPathConflict,
-    #[error("Workflow not found: {0}")]
-    WorkflowNotFound(WorkflowId),
-    #[error("Issue {issue_id} is already associated with workflow {existing_workflow_id}")]
-    ChildIssueAlreadyInWorkflow {
-        issue_id: IssueId,
-        existing_workflow_id: WorkflowId,
-    },
 }
 
 /// Trait for read-only store operations: queries and lookups.
@@ -631,32 +609,6 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
-    // ---- Workflow (read-only) ----
-
-    /// Retrieves a workflow by its WorkflowId.
-    ///
-    /// Returns `StoreError::WorkflowNotFound` if no workflow with the given
-    /// id exists.
-    async fn get_workflow(
-        &self,
-        workflow_id: &WorkflowId,
-    ) -> Result<Versioned<Workflow>, StoreError>;
-
-    /// Lists workflows matching the provided filter. All set filter fields
-    /// are ANDed together; an empty filter returns every workflow.
-    async fn list_workflows(
-        &self,
-        filter: &WorkflowFilter,
-    ) -> Result<Vec<Versioned<Workflow>>, StoreError>;
-
-    /// Looks up the workflow that contains the given child issue via the
-    /// `workflow_issues` reverse index. Returns `Ok(None)` if the issue is
-    /// not associated with any workflow.
-    async fn find_workflow_by_issue_id(
-        &self,
-        issue_id: &IssueId,
-    ) -> Result<Option<Versioned<Workflow>>, StoreError>;
-
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
@@ -877,33 +829,6 @@ pub trait Store: ReadOnlyStore {
         &self,
         id: &ConversationId,
         data: Vec<u8>,
-    ) -> Result<(), StoreError>;
-
-    // ---- Workflow mutations ----
-
-    /// Inserts or updates a workflow. The workflow's id (carried on the
-    /// domain object) is used as the storage key; a new version is appended
-    /// each time the same workflow is upserted. Returns the new version
-    /// number.
-    async fn upsert_workflow(
-        &self,
-        workflow: Workflow,
-        actor: &ActorRef,
-    ) -> Result<VersionNumber, StoreError>;
-
-    /// Adds a row to the `workflow_issues` reverse index, recording that the
-    /// given issue was created by the given workflow while it was in
-    /// `state_id`. Each `issue_id` may be associated with at most one workflow.
-    ///
-    /// Re-inserting the same `(workflow_id, issue_id)` pair is idempotent.
-    /// Inserting an `issue_id` already owned by a *different* workflow returns
-    /// `StoreError::ChildIssueAlreadyInWorkflow` and does not mutate state.
-    /// Returns `StoreError::WorkflowNotFound` if the workflow does not exist.
-    async fn insert_workflow_issue(
-        &self,
-        workflow_id: &WorkflowId,
-        issue_id: &IssueId,
-        state_id: &str,
     ) -> Result<(), StoreError>;
 
     /// Adds a session to the store.
