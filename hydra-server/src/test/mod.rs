@@ -1,5 +1,6 @@
 pub(crate) mod agents;
 mod auth;
+mod chat_lifecycle;
 pub(crate) mod common;
 mod conversations;
 mod device_flow;
