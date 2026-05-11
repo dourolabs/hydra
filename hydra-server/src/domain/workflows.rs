@@ -75,7 +75,7 @@ pub enum TemplateError {
 /// The engine constructs this from the active workflow's current state and
 /// passes it to [`render_template`]. Fields are owned strings so the renderer
 /// can produce results without lifetime gymnastics.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TemplateScope {
     pub workflow_id: String,
     pub workflow_name: String,
