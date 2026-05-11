@@ -1322,7 +1322,6 @@ mod tests {
                 Conversation {
                     title: None,
                     agent_name: None,
-                    active_session_id: None,
                     status: ConversationStatus::Active,
                     creator: Username::from("creator"),
                     session_settings: crate::domain::issues::SessionSettings::default(),
@@ -1402,7 +1401,6 @@ mod tests {
                 Conversation {
                     title: None,
                     agent_name: None,
-                    active_session_id: None,
                     status: ConversationStatus::Active,
                     creator: Username::from("creator"),
                     session_settings: settings,
