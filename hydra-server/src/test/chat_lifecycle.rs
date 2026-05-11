@@ -640,6 +640,372 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
+-> anyhow::Result<()> {
+    // Regression guard for the close/resume flow:
+    //   1. The catch-up sent to a freshly-spawned worker after /resume must
+    //      include the full prior conversation history (user messages and
+    //      assistant replies) so the agent can reconstruct context.
+    //   2. After the new worker re-attaches, the server must forward ONLY
+    //      the next new user message — not replay msg1/msg2/msg3 — so the
+    //      assistant does not generate redundant replies for earlier turns.
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let msg1 = "My name is Alice. What's 2+2?";
+    let msg2 = "I'm a software engineer. What's 3+3?";
+    let msg3 = "I work on Rust projects. What's 4+4?";
+    let msg4 = "What's my name and what do I work on?";
+
+    // Phase 1: create the conversation with msg1; this also creates the
+    // initial interactive session.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some(msg1.to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Phase 2: connect fake-worker #1 and exchange three full turns.
+    let mut ws1 = connect_relay(&server.base_url(), &initial_session_id).await?;
+    let catch_up = worker_handshake(
+        &mut ws1,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+    assert_eq!(
+        catch_up.events.len(),
+        1,
+        "fresh worker should see msg1 in the initial catch-up"
+    );
+    assert!(
+        matches!(
+            &catch_up.events[0],
+            ConversationEvent::UserMessage { content, .. } if content == msg1
+        ),
+        "first catch-up event should be msg1, got {:?}",
+        catch_up.events[0]
+    );
+
+    send_worker_message(
+        &mut ws1,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "reply 1".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+
+    // Turn 2: client sends msg2; verify the relay forwards it to worker #1.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: msg2.to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+    let forwarded = drain_server_messages(&mut ws1, Duration::from_secs(2)).await?;
+    assert!(
+        forwarded.iter().any(|m| matches!(
+            m,
+            ServerMessage::Event { event: ConversationEvent::UserMessage { content, .. } }
+                if content == msg2
+        )),
+        "worker #1 should receive msg2 via the relay, got {forwarded:?}"
+    );
+    send_worker_message(
+        &mut ws1,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "reply 2".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+
+    // Turn 3: client sends msg3; verify the relay forwards it to worker #1.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: msg3.to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+    let forwarded = drain_server_messages(&mut ws1, Duration::from_secs(2)).await?;
+    assert!(
+        forwarded.iter().any(|m| matches!(
+            m,
+            ServerMessage::Event { event: ConversationEvent::UserMessage { content, .. } }
+                if content == msg3
+        )),
+        "worker #1 should receive msg3 via the relay, got {forwarded:?}"
+    );
+    send_worker_message(
+        &mut ws1,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "reply 3".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+
+    // Phase 3: suspend worker #1 (Suspending + SessionStateUpload), close the
+    // WS, and wait for the conversation to settle into Idle.
+    send_worker_message(
+        &mut ws1,
+        WorkerMessage::Event {
+            event: ConversationEvent::Suspending {
+                reason: "idle_timeout".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws1,
+        WorkerMessage::SessionStateUpload {
+            data: b"claude-session-history".to_vec(),
+        },
+    )
+    .await?;
+    ws1.send(tungstenite::Message::Close(None)).await?;
+    drop(ws1);
+
+    wait_for_status(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        ConversationStatus::Idle,
+    )
+    .await?;
+
+    // Phase 4: explicitly /close the conversation (the "End Chat" path).
+    let closed: Conversation = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/close",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(closed.status, ConversationStatus::Closed);
+    let events_after_close: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        matches!(
+            events_after_close.last(),
+            Some(ConversationEvent::Closed { .. })
+        ),
+        "Closed event should be appended by /close, got {events_after_close:?}"
+    );
+
+    // Phase 5: /resume; a new session is created and a Resumed event is
+    // appended.
+    let resumed: Conversation = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/resume",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(resumed.status, ConversationStatus::Active);
+    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    assert_ne!(
+        new_session_id, initial_session_id,
+        "resume must create a brand-new session"
+    );
+
+    // Phase 6: connect fake-worker #2 and handshake as Fresh with no
+    // resume_from_event_index — the server must return the full prior event
+    // log so the new worker can reconstruct context.
+    let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
+    let catch_up2 = worker_handshake(
+        &mut ws2,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+
+    // History-tracked assertion: full prior log, in insertion order.
+    // Expected sequence: msg1, reply1, msg2, reply2, msg3, reply3, Suspending,
+    // Closed, Resumed = 9 events.
+    assert_eq!(
+        catch_up2.events.len(),
+        9,
+        "catch-up should contain 3 user + 3 assistant + Suspending + Closed + \
+         Resumed = 9 events, got {:?}",
+        catch_up2.events
+    );
+    match &catch_up2.events[0] {
+        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg1),
+        other => panic!("event[0] should be msg1 UserMessage, got {other:?}"),
+    }
+    match &catch_up2.events[1] {
+        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 1"),
+        other => panic!("event[1] should be reply 1 AssistantMessage, got {other:?}"),
+    }
+    match &catch_up2.events[2] {
+        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg2),
+        other => panic!("event[2] should be msg2 UserMessage, got {other:?}"),
+    }
+    match &catch_up2.events[3] {
+        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 2"),
+        other => panic!("event[3] should be reply 2 AssistantMessage, got {other:?}"),
+    }
+    match &catch_up2.events[4] {
+        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg3),
+        other => panic!("event[4] should be msg3 UserMessage, got {other:?}"),
+    }
+    match &catch_up2.events[5] {
+        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 3"),
+        other => panic!("event[5] should be reply 3 AssistantMessage, got {other:?}"),
+    }
+    assert!(
+        matches!(catch_up2.events[6], ConversationEvent::Suspending { .. }),
+        "event[6] should be Suspending, got {:?}",
+        catch_up2.events[6]
+    );
+    assert!(
+        matches!(catch_up2.events[7], ConversationEvent::Closed { .. }),
+        "event[7] should be Closed, got {:?}",
+        catch_up2.events[7]
+    );
+    assert!(
+        matches!(catch_up2.events[8], ConversationEvent::Resumed { .. }),
+        "event[8] should be Resumed, got {:?}",
+        catch_up2.events[8]
+    );
+
+    // Phase 7: send msg4 and verify the resumed relay forwards ONLY this new
+    // message — not a replay of msg1/msg2/msg3.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: msg4.to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let received_after_resume = drain_server_messages(&mut ws2, Duration::from_millis(500)).await?;
+    let event_forwards: Vec<&ConversationEvent> = received_after_resume
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Event { event } => Some(event),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        event_forwards.len(),
+        1,
+        "exactly one event should be forwarded to worker #2 after resume; \
+         a re-broadcast of msg1/2/3 would show up here. Got {event_forwards:?}"
+    );
+    match event_forwards[0] {
+        ConversationEvent::UserMessage { content, .. } => assert_eq!(
+            content, msg4,
+            "the only forwarded event must be msg4, not a replay"
+        ),
+        other => panic!("forwarded event must be msg4 UserMessage, got {other:?}"),
+    }
+
+    // Final cross-check via GET /events: exactly 4 user messages, 3 assistant
+    // messages, and one each of Suspending/Closed/Resumed — no duplicates.
+    let final_events: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let user_messages: Vec<&str> = final_events
+        .iter()
+        .filter_map(|e| match e {
+            ConversationEvent::UserMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        user_messages,
+        vec![msg1, msg2, msg3, msg4],
+        "exactly 4 user messages in insertion order, no duplicates"
+    );
+    let assistant_messages: Vec<&str> = final_events
+        .iter()
+        .filter_map(|e| match e {
+            ConversationEvent::AssistantMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        assistant_messages,
+        vec!["reply 1", "reply 2", "reply 3"],
+        "exactly 3 assistant messages in insertion order, no duplicates"
+    );
+    let suspending_count = final_events
+        .iter()
+        .filter(|e| matches!(e, ConversationEvent::Suspending { .. }))
+        .count();
+    let closed_count = final_events
+        .iter()
+        .filter(|e| matches!(e, ConversationEvent::Closed { .. }))
+        .count();
+    let resumed_count = final_events
+        .iter()
+        .filter(|e| matches!(e, ConversationEvent::Resumed { .. }))
+        .count();
+    assert_eq!(
+        (suspending_count, closed_count, resumed_count),
+        (1, 1, 1),
+        "exactly one Suspending, one Closed, one Resumed event in the final \
+         history; got Suspending={suspending_count}, Closed={closed_count}, \
+         Resumed={resumed_count}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn worker_disconnect_without_suspending_still_marks_conversation_idle() -> anyhow::Result<()>
 {
     // The relay handler defensively marks an Active conversation Idle if the
