@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Panel, Spinner, Tabs } from "@hydra/ui";
 import type { Conversation, ConversationEvent } from "@hydra/api";
@@ -11,44 +11,6 @@ import { IssueSettings } from "../features/issues/IssueSettings";
 import { formatTimestamp } from "../utils/time";
 import { ApiError, apiClient } from "../api/client";
 import styles from "./ChatPage.module.css";
-
-function NewChatPage() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [creating, setCreating] = useState(false);
-
-  const createMutation = useMutation({
-    mutationFn: (message: string) =>
-      apiClient.createConversation({ message }),
-    onSuccess: (conversation: Conversation) => {
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      navigate(`/chat/${conversation.conversation_id}`, { replace: true });
-    },
-    onSettled: () => setCreating(false),
-  });
-
-  const handleSend = useCallback(
-    (content: string) => {
-      if (creating) return;
-      setCreating(true);
-      createMutation.mutate(content);
-    },
-    [creating, createMutation],
-  );
-
-  return (
-    <div className={styles.chatLayout}>
-      <div className={styles.newHeader}>
-        <button className={styles.back} onClick={() => navigate("/chat")}>
-          &larr; Chat
-        </button>
-        <h2 className={styles.title}>New conversation</h2>
-      </div>
-      <ChatMessageList events={[]} />
-      <ChatInput onSend={handleSend} disabled={creating} />
-    </div>
-  );
-}
 
 const TABS = [
   { id: "chat", label: "Chat" },
@@ -204,10 +166,5 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
 
 export function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-
-  if (conversationId === "new") {
-    return <NewChatPage />;
-  }
-
   return <ExistingChatPage conversationId={conversationId ?? ""} />;
 }
