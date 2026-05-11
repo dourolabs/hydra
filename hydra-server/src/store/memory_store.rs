@@ -5,8 +5,10 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog,
+    WorkflowFilter,
 };
 use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::workflows::Workflow;
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -27,7 +29,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned,
+    PatchId, RepoName, SessionId, VersionNumber, Versioned, WorkflowId,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -79,6 +81,10 @@ pub struct MemoryStore {
     conversation_events: DashMap<ConversationId, Vec<Versioned<ConversationEvent>>>,
     /// Maps conversation IDs to their session state blobs
     conversation_session_state: DashMap<ConversationId, Vec<u8>>,
+    /// Maps workflow IDs to their versioned Workflow data
+    workflows: DashMap<WorkflowId, Vec<Versioned<Workflow>>>,
+    /// Reverse index from child issue IDs to the workflow that created them
+    workflow_issues: DashMap<IssueId, WorkflowId>,
 }
 
 impl MemoryStore {
@@ -105,6 +111,8 @@ impl MemoryStore {
             conversations: DashMap::new(),
             conversation_events: DashMap::new(),
             conversation_session_state: DashMap::new(),
+            workflows: DashMap::new(),
+            workflow_issues: DashMap::new(),
         }
     }
 
@@ -1584,6 +1592,83 @@ impl ReadOnlyStore for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone()))
     }
+
+    async fn get_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Versioned<Workflow>, StoreError> {
+        let entry = self
+            .workflows
+            .get(workflow_id)
+            .ok_or_else(|| StoreError::WorkflowNotFound(workflow_id.clone()))?;
+        let mut versioned = Self::latest_versioned(entry.value())
+            .ok_or_else(|| StoreError::WorkflowNotFound(workflow_id.clone()))?;
+        versioned.creation_time = entry.value()[0].timestamp;
+        Ok(versioned)
+    }
+
+    async fn list_workflows(
+        &self,
+        filter: &WorkflowFilter,
+    ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
+        let mut results: Vec<Versioned<Workflow>> = Vec::new();
+        for entry in self.workflows.iter() {
+            let Some(mut latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if let Some(expected_status) = filter.status {
+                if latest.item.status != expected_status {
+                    continue;
+                }
+            }
+            if let Some(expected_tracking) = &filter.tracking_issue_id {
+                if &latest.item.tracking_issue_id != expected_tracking {
+                    continue;
+                }
+            }
+            if let Some(expected_active) = &filter.active_issue_id {
+                if latest.item.active_issue_id.as_ref() != Some(expected_active) {
+                    continue;
+                }
+            }
+            if let Some(expected_associated) = &filter.associated_issue_id {
+                let matches = self
+                    .workflow_issues
+                    .get(expected_associated)
+                    .map(|wid| wid.value() == &latest.item.workflow_id)
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            latest.creation_time = entry.value()[0].timestamp;
+            results.push(latest);
+        }
+        results.sort_by(|a, b| {
+            b.timestamp
+                .cmp(&a.timestamp)
+                .then_with(|| a.item.workflow_id.as_ref().cmp(b.item.workflow_id.as_ref()))
+        });
+        Ok(results)
+    }
+
+    async fn find_workflow_by_issue_id(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Option<Versioned<Workflow>>, StoreError> {
+        let Some(workflow_id) = self
+            .workflow_issues
+            .get(issue_id)
+            .map(|entry| entry.value().clone())
+        else {
+            return Ok(None);
+        };
+        match self.get_workflow(&workflow_id).await {
+            Ok(workflow) => Ok(Some(workflow)),
+            Err(StoreError::WorkflowNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
 }
 
 #[async_trait]
@@ -2297,6 +2382,44 @@ impl Store for MemoryStore {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
         self.conversation_session_state.insert(id.clone(), data);
+        Ok(())
+    }
+
+    async fn upsert_workflow(
+        &self,
+        workflow: Workflow,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let workflow_id = workflow.workflow_id.clone();
+        let mut entry = self.workflows.entry(workflow_id).or_default();
+        let versions = entry.value_mut();
+        let next_version = Self::next_version(versions);
+        let creation_time = versions
+            .first()
+            .map(|v| v.creation_time)
+            .unwrap_or_else(Utc::now);
+        let now = Utc::now();
+        versions.push(Versioned::with_actor(
+            workflow,
+            next_version,
+            now,
+            actor.clone(),
+            creation_time,
+        ));
+        Ok(next_version)
+    }
+
+    async fn insert_workflow_issue(
+        &self,
+        workflow_id: &WorkflowId,
+        issue_id: &IssueId,
+        _state_id: &str,
+    ) -> Result<(), StoreError> {
+        if !self.workflows.contains_key(workflow_id) {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
+        self.workflow_issues
+            .insert(issue_id.clone(), workflow_id.clone());
         Ok(())
     }
 }
@@ -7642,5 +7765,401 @@ mod tests {
         let store = MemoryStore::new();
         let summaries = store.get_conversation_event_summaries(&[]).await.unwrap();
         assert!(summaries.is_empty());
+    }
+
+    // ---- Workflow tests ----
+
+    mod workflow_tests {
+        use super::*;
+        use crate::domain::workflows::{
+            StateEntryAction, Workflow, WorkflowState, WorkflowStatus, WorkflowTemplate,
+        };
+        use hydra_common::WorkflowId;
+        use hydra_common::api::v1::issues::IssueStatus;
+
+        fn sample_template() -> WorkflowTemplate {
+            WorkflowTemplate::new(
+                "Test".to_string(),
+                String::new(),
+                vec![],
+                vec![WorkflowState::new(
+                    "done".to_string(),
+                    "Done".to_string(),
+                    true,
+                    StateEntryAction::Noop,
+                    Some(IssueStatus::Closed),
+                )],
+                vec![],
+                "done".to_string(),
+            )
+        }
+
+        fn workflow_with(
+            workflow_id: WorkflowId,
+            tracking_issue_id: IssueId,
+            current_state: &str,
+            active_issue_id: Option<IssueId>,
+            status: WorkflowStatus,
+        ) -> Workflow {
+            Workflow::new(
+                workflow_id,
+                "/workflows/test.yaml".to_string(),
+                sample_template(),
+                tracking_issue_id,
+                current_state.to_string(),
+                HashMap::new(),
+                active_issue_id,
+                Vec::new(),
+                status,
+            )
+        }
+
+        #[tokio::test]
+        async fn upsert_and_get_workflow_round_trip() {
+            let store = MemoryStore::new();
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "done",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let version = store
+                .upsert_workflow(workflow.clone(), &test_actor())
+                .await
+                .unwrap();
+            assert_eq!(version, 1);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 1);
+            assert_eq!(fetched.item, workflow);
+        }
+
+        #[tokio::test]
+        async fn get_workflow_returns_not_found_for_missing_id() {
+            let store = MemoryStore::new();
+            let workflow_id = WorkflowId::new();
+            let err = store.get_workflow(&workflow_id).await.unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+        }
+
+        #[tokio::test]
+        async fn upsert_workflow_bumps_version_on_update() {
+            let store = MemoryStore::new();
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "develop",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let v1 = store
+                .upsert_workflow(workflow.clone(), &test_actor())
+                .await
+                .unwrap();
+
+            let mut updated = workflow.clone();
+            updated.current_state = "review".to_string();
+            let v2 = store
+                .upsert_workflow(updated.clone(), &test_actor())
+                .await
+                .unwrap();
+
+            assert_eq!(v1, 1);
+            assert_eq!(v2, 2);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 2);
+            assert_eq!(fetched.item.current_state, "review");
+            // creation_time is preserved across updates
+            assert_eq!(fetched.creation_time, fetched.creation_time);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_status() {
+            let store = MemoryStore::new();
+            let active_id = WorkflowId::new();
+            let completed_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        active_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        completed_id.clone(),
+                        IssueId::new(),
+                        "done",
+                        None,
+                        WorkflowStatus::Completed,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    status: Some(WorkflowStatus::Active),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, active_id);
+
+            let results = store
+                .list_workflows(&WorkflowFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_tracking_issue_id() {
+            let store = MemoryStore::new();
+            let target_tracking = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        target_tracking.clone(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    tracking_issue_id: Some(target_tracking.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+            assert_eq!(results[0].item.tracking_issue_id, target_tracking);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_active_issue_id() {
+            let store = MemoryStore::new();
+            let active_issue = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        Some(active_issue.clone()),
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    active_issue_id: Some(active_issue.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_associated_issue_id() {
+            let store = MemoryStore::new();
+            let associated = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            store
+                .insert_workflow_issue(&target_id, &associated, "develop")
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(associated.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+
+            // Issue with no association: returns nothing.
+            let unassociated = IssueId::new();
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(unassociated),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert!(results.is_empty());
+        }
+
+        #[tokio::test]
+        async fn find_workflow_by_issue_id_uses_reverse_index() {
+            let store = MemoryStore::new();
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            // Before inserting, lookup returns None.
+            let result = store.find_workflow_by_issue_id(&child).await.unwrap();
+            assert!(result.is_none());
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+
+            let result = store.find_workflow_by_issue_id(&child).await.unwrap();
+            let found = result.expect("workflow should be found via reverse index");
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_errors_when_workflow_missing() {
+            let store = MemoryStore::new();
+            let missing = WorkflowId::new();
+            let err = store
+                .insert_workflow_issue(&missing, &IssueId::new(), "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == missing
+            ));
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_is_idempotent() {
+            let store = MemoryStore::new();
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+            store
+                .insert_workflow_issue(&workflow_id, &child, "review")
+                .await
+                .unwrap();
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
     }
 }
