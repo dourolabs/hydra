@@ -284,6 +284,11 @@ pub enum StoreError {
     DocumentPathConflict,
     #[error("Workflow not found: {0}")]
     WorkflowNotFound(WorkflowId),
+    #[error("Issue {issue_id} is already associated with workflow {existing_workflow_id}")]
+    ChildIssueAlreadyInWorkflow {
+        issue_id: IssueId,
+        existing_workflow_id: WorkflowId,
+    },
 }
 
 /// Trait for read-only store operations: queries and lookups.
@@ -888,9 +893,11 @@ pub trait Store: ReadOnlyStore {
 
     /// Adds a row to the `workflow_issues` reverse index, recording that the
     /// given issue was created by the given workflow while it was in
-    /// `state_id`. Subsequent inserts with the same `(workflow_id, issue_id)`
-    /// pair are idempotent.
+    /// `state_id`. Each `issue_id` may be associated with at most one workflow.
     ///
+    /// Re-inserting the same `(workflow_id, issue_id)` pair is idempotent.
+    /// Inserting an `issue_id` already owned by a *different* workflow returns
+    /// `StoreError::ChildIssueAlreadyInWorkflow` and does not mutate state.
     /// Returns `StoreError::WorkflowNotFound` if the workflow does not exist.
     async fn insert_workflow_issue(
         &self,
