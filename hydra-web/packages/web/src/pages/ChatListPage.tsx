@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button } from "@hydra/ui";
-import type { ConversationSummary } from "@hydra/api";
+import type { Conversation, ConversationSummary } from "@hydra/api";
+import { apiClient } from "../api/client";
 import { useConversations } from "../features/chat/useConversations";
 import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
@@ -16,7 +18,16 @@ function conversationTitle(c: ConversationSummary): string {
 
 export function ChatListPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data, isLoading, error, refetch } = useConversations();
+
+  const createMutation = useMutation({
+    mutationFn: () => apiClient.createConversation({}),
+    onSuccess: (conversation: Conversation) => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      navigate(`/chat/${conversation.conversation_id}`);
+    },
+  });
 
   const sorted = useMemo(() => {
     if (!data) return [];
@@ -29,10 +40,21 @@ export function ChatListPage() {
     <div className={styles.page}>
       <div className={styles.headerRow}>
         <h2 className={styles.title}>Chat</h2>
-        <Button variant="primary" size="sm" onClick={() => navigate("/chat/new")}>
-          New Chat
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => createMutation.mutate()}
+          disabled={createMutation.isPending}
+        >
+          {createMutation.isPending ? "Creating…" : "New Chat"}
         </Button>
       </div>
+
+      {createMutation.error && (
+        <ErrorState
+          message={`Failed to create conversation: ${createMutation.error.message}`}
+        />
+      )}
 
       {isLoading && <LoadingState />}
 

@@ -13,23 +13,6 @@
   }
 }
 
-.newHeader {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.back {
-  composes: back from "../features/chat/chat-shared.module.css";
-}
-
-.title {
-  composes: title from "../features/chat/chat-shared.module.css";
-}
-
 .center {
   composes: center from "./page.module.css";
   align-items: center;
