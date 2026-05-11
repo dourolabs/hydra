@@ -68,5 +68,8 @@ CREATE TABLE IF NOT EXISTS metis.workflow_issues (
     issue_id TEXT NOT NULL,
     state_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (issue_id)
+    PRIMARY KEY (workflow_id, issue_id)
 );
+
+CREATE INDEX workflow_issues_issue_id_idx
+    ON metis.workflow_issues (issue_id);

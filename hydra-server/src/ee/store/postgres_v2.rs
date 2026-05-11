@@ -4088,7 +4088,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(w2.created_at) FROM {TABLE_WORKFLOWS_V2} w2 WHERE w2.id = w.id) AS creation_time \
              FROM {TABLE_WORKFLOW_ISSUES} wi \
              JOIN {TABLE_WORKFLOWS_V2} w ON w.id = wi.workflow_id AND w.is_latest = true \
-             WHERE wi.issue_id = $1"
+             WHERE wi.issue_id = $1 \
+             LIMIT 1"
         );
         let row = sqlx::query_as::<_, WorkflowRow>(&query)
             .bind(issue_id.as_ref())
@@ -5237,53 +5238,35 @@ impl Store for PostgresStoreV2 {
         issue_id: &IssueId,
         state_id: &str,
     ) -> Result<(), StoreError> {
-        // Atomically: insert only if a latest workflow row exists for $1, and
-        // the issue_id is not already owned by some other workflow. The CTE
-        // makes the INSERT contingent on `is_latest = true` and rejects the
-        // row via `ON CONFLICT (issue_id) DO NOTHING` if a row already exists
-        // for this issue. A trailing SELECT reports whether the INSERT
-        // landed and, if not, which workflow currently owns the issue — so
-        // the caller can distinguish `Ok(())` (idempotent), `WorkflowNotFound`
-        // (no latest row), and `ChildIssueAlreadyInWorkflow` (different
-        // workflow) without a follow-up round-trip.
+        // Atomically: insert only if a latest workflow row exists for $1.
+        // The CTE lets us distinguish "workflow missing" from "row already
+        // present" — the second `EXISTS` reports rows preexisting from a
+        // prior call that succeeded against a still-latest workflow.
         let query = format!(
             "WITH inserted AS ( \
                  INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
                  SELECT $1, $2, $3 \
                  FROM {TABLE_WORKFLOWS_V2} \
                  WHERE id = $1 AND is_latest = true \
-                 ON CONFLICT (issue_id) DO NOTHING \
+                 ON CONFLICT (workflow_id, issue_id) DO NOTHING \
                  RETURNING 1 \
              ) \
              SELECT \
                  EXISTS(SELECT 1 FROM inserted) AS inserted, \
-                 (SELECT workflow_id FROM {TABLE_WORKFLOW_ISSUES} WHERE issue_id = $2) \
-                     AS existing_workflow_id"
+                 EXISTS(SELECT 1 FROM {TABLE_WORKFLOW_ISSUES} \
+                        WHERE workflow_id = $1 AND issue_id = $2) AS already_present"
         );
-        let (inserted, existing_workflow_id): (bool, Option<String>) =
-            sqlx::query_as::<_, (bool, Option<String>)>(&query)
-                .bind(workflow_id.as_ref())
-                .bind(issue_id.as_ref())
-                .bind(state_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        if inserted {
-            return Ok(());
+        let (inserted, already_present): (bool, bool) = sqlx::query_as::<_, (bool, bool)>(&query)
+            .bind(workflow_id.as_ref())
+            .bind(issue_id.as_ref())
+            .bind(state_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        if !inserted && !already_present {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
         }
-        if let Some(existing) = existing_workflow_id {
-            if existing == workflow_id.as_ref() {
-                return Ok(());
-            }
-            let existing_workflow_id = existing.parse::<WorkflowId>().map_err(|err| {
-                StoreError::Internal(format!("invalid workflow id stored in database: {err}"))
-            })?;
-            return Err(StoreError::ChildIssueAlreadyInWorkflow {
-                issue_id: issue_id.clone(),
-                existing_workflow_id,
-            });
-        }
-        Err(StoreError::WorkflowNotFound(workflow_id.clone()))
+        Ok(())
     }
 }
 
@@ -8826,7 +8809,7 @@ mod tests {
 
         #[sqlx::test(migrations = "./migrations")]
         #[ignore]
-        async fn insert_workflow_issue_is_idempotent_for_same_workflow(pool: PgStorePool) {
+        async fn insert_workflow_issue_is_idempotent(pool: PgStorePool) {
             let store = PostgresStoreV2::new(pool);
             let workflow_id = WorkflowId::new();
             let child = IssueId::new();
@@ -8906,61 +8889,6 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(count, 0, "no dangling workflow_issues row should be left");
-        }
-
-        #[sqlx::test(migrations = "./migrations")]
-        #[ignore]
-        async fn insert_workflow_issue_rejects_different_workflow_for_same_issue(
-            pool: PgStorePool,
-        ) {
-            let store = PostgresStoreV2::new(pool);
-            let first_workflow_id = WorkflowId::new();
-            let second_workflow_id = WorkflowId::new();
-            let child = IssueId::new();
-
-            for workflow_id in [&first_workflow_id, &second_workflow_id] {
-                store
-                    .upsert_workflow(
-                        workflow_with(
-                            workflow_id.clone(),
-                            IssueId::new(),
-                            "develop",
-                            None,
-                            WorkflowStatus::Active,
-                        ),
-                        &ActorRef::test(),
-                    )
-                    .await
-                    .unwrap();
-            }
-
-            store
-                .insert_workflow_issue(&first_workflow_id, &child, "develop")
-                .await
-                .unwrap();
-
-            let err = store
-                .insert_workflow_issue(&second_workflow_id, &child, "develop")
-                .await
-                .unwrap_err();
-            match err {
-                StoreError::ChildIssueAlreadyInWorkflow {
-                    issue_id,
-                    existing_workflow_id,
-                } => {
-                    assert_eq!(issue_id, child);
-                    assert_eq!(existing_workflow_id, first_workflow_id);
-                }
-                other => panic!("unexpected error: {other:?}"),
-            }
-
-            // The original mapping must remain intact.
-            let found = store
-                .find_workflow_by_issue_id(&child)
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(found.item.workflow_id, first_workflow_id);
         }
 
         /// Returns a `Workflow` populated across every field that lands in the
