@@ -15,13 +15,14 @@ use axum::{
     extract::{Path, Query, State},
 };
 use hydra_common::{
-    IssueId, Versioned, WorkflowId,
+    Versioned, WorkflowId,
     api::v1::{
         ApiError,
-        workflows::{StartWorkflowRequest, TransitionWorkflowRequest, Workflow, WorkflowStatus},
+        workflows::{
+            ListWorkflowsQuery, StartWorkflowRequest, TransitionWorkflowRequest, Workflow,
+        },
     },
 };
-use serde::Deserialize;
 use tracing::{error, info};
 
 use crate::{
@@ -32,18 +33,6 @@ use crate::{
     },
     store::{StoreError, WorkflowFilter},
 };
-
-/// Query parameters for `GET /v1/workflows`.
-#[derive(Debug, Default, Deserialize)]
-pub struct ListWorkflowsQuery {
-    #[serde(default)]
-    pub status: Option<WorkflowStatus>,
-    /// Filter by any issue associated with the workflow (matches the
-    /// `workflow_issues` reverse index — i.e., issues created by any state of
-    /// the workflow). The CLI's `--issue` flag maps here.
-    #[serde(default)]
-    pub issue_id: Option<IssueId>,
-}
 
 /// POST /v1/workflows — start a new workflow.
 pub async fn create_workflow(
@@ -280,6 +269,7 @@ fn map_cancel_workflow_error(err: CancelWorkflowError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hydra_common::api::v1::workflows::WorkflowStatus;
 
     #[test]
     fn map_store_error_workflow_not_found_returns_404() {
