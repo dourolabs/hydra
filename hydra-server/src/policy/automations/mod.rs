@@ -9,6 +9,7 @@ mod review_helpers;
 pub mod spawn_sessions;
 pub mod start_created_sessions;
 pub mod sync_review_request_issues;
+pub mod workflow_engine;
 
 pub use cascade_issue_status::CascadeIssueStatusAutomation;
 pub use close_merge_request_issues::CloseMergeRequestIssuesAutomation;
@@ -19,3 +20,4 @@ pub use patch_workflow::PatchWorkflowAutomation;
 pub use spawn_sessions::SpawnSessionsAutomation;
 pub use start_created_sessions::StartCreatedSessionsAutomation;
 pub use sync_review_request_issues::SyncReviewRequestIssuesAutomation;
+pub use workflow_engine::WorkflowEngineAutomation;

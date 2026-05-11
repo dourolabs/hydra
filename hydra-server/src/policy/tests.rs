@@ -835,7 +835,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 5 restrictions and 7 automations are active.
+/// behavior exactly — all built-in restrictions and automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -844,7 +844,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 5);
-    assert_eq!(engine.automation_count(), 10);
+    assert_eq!(engine.automation_count(), 11);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -867,12 +867,36 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("inbox_label".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
+                PolicyEntry::Name("workflow_engine".to_string()),
             ],
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
-    assert_eq!(explicit_engine.automation_count(), 10);
+    assert_eq!(explicit_engine.automation_count(), 11);
+}
+
+/// Confirm `workflow_engine` is in the default automations list and the
+/// registry can build it.
+#[test]
+fn default_policy_config_includes_workflow_engine() {
+    use crate::app::default_policy_config;
+    let config = default_policy_config();
+    let has_workflow_engine = config
+        .global
+        .automations
+        .iter()
+        .any(|entry| entry.name() == "workflow_engine");
+    assert!(
+        has_workflow_engine,
+        "default_policy_config() must include 'workflow_engine'"
+    );
+
+    // The registry must be able to build it (proves the factory is wired up).
+    let registry = registry::build_default_registry();
+    registry
+        .build(&config)
+        .expect("registry should build engine for default config");
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked

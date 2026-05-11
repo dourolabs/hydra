@@ -183,6 +183,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("start_created_sessions", |params| {
         Ok(Box::new(StartCreatedSessionsAutomation::new(params)?))
     });
+    registry.register_automation("workflow_engine", |params| {
+        Ok(Box::new(WorkflowEngineAutomation::new(params)?))
+    });
 
     registry
 }

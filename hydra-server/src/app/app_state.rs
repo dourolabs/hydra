@@ -42,6 +42,7 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("inbox_label".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
+                PolicyEntry::Name("workflow_engine".to_string()),
             ],
         },
     }

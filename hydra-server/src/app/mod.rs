@@ -50,7 +50,8 @@ pub(crate) use sessions::{
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
 pub use workflows::{
-    CancelWorkflowError, CreateWorkflowError, EnterStateError, TransitionWorkflowError,
+    AdvanceWorkflowError, CancelWorkflowError, CreateWorkflowError, EnterStateError,
+    TransitionWorkflowError,
 };
 
 #[derive(Debug, Clone)]

@@ -17,7 +17,7 @@ use hydra_common::{
     IssueId, RepoName, Versioned, WorkflowId, api::v1::issues::IssueStatus as ApiIssueStatus,
 };
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     domain::{
@@ -109,6 +109,21 @@ pub enum TransitionWorkflowError {
     Store {
         #[source]
         source: StoreError,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum AdvanceWorkflowError {
+    #[error("workflow store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+    #[error("failed to enter target state '{state}'")]
+    EnterState {
+        state: String,
+        #[source]
+        source: EnterStateError,
     },
 }
 
@@ -434,6 +449,154 @@ impl AppState {
             .get_workflow(workflow_id)
             .await
             .map_err(|source| CancelWorkflowError::Store { source })
+    }
+
+    /// Drive a workflow forward in response to its active child issue
+    /// reaching a terminal status.
+    ///
+    /// Looks up the first `OnChildStatus` transition out of the workflow's
+    /// current state whose status matches `child_status`, performs the
+    /// transition (history, state entry, terminal handling), and then
+    /// recursively follows `Auto` transitions out of any `Noop` state until
+    /// the workflow lands somewhere that requires an external signal.
+    ///
+    /// Returns `Ok(None)` when no matching transition is configured, which
+    /// is a normal "wait for another signal" outcome rather than an error.
+    /// Returns `Ok(Some(workflow))` with the updated record when at least
+    /// one transition fired. The caller (workflow_engine automation) is
+    /// expected to have already validated:
+    /// - the workflow is not in a terminal status,
+    /// - the issue is the workflow's current `active_issue_id`,
+    /// - `child_status.is_terminal()`.
+    pub async fn advance_workflow_from_child_status(
+        &self,
+        workflow_id: &WorkflowId,
+        child_status: IssueStatus,
+        actor: ActorRef,
+    ) -> Result<Option<Workflow>, AdvanceWorkflowError> {
+        let mut workflow = self
+            .store
+            .as_ref()
+            .get_workflow(workflow_id)
+            .await
+            .map_err(|source| AdvanceWorkflowError::Store { source })?
+            .item;
+
+        let template = workflow.template_snapshot.clone();
+        let api_status: ApiIssueStatus = child_status.into();
+        let Some(first_transition) = template.transitions.iter().find(|t| {
+            t.from == workflow.current_state
+                && matches!(
+                    &t.trigger,
+                    TransitionTrigger::OnChildStatus { status } if *status == api_status
+                )
+        }) else {
+            return Ok(None);
+        };
+        let first_transition = first_transition.clone();
+
+        // Snapshot the previous issue's progress before we mutate the
+        // workflow's active_issue_id during state entry.
+        let previous_progress = self
+            .load_previous_step_progress(workflow.active_issue_id.as_ref())
+            .await
+            .map_err(|source| AdvanceWorkflowError::Store { source })?;
+
+        let target_state = find_state(&template, &first_transition.to)
+            .expect("validated template only references known states");
+        let from_state = workflow.current_state.clone();
+        workflow.current_state = first_transition.to.clone();
+
+        self.enter_state(
+            &mut workflow,
+            target_state,
+            Some(from_state),
+            first_transition.label.clone(),
+            previous_progress,
+            actor.clone(),
+        )
+        .await
+        .map_err(|source| AdvanceWorkflowError::EnterState {
+            state: first_transition.to.clone(),
+            source,
+        })?;
+
+        // Chase Auto transitions out of Noop states until we either land
+        // somewhere that needs an external signal or hit a terminal state.
+        loop {
+            if workflow.status.is_terminal() {
+                break;
+            }
+            let current_state = find_state(&template, &workflow.current_state)
+                .expect("validated template only references known states");
+            // Auto transitions only meaningfully run after a Noop on_enter —
+            // any other entry already produced a child issue that needs to
+            // complete before we can transition again.
+            if !matches!(current_state.on_enter, StateEntryAction::Noop) {
+                break;
+            }
+            let Some(auto_transition) = template.transitions.iter().find(|t| {
+                t.from == workflow.current_state && matches!(t.trigger, TransitionTrigger::Auto)
+            }) else {
+                break;
+            };
+            let auto_transition = auto_transition.clone();
+            let next_state = find_state(&template, &auto_transition.to)
+                .expect("validated template only references known states");
+            let from_state = workflow.current_state.clone();
+            workflow.current_state = auto_transition.to.clone();
+            self.enter_state(
+                &mut workflow,
+                next_state,
+                Some(from_state),
+                auto_transition.label.clone(),
+                None,
+                actor.clone(),
+            )
+            .await
+            .map_err(|source| AdvanceWorkflowError::EnterState {
+                state: auto_transition.to.clone(),
+                source,
+            })?;
+        }
+
+        self.store
+            .upsert_workflow_with_actor(workflow.clone(), actor)
+            .await
+            .map_err(|source| AdvanceWorkflowError::Store { source })?;
+
+        let last = workflow.history.last();
+        info!(
+            workflow_id = %workflow_id,
+            from_state = last.and_then(|h| h.from_state.as_deref()).unwrap_or(""),
+            to_state = %workflow.current_state,
+            status = ?workflow.status,
+            "workflow advanced by automation"
+        );
+        // Sanity guard: if the template authored multiple `OnChildStatus`
+        // transitions with the same status leaving the same state, we use
+        // the first match (per design v3 risk #1) — log the duplication.
+        let same_status_count = template
+            .transitions
+            .iter()
+            .filter(|t| {
+                t.from == first_transition.from
+                    && matches!(
+                        &t.trigger,
+                        TransitionTrigger::OnChildStatus { status } if *status == api_status
+                    )
+            })
+            .count();
+        if same_status_count > 1 {
+            warn!(
+                workflow_id = %workflow_id,
+                state = %first_transition.from,
+                status = %api_status,
+                "multiple on_child_status transitions match; first match wins"
+            );
+        }
+
+        Ok(Some(workflow))
     }
 
     /// Execute the entry effect of a workflow's current state.
