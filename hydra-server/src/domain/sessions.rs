@@ -11,6 +11,17 @@ fn default_task_status() -> Status {
     Status::Complete
 }
 
+/// Settings that only apply when a session is running in interactive mode.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_resume_from: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     pub prompt: String,
@@ -32,10 +43,9 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interactive: bool,
+    /// Interactive-only settings. `Some` for interactive sessions, `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_id: Option<ConversationId>,
+    pub interactive: Option<InteractiveOptions>,
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,8 +76,7 @@ impl Session {
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
         mcp_config: Option<McpConfig>,
-        interactive: bool,
-        conversation_id: Option<ConversationId>,
+        interactive: Option<InteractiveOptions>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -85,7 +94,6 @@ impl Session {
             secrets,
             mcp_config,
             interactive,
-            conversation_id,
             status,
             last_message,
             error,
@@ -94,6 +102,19 @@ impl Session {
             start_time: None,
             end_time: None,
         }
+    }
+
+    /// Returns the conversation_id, if this is an interactive session attached
+    /// to a conversation.
+    pub fn conversation_id(&self) -> Option<&ConversationId> {
+        self.interactive
+            .as_ref()
+            .and_then(|opts| opts.conversation_id.as_ref())
+    }
+
+    /// Returns `true` if this is an interactive session.
+    pub fn is_interactive(&self) -> bool {
+        self.interactive.is_some()
     }
 }
 
@@ -193,6 +214,26 @@ impl From<Bundle> for api::sessions::Bundle {
     }
 }
 
+impl From<api::sessions::InteractiveOptions> for InteractiveOptions {
+    fn from(value: api::sessions::InteractiveOptions) -> Self {
+        InteractiveOptions {
+            conversation_id: value.conversation_id,
+            idle_timeout_secs: value.idle_timeout_secs,
+            conversation_resume_from: value.conversation_resume_from,
+        }
+    }
+}
+
+impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
+    fn from(value: InteractiveOptions) -> Self {
+        api::sessions::InteractiveOptions::new(
+            value.conversation_id,
+            value.idle_timeout_secs,
+            value.conversation_resume_from,
+        )
+    }
+}
+
 impl TryFrom<api::sessions::Session> for Session {
     type Error = crate::domain::task_status::UnsupportedVariantError;
 
@@ -209,8 +250,7 @@ impl TryFrom<api::sessions::Session> for Session {
             memory_limit: value.memory_limit,
             secrets: value.secrets,
             mcp_config: value.mcp_config,
-            interactive: value.interactive,
-            conversation_id: value.conversation_id,
+            interactive: value.interactive.map(Into::into),
             status: value.status.try_into()?,
             last_message: value.last_message,
             error: value.error.map(TryInto::try_into).transpose()?,
@@ -236,8 +276,7 @@ impl From<Session> for api::sessions::Session {
             value.memory_limit,
             value.secrets,
             value.mcp_config,
-            value.interactive,
-            value.conversation_id,
+            value.interactive.map(Into::into),
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
@@ -288,7 +327,6 @@ mod tests {
             Some("768Mi".to_string()),
             secrets.clone(),
             None,
-            false,
             None,
             Status::Created,
             None,
@@ -318,7 +356,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             None,
             Status::Created,
             None,

@@ -3,7 +3,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         issues::SessionSettings,
-        sessions::{Bundle, BundleSpec},
+        sessions::{Bundle, BundleSpec, InteractiveOptions},
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
@@ -174,6 +174,15 @@ impl AppState {
             }
         }
 
+        let interactive = if request.interactive {
+            Some(InteractiveOptions {
+                conversation_id: request.conversation_id.clone(),
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            })
+        } else {
+            None
+        };
         let session = Session::new(
             request.prompt,
             context,
@@ -186,8 +195,7 @@ impl AppState {
             memory_limit,
             secrets,
             None,
-            request.interactive,
-            request.conversation_id.clone(),
+            interactive,
             Status::Created,
             None,
             None,
@@ -1307,11 +1315,12 @@ mod tests {
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
         assert!(
-            !session.interactive,
+            !session.is_interactive(),
             "non-conversation session should not be interactive"
         );
         assert_eq!(
-            session.conversation_id, None,
+            session.conversation_id(),
+            None,
             "non-conversation session should have no conversation_id"
         );
 
@@ -1347,11 +1356,11 @@ mod tests {
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
         assert!(
-            session.interactive,
+            session.is_interactive(),
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.conversation_id,
+            session.conversation_id().cloned(),
             Some(conv_id),
             "conversation session should have conversation_id"
         );

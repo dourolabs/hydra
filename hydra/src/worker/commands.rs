@@ -69,6 +69,7 @@ pub trait WorkerCommands: Send + Sync {
         working_dir: &Path,
         env: &HashMap<String, String>,
         idle_timeout: Duration,
+        conversation_resume_from: Option<usize>,
     ) -> Result<String>;
 }
 
@@ -330,6 +331,7 @@ impl WorkerCommands for CodexCommands {
         _working_dir: &Path,
         _env: &HashMap<String, String>,
         _idle_timeout: Duration,
+        _conversation_resume_from: Option<usize>,
     ) -> Result<String> {
         Err(anyhow!("interactive mode is not supported for Codex"))
     }
@@ -597,6 +599,7 @@ impl WorkerCommands for ClaudeCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         idle_timeout: Duration,
+        conversation_resume_from: Option<usize>,
     ) -> Result<String> {
         super::interactive::run_interactive(
             ws_stream,
@@ -605,6 +608,7 @@ impl WorkerCommands for ClaudeCommands {
             env,
             working_dir,
             idle_timeout,
+            conversation_resume_from,
         )
         .await
         .context("interactive claude session failed")?;
@@ -645,16 +649,33 @@ impl WorkerCommands for ModelAwareCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
         idle_timeout: Duration,
+        conversation_resume_from: Option<usize>,
     ) -> Result<String> {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
-                    .run_interactive(ws_stream, session_id, model, working_dir, env, idle_timeout)
+                    .run_interactive(
+                        ws_stream,
+                        session_id,
+                        model,
+                        working_dir,
+                        env,
+                        idle_timeout,
+                        conversation_resume_from,
+                    )
                     .await
             }
             None => {
                 self.codex
-                    .run_interactive(ws_stream, session_id, model, working_dir, env, idle_timeout)
+                    .run_interactive(
+                        ws_stream,
+                        session_id,
+                        model,
+                        working_dir,
+                        env,
+                        idle_timeout,
+                        conversation_resume_from,
+                    )
                     .await
             }
         }

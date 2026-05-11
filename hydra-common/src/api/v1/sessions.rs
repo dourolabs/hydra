@@ -14,6 +14,42 @@ use std::collections::HashMap;
 /// Stored as a JSON object to remain flexible as the MCP config schema evolves.
 pub type McpConfig = Value;
 
+/// Settings that only apply when a session is running in interactive mode.
+///
+/// Present (`Some`) on an interactive session; absent (`None`) on a one-shot session.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct InteractiveOptions {
+    /// Conversation this session is attached to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
+    /// Idle timeout in seconds — the worker suspends the session after this
+    /// long without a user message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
+    /// When resuming a conversation, the event index to resume from. The worker
+    /// sends this in the WorkerConnect handshake so the server only replays
+    /// events after this index and includes session state for resumption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_resume_from: Option<usize>,
+}
+
+impl InteractiveOptions {
+    pub fn new(
+        conversation_id: Option<ConversationId>,
+        idle_timeout_secs: Option<u64>,
+        conversation_resume_from: Option<usize>,
+    ) -> Self {
+        Self {
+            conversation_id,
+            idle_timeout_secs,
+            conversation_resume_from,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -38,10 +74,9 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interactive: bool,
+    /// Interactive-only settings. `Some` for interactive sessions, `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_id: Option<ConversationId>,
+    pub interactive: Option<InteractiveOptions>,
     #[serde(default = "default_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,8 +107,7 @@ impl Session {
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
         mcp_config: Option<McpConfig>,
-        interactive: bool,
-        conversation_id: Option<ConversationId>,
+        interactive: Option<InteractiveOptions>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -95,7 +129,6 @@ impl Session {
             secrets,
             mcp_config,
             interactive,
-            conversation_id,
             status,
             last_message,
             error,
@@ -287,14 +320,13 @@ pub struct WorkerContext {
     pub build_cache: Option<BuildCacheContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interactive: bool,
+    /// Interactive-only settings. `Some` when the worker should run in
+    /// interactive mode; `None` for a one-shot session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_timeout_secs: Option<u64>,
+    pub interactive: Option<InteractiveOptions>,
 }
 
 impl WorkerContext {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         request_context: Bundle,
         prompt: String,
@@ -302,8 +334,7 @@ impl WorkerContext {
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
         mcp_config: Option<McpConfig>,
-        interactive: bool,
-        idle_timeout_secs: Option<u64>,
+        interactive: Option<InteractiveOptions>,
     ) -> Self {
         Self {
             request_context,
@@ -313,7 +344,6 @@ impl WorkerContext {
             build_cache,
             mcp_config,
             interactive,
-            idle_timeout_secs,
         }
     }
 }
@@ -698,7 +728,6 @@ mod tests {
             Some("1Gi".to_string()),
             Some(vec!["secret".to_string()]),
             None,
-            false,
             None,
             Status::Running,
             Some("last message text".to_string()),
@@ -914,7 +943,6 @@ mod tests {
             HashMap::new(),
             None,
             Some(mcp_config.clone()),
-            false,
             None,
         );
 
@@ -923,5 +951,43 @@ mod tests {
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
         assert_eq!(deserialized.mcp_config, Some(mcp_config));
+    }
+
+    #[test]
+    fn worker_context_serializes_interactive_options() {
+        let opts = InteractiveOptions::new(None, Some(600), Some(42));
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            Some(opts.clone()),
+        );
+
+        let json = serde_json::to_value(&context).unwrap();
+        let interactive = json.get("interactive").expect("interactive present");
+        assert_eq!(interactive.get("idle_timeout_secs").unwrap(), 600);
+        assert_eq!(interactive.get("conversation_resume_from").unwrap(), 42);
+
+        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.interactive, Some(opts));
+    }
+
+    #[test]
+    fn worker_context_omits_interactive_when_none() {
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(json.get("interactive").is_none());
     }
 }
