@@ -21,7 +21,7 @@ use crate::{
         sessions::{BundleSpec, Session},
         task_status::{Status, TaskError},
         users::{User, Username},
-        workflows::Workflow,
+        workflows::{Workflow, WorkflowStatus},
     },
     store::{
         ConversationEventSummary, ReadOnlyStore, Store, StoreError, TaskStatusLog, WorkflowFilter,
@@ -115,6 +115,8 @@ const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
 const TABLE_CONVERSATION_EVENTS_V2: &str = "metis.conversation_events_v2";
 const TABLE_CONVERSATION_SESSION_STATE: &str = "metis.conversation_session_state";
+const TABLE_WORKFLOWS_V2: &str = "metis.workflows_v2";
+const TABLE_WORKFLOW_ISSUES: &str = "metis.workflow_issues";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -1274,6 +1276,117 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
         })
     }
+
+    // -------------------------------------------------------------------------
+    // Workflow helpers
+    // -------------------------------------------------------------------------
+
+    async fn insert_workflow_in_tx<'e, E>(
+        executor: E,
+        version_number: VersionNumber,
+        workflow: &Workflow,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let id = &workflow.workflow_id;
+        let version_number_i64 = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for workflow '{id}'"))
+        })?;
+        let template_snapshot_json =
+            serde_json::to_value(&workflow.template_snapshot).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to serialize workflow template_snapshot: {e}"
+                ))
+            })?;
+        let context_json = serde_json::to_value(&workflow.context).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize workflow context: {e}"))
+        })?;
+        let history_json = serde_json::to_value(&workflow.history).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize workflow history: {e}"))
+        })?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_WORKFLOWS_V2} \
+             (id, version_number, template_path, template_snapshot, tracking_issue_id, \
+              current_state, context, active_issue_id, history, status, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number_i64)
+            .bind(&workflow.template_path)
+            .bind(&template_snapshot_json)
+            .bind(workflow.tracking_issue_id.as_ref())
+            .bind(&workflow.current_state)
+            .bind(&context_json)
+            .bind(workflow.active_issue_id.as_ref().map(|i| i.as_ref()))
+            .bind(&history_json)
+            .bind(workflow.status.as_str())
+            .bind(actor)
+            .execute(executor)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    fn row_to_workflow(row: &WorkflowRow) -> Result<Workflow, StoreError> {
+        let workflow_id = row.id.parse::<WorkflowId>().map_err(|err| {
+            StoreError::Internal(format!("invalid workflow id stored in database: {err}"))
+        })?;
+        let tracking_issue_id = row.tracking_issue_id.parse::<IssueId>().map_err(|err| {
+            StoreError::Internal(format!(
+                "invalid tracking_issue_id stored in database: {err}"
+            ))
+        })?;
+        let active_issue_id = row
+            .active_issue_id
+            .as_deref()
+            .map(|s| {
+                s.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!(
+                        "invalid active_issue_id stored in database: {err}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let template_snapshot =
+            serde_json::from_value(row.template_snapshot.clone()).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize workflow template_snapshot: {e}"
+                ))
+            })?;
+        let context: HashMap<String, String> = serde_json::from_value(row.context.clone())
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize workflow context: {e}"))
+            })?;
+        let history = serde_json::from_value(row.history.clone()).map_err(|e| {
+            StoreError::Internal(format!("failed to deserialize workflow history: {e}"))
+        })?;
+        let status = match row.status.as_str() {
+            "active" => WorkflowStatus::Active,
+            "completed" => WorkflowStatus::Completed,
+            "failed" => WorkflowStatus::Failed,
+            "cancelled" => WorkflowStatus::Cancelled,
+            other => {
+                return Err(StoreError::Internal(format!(
+                    "invalid workflow status in database: {other}"
+                )));
+            }
+        };
+        Ok(Workflow::new(
+            workflow_id,
+            row.template_path.clone(),
+            template_snapshot,
+            tracking_issue_id,
+            row.current_state.clone(),
+            context,
+            active_issue_id,
+            history,
+            status,
+        ))
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1434,6 +1547,26 @@ struct ConversationRow {
     status: String,
     creator: String,
     deleted: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct WorkflowRow {
+    id: String,
+    version_number: i64,
+    template_path: String,
+    template_snapshot: Value,
+    tracking_issue_id: String,
+    current_state: String,
+    context: Value,
+    active_issue_id: Option<String>,
+    history: Value,
+    status: String,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -3844,23 +3977,145 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_workflow(
         &self,
-        _workflow_id: &WorkflowId,
+        workflow_id: &WorkflowId,
     ) -> Result<Versioned<Workflow>, StoreError> {
-        unimplemented!("PostgresStoreV2::get_workflow is not yet implemented")
+        let query = format!(
+            "SELECT id, version_number, template_path, template_snapshot, tracking_issue_id, \
+             current_state, context, active_issue_id, history, status, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_WORKFLOWS_V2} WHERE id = $1) AS creation_time \
+             FROM {TABLE_WORKFLOWS_V2} \
+             WHERE id = $1 \
+             ORDER BY is_latest DESC, version_number DESC \
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, WorkflowRow>(&query)
+            .bind(workflow_id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::WorkflowNotFound(workflow_id.clone()))?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for workflow '{}'",
+                row.id
+            ))
+        })?;
+        let workflow = Self::row_to_workflow(&row)?;
+        Ok(Versioned::with_optional_actor(
+            workflow,
+            version,
+            row.created_at,
+            parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
+        ))
     }
 
     async fn list_workflows(
         &self,
-        _filter: &WorkflowFilter,
+        filter: &WorkflowFilter,
     ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
-        unimplemented!("PostgresStoreV2::list_workflows is not yet implemented")
+        let mut sql = format!(
+            "SELECT w.id, w.version_number, w.template_path, w.template_snapshot, w.tracking_issue_id, \
+             w.current_state, w.context, w.active_issue_id, w.history, w.status, w.actor, w.created_at, w.updated_at, \
+             (SELECT MIN(w2.created_at) FROM {TABLE_WORKFLOWS_V2} w2 WHERE w2.id = w.id) AS creation_time \
+             FROM {TABLE_WORKFLOWS_V2} w"
+        );
+        let mut predicates: Vec<String> = vec!["w.is_latest = true".to_string()];
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(status) = filter.status {
+            predicates.push(format!("w.status = ${}", bindings.len() + 1));
+            bindings.push(status.as_str().to_string());
+        }
+        if let Some(tracking) = &filter.tracking_issue_id {
+            predicates.push(format!("w.tracking_issue_id = ${}", bindings.len() + 1));
+            bindings.push(tracking.as_ref().to_string());
+        }
+        if let Some(active) = &filter.active_issue_id {
+            predicates.push(format!("w.active_issue_id = ${}", bindings.len() + 1));
+            bindings.push(active.as_ref().to_string());
+        }
+        if let Some(associated) = &filter.associated_issue_id {
+            predicates.push(format!(
+                "EXISTS (SELECT 1 FROM {TABLE_WORKFLOW_ISSUES} wi WHERE wi.workflow_id = w.id AND wi.issue_id = ${})",
+                bindings.len() + 1,
+            ));
+            bindings.push(associated.as_ref().to_string());
+        }
+
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+        sql.push_str(" ORDER BY w.created_at DESC, w.id ASC");
+
+        let mut query_builder = sqlx::query_as::<_, WorkflowRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for workflow '{}'",
+                    row.id
+                ))
+            })?;
+            let workflow = Self::row_to_workflow(&row)?;
+            let versioned = Versioned::with_optional_actor(
+                workflow,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
+            );
+            results.push(versioned);
+        }
+        Ok(results)
     }
 
     async fn find_workflow_by_issue_id(
         &self,
-        _issue_id: &IssueId,
+        issue_id: &IssueId,
     ) -> Result<Option<Versioned<Workflow>>, StoreError> {
-        unimplemented!("PostgresStoreV2::find_workflow_by_issue_id is not yet implemented")
+        let query = format!(
+            "SELECT w.id, w.version_number, w.template_path, w.template_snapshot, w.tracking_issue_id, \
+             w.current_state, w.context, w.active_issue_id, w.history, w.status, w.actor, w.created_at, w.updated_at, \
+             (SELECT MIN(w2.created_at) FROM {TABLE_WORKFLOWS_V2} w2 WHERE w2.id = w.id) AS creation_time \
+             FROM {TABLE_WORKFLOW_ISSUES} wi \
+             JOIN {TABLE_WORKFLOWS_V2} w ON w.id = wi.workflow_id AND w.is_latest = true \
+             WHERE wi.issue_id = $1 \
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, WorkflowRow>(&query)
+            .bind(issue_id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            None => Ok(None),
+            Some(row) => {
+                let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid version number stored for workflow '{}'",
+                        row.id
+                    ))
+                })?;
+                let workflow = Self::row_to_workflow(&row)?;
+                Ok(Some(Versioned::with_optional_actor(
+                    workflow,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                    row.creation_time.unwrap_or(row.created_at),
+                )))
+            }
+        }
     }
 }
 
@@ -4941,19 +5196,72 @@ impl Store for PostgresStoreV2 {
 
     async fn upsert_workflow(
         &self,
-        _workflow: Workflow,
-        _actor: &ActorRef,
+        workflow: Workflow,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        unimplemented!("PostgresStoreV2::upsert_workflow is not yet implemented")
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let id_str = workflow.workflow_id.as_ref().to_string();
+        let lock_query = format!(
+            "SELECT version_number FROM {TABLE_WORKFLOWS_V2} \
+             WHERE id = $1 \
+             ORDER BY version_number DESC \
+             LIMIT 1 \
+             FOR UPDATE"
+        );
+        let latest_version: Option<i64> = sqlx::query_scalar(&lock_query)
+            .bind(&id_str)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        let next_version_i64 = latest_version.unwrap_or(0).checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!(
+                "version number overflow for workflow '{}'",
+                workflow.workflow_id
+            ))
+        })?;
+        let next_version = VersionNumber::try_from(next_version_i64).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid next version for workflow '{}'",
+                workflow.workflow_id
+            ))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        Self::insert_workflow_in_tx(&mut *tx, next_version, &workflow, Some(&actor_json)).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(next_version)
     }
 
     async fn insert_workflow_issue(
         &self,
-        _workflow_id: &WorkflowId,
-        _issue_id: &IssueId,
-        _state_id: &str,
+        workflow_id: &WorkflowId,
+        issue_id: &IssueId,
+        state_id: &str,
     ) -> Result<(), StoreError> {
-        unimplemented!("PostgresStoreV2::insert_workflow_issue is not yet implemented")
+        let exists_query =
+            format!("SELECT EXISTS(SELECT 1 FROM {TABLE_WORKFLOWS_V2} WHERE id = $1 LIMIT 1)");
+        let exists: bool = sqlx::query_scalar(&exists_query)
+            .bind(workflow_id.as_ref())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        if !exists {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
+
+        let query = format!(
+            "INSERT INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (workflow_id, issue_id) DO NOTHING"
+        );
+        sqlx::query(&query)
+            .bind(workflow_id.as_ref())
+            .bind(issue_id.as_ref())
+            .bind(state_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
     }
 }
 
@@ -8125,5 +8433,591 @@ mod tests {
             .unwrap();
         let ids_after: Vec<_> = list_after.iter().map(|(id, _)| id.clone()).collect();
         assert!(!ids_after.contains(&conv_id));
+    }
+
+    // -------------------------------------------------------------------------
+    // Workflow tests (parity with the memory store; gated behind a real
+    // Postgres instance via #[sqlx::test] like the rest of this module).
+    // -------------------------------------------------------------------------
+
+    mod workflow_tests {
+        use super::*;
+        use crate::domain::workflows::{
+            ContextParam, SessionSettingsTemplate, StateEntryAction, TransitionTrigger, Workflow,
+            WorkflowHistoryEntry, WorkflowState, WorkflowStatus, WorkflowTemplate,
+            WorkflowTransition,
+        };
+        use chrono::{TimeZone, Utc};
+        use hydra_common::WorkflowId;
+        use hydra_common::api::v1::form::{Action, ActionStyle, Effect, Field, Form, Input};
+        use hydra_common::api::v1::issues::{IssueStatus, IssueType};
+
+        fn sample_template() -> WorkflowTemplate {
+            WorkflowTemplate::new(
+                "Test".to_string(),
+                String::new(),
+                vec![],
+                vec![WorkflowState::new(
+                    "done".to_string(),
+                    "Done".to_string(),
+                    true,
+                    StateEntryAction::Noop,
+                    Some(IssueStatus::Closed),
+                )],
+                vec![],
+                "done".to_string(),
+            )
+        }
+
+        fn workflow_with(
+            workflow_id: WorkflowId,
+            tracking_issue_id: IssueId,
+            current_state: &str,
+            active_issue_id: Option<IssueId>,
+            status: WorkflowStatus,
+        ) -> Workflow {
+            Workflow::new(
+                workflow_id,
+                "/workflows/test.yaml".to_string(),
+                sample_template(),
+                tracking_issue_id,
+                current_state.to_string(),
+                HashMap::new(),
+                active_issue_id,
+                Vec::new(),
+                status,
+            )
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn upsert_and_get_workflow_round_trip(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "done",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let version = store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            assert_eq!(version, 1);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 1);
+            assert_eq!(fetched.item, workflow);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn get_workflow_returns_not_found_for_missing_id(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let err = store.get_workflow(&workflow_id).await.unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn upsert_workflow_bumps_version_on_update(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "develop",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let v1 = store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            let mut updated = workflow.clone();
+            updated.current_state = "review".to_string();
+            let v2 = store
+                .upsert_workflow(updated.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            assert_eq!(v1, 1);
+            assert_eq!(v2, 2);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 2);
+            assert_eq!(fetched.item.current_state, "review");
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn list_workflows_filters_by_status(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let active_id = WorkflowId::new();
+            let completed_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        active_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        completed_id.clone(),
+                        IssueId::new(),
+                        "done",
+                        None,
+                        WorkflowStatus::Completed,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    status: Some(WorkflowStatus::Active),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, active_id);
+
+            let results = store
+                .list_workflows(&WorkflowFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn list_workflows_filters_by_tracking_issue_id(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let target_tracking = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        target_tracking.clone(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    tracking_issue_id: Some(target_tracking.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn list_workflows_filters_by_active_issue_id(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let target_active = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        Some(target_active.clone()),
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        Some(IssueId::new()),
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    active_issue_id: Some(target_active.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn list_workflows_filters_by_associated_issue_id(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let target_id = WorkflowId::new();
+            let associated = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .insert_workflow_issue(&target_id, &associated, "develop")
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(associated.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+
+            let unassociated = IssueId::new();
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(unassociated),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert!(results.is_empty());
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn find_workflow_by_issue_id_uses_reverse_index(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let result = store.find_workflow_by_issue_id(&child).await.unwrap();
+            assert!(result.is_none());
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+
+            let result = store.find_workflow_by_issue_id(&child).await.unwrap();
+            let found = result.expect("workflow should be found via reverse index");
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn insert_workflow_issue_errors_when_workflow_missing(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let missing = WorkflowId::new();
+            let err = store
+                .insert_workflow_issue(&missing, &IssueId::new(), "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == missing
+            ));
+        }
+
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn insert_workflow_issue_is_idempotent(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+            // Second insert with the same (workflow_id, issue_id) should not fail.
+            store
+                .insert_workflow_issue(&workflow_id, &child, "review")
+                .await
+                .unwrap();
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        /// Returns a `Workflow` populated across every field that lands in the
+        /// JSONB columns (`template_snapshot`, `context`, `history`) plus
+        /// `active_issue_id`, so a regression in the serialization of any
+        /// nested type (`WorkflowTemplate`, `WorkflowState`,
+        /// `StateEntryAction::CreateIssue`, `Form`, `WorkflowTransition`,
+        /// `TransitionTrigger`, `ContextParam`, `WorkflowHistoryEntry`) shows
+        /// up as a round-trip mismatch rather than slipping through.
+        fn sample_workflow_all_fields(
+            workflow_id: WorkflowId,
+            tracking_issue_id: IssueId,
+            active_issue_id: IssueId,
+            history_child_id: IssueId,
+        ) -> Workflow {
+            let template = WorkflowTemplate::new(
+                "Patch Review \u{1F680} \"quoted\"".to_string(),
+                "Develop -> review -> merged, with a manual escape hatch.".to_string(),
+                vec![
+                    ContextParam::new(
+                        "repo_name".to_string(),
+                        Some("Repository to work in".to_string()),
+                        true,
+                        None,
+                    ),
+                    ContextParam::new(
+                        "base_branch".to_string(),
+                        Some("Base branch to merge into".to_string()),
+                        false,
+                        Some("main".to_string()),
+                    ),
+                    ContextParam::new("notes".to_string(), None, false, None),
+                ],
+                vec![
+                    WorkflowState::new(
+                        "develop".to_string(),
+                        "Development".to_string(),
+                        false,
+                        StateEntryAction::CreateIssue {
+                            issue_type: IssueType::Task,
+                            title_template: "Develop: {{workflow.name}}".to_string(),
+                            description_template:
+                                "Implement the changes for {{context.repo_name}}.".to_string(),
+                            assignee: Some("swe".to_string()),
+                            form: Some(Form {
+                                prompt: "Confirm the work \u{2705}".to_string(),
+                                fields: vec![Field {
+                                    key: "summary".to_string(),
+                                    label: "Summary".to_string(),
+                                    description: Some("One-line summary".to_string()),
+                                    input: Input::Text {
+                                        placeholder: Some("e.g. \"fix bug\"".to_string()),
+                                        min_length: Some(1),
+                                        max_length: Some(120),
+                                        pattern: None,
+                                    },
+                                    default: Some(serde_json::json!("default summary")),
+                                }],
+                                actions: vec![Action {
+                                    id: "submit".to_string(),
+                                    label: "Submit".to_string(),
+                                    style: ActionStyle::Primary,
+                                    requires: vec!["summary".to_string()],
+                                    effect: Effect::UpdateIssue {
+                                        status: IssueStatus::Closed,
+                                    },
+                                }],
+                            }),
+                            session_settings: Some({
+                                let mut s = SessionSettingsTemplate::default();
+                                s.repo_name = Some("{{context.repo_name}}".to_string());
+                                s.branch = Some("feature/{{workflow.id}}".to_string());
+                                s.image = Some("hydra/swe:latest".to_string());
+                                s.model = Some("claude-sonnet-4-6".to_string());
+                                s.secrets = Some(vec!["GITHUB_TOKEN".to_string()]);
+                                s
+                            }),
+                        },
+                        None,
+                    ),
+                    WorkflowState::new(
+                        "review".to_string(),
+                        "Code Review".to_string(),
+                        false,
+                        StateEntryAction::Noop,
+                        None,
+                    ),
+                    WorkflowState::new(
+                        "merged".to_string(),
+                        "Merged".to_string(),
+                        true,
+                        StateEntryAction::Noop,
+                        Some(IssueStatus::Closed),
+                    ),
+                ],
+                vec![
+                    WorkflowTransition::new(
+                        "develop".to_string(),
+                        "review".to_string(),
+                        TransitionTrigger::OnChildStatus {
+                            status: IssueStatus::Closed,
+                        },
+                        Some("Ready for Review".to_string()),
+                    ),
+                    WorkflowTransition::new(
+                        "review".to_string(),
+                        "merged".to_string(),
+                        TransitionTrigger::Auto,
+                        None,
+                    ),
+                ],
+                "develop".to_string(),
+            );
+
+            let mut context = HashMap::new();
+            context.insert("repo_name".to_string(), "dourolabs/hydra".to_string());
+            context.insert("base_branch".to_string(), "main".to_string());
+            context.insert(
+                "notes".to_string(),
+                "unicode \u{1F389} and \"quoted\" value".to_string(),
+            );
+
+            // Use a fixed-precision timestamp to avoid sub-microsecond rounding
+            // differences across PG JSONB round-trips.
+            let ts = Utc.with_ymd_and_hms(2026, 5, 11, 12, 34, 56).unwrap();
+
+            let history = vec![
+                WorkflowHistoryEntry::new(
+                    None,
+                    "develop".to_string(),
+                    None,
+                    ts,
+                    Some(history_child_id.clone()),
+                ),
+                WorkflowHistoryEntry::new(
+                    Some("develop".to_string()),
+                    "review".to_string(),
+                    Some("Ready for Review".to_string()),
+                    ts,
+                    Some(history_child_id),
+                ),
+            ];
+
+            Workflow::new(
+                workflow_id,
+                "/workflows/patch-review.yaml".to_string(),
+                template,
+                tracking_issue_id,
+                "review".to_string(),
+                context,
+                Some(active_issue_id),
+                history,
+                WorkflowStatus::Active,
+            )
+        }
+
+        /// Round-trip serialization: upsert then get; fetched workflow must
+        /// equal the original across every field that lands in JSONB columns
+        /// (`template_snapshot`, `context`, `history`) plus `active_issue_id`.
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn workflow_serialization_round_trip_v2(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow = sample_workflow_all_fields(
+                WorkflowId::new(),
+                IssueId::new(),
+                IssueId::new(),
+                IssueId::new(),
+            );
+
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            let fetched = store.get_workflow(&workflow.workflow_id).await.unwrap();
+            assert_eq!(
+                fetched.item, workflow,
+                "Workflow must round-trip all fields (template_snapshot, context, history, active_issue_id)"
+            );
+        }
     }
 }
