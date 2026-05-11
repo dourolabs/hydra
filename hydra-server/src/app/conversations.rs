@@ -415,9 +415,7 @@ mod tests {
             .unwrap();
         sessions
             .into_iter()
-            .filter_map(|(_, s)| {
-                (s.item.conversation_id() == Some(conversation_id)).then_some(s)
-            })
+            .filter_map(|(_, s)| (s.item.conversation_id() == Some(conversation_id)).then_some(s))
             .next()
             .expect("expected at least one session for the conversation")
     }
@@ -747,7 +745,7 @@ mod tests {
             .unwrap();
         let expected_resume_from = events_before_resume.len();
 
-        let resumed = state
+        state
             .resume_conversation(
                 &conversation_id,
                 ActorRef::test(),
@@ -756,8 +754,24 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = resumed.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let resumed_session_id = events
+            .into_iter()
+            .rev()
+            .find_map(|e| match e.item {
+                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .expect("expected a Resumed event after resume_conversation");
+        let session = state
+            .store()
+            .get_session(&resumed_session_id, false)
+            .await
+            .unwrap();
         let opts = session
             .item
             .interactive

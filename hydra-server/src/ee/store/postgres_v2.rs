@@ -670,8 +670,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -697,6 +697,13 @@ impl PostgresStoreV2 {
             .bind(session.end_time)
             .bind(session.interactive.is_some())
             .bind(session.conversation_id().map(|c| c.as_ref()))
+            .bind(
+                session
+                    .interactive
+                    .as_ref()
+                    .and_then(|opts| opts.conversation_resume_from)
+                    .map(|n| n as i64),
+            )
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -762,7 +769,7 @@ impl PostgresStoreV2 {
             Some(InteractiveOptions {
                 conversation_id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
             })
         } else {
             None
@@ -1401,6 +1408,8 @@ struct TaskRow {
     interactive: bool,
     #[sqlx(default)]
     conversation_id: Option<String>,
+    #[sqlx(default)]
+    conversation_resume_from: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2706,7 +2715,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2743,7 +2752,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2876,7 +2885,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -5424,7 +5433,7 @@ mod tests {
         task.interactive = Some(InteractiveOptions {
             conversation_id: Some(conv_id.clone()),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            conversation_resume_from: Some(7),
         });
 
         let (task_id, _) = store
@@ -5441,6 +5450,15 @@ mod tests {
             fetched.item.conversation_id().cloned(),
             Some(conv_id),
             "conversation_id must be persisted"
+        );
+        assert_eq!(
+            fetched
+                .item
+                .interactive
+                .as_ref()
+                .and_then(|opts| opts.conversation_resume_from),
+            Some(7),
+            "conversation_resume_from must be persisted"
         );
     }
 
