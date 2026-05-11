@@ -316,6 +316,15 @@ impl AppState {
             return Err(ResumeConversationError::AlreadyActive);
         }
 
+        // Capture event count BEFORE appending Resumed — this is the index the
+        // worker should skip past on catch-up.
+        let current_events = self
+            .store()
+            .get_conversation_events(conversation_id)
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?;
+        let resume_from_event_index = current_events.len();
+
         // Create a new interactive session linked to the conversation.
         // `create_session` derives session_settings from the linked conversation.
         let session_request = CreateSessionRequest::new(
@@ -331,6 +340,22 @@ impl AppState {
             .create_session(session_request, actor_ref.clone(), creator)
             .await
             .map_err(|source| ResumeConversationError::Session { source })?;
+
+        // Mark this session as a resume by setting conversation_resume_from on
+        // its InteractiveOptions.
+        let mut session = self
+            .store()
+            .get_session(&session_id, false)
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?
+            .item;
+        if let Some(opts) = session.interactive.as_mut() {
+            opts.conversation_resume_from = Some(resume_from_event_index);
+        }
+        self.store
+            .update_session_with_actor(&session_id, session, actor_ref.clone())
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?;
 
         // Append Resumed event
         let event = ConversationEvent::Resumed {
@@ -391,7 +416,7 @@ mod tests {
         sessions
             .into_iter()
             .filter_map(|(_, s)| {
-                (s.item.conversation_id.as_ref() == Some(conversation_id)).then_some(s)
+                (s.item.conversation_id() == Some(conversation_id)).then_some(s)
             })
             .next()
             .expect("expected at least one session for the conversation")
@@ -512,12 +537,12 @@ mod tests {
 
         let session = session_for_conversation(&state, &conversation_id).await;
         assert!(
-            session.item.interactive,
+            session.item.is_interactive(),
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id.as_ref(),
-            Some(&conversation_id),
+            session.item.conversation_id().cloned(),
+            Some(conversation_id),
             "conversation session should have conversation_id set"
         );
     }
@@ -553,12 +578,12 @@ mod tests {
 
         let session = session_for_conversation(&state, &conversation_id).await;
         assert!(
-            session.item.interactive,
+            session.item.is_interactive(),
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id.as_ref(),
-            Some(&conversation_id),
+            session.item.conversation_id().cloned(),
+            Some(conversation_id),
             "conversation session should have conversation_id set"
         );
     }
@@ -672,13 +697,76 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            session.item.interactive,
+            session.item.is_interactive(),
             "resumed conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id.as_ref(),
-            Some(&conversation_id),
+            session.item.conversation_id().cloned(),
+            Some(conversation_id),
             "resumed conversation session should have conversation_id set"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_conversation_sets_conversation_resume_from_to_event_count() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        // Send a couple of messages to add events.
+        state
+            .send_message(&conversation_id, "first".to_string(), ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .send_message(&conversation_id, "second".to_string(), ActorRef::test())
+            .await
+            .unwrap();
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        // resume_conversation captures the event count *before* it appends the
+        // Resumed event, so this snapshot taken now is the expected value.
+        let events_before_resume = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let expected_resume_from = events_before_resume.len();
+
+        let resumed = state
+            .resume_conversation(
+                &conversation_id,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session_id = resumed.item.active_session_id.as_ref().unwrap();
+        let session = state.store().get_session(session_id, false).await.unwrap();
+        let opts = session
+            .item
+            .interactive
+            .as_ref()
+            .expect("session should be interactive");
+        assert_eq!(
+            opts.conversation_resume_from,
+            Some(expected_resume_from),
+            "conversation_resume_from should equal event count before Resumed"
         );
     }
 }
