@@ -1305,29 +1305,6 @@ impl StoreWithEvents {
         self.inner.delete_user_secret(username, secret_name).await
     }
 
-    // ---- Workflow mutations (inherent, with actor) ----
-
-    // TODO(workflow-engine): emit events once the engine automation subscribes
-    pub async fn upsert_workflow_with_actor(
-        &self,
-        workflow: Workflow,
-        actor: ActorRef,
-    ) -> Result<VersionNumber, StoreError> {
-        self.inner.upsert_workflow(workflow, &actor).await
-    }
-
-    // TODO(workflow-engine): emit events once the engine automation subscribes
-    pub async fn insert_workflow_issue(
-        &self,
-        workflow_id: &WorkflowId,
-        issue_id: &IssueId,
-        state_id: &str,
-    ) -> Result<(), StoreError> {
-        self.inner
-            .insert_workflow_issue(workflow_id, issue_id, state_id)
-            .await
-    }
-
     /// Re-fetch the entity identified by `object_id` and emit an appropriate
     /// updated event so SSE subscribers see the label change.
     async fn emit_entity_updated_on_label_change(&self, object_id: &HydraId) {
