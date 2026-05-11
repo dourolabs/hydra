@@ -8443,10 +8443,14 @@ mod tests {
     mod workflow_tests {
         use super::*;
         use crate::domain::workflows::{
-            StateEntryAction, Workflow, WorkflowState, WorkflowStatus, WorkflowTemplate,
+            ContextParam, SessionSettingsTemplate, StateEntryAction, TransitionTrigger, Workflow,
+            WorkflowHistoryEntry, WorkflowState, WorkflowStatus, WorkflowTemplate,
+            WorkflowTransition,
         };
+        use chrono::{TimeZone, Utc};
         use hydra_common::WorkflowId;
-        use hydra_common::api::v1::issues::IssueStatus;
+        use hydra_common::api::v1::form::{Action, ActionStyle, Effect, Field, Form, Input};
+        use hydra_common::api::v1::issues::{IssueStatus, IssueType};
 
         fn sample_template() -> WorkflowTemplate {
             WorkflowTemplate::new(
@@ -8834,6 +8838,186 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        /// Returns a `Workflow` populated across every field that lands in the
+        /// JSONB columns (`template_snapshot`, `context`, `history`) plus
+        /// `active_issue_id`, so a regression in the serialization of any
+        /// nested type (`WorkflowTemplate`, `WorkflowState`,
+        /// `StateEntryAction::CreateIssue`, `Form`, `WorkflowTransition`,
+        /// `TransitionTrigger`, `ContextParam`, `WorkflowHistoryEntry`) shows
+        /// up as a round-trip mismatch rather than slipping through.
+        fn sample_workflow_all_fields(
+            workflow_id: WorkflowId,
+            tracking_issue_id: IssueId,
+            active_issue_id: IssueId,
+            history_child_id: IssueId,
+        ) -> Workflow {
+            let template = WorkflowTemplate::new(
+                "Patch Review \u{1F680} \"quoted\"".to_string(),
+                "Develop -> review -> merged, with a manual escape hatch.".to_string(),
+                vec![
+                    ContextParam::new(
+                        "repo_name".to_string(),
+                        Some("Repository to work in".to_string()),
+                        true,
+                        None,
+                    ),
+                    ContextParam::new(
+                        "base_branch".to_string(),
+                        Some("Base branch to merge into".to_string()),
+                        false,
+                        Some("main".to_string()),
+                    ),
+                    ContextParam::new("notes".to_string(), None, false, None),
+                ],
+                vec![
+                    WorkflowState::new(
+                        "develop".to_string(),
+                        "Development".to_string(),
+                        false,
+                        StateEntryAction::CreateIssue {
+                            issue_type: IssueType::Task,
+                            title_template: "Develop: {{workflow.name}}".to_string(),
+                            description_template:
+                                "Implement the changes for {{context.repo_name}}.".to_string(),
+                            assignee: Some("swe".to_string()),
+                            form: Some(Form {
+                                prompt: "Confirm the work \u{2705}".to_string(),
+                                fields: vec![Field {
+                                    key: "summary".to_string(),
+                                    label: "Summary".to_string(),
+                                    description: Some("One-line summary".to_string()),
+                                    input: Input::Text {
+                                        placeholder: Some("e.g. \"fix bug\"".to_string()),
+                                        min_length: Some(1),
+                                        max_length: Some(120),
+                                        pattern: None,
+                                    },
+                                    default: Some(serde_json::json!("default summary")),
+                                }],
+                                actions: vec![Action {
+                                    id: "submit".to_string(),
+                                    label: "Submit".to_string(),
+                                    style: ActionStyle::Primary,
+                                    requires: vec!["summary".to_string()],
+                                    effect: Effect::UpdateIssue {
+                                        status: IssueStatus::Closed,
+                                    },
+                                }],
+                            }),
+                            session_settings: Some({
+                                let mut s = SessionSettingsTemplate::default();
+                                s.repo_name = Some("{{context.repo_name}}".to_string());
+                                s.branch = Some("feature/{{workflow.id}}".to_string());
+                                s.image = Some("hydra/swe:latest".to_string());
+                                s.model = Some("claude-sonnet-4-6".to_string());
+                                s.secrets = Some(vec!["GITHUB_TOKEN".to_string()]);
+                                s
+                            }),
+                        },
+                        None,
+                    ),
+                    WorkflowState::new(
+                        "review".to_string(),
+                        "Code Review".to_string(),
+                        false,
+                        StateEntryAction::Noop,
+                        None,
+                    ),
+                    WorkflowState::new(
+                        "merged".to_string(),
+                        "Merged".to_string(),
+                        true,
+                        StateEntryAction::Noop,
+                        Some(IssueStatus::Closed),
+                    ),
+                ],
+                vec![
+                    WorkflowTransition::new(
+                        "develop".to_string(),
+                        "review".to_string(),
+                        TransitionTrigger::OnChildStatus {
+                            status: IssueStatus::Closed,
+                        },
+                        Some("Ready for Review".to_string()),
+                    ),
+                    WorkflowTransition::new(
+                        "review".to_string(),
+                        "merged".to_string(),
+                        TransitionTrigger::Auto,
+                        None,
+                    ),
+                ],
+                "develop".to_string(),
+            );
+
+            let mut context = HashMap::new();
+            context.insert("repo_name".to_string(), "dourolabs/hydra".to_string());
+            context.insert("base_branch".to_string(), "main".to_string());
+            context.insert(
+                "notes".to_string(),
+                "unicode \u{1F389} and \"quoted\" value".to_string(),
+            );
+
+            // Use a fixed-precision timestamp to avoid sub-microsecond rounding
+            // differences across PG JSONB round-trips.
+            let ts = Utc.with_ymd_and_hms(2026, 5, 11, 12, 34, 56).unwrap();
+
+            let history = vec![
+                WorkflowHistoryEntry::new(
+                    None,
+                    "develop".to_string(),
+                    None,
+                    ts,
+                    Some(history_child_id.clone()),
+                ),
+                WorkflowHistoryEntry::new(
+                    Some("develop".to_string()),
+                    "review".to_string(),
+                    Some("Ready for Review".to_string()),
+                    ts,
+                    Some(history_child_id),
+                ),
+            ];
+
+            Workflow::new(
+                workflow_id,
+                "/workflows/patch-review.yaml".to_string(),
+                template,
+                tracking_issue_id,
+                "review".to_string(),
+                context,
+                Some(active_issue_id),
+                history,
+                WorkflowStatus::Active,
+            )
+        }
+
+        /// Round-trip serialization: upsert then get; fetched workflow must
+        /// equal the original across every field that lands in JSONB columns
+        /// (`template_snapshot`, `context`, `history`) plus `active_issue_id`.
+        #[sqlx::test(migrations = "./migrations")]
+        #[ignore]
+        async fn workflow_serialization_round_trip_v2(pool: PgStorePool) {
+            let store = PostgresStoreV2::new(pool);
+            let workflow = sample_workflow_all_fields(
+                WorkflowId::new(),
+                IssueId::new(),
+                IssueId::new(),
+                IssueId::new(),
+            );
+
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            let fetched = store.get_workflow(&workflow.workflow_id).await.unwrap();
+            assert_eq!(
+                fetched.item, workflow,
+                "Workflow must round-trip all fields (template_snapshot, context, history, active_issue_id)"
+            );
         }
     }
 }
