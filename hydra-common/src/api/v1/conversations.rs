@@ -79,7 +79,6 @@ pub struct Conversation {
     pub conversation_id: ConversationId,
     pub title: Option<String>,
     pub agent_name: Option<String>,
-    pub active_session_id: Option<SessionId>,
     pub status: ConversationStatus,
     pub creator: Username,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
@@ -94,7 +93,6 @@ impl Conversation {
         conversation_id: ConversationId,
         title: Option<String>,
         agent_name: Option<String>,
-        active_session_id: Option<SessionId>,
         status: ConversationStatus,
         creator: Username,
         session_settings: SessionSettings,
@@ -105,7 +103,6 @@ impl Conversation {
             conversation_id,
             title,
             agent_name,
-            active_session_id,
             status,
             creator,
             session_settings,

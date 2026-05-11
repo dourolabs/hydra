@@ -1203,9 +1203,6 @@ pub fn render_conversation_records(
             writeln!(writer, "Creator: {}", conversation.creator)?;
             writeln!(writer, "Created: {}", conversation.created_at)?;
             writeln!(writer, "Updated: {}", conversation.updated_at)?;
-            if let Some(ref session_id) = conversation.active_session_id {
-                writeln!(writer, "Active Session: {session_id}")?;
-            }
 
             if !events.is_empty() {
                 writeln!(writer)?;

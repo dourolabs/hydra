@@ -3,6 +3,7 @@ use hydra_common::api::v1::conversations::{
     Conversation, ConversationEvent, ConversationSummary, CreateConversationRequest,
     SendMessageRequest, UpdateConversationRequest,
 };
+use hydra_common::api::v1::sessions::ListSessionsResponse;
 use reqwest::StatusCode;
 
 #[tokio::test]
@@ -26,9 +27,16 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     let conversation: Conversation = response.json().await?;
     assert!(!conversation.conversation_id.as_ref().is_empty());
     assert_eq!(conversation.agent_name.as_deref(), Some("test-agent"));
+
+    let sessions: ListSessionsResponse = client
+        .get(format!("{}/v1/sessions", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
     assert!(
-        conversation.active_session_id.is_some(),
-        "expected active_session_id to be set"
+        !sessions.sessions.is_empty(),
+        "expected create_conversation to create a session"
     );
 
     Ok(())
@@ -300,7 +308,6 @@ async fn close_conversation_sets_status_closed() -> anyhow::Result<()> {
         closed.status,
         hydra_common::api::v1::conversations::ConversationStatus::Closed
     );
-    assert!(closed.active_session_id.is_none());
 
     Ok(())
 }
@@ -391,9 +398,43 @@ async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
         resumed.status,
         hydra_common::api::v1::conversations::ConversationStatus::Active
     );
-    assert!(resumed.active_session_id.is_some());
-    // New session should be different from the original
-    assert_ne!(resumed.active_session_id, created.active_session_id);
+
+    let events: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{}/events",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let resumed_session_id = events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
+            _ => None,
+        })
+        .expect("expected a Resumed event after /resume");
+    let sessions: ListSessionsResponse = client
+        .get(format!("{}/v1/sessions", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        sessions
+            .sessions
+            .iter()
+            .any(|s| s.session_id == resumed_session_id),
+        "resumed session_id should appear in the sessions list"
+    );
+    assert!(
+        sessions.sessions.len() >= 2,
+        "resume should produce a second session in addition to the original (got {})",
+        sessions.sessions.len()
+    );
 
     Ok(())
 }

@@ -135,7 +135,11 @@ async fn handle_relay_socket(
     }
 
     // Step 3: Register relay in ChatRelayMap.
-    let mut user_msg_rx = chat_relay::register_relay(&state.chat_relay_map, session_id.clone());
+    let mut user_msg_rx = chat_relay::register_relay(
+        &state.chat_relay_map,
+        conversation_id.clone(),
+        session_id.clone(),
+    );
 
     info!(%session_id, "relay registered, starting relay loop");
 
@@ -229,7 +233,6 @@ async fn handle_relay_socket(
             let mut conversation = versioned.item;
             if conversation.status == ConversationStatus::Active {
                 conversation.status = ConversationStatus::Idle;
-                conversation.active_session_id = None;
                 let actor_ref = ActorRef::from(&actor);
                 if let Err(err) = state
                     .store
@@ -247,8 +250,8 @@ async fn handle_relay_socket(
         }
     }
 
-    chat_relay::unregister_relay(&state.chat_relay_map, &session_id);
-    info!(%session_id, "relay unregistered");
+    chat_relay::unregister_relay(&state.chat_relay_map, &conversation_id);
+    info!(%session_id, %conversation_id, "relay unregistered");
 }
 
 /// Build the WorkerCatchUp payload based on the worker's connect message.
@@ -317,8 +320,7 @@ async fn handle_worker_event(
         .append_conversation_event_with_actor(conversation_id, domain_event, actor_ref.clone())
         .await?;
 
-    // If the worker is suspending, update conversation status to Idle
-    // and clear active_session_id.
+    // If the worker is suspending, update conversation status to Idle.
     if is_suspending {
         let mut conversation = state
             .store()
@@ -326,7 +328,6 @@ async fn handle_worker_event(
             .await?
             .item;
         conversation.status = ConversationStatus::Idle;
-        conversation.active_session_id = None;
         state
             .store
             .update_conversation_with_actor(conversation_id, conversation, actor_ref.clone())
