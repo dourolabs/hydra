@@ -17,7 +17,7 @@ pub type McpConfig = Value;
 /// Settings that only apply when a session is running in interactive mode.
 ///
 /// Present (`Some`) on an interactive session; absent (`None`) on a one-shot session.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]

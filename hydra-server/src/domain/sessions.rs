@@ -12,7 +12,7 @@ fn default_task_status() -> Status {
 }
 
 /// Settings that only apply when a session is running in interactive mode.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteractiveOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<ConversationId>,
