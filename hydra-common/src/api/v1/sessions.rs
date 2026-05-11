@@ -125,6 +125,8 @@ pub struct CreateSessionRequest {
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_id: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
     #[serde(default)]
     pub interactive: bool,
 }
@@ -136,6 +138,7 @@ impl CreateSessionRequest {
         context: BundleSpec,
         variables: HashMap<String, String>,
         issue_id: Option<IssueId>,
+        conversation_id: Option<ConversationId>,
         interactive: bool,
     ) -> Self {
         Self {
@@ -144,6 +147,7 @@ impl CreateSessionRequest {
             context,
             variables,
             issue_id,
+            conversation_id,
             interactive,
         }
     }
@@ -855,6 +859,45 @@ mod tests {
         });
         let session: Session = serde_json::from_value(json).unwrap();
         assert_eq!(session.mcp_config, None);
+    }
+
+    #[test]
+    fn create_session_request_round_trips_conversation_id() {
+        let conv_id = crate::ConversationId::new();
+        let request = CreateSessionRequest::new(
+            "prompt".to_string(),
+            None,
+            BundleSpec::None,
+            HashMap::new(),
+            None,
+            Some(conv_id.clone()),
+            true,
+        );
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            json.get("conversation_id").and_then(|v| v.as_str()),
+            Some(conv_id.as_ref())
+        );
+
+        let deserialized: CreateSessionRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.conversation_id, Some(conv_id));
+    }
+
+    #[test]
+    fn create_session_request_omits_conversation_id_when_none() {
+        let request = CreateSessionRequest::new(
+            "prompt".to_string(),
+            None,
+            BundleSpec::None,
+            HashMap::new(),
+            None,
+            None,
+            false,
+        );
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("conversation_id").is_none());
     }
 
     #[test]

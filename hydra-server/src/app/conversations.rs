@@ -107,18 +107,20 @@ impl AppState {
             .await
             .map_err(|source| CreateConversationError::Store { source })?;
 
-        // 4. Create an interactive session, applying conversation session_settings
-        let session_request =
-            CreateSessionRequest::new(message, None, BundleSpec::None, HashMap::new(), None, true);
-        let settings = conversation.session_settings.clone();
+        // 4. Create an interactive session linked to the conversation. The conversation
+        //    was just persisted above, so `create_session`'s internal lookup will succeed
+        //    and it will derive session_settings from the linked conversation.
+        let session_request = CreateSessionRequest::new(
+            message,
+            None,
+            BundleSpec::None,
+            HashMap::new(),
+            None,
+            Some(conversation_id.clone()),
+            true,
+        );
         let session_id = self
-            .create_session(
-                session_request,
-                Some(settings),
-                actor_ref.clone(),
-                creator,
-                Some(conversation_id.clone()),
-            )
+            .create_session(session_request, actor_ref.clone(), creator)
             .await
             .map_err(|source| CreateConversationError::Session { source })?;
 
@@ -322,24 +324,19 @@ impl AppState {
             return Err(ResumeConversationError::AlreadyActive);
         }
 
-        // Create a new interactive session, applying conversation session_settings
+        // Create a new interactive session linked to the conversation.
+        // `create_session` derives session_settings from the linked conversation.
         let session_request = CreateSessionRequest::new(
             String::new(),
             None,
             BundleSpec::None,
             HashMap::new(),
             None,
+            Some(conversation_id.clone()),
             true,
         );
-        let settings = versioned.item.session_settings.clone();
         let session_id = self
-            .create_session(
-                session_request,
-                Some(settings),
-                actor_ref.clone(),
-                creator,
-                Some(conversation_id.clone()),
-            )
+            .create_session(session_request, actor_ref.clone(), creator)
             .await
             .map_err(|source| ResumeConversationError::Session { source })?;
 
