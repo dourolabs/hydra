@@ -10,7 +10,7 @@ use crate::domain::{
 };
 use crate::{
     job_engine::JobStatus,
-    store::{MemoryStore, Session, Status},
+    store::{InteractiveOptions, MemoryStore, Session, Status},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
         test_app_config, test_client, test_secret_manager, test_state_handles,
@@ -1308,5 +1308,62 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
         body.variables.get("HYDRA_ID").map(String::as_str),
         Some(job_id.as_ref())
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state;
+    let expected_idle_timeout = state.config.job.interactive_idle_timeout_secs;
+    let default_image = default_image();
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                creator: Username::from("test-creator"),
+                image: Some(default_image),
+                model: None,
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mcp_config: None,
+                interactive: Some(InteractiveOptions {
+                    conversation_id: None,
+                    conversation_resume_from: None,
+                }),
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::sessions::WorkerContext = response.json().await?;
+    let interactive = body
+        .interactive
+        .expect("worker context must include interactive options");
+    assert_eq!(interactive.idle_timeout_secs, Some(expected_idle_timeout));
     Ok(())
 }

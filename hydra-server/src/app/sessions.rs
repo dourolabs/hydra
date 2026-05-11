@@ -177,7 +177,6 @@ impl AppState {
         let interactive = if request.interactive {
             Some(InteractiveOptions {
                 conversation_id: request.conversation_id.clone(),
-                idle_timeout_secs: None,
                 conversation_resume_from: None,
             })
         } else {

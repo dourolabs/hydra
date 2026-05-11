@@ -17,8 +17,6 @@ pub struct InteractiveOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<ConversationId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_timeout_secs: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_resume_from: Option<usize>,
 }
 
@@ -218,7 +216,6 @@ impl From<api::sessions::InteractiveOptions> for InteractiveOptions {
     fn from(value: api::sessions::InteractiveOptions) -> Self {
         InteractiveOptions {
             conversation_id: value.conversation_id,
-            idle_timeout_secs: value.idle_timeout_secs,
             conversation_resume_from: value.conversation_resume_from,
         }
     }
@@ -228,7 +225,7 @@ impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
     fn from(value: InteractiveOptions) -> Self {
         api::sessions::InteractiveOptions::new(
             value.conversation_id,
-            value.idle_timeout_secs,
+            None,
             value.conversation_resume_from,
         )
     }
