@@ -27,11 +27,13 @@ CREATE INDEX IF NOT EXISTS idx_workflows_is_latest
     ON workflows(workflow_id) WHERE is_latest = 1;
 
 -- Reverse index mapping child issues back to the workflow that created them.
--- Each issue may belong to at most one workflow (PK on issue_id).
 CREATE TABLE IF NOT EXISTS workflow_issues (
     workflow_id TEXT NOT NULL,
     issue_id TEXT NOT NULL,
     state_id TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (issue_id)
+    PRIMARY KEY (workflow_id, issue_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_workflow_issues_issue_id
+    ON workflow_issues(issue_id);
