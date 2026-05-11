@@ -37,7 +37,7 @@ pub use crate::ee::store::migration;
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
-pub use crate::domain::sessions::Session;
+pub use crate::domain::sessions::{InteractiveOptions, Session};
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
 /// The kind of object participating in a relationship.

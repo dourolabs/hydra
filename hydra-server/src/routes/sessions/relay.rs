@@ -40,7 +40,7 @@ pub async fn session_relay(
             other => ApiError::internal(format!("failed to load session: {other}")),
         })?;
 
-    let conversation_id = session.conversation_id.clone().ok_or_else(|| {
+    let conversation_id = session.conversation_id().cloned().ok_or_else(|| {
         ApiError::bad_request(format!(
             "session '{session_id}' is not an interactive session (no conversation_id)"
         ))

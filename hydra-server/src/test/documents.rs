@@ -33,7 +33,6 @@ fn sample_task(status: Status) -> Session {
         None,
         None,
         None,
-        false,
         None,
         status,
         None,
