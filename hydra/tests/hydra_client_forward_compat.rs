@@ -409,6 +409,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         BundleSpec::None,
         HashMap::new(),
         None,
+        None,
         false,
     );
     let created_session = client.create_session(&create_session_request).await?;

@@ -336,6 +336,27 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
                 ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
             }
         },
+        CreateSessionError::ConversationLookup {
+            source,
+            conversation_id,
+        } => match source {
+            StoreError::ConversationNotFound(_) => {
+                ApiError::not_found(format!("conversation '{conversation_id}' not found"))
+            }
+            other => {
+                error!(
+                    error = %other,
+                    conversation_id = %conversation_id,
+                    "failed to load conversation for session creation"
+                );
+                ApiError::internal(format!(
+                    "Failed to load conversation '{conversation_id}': {other}"
+                ))
+            }
+        },
+        err @ CreateSessionError::IssueAndConversationConflict => {
+            ApiError::bad_request(err.to_string())
+        }
         CreateSessionError::Store { source } => {
             error!(error = %source, "failed to store session");
             ApiError::internal(format!("Failed to store session: {source}"))
