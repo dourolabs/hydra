@@ -31,7 +31,7 @@ pub use conversations::ConversationEventId;
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, NotificationId, PatchId,
-    SessionId, WorkflowId,
+    SessionId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
@@ -78,7 +78,6 @@ mod ts_export {
         crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
-        crate::WorkflowId::export_all(&cfg).expect("WorkflowId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::ConversationEventId::export_all(&cfg).expect("ConversationEventId");
         crate::Rgb::export_all(&cfg).expect("Rgb");
