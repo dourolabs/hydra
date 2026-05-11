@@ -17,7 +17,6 @@ pub enum ConversationStatus {
 pub struct Conversation {
     pub title: Option<String>,
     pub agent_name: Option<String>,
-    pub active_session_id: Option<SessionId>,
     #[serde(default)]
     pub status: ConversationStatus,
     pub creator: Username,
@@ -155,7 +154,6 @@ impl From<api::conversations::Conversation> for Conversation {
         Self {
             title: value.title,
             agent_name: value.agent_name,
-            active_session_id: value.active_session_id,
             status: value.status.into(),
             creator: value.creator.into(),
             session_settings: value.session_settings.into(),
@@ -176,7 +174,6 @@ impl Conversation {
             conversation_id,
             self.title.clone(),
             self.agent_name.clone(),
-            self.active_session_id.clone(),
             self.status.into(),
             self.creator.clone().into(),
             self.session_settings.clone().into(),

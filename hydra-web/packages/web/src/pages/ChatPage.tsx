@@ -45,12 +45,6 @@ function ConversationDetails({ conversation }: { conversation: Conversation }) {
           <span className={styles.metaLabel}>Creator</span>
           <span className={styles.metaValue}>{conversation.creator}</span>
         </div>
-        {conversation.active_session_id && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Active Session</span>
-            <span className={styles.metaValue}>{conversation.active_session_id}</span>
-          </div>
-        )}
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Created</span>
           <span className={styles.metaValue}>{formatTimestamp(conversation.created_at)}</span>

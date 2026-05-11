@@ -147,7 +147,6 @@ struct ConversationRow {
     version_number: i64,
     title: Option<String>,
     agent_name: Option<String>,
-    active_session_id: Option<String>,
     session_settings: String,
     status: String,
     creator: String,
@@ -636,14 +635,6 @@ impl SqliteStore {
         Ok(Conversation {
             title: row.title.clone(),
             agent_name: row.agent_name.clone(),
-            active_session_id: row
-                .active_session_id
-                .as_deref()
-                .map(|s| s.parse::<SessionId>())
-                .transpose()
-                .map_err(|e| {
-                    StoreError::Internal(format!("invalid session id in conversation: {e}"))
-                })?,
             status,
             creator: Username::from(row.creator.clone()),
             session_settings,
@@ -683,14 +674,13 @@ impl SqliteStore {
             })?;
 
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
+            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
         .bind(&conversation.title)
         .bind(&conversation.agent_name)
-        .bind(conversation.active_session_id.as_ref().map(|s| s.as_ref()))
         .bind(&session_settings_json)
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
@@ -3727,7 +3717,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let row = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, active_session_id, session_settings, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -3774,7 +3764,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.active_session_id, c.session_settings, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
              FROM {TABLE_CONVERSATIONS} c
              WHERE c.is_latest = 1"
@@ -8653,7 +8643,6 @@ mod tests {
         Conversation {
             title: Some("Test conversation".to_string()),
             agent_name: Some("test-agent".to_string()),
-            active_session_id: None,
             status: crate::domain::conversations::ConversationStatus::Active,
             creator: Username::from("testuser".to_string()),
             session_settings: Default::default(),

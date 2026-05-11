@@ -83,7 +83,6 @@ impl AppState {
         let conversation = Conversation {
             title: None,
             agent_name,
-            active_session_id: None,
             status: ConversationStatus::Active,
             creator: creator.clone(),
             session_settings,
@@ -121,20 +120,11 @@ impl AppState {
             Some(conversation_id.clone()),
             true,
         );
-        let session_id = self
-            .create_session(session_request, actor_ref.clone(), creator)
+        self.create_session(session_request, actor_ref.clone(), creator)
             .await
             .map_err(|source| CreateConversationError::Session { source })?;
 
-        // 5. Update conversation with active_session_id
-        let mut updated_conversation = conversation;
-        updated_conversation.active_session_id = Some(session_id);
-        self.store
-            .update_conversation_with_actor(&conversation_id, updated_conversation, actor_ref)
-            .await
-            .map_err(|source| CreateConversationError::Store { source })?;
-
-        // 6. Fetch and return the final conversation state
+        // 5. Fetch and return the final conversation state
         let versioned = self
             .store()
             .get_conversation(&conversation_id, false)
@@ -175,22 +165,21 @@ impl AppState {
             .map_err(|source| SendMessageError::Store { source })?;
 
         // Forward to worker via ChatRelayMap if connected
-        if let Some(session_id) = &versioned.item.active_session_id {
-            let api_event: api_conversations::ConversationEvent = event.clone().into();
-            match chat_relay::send_to_worker(&self.chat_relay_map, session_id, api_event).await {
-                Ok(()) => {
-                    info!(conversation_id = %conversation_id, session_id = %session_id, "message forwarded to worker");
-                }
-                Err(chat_relay::SendToWorkerError::NoRelay) => {
-                    info!(conversation_id = %conversation_id, session_id = %session_id, "no relay connected, worker will catch up");
-                }
-                Err(err) => {
-                    warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to forward message to worker");
-                }
+        let api_event: api_conversations::ConversationEvent = event.into();
+        match chat_relay::send_to_worker(&self.chat_relay_map, conversation_id, api_event.clone())
+            .await
+        {
+            Ok(()) => {
+                info!(conversation_id = %conversation_id, "message forwarded to worker");
+            }
+            Err(chat_relay::SendToWorkerError::NoRelay) => {
+                info!(conversation_id = %conversation_id, "no relay connected, worker will catch up");
+            }
+            Err(err) => {
+                warn!(conversation_id = %conversation_id, error = %err, "failed to forward message to worker");
             }
         }
 
-        let api_event: api_conversations::ConversationEvent = event.into();
         Ok(api_event)
     }
 
@@ -219,9 +208,11 @@ impl AppState {
             .await
             .map_err(|source| CloseConversationError::Store { source })?;
 
-        // Kill session if active
-        if let Some(session_id) = &versioned.item.active_session_id {
-            match self.job_engine.kill_job(session_id).await {
+        // Kill the worker if one is currently relaying this conversation.
+        // If no entry is present, no worker is connected and no kill is needed.
+        if let Some(entry) = self.chat_relay_map.get(conversation_id).map(|e| e.clone()) {
+            let session_id = entry.session_id;
+            match self.job_engine.kill_job(&session_id).await {
                 Ok(()) => {
                     info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
                 }
@@ -234,7 +225,6 @@ impl AppState {
         // Update conversation status
         let mut updated = versioned.item;
         updated.status = ConversationStatus::Closed;
-        updated.active_session_id = None;
         self.store
             .update_conversation_with_actor(conversation_id, updated, actor_ref)
             .await
@@ -355,7 +345,6 @@ impl AppState {
         // Update conversation status
         let mut updated = versioned.item;
         updated.status = ConversationStatus::Active;
-        updated.active_session_id = Some(session_id.clone());
         self.store
             .update_conversation_with_actor(conversation_id, updated, actor_ref)
             .await
@@ -376,12 +365,37 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::test_helpers::state_with_default_model,
+        app::{AppState, test_helpers::state_with_default_model},
         domain::{
-            actors::ActorRef, conversations::ConversationStatus, issues::SessionSettings,
+            actors::ActorRef,
+            conversations::{ConversationEvent, ConversationStatus},
+            issues::SessionSettings,
+            sessions::Session,
             users::Username,
         },
     };
+    use hydra_common::{ConversationId, Versioned, api::v1::sessions::SearchSessionsQuery};
+
+    /// Look up the (single) session associated with a conversation by
+    /// scanning all sessions and matching on `conversation_id`. Used by tests
+    /// to verify session settings flowed through from the conversation.
+    async fn session_for_conversation(
+        state: &AppState,
+        conversation_id: &ConversationId,
+    ) -> Versioned<Session> {
+        let sessions = state
+            .store()
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        sessions
+            .into_iter()
+            .filter_map(|(_, s)| {
+                (s.item.conversation_id.as_ref() == Some(conversation_id)).then_some(s)
+            })
+            .next()
+            .expect("expected at least one session for the conversation")
+    }
 
     #[tokio::test]
     async fn create_conversation_applies_session_settings_model() {
@@ -391,7 +405,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_conversation_id, versioned) = state
+        let (conversation_id, versioned) = state
             .create_conversation(
                 Some("hello".to_string()),
                 None,
@@ -403,8 +417,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(versioned.item.status, ConversationStatus::Active);
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert_eq!(session.item.model.as_deref(), Some("custom-model"));
     }
 
@@ -413,7 +426,7 @@ mod tests {
         let state = state_with_default_model("default-model");
         let settings = SessionSettings::default();
 
-        let (_conversation_id, versioned) = state
+        let (conversation_id, _versioned) = state
             .create_conversation(
                 Some("hello".to_string()),
                 None,
@@ -424,8 +437,7 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert_eq!(session.item.model.as_deref(), Some("default-model"));
     }
 
@@ -438,7 +450,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_conversation_id, versioned) = state
+        let (conversation_id, _versioned) = state
             .create_conversation(
                 Some("hello".to_string()),
                 None,
@@ -449,8 +461,7 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         match &session.item.context {
             crate::domain::sessions::BundleSpec::GitRepository { url, rev } => {
                 assert_eq!(url, "https://github.com/org/repo.git");
@@ -468,7 +479,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_conversation_id, versioned) = state
+        let (conversation_id, _versioned) = state
             .create_conversation(
                 Some("hello".to_string()),
                 None,
@@ -479,8 +490,7 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert_eq!(session.item.secrets, Some(vec!["GH_TOKEN".to_string()]));
     }
 
@@ -489,7 +499,7 @@ mod tests {
         let state = state_with_default_model("default-model");
         let settings = SessionSettings::default();
 
-        let (conversation_id, versioned) = state
+        let (conversation_id, _versioned) = state
             .create_conversation(
                 Some("hello".to_string()),
                 None,
@@ -500,15 +510,14 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert!(
             session.item.interactive,
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id,
-            Some(conversation_id),
+            session.item.conversation_id.as_ref(),
+            Some(&conversation_id),
             "conversation session should have conversation_id set"
         );
     }
@@ -542,15 +551,14 @@ mod tests {
             events.len()
         );
 
-        let session_id = versioned.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let session = session_for_conversation(&state, &conversation_id).await;
         assert!(
             session.item.interactive,
             "conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id,
-            Some(conversation_id),
+            session.item.conversation_id.as_ref(),
+            Some(&conversation_id),
             "conversation session should have conversation_id set"
         );
     }
@@ -591,8 +599,27 @@ mod tests {
             .unwrap();
 
         assert_eq!(resumed.item.status, ConversationStatus::Active);
-        let session_id = resumed.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+
+        // The Resumed event records the new session id; use that to fetch the
+        // newly-created session and confirm settings flowed through.
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let resumed_session_id = events
+            .into_iter()
+            .rev()
+            .find_map(|e| match e.item {
+                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .expect("expected a Resumed event after resume_conversation");
+        let session = state
+            .store()
+            .get_session(&resumed_session_id, false)
+            .await
+            .unwrap();
         assert_eq!(session.item.model.as_deref(), Some("custom-model"));
     }
 
@@ -617,7 +644,7 @@ mod tests {
             .await
             .unwrap();
 
-        let resumed = state
+        state
             .resume_conversation(
                 &conversation_id,
                 ActorRef::test(),
@@ -626,15 +653,31 @@ mod tests {
             .await
             .unwrap();
 
-        let session_id = resumed.item.active_session_id.as_ref().unwrap();
-        let session = state.store().get_session(session_id, false).await.unwrap();
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let resumed_session_id = events
+            .into_iter()
+            .rev()
+            .find_map(|e| match e.item {
+                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .expect("expected a Resumed event after resume_conversation");
+        let session = state
+            .store()
+            .get_session(&resumed_session_id, false)
+            .await
+            .unwrap();
         assert!(
             session.item.interactive,
             "resumed conversation session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_id,
-            Some(conversation_id),
+            session.item.conversation_id.as_ref(),
+            Some(&conversation_id),
             "resumed conversation session should have conversation_id set"
         );
     }
