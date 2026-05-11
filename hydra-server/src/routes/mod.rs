@@ -19,7 +19,6 @@ pub mod sessions;
 pub mod users;
 pub mod version;
 pub mod whoami;
-pub mod workflows;
 
 /// Resolve a version number that may be negative (offset from latest) into an
 /// absolute positive version number.

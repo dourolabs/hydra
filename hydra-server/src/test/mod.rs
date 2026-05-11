@@ -22,6 +22,5 @@ mod secrets;
 mod sessions;
 mod users;
 mod whoami;
-mod workflows;
 
 pub(crate) use crate::test_utils::*;

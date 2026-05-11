@@ -369,21 +369,6 @@ impl TransitionWorkflowRequest {
     }
 }
 
-/// Query parameters for `GET /v1/workflows`.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct ListWorkflowsQuery {
-    #[serde(default)]
-    pub status: Option<WorkflowStatus>,
-    /// Filter by any issue associated with the workflow (matches the
-    /// `workflow_issues` reverse index — i.e., issues created by any state of
-    /// the workflow). The CLI's `--issue` flag maps here.
-    #[serde(default)]
-    pub issue_id: Option<IssueId>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
