@@ -301,5 +301,6 @@ mod ts_export {
         crate::workflows::StartWorkflowRequest::export_all(&cfg).expect("StartWorkflowRequest");
         crate::workflows::TransitionWorkflowRequest::export_all(&cfg)
             .expect("TransitionWorkflowRequest");
+        crate::workflows::ListWorkflowsQuery::export_all(&cfg).expect("ListWorkflowsQuery");
     }
 }
