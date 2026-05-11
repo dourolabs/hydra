@@ -1295,7 +1295,6 @@ impl SqliteStore {
         let interactive = if row.interactive {
             Some(InteractiveOptions {
                 conversation_id,
-                idle_timeout_secs: None,
                 conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
             })
         } else {
@@ -6970,7 +6969,6 @@ mod tests {
         let mut task = spawn_task();
         task.interactive = Some(InteractiveOptions {
             conversation_id: Some(conv_id.clone()),
-            idle_timeout_secs: None,
             conversation_resume_from: Some(7),
         });
 
