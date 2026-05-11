@@ -1,5 +1,5 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
-use crate::domain::workflows::Workflow;
+use crate::domain::workflows::{Workflow, WorkflowHistoryEntry, WorkflowStatus, WorkflowTemplate};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
     agents::Agent,
@@ -56,6 +56,8 @@ const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
 const TABLE_CONVERSATIONS: &str = "conversations";
 const TABLE_CONVERSATION_EVENTS: &str = "conversation_events";
+const TABLE_WORKFLOWS: &str = "workflows";
+const TABLE_WORKFLOW_ISSUES: &str = "workflow_issues";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -176,6 +178,26 @@ struct ConversationEventSummaryRow {
     conversation_id: String,
     event_count: i64,
     last_event_data: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct WorkflowRow {
+    workflow_id: String,
+    version_number: i64,
+    template_path: String,
+    template_snapshot: String,
+    tracking_issue_id: String,
+    current_state: String,
+    context: String,
+    active_issue_id: Option<String>,
+    history: String,
+    status: String,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -406,6 +428,28 @@ impl SqliteStore {
         match version {
             Some(value) => VersionNumber::try_from(value).map(Some).map_err(|_| {
                 StoreError::Internal(format!("invalid version number stored for {table} '{id}'"))
+            }),
+            None => Ok(None),
+        }
+    }
+
+    async fn fetch_latest_workflow_version(
+        &self,
+        workflow_id: &str,
+    ) -> Result<Option<VersionNumber>, StoreError> {
+        let version = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT version_number FROM {TABLE_WORKFLOWS} WHERE workflow_id = ?1 ORDER BY version_number DESC LIMIT 1"
+        ))
+        .bind(workflow_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        match version {
+            Some(value) => VersionNumber::try_from(value).map(Some).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for workflow '{workflow_id}'"
+                ))
             }),
             None => Ok(None),
         }
@@ -696,6 +740,124 @@ impl SqliteStore {
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
         .bind(conversation.deleted)
+        .bind(actor)
+        .execute(executor)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    // ---- Workflow helpers ----
+
+    fn row_to_workflow(row: &WorkflowRow) -> Result<Workflow, StoreError> {
+        let workflow_id: WorkflowId = row.workflow_id.parse().map_err(|e| {
+            StoreError::Internal(format!("invalid workflow id stored in database: {e}"))
+        })?;
+        let template_snapshot: WorkflowTemplate = serde_json::from_str(&row.template_snapshot)
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize workflow template: {e}"))
+            })?;
+        let tracking_issue_id: IssueId = row.tracking_issue_id.parse().map_err(|e| {
+            StoreError::Internal(format!(
+                "invalid tracking issue id stored for workflow: {e}"
+            ))
+        })?;
+        let context: HashMap<String, String> = serde_json::from_str(&row.context).map_err(|e| {
+            StoreError::Internal(format!("failed to deserialize workflow context: {e}"))
+        })?;
+        let active_issue_id = row
+            .active_issue_id
+            .as_deref()
+            .map(|s| s.parse::<IssueId>())
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("invalid active issue id stored for workflow: {e}"))
+            })?;
+        let history: Vec<WorkflowHistoryEntry> =
+            serde_json::from_str(&row.history).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize workflow history: {e}"))
+            })?;
+        let status = parse_workflow_status(&row.status);
+
+        Ok(Workflow::new(
+            workflow_id,
+            row.template_path.clone(),
+            template_snapshot,
+            tracking_issue_id,
+            row.current_state.clone(),
+            context,
+            active_issue_id,
+            history,
+            status,
+        ))
+    }
+
+    fn versioned_workflow_from_row(row: WorkflowRow) -> Result<Versioned<Workflow>, StoreError> {
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for workflow '{}'",
+                row.workflow_id
+            ))
+        })?;
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
+        let actor = parse_actor_json_string(row.actor.as_deref())?;
+        let workflow = Self::row_to_workflow(&row)?;
+        Ok(Versioned::with_optional_actor(
+            workflow,
+            version,
+            timestamp,
+            actor,
+            creation_time,
+        ))
+    }
+
+    async fn insert_workflow_in_tx<'e, E>(
+        executor: E,
+        workflow: &Workflow,
+        version_number: VersionNumber,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
+        let workflow_id_str = workflow.workflow_id.as_ref();
+        let version_number_i64 = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "version number overflow for workflow '{workflow_id_str}'"
+            ))
+        })?;
+        let template_snapshot_json =
+            serde_json::to_string(&workflow.template_snapshot).map_err(|e| {
+                StoreError::Internal(format!("failed to serialize workflow template: {e}"))
+            })?;
+        let context_json = serde_json::to_string(&workflow.context).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize workflow context: {e}"))
+        })?;
+        let history_json = serde_json::to_string(&workflow.history).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize workflow history: {e}"))
+        })?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_WORKFLOWS} (workflow_id, version_number, template_path, template_snapshot, tracking_issue_id, current_state, context, active_issue_id, history, status, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)"
+        ))
+        .bind(workflow_id_str)
+        .bind(version_number_i64)
+        .bind(&workflow.template_path)
+        .bind(&template_snapshot_json)
+        .bind(workflow.tracking_issue_id.as_ref())
+        .bind(&workflow.current_state)
+        .bind(&context_json)
+        .bind(workflow.active_issue_id.as_ref().map(|id| id.as_ref()))
+        .bind(&history_json)
+        .bind(workflow.status.as_str())
         .bind(actor)
         .execute(executor)
         .await
@@ -2013,6 +2175,16 @@ fn parse_actor_json_string(value: Option<&str>) -> Result<Option<ActorRef>, Stor
         Some(v) => serde_json::from_str(v).map(Some).map_err(|e| {
             StoreError::Internal(format!("failed to parse actor JSON into ActorRef: {e}"))
         }),
+    }
+}
+
+fn parse_workflow_status(s: &str) -> WorkflowStatus {
+    match s {
+        "active" => WorkflowStatus::Active,
+        "completed" => WorkflowStatus::Completed,
+        "failed" => WorkflowStatus::Failed,
+        "cancelled" => WorkflowStatus::Cancelled,
+        _ => WorkflowStatus::Unknown,
     }
 }
 
@@ -3955,23 +4127,96 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_workflow(
         &self,
-        _workflow_id: &WorkflowId,
+        workflow_id: &WorkflowId,
     ) -> Result<Versioned<Workflow>, StoreError> {
-        unimplemented!("SqliteStore::get_workflow is not yet implemented")
+        let row = sqlx::query_as::<_, WorkflowRow>(&format!(
+            "SELECT workflow_id, version_number, template_path, template_snapshot, tracking_issue_id, current_state, context, active_issue_id, history, status, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_WORKFLOWS} WHERE workflow_id = ?1) AS creation_time
+             FROM {TABLE_WORKFLOWS}
+             WHERE workflow_id = ?1 AND is_latest = 1
+             LIMIT 1"
+        ))
+        .bind(workflow_id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::WorkflowNotFound(workflow_id.clone()))?;
+        Self::versioned_workflow_from_row(row)
     }
 
     async fn list_workflows(
         &self,
-        _filter: &WorkflowFilter,
+        filter: &WorkflowFilter,
     ) -> Result<Vec<Versioned<Workflow>>, StoreError> {
-        unimplemented!("SqliteStore::list_workflows is not yet implemented")
+        let mut sql = format!(
+            "SELECT w.workflow_id, w.version_number, w.template_path, w.template_snapshot, w.tracking_issue_id, w.current_state, w.context, w.active_issue_id, w.history, w.status, w.actor, w.created_at, w.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_WORKFLOWS} WHERE workflow_id = w.workflow_id) AS creation_time
+             FROM {TABLE_WORKFLOWS} w"
+        );
+
+        let mut predicates: Vec<String> = vec!["w.is_latest = 1".to_string()];
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(associated_issue_id) = &filter.associated_issue_id {
+            sql.push_str(&format!(
+                " INNER JOIN {TABLE_WORKFLOW_ISSUES} wi ON wi.workflow_id = w.workflow_id"
+            ));
+            bindings.push(associated_issue_id.as_ref().to_string());
+            predicates.push(format!("wi.issue_id = ?{}", bindings.len()));
+        }
+        if let Some(status) = filter.status {
+            bindings.push(status.as_str().to_string());
+            predicates.push(format!("w.status = ?{}", bindings.len()));
+        }
+        if let Some(tracking_issue_id) = &filter.tracking_issue_id {
+            bindings.push(tracking_issue_id.as_ref().to_string());
+            predicates.push(format!("w.tracking_issue_id = ?{}", bindings.len()));
+        }
+        if let Some(active_issue_id) = &filter.active_issue_id {
+            bindings.push(active_issue_id.as_ref().to_string());
+            predicates.push(format!("w.active_issue_id = ?{}", bindings.len()));
+        }
+
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+        sql.push_str(" ORDER BY w.updated_at DESC, w.workflow_id ASC");
+
+        let mut query_builder = sqlx::query_as::<_, WorkflowRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut workflows = Vec::with_capacity(rows.len());
+        for row in rows {
+            workflows.push(Self::versioned_workflow_from_row(row)?);
+        }
+        Ok(workflows)
     }
 
     async fn find_workflow_by_issue_id(
         &self,
-        _issue_id: &IssueId,
+        issue_id: &IssueId,
     ) -> Result<Option<Versioned<Workflow>>, StoreError> {
-        unimplemented!("SqliteStore::find_workflow_by_issue_id is not yet implemented")
+        let row = sqlx::query_as::<_, WorkflowRow>(&format!(
+            "SELECT w.workflow_id, w.version_number, w.template_path, w.template_snapshot, w.tracking_issue_id, w.current_state, w.context, w.active_issue_id, w.history, w.status, w.actor, w.created_at, w.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_WORKFLOWS} WHERE workflow_id = w.workflow_id) AS creation_time
+             FROM {TABLE_WORKFLOWS} w
+             INNER JOIN {TABLE_WORKFLOW_ISSUES} wi ON wi.workflow_id = w.workflow_id
+             WHERE wi.issue_id = ?1 AND w.is_latest = 1
+             LIMIT 1"
+        ))
+        .bind(issue_id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        row.map(Self::versioned_workflow_from_row).transpose()
     }
 }
 
@@ -4952,19 +5197,66 @@ impl Store for SqliteStore {
 
     async fn upsert_workflow(
         &self,
-        _workflow: Workflow,
-        _actor: &ActorRef,
+        workflow: Workflow,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        unimplemented!("SqliteStore::upsert_workflow is not yet implemented")
+        let workflow_id_str = workflow.workflow_id.as_ref().to_string();
+        let latest_version = self.fetch_latest_workflow_version(&workflow_id_str).await?;
+        let next_version = match latest_version {
+            None => 1,
+            Some(v) => v.checked_add(1).ok_or_else(|| {
+                StoreError::Internal(format!(
+                    "version number overflow for workflow '{workflow_id_str}'"
+                ))
+            })?,
+        };
+
+        let actor_json = actor_to_json_string(actor);
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query(&format!(
+            "UPDATE {TABLE_WORKFLOWS} SET is_latest = 0 WHERE workflow_id = ?1 AND is_latest = 1"
+        ))
+        .bind(&workflow_id_str)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        Self::insert_workflow_in_tx(&mut *tx, &workflow, next_version, Some(&actor_json)).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
     }
 
     async fn insert_workflow_issue(
         &self,
-        _workflow_id: &WorkflowId,
-        _issue_id: &IssueId,
-        _state_id: &str,
+        workflow_id: &WorkflowId,
+        issue_id: &IssueId,
+        state_id: &str,
     ) -> Result<(), StoreError> {
-        unimplemented!("SqliteStore::insert_workflow_issue is not yet implemented")
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_WORKFLOWS} WHERE workflow_id = ?1"
+        ))
+        .bind(workflow_id.as_ref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists == 0 {
+            return Err(StoreError::WorkflowNotFound(workflow_id.clone()));
+        }
+
+        sqlx::query(&format!(
+            "INSERT OR IGNORE INTO {TABLE_WORKFLOW_ISSUES} (workflow_id, issue_id, state_id)
+             VALUES (?1, ?2, ?3)"
+        ))
+        .bind(workflow_id.as_ref())
+        .bind(issue_id.as_ref())
+        .bind(state_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 }
 
@@ -8978,5 +9270,520 @@ mod tests {
         // get_conversation with include_deleted=true should return the deleted conversation
         let fetched = store.get_conversation(&id, true).await.unwrap();
         assert!(fetched.item.deleted);
+    }
+
+    // ---- Workflow tests ----
+
+    mod workflow_tests {
+        use super::*;
+        use crate::domain::workflows::{
+            StateEntryAction, Workflow, WorkflowState, WorkflowStatus, WorkflowTemplate,
+        };
+        use hydra_common::WorkflowId;
+        use hydra_common::api::v1::issues::IssueStatus;
+
+        fn sample_template() -> WorkflowTemplate {
+            WorkflowTemplate::new(
+                "Test".to_string(),
+                String::new(),
+                vec![],
+                vec![WorkflowState::new(
+                    "done".to_string(),
+                    "Done".to_string(),
+                    true,
+                    StateEntryAction::Noop,
+                    Some(IssueStatus::Closed),
+                )],
+                vec![],
+                "done".to_string(),
+            )
+        }
+
+        fn workflow_with(
+            workflow_id: WorkflowId,
+            tracking_issue_id: IssueId,
+            current_state: &str,
+            active_issue_id: Option<IssueId>,
+            status: WorkflowStatus,
+        ) -> Workflow {
+            Workflow::new(
+                workflow_id,
+                "/workflows/test.yaml".to_string(),
+                sample_template(),
+                tracking_issue_id,
+                current_state.to_string(),
+                HashMap::new(),
+                active_issue_id,
+                Vec::new(),
+                status,
+            )
+        }
+
+        #[tokio::test]
+        async fn upsert_and_get_workflow_round_trip() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "done",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let version = store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            assert_eq!(version, 1);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 1);
+            assert_eq!(fetched.item, workflow);
+        }
+
+        #[tokio::test]
+        async fn get_workflow_returns_not_found_for_missing_id() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let err = store.get_workflow(&workflow_id).await.unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == workflow_id
+            ));
+        }
+
+        #[tokio::test]
+        async fn upsert_workflow_bumps_version_on_update() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let mut workflow = workflow_with(
+                workflow_id.clone(),
+                tracking.clone(),
+                "develop",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            let v1 = store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            workflow.current_state = "review".to_string();
+            workflow
+                .context
+                .insert("key".to_string(), "value".to_string());
+            let v2 = store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            assert_eq!(v1, 1);
+            assert_eq!(v2, 2);
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 2);
+            assert_eq!(fetched.item.current_state, "review");
+            assert_eq!(
+                fetched.item.context.get("key").map(String::as_str),
+                Some("value")
+            );
+        }
+
+        #[tokio::test]
+        async fn get_workflow_returns_only_latest_version_after_updates() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let tracking = IssueId::new();
+            let mut workflow = workflow_with(
+                workflow_id.clone(),
+                tracking,
+                "develop",
+                None,
+                WorkflowStatus::Active,
+            );
+
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            workflow.current_state = "review".to_string();
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            workflow.status = WorkflowStatus::Completed;
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            let fetched = store.get_workflow(&workflow_id).await.unwrap();
+            assert_eq!(fetched.version, 3);
+            assert_eq!(fetched.item.status, WorkflowStatus::Completed);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_status() {
+            let store = create_test_store().await;
+            let active_id = WorkflowId::new();
+            let completed_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        active_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        completed_id.clone(),
+                        IssueId::new(),
+                        "done",
+                        None,
+                        WorkflowStatus::Completed,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    status: Some(WorkflowStatus::Active),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, active_id);
+
+            let results = store
+                .list_workflows(&WorkflowFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_tracking_issue_id() {
+            let store = create_test_store().await;
+            let target_tracking = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        target_tracking.clone(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    tracking_issue_id: Some(target_tracking.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+            assert_eq!(results[0].item.tracking_issue_id, target_tracking);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_active_issue_id() {
+            let store = create_test_store().await;
+            let active_issue = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        Some(active_issue.clone()),
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    active_issue_id: Some(active_issue.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_filters_by_associated_issue_id() {
+            let store = create_test_store().await;
+            let associated = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            store
+                .insert_workflow_issue(&target_id, &associated, "develop")
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(associated.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+
+            let unassociated = IssueId::new();
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    associated_issue_id: Some(unassociated),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert!(results.is_empty());
+        }
+
+        #[tokio::test]
+        async fn list_workflows_combines_filters_with_and() {
+            let store = create_test_store().await;
+            let tracking = IssueId::new();
+            let target_id = WorkflowId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        target_id.clone(),
+                        tracking.clone(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            // Same tracking issue, different status — should be filtered out.
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        WorkflowId::new(),
+                        tracking.clone(),
+                        "done",
+                        None,
+                        WorkflowStatus::Completed,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let results = store
+                .list_workflows(&WorkflowFilter {
+                    status: Some(WorkflowStatus::Active),
+                    tracking_issue_id: Some(tracking),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].item.workflow_id, target_id);
+        }
+
+        #[tokio::test]
+        async fn find_workflow_by_issue_id_uses_reverse_index() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            let result = store.find_workflow_by_issue_id(&child).await.unwrap();
+            assert!(result.is_none());
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .expect("workflow should be found via reverse index");
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
+
+        #[tokio::test]
+        async fn find_workflow_by_issue_id_returns_latest_version() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            let mut workflow = workflow_with(
+                workflow_id.clone(),
+                IssueId::new(),
+                "develop",
+                None,
+                WorkflowStatus::Active,
+            );
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+
+            workflow.current_state = "review".to_string();
+            store
+                .upsert_workflow(workflow.clone(), &ActorRef::test())
+                .await
+                .unwrap();
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.version, 2);
+            assert_eq!(found.item.current_state, "review");
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_errors_when_workflow_missing() {
+            let store = create_test_store().await;
+            let missing = WorkflowId::new();
+            let err = store
+                .insert_workflow_issue(&missing, &IssueId::new(), "develop")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                StoreError::WorkflowNotFound(id) if id == missing
+            ));
+        }
+
+        #[tokio::test]
+        async fn insert_workflow_issue_is_idempotent() {
+            let store = create_test_store().await;
+            let workflow_id = WorkflowId::new();
+            let child = IssueId::new();
+            store
+                .upsert_workflow(
+                    workflow_with(
+                        workflow_id.clone(),
+                        IssueId::new(),
+                        "develop",
+                        None,
+                        WorkflowStatus::Active,
+                    ),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+
+            store
+                .insert_workflow_issue(&workflow_id, &child, "develop")
+                .await
+                .unwrap();
+            store
+                .insert_workflow_issue(&workflow_id, &child, "review")
+                .await
+                .unwrap();
+
+            let found = store
+                .find_workflow_by_issue_id(&child)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.item.workflow_id, workflow_id);
+        }
     }
 }
