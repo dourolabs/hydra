@@ -11,7 +11,7 @@ use crate::{
 };
 use chrono::{DateTime, Duration, Utc};
 use hydra_common::{
-    SessionId, Versioned,
+    ConversationId, SessionId, Versioned,
     api::v1 as api,
     api::v1::sessions::SearchSessionsQuery,
     issues::IssueId,
@@ -37,6 +37,14 @@ pub enum CreateSessionError {
         source: StoreError,
         issue_id: IssueId,
     },
+    #[error("failed to load conversation '{conversation_id}' for session creation")]
+    ConversationLookup {
+        #[source]
+        source: StoreError,
+        conversation_id: ConversationId,
+    },
+    #[error("issue_id and conversation_id are mutually exclusive on CreateSessionRequest")]
+    IssueAndConversationConflict,
     #[error("failed to store session")]
     Store {
         #[source]
@@ -81,40 +89,43 @@ impl AppState {
     pub async fn create_session(
         &self,
         request: api::sessions::CreateSessionRequest,
-        override_session_settings: Option<SessionSettings>,
         actor: ActorRef,
         creator: Username,
-        conversation_id: Option<hydra_common::ConversationId>,
     ) -> Result<SessionId, CreateSessionError> {
-        let env_vars = request.variables;
+        if request.issue_id.is_some() && request.conversation_id.is_some() {
+            return Err(CreateSessionError::IssueAndConversationConflict);
+        }
 
-        let issue = match request.issue_id.as_ref() {
-            Some(issue_id) => {
-                let store = self.store.as_ref();
-                Some(store.get_issue(issue_id, false).await.map_err(|source| {
-                    CreateSessionError::IssueLookup {
-                        source,
-                        issue_id: issue_id.clone(),
-                    }
-                })?)
-            }
-            None => None,
-        };
-        let session_settings = if let Some(settings) = override_session_settings {
-            let settings = self.apply_session_settings_defaults(settings);
-            if SessionSettings::is_default(&settings) {
-                None
-            } else {
-                Some(settings)
-            }
+        let env_vars = request.variables;
+        let store = self.store.as_ref();
+
+        // Derive session settings from whichever of conversation/issue is linked.
+        // `create_conversation` persists the conversation before calling this method,
+        // so the lookup below succeeds when invoked from that path.
+        let derived_settings = if let Some(conversation_id) = request.conversation_id.as_ref() {
+            let conversation = store
+                .get_conversation(conversation_id, false)
+                .await
+                .map_err(|source| CreateSessionError::ConversationLookup {
+                    source,
+                    conversation_id: conversation_id.clone(),
+                })?;
+            Some(conversation.item.session_settings)
+        } else if let Some(issue_id) = request.issue_id.as_ref() {
+            let issue = store.get_issue(issue_id, false).await.map_err(|source| {
+                CreateSessionError::IssueLookup {
+                    source,
+                    issue_id: issue_id.clone(),
+                }
+            })?;
+            Some(issue.item.session_settings)
         } else {
-            issue
-                .as_ref()
-                .map(|issue| {
-                    self.apply_session_settings_defaults(issue.item.session_settings.clone())
-                })
-                .filter(|settings| !SessionSettings::is_default(settings))
+            None
         };
+
+        let session_settings = derived_settings
+            .map(|settings| self.apply_session_settings_defaults(settings))
+            .filter(|settings| !SessionSettings::is_default(settings));
 
         let mut context: BundleSpec = request.context.into();
         let image = session_settings
@@ -176,7 +187,7 @@ impl AppState {
             secrets,
             None,
             request.interactive,
-            conversation_id,
+            request.conversation_id.clone(),
             Status::Created,
             None,
             None,
@@ -1275,57 +1286,63 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_passes_interactive_and_conversation_id() {
-        use hydra_common::{ConversationId, api::v1::sessions::CreateSessionRequest};
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        use hydra_common::api::v1::sessions::CreateSessionRequest;
 
         let state = state_with_default_model("default-model");
 
-        // Non-interactive session (issue-based): interactive=false, conversation_id=None
+        // Non-interactive session (no issue/conversation): interactive=false, conversation_id=None
         let request = CreateSessionRequest::new(
             "do stuff".to_string(),
             None,
             hydra_common::api::v1::sessions::BundleSpec::None,
             std::collections::HashMap::new(),
             None,
+            None,
             false,
         );
         let session_id = state
-            .create_session(
-                request,
-                None,
-                ActorRef::test(),
-                Username::from("creator"),
-                None,
-            )
+            .create_session(request, ActorRef::test(), Username::from("creator"))
             .await
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
         assert!(
             !session.interactive,
-            "issue session should not be interactive"
+            "non-conversation session should not be interactive"
         );
         assert_eq!(
             session.conversation_id, None,
-            "issue session should have no conversation_id"
+            "non-conversation session should have no conversation_id"
         );
 
-        // Interactive session (conversation-based): interactive=true, conversation_id=Some(...)
-        let conv_id = ConversationId::new();
+        // Interactive session (conversation-based): conversation_id is set on request.
+        let (conv_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    active_session_id: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: crate::domain::issues::SessionSettings::default(),
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
         let request = CreateSessionRequest::new(
             "hello".to_string(),
             None,
             hydra_common::api::v1::sessions::BundleSpec::None,
             std::collections::HashMap::new(),
             None,
+            Some(conv_id.clone()),
             true,
         );
         let session_id = state
-            .create_session(
-                request,
-                None,
-                ActorRef::test(),
-                Username::from("creator"),
-                Some(conv_id.clone()),
-            )
+            .create_session(request, ActorRef::test(), Username::from("creator"))
             .await
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
@@ -1337,6 +1354,83 @@ mod tests {
             session.conversation_id,
             Some(conv_id),
             "conversation session should have conversation_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_session_rejects_issue_and_conversation_together() {
+        use crate::app::CreateSessionError;
+        use hydra_common::{ConversationId, IssueId, api::v1::sessions::CreateSessionRequest};
+
+        let state = state_with_default_model("default-model");
+        let request = CreateSessionRequest::new(
+            "do stuff".to_string(),
+            None,
+            hydra_common::api::v1::sessions::BundleSpec::None,
+            std::collections::HashMap::new(),
+            Some(IssueId::new()),
+            Some(ConversationId::new()),
+            false,
+        );
+
+        let err = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .expect_err("issue_id + conversation_id should be rejected");
+        assert!(
+            matches!(err, CreateSessionError::IssueAndConversationConflict),
+            "expected IssueAndConversationConflict, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_session_derives_settings_from_linked_conversation() {
+        use crate::domain::{
+            conversations::{Conversation, ConversationStatus},
+            issues::SessionSettings,
+        };
+        use hydra_common::api::v1::sessions::CreateSessionRequest;
+
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings {
+            model: Some("conversation-model".to_string()),
+            ..Default::default()
+        };
+        let (conv_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    active_session_id: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: settings,
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let request = CreateSessionRequest::new(
+            "hello".to_string(),
+            None,
+            hydra_common::api::v1::sessions::BundleSpec::None,
+            std::collections::HashMap::new(),
+            None,
+            Some(conv_id),
+            true,
+        );
+        let session_id = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        assert_eq!(
+            session.model.as_deref(),
+            Some("conversation-model"),
+            "session should inherit model from the linked conversation"
         );
     }
 

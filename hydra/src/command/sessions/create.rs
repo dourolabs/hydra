@@ -49,8 +49,15 @@ pub async fn run(
         }
         None => None,
     };
-    let request =
-        CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id, false);
+    let request = CreateSessionRequest::new(
+        prompt,
+        image,
+        bundle_context,
+        variables,
+        issue_id,
+        None,
+        false,
+    );
     let response = client.create_session(&request).await?;
     let session_id = response.session_id;
 
@@ -333,6 +340,7 @@ mod tests {
             BundleSpec::None,
             variables.clone(),
             None,
+            None,
             false,
         );
         let create_mock = server.mock(|when, then| {
@@ -398,6 +406,7 @@ mod tests {
             },
             variables,
             None,
+            None,
             false,
         );
         let job_id = task_id("t-job-service");
@@ -445,6 +454,7 @@ mod tests {
                 rev: Some("main".into()),
             },
             variables,
+            None,
             None,
             false,
         );
@@ -494,6 +504,7 @@ mod tests {
             },
             variables,
             None,
+            None,
             false,
         );
         let job_id = task_id("t-job-git");
@@ -542,6 +553,7 @@ mod tests {
             },
             variables,
             None,
+            None,
             false,
         );
         let job_id = task_id("t-job-git-default-rev");
@@ -586,6 +598,7 @@ mod tests {
             Some("ghcr.io/example/hydra:dev".to_string()),
             BundleSpec::None,
             variables,
+            None,
             None,
             false,
         );
@@ -632,6 +645,7 @@ mod tests {
                 ("PROMPT".to_string(), "variable prompt".to_string()),
                 ("FOO".to_string(), "bar".to_string()),
             ]),
+            None,
             None,
             false,
         );

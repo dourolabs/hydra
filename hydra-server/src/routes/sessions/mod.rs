@@ -30,13 +30,7 @@ pub async fn create_session(
 ) -> Result<Json<v1::sessions::CreateSessionResponse>, ApiError> {
     info!("create_session invoked");
     let session_id = state
-        .create_session(
-            payload,
-            None,
-            ActorRef::from(&actor),
-            actor.creator.clone(),
-            None,
-        )
+        .create_session(payload, ActorRef::from(&actor), actor.creator.clone())
         .await
         .map_err(|err| match err {
             CreateSessionError::TaskResolution(err) => ApiError::from(err),
@@ -53,6 +47,27 @@ pub async fn create_session(
                     ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
                 }
             },
+            CreateSessionError::ConversationLookup {
+                source,
+                conversation_id,
+            } => match source {
+                StoreError::ConversationNotFound(_) => {
+                    ApiError::not_found(format!("conversation '{conversation_id}' not found"))
+                }
+                other => {
+                    error!(
+                        error = %other,
+                        conversation_id = %conversation_id,
+                        "failed to load conversation for session creation"
+                    );
+                    ApiError::internal(format!(
+                        "Failed to load conversation '{conversation_id}': {other}"
+                    ))
+                }
+            },
+            err @ CreateSessionError::IssueAndConversationConflict => {
+                ApiError::bad_request(err.to_string())
+            }
             CreateSessionError::Store { source } => {
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))
