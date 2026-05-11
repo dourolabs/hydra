@@ -15,6 +15,7 @@ mod sessions;
 #[cfg(test)]
 pub mod test_helpers;
 mod users;
+mod workflows;
 
 use crate::{
     domain::patches::Patch, domain::sessions::Bundle, merge_queue::MergeQueueImpl,
@@ -48,6 +49,9 @@ pub(crate) use sessions::{
 };
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
+pub use workflows::{
+    CancelWorkflowError, CreateWorkflowError, EnterStateError, TransitionWorkflowError,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
