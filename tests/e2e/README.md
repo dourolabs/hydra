@@ -71,7 +71,7 @@ navigate to pages, click buttons, fill forms, wait for state changes.>
 | Requirement | Details |
 |---|---|
 | Hydra binary | Built from source (`cargo build -p hydra-single-player --release`) |
-| API key | `CLAUDE_CODE_OAUTH_TOKEN` environment variable |
+| Claude credential | Either `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` environment variable |
 | GitHub PAT | `GH_TOKEN` environment variable |
 | Playwright MCP | `npx @playwright/mcp` |
 | Test repo | `dourolabs/hydra-test-fixture` |
@@ -81,8 +81,11 @@ navigate to pages, click buttons, fill forms, wait for state changes.>
 ### Quick Start
 
 ```bash
-# Set required environment variables
+# Set required environment variables.
+# Provide at least one Claude credential (either OAuth token or API key):
 export CLAUDE_CODE_OAUTH_TOKEN="your-oauth-token"
+# ...or:
+# export ANTHROPIC_API_KEY="your-anthropic-api-key"
 export GH_TOKEN="your-github-pat"
 
 # Bootstrap a test server
@@ -93,7 +96,7 @@ export GH_TOKEN="your-github-pat"
 
 The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra single-player instance for testing:
 
-1. **Validates prerequisites** -- checks for required env vars (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`), `cargo`, `npx`, and the test config file
+1. **Validates prerequisites** -- checks for required env vars (`GH_TOKEN` plus at least one of `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`), `cargo`, `npx`, and the test config file
 2. **Creates directories** -- sets up test paths (`/tmp/hydra-e2e`)
 3. **Cleans previous state** -- removes `~/.hydra/server/` for a fresh run
 4. **Builds the binary** -- runs `cargo build -p hydra-single-player --release` and creates a `hydra-sp` symlink in `target/release/`
