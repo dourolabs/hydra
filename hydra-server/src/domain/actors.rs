@@ -329,9 +329,9 @@ async fn github_token_is_valid(config: &GithubAppSection, token: &str) -> Result
         StatusCode::UNAUTHORIZED => Ok(false),
         status => {
             error!(status = %status, "unexpected github token validation response");
-            Err(ApiError::internal(
-                "unexpected response while validating github token",
-            ))
+            Err(ApiError::internal(format!(
+                "unexpected response while validating github token: {status}"
+            )))
         }
     }
 }
@@ -382,7 +382,9 @@ async fn refresh_github_token(
         .unwrap_or_else(|| "github token refresh failed".to_string());
 
     error!(status = %status, error = %message, "github token refresh failed");
-    Err(ApiError::unauthorized("GitHub token refresh failed"))
+    Err(ApiError::unauthorized(format!(
+        "GitHub token refresh failed: {message}"
+    )))
 }
 
 fn join_url(base: &str, path: &str) -> String {

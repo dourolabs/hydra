@@ -362,6 +362,12 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         .await?;
 
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let body: hydra_common::api::v1::error::ApiErrorBody = response.json().await?;
+    assert!(
+        body.error.contains("bad refresh token"),
+        "expected response body to surface upstream error_description, got: {}",
+        body.error,
+    );
 
     Ok(())
 }
