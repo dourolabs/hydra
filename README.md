@@ -44,7 +44,7 @@ Don't blame me if you choose local and Claude `rm -rf`s your machine.
 ### 3. Add a git repository
 
 Open the frontend at http://localhost:8080/ and click "Create Issue".
-Tell the agent "add the git repo (git url)  ".
+Tell the agent "add the git repo (git url)".
 The agent will register the repo in the system and additionally work on a Dockerfile with the dependencies your repo needs.
 The agent will also set up a github action to publish the image, configure your git repo to use the image, and then validate that the image has everything you need.
 
