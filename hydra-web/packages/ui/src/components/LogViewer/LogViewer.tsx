@@ -32,7 +32,7 @@ function LogRow({
 }: RowComponentProps<RowExtraProps>): ReactElement {
   const html = getHtml(index);
   return (
-    <div className={styles.row} style={style}>
+    <div className={styles.row} style={style} data-testid="log-row">
       <span
         className={styles.lineNumber}
         style={{ minWidth: lineNumberWidth }}
@@ -70,9 +70,11 @@ export function LogViewer({
     if (index < cache.length && cache[index] !== undefined) {
       return cache[index];
     }
-    // Extend cache up to this index
+    // Strip embedded \r — white-space: pre renders a bare CR as a line break,
+    // which would stack visual lines inside a single virtualized row.
     while (cache.length <= index) {
-      cache.push(ansiConverter.toHtml(lines[cache.length]));
+      const raw = lines[cache.length];
+      cache.push(ansiConverter.toHtml(raw.replace(/\r/g, "")));
     }
     return cache[index];
   }, [lines]);

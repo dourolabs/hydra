@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LogViewer, Spinner } from "@hydra/ui";
 import { useSessionLogs } from "./useSessionLogs";
+import { splitLogLines } from "./splitLogLines";
 import styles from "./SessionLogViewer.module.css";
 
 interface SessionLogViewerProps {
@@ -80,7 +81,7 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
     es.onmessage = (event) => {
       const chunk = event.data as string;
       if (chunk) {
-        const newLines = chunk.split("\n");
+        const newLines = splitLogLines(chunk);
         pendingLinesRef.current.push(...newLines);
         if (rafIdRef.current === null) {
           rafIdRef.current = requestAnimationFrame(flushPendingLines);
@@ -130,7 +131,7 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
   }, []);
 
   // Parse snapshot text into lines
-  const snapshotLines = snapshotText ? snapshotText.split("\n") : [];
+  const snapshotLines = snapshotText ? splitLogLines(snapshotText) : [];
 
   const lines = isStreaming ? streamLines : snapshotLines;
   const isLoading = !isStreaming && snapshotLoading;
