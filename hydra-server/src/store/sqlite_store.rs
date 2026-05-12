@@ -8043,6 +8043,210 @@ mod tests {
         assert!(!refs[0].internal);
     }
 
+    /// Schema as of migration 20260316000000_add_internal_to_user_secrets — the state
+    /// the broken 20260330000000 migration starts from.
+    async fn setup_pre_composite_pk_user_secrets(pool: &SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE user_secrets ( \
+                username TEXT NOT NULL, \
+                secret_name TEXT NOT NULL, \
+                encrypted_value BLOB NOT NULL, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                PRIMARY KEY (username, secret_name))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("ALTER TABLE user_secrets ADD COLUMN internal BOOLEAN NOT NULL DEFAULT FALSE")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Verbatim body of 20260330000000_user_secrets_composite_pk.sql — kept inline so
+    /// the regression test reproduces the original scrambling bug end-to-end.
+    async fn apply_broken_composite_pk_migration(pool: &SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_secrets_new ( \
+                username TEXT NOT NULL, \
+                secret_name TEXT NOT NULL, \
+                encrypted_value BLOB NOT NULL, \
+                internal BOOLEAN NOT NULL DEFAULT FALSE, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                PRIMARY KEY (username, secret_name, internal))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO user_secrets_new SELECT * FROM user_secrets")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE user_secrets")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE user_secrets_new RENAME TO user_secrets")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Apply the repair migration file directly so the test exercises the actual
+    /// shipped SQL.
+    async fn apply_repair_migration(pool: &SqlitePool) {
+        let sql = include_str!(
+            "../../sqlite-migrations/20260512100000_repair_scrambled_user_secrets.sql"
+        );
+        sqlx::raw_sql(sql).execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repair_migration_unscrambles_user_secrets() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_composite_pk_user_secrets(&pool).await;
+
+        // Column order matches the post-20260316 schema: internal is last.
+        sqlx::query(
+            "INSERT INTO user_secrets \
+             (username, secret_name, encrypted_value, created_at, updated_at, internal) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind("alice")
+        .bind("CLAUDE_CODE_OAUTH_TOKEN")
+        .bind(&b"orig"[..])
+        .bind("2026-03-01T10:00:00.000+00:00")
+        .bind("2026-03-02T10:00:00.000+00:00")
+        .bind(false)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_broken_composite_pk_migration(&pool).await;
+        apply_repair_migration(&pool).await;
+
+        let store = SqliteStore::new(pool.clone());
+        let username = Username::from("alice".to_string());
+
+        let value = store
+            .get_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN")
+            .await
+            .unwrap();
+        assert_eq!(value, Some(b"orig".to_vec()));
+
+        let refs = store.list_user_secret_names(&username).await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "CLAUDE_CODE_OAUTH_TOKEN");
+        assert!(!refs[0].internal);
+
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_secrets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row_count, 1);
+    }
+
+    #[tokio::test]
+    async fn repair_migration_dedupes_zombie_rows() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_composite_pk_user_secrets(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO user_secrets \
+             (username, secret_name, encrypted_value, created_at, updated_at, internal) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind("alice")
+        .bind("CLAUDE_CODE_OAUTH_TOKEN")
+        .bind(&b"orig"[..])
+        .bind("2026-03-01T10:00:00.000+00:00")
+        .bind("2026-03-02T10:00:00.000+00:00")
+        .bind(false)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_broken_composite_pk_migration(&pool).await;
+
+        // After the bad migration, simulate `set_user_secret`. The UPSERT's
+        // ON CONFLICT (username, secret_name, internal) cannot match the scrambled
+        // PK (whose `internal` holds a timestamp), so a second row is inserted.
+        let store = SqliteStore::new(pool.clone());
+        let username = Username::from("alice".to_string());
+        store
+            .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", b"updated", false)
+            .await
+            .unwrap();
+
+        let pre_repair: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_secrets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pre_repair, 2, "expected zombie pair before repair");
+
+        apply_repair_migration(&pool).await;
+
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_secrets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row_count, 1);
+
+        // Dedupe should prefer the zombie row's (newer) value.
+        let value = store
+            .get_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN")
+            .await
+            .unwrap();
+        assert_eq!(value, Some(b"updated".to_vec()));
+
+        let refs = store.list_user_secret_names(&username).await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert!(!refs[0].internal);
+    }
+
+    #[tokio::test]
+    async fn repair_migration_is_noop_on_clean_install() {
+        // On a database whose user_secrets table only ever saw the (correctly typed)
+        // post-composite-PK schema and well-formed rows, the repair must not touch
+        // any data.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        SqliteStore::run_migrations(&pool).await.unwrap();
+
+        let store = SqliteStore::new(pool.clone());
+        let username = Username::from("alice".to_string());
+        store
+            .set_user_secret(&username, "EXTERNAL_KEY", b"ext", false)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "GITHUB_TOKEN", b"int", true)
+            .await
+            .unwrap();
+
+        // The repair migration has already been applied by run_migrations above;
+        // running it again must remain a no-op.
+        apply_repair_migration(&pool).await;
+
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_secrets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row_count, 2);
+
+        let ext = store
+            .get_user_secret(&username, "EXTERNAL_KEY")
+            .await
+            .unwrap();
+        assert_eq!(ext, Some(b"ext".to_vec()));
+        let int = store
+            .get_user_secret(&username, "GITHUB_TOKEN")
+            .await
+            .unwrap();
+        assert_eq!(int, Some(b"int".to_vec()));
+    }
+
     // ---- Count tests ----
 
     #[tokio::test]
