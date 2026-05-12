@@ -3,7 +3,7 @@
 **ID:** server-init
 **Category:** core
 **Priority:** P0
-**Prerequisites:** Hydra binary built (`cargo build -p hydra`), `CLAUDE_CODE_OAUTH_TOKEN` and `GH_TOKEN` environment variables set
+**Prerequisites:** Hydra binary built (`cargo build -p hydra`), `GH_TOKEN` and at least one of `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` environment variables set
 **Estimated duration:** 3 minutes
 
 ## Description
@@ -17,7 +17,8 @@ Verify that the Hydra server initializes successfully using the `--config` flag 
    hydra:
      namespace: "test"
      server_hostname: "127.0.0.1:8080"
-     CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
+     CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+     ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
    storage_backend: "sqlite"
    sqlite_path: "~/.hydra/server/hydra.db"
    job_engine: "local"

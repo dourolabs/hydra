@@ -2,14 +2,18 @@
 # Usage: hydra-single-player server init --config tests/e2e/config/test-config.yaml
 #
 # Required environment variables:
-#   CLAUDE_CODE_OAUTH_TOKEN - OAuth token for Claude Code
+#   CLAUDE_CODE_OAUTH_TOKEN - OAuth token for Claude Code (or ANTHROPIC_API_KEY)
+#   ANTHROPIC_API_KEY       - Anthropic API key (alternative to CLAUDE_CODE_OAUTH_TOKEN)
 #   GH_TOKEN                - GitHub personal access token (repo scope)
+#
+# At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set.
 
 hydra:
   namespace: "test"
   server_hostname: "127.0.0.1:8080"
   HYDRA_SECRET_ENCRYPTION_KEY: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
-  CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
+  CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
 job:
   default_model: "opus"

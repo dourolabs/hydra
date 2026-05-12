@@ -9,8 +9,11 @@
 # Usage: ./tests/e2e/run.sh
 #
 # Required environment variables:
-#   CLAUDE_CODE_OAUTH_TOKEN  OAuth token for Claude Code
+#   CLAUDE_CODE_OAUTH_TOKEN  OAuth token for Claude Code (or ANTHROPIC_API_KEY)
+#   ANTHROPIC_API_KEY        Anthropic API key (alternative to CLAUDE_CODE_OAUTH_TOKEN)
 #   GH_TOKEN                 GitHub personal access token (repo scope)
+#
+# At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set.
 #
 # The script leaves the server running in the background. Use the printed
 # PID or the cleanup trap (on script exit) to stop it.
@@ -43,15 +46,12 @@ trap cleanup EXIT
 # --------------------------------------------------------------------------
 echo "==> Validating prerequisites..."
 
-missing=()
-if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  missing+=("CLAUDE_CODE_OAUTH_TOKEN")
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "ERROR: At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set" >&2
+  exit 1
 fi
 if [[ -z "${GH_TOKEN:-}" ]]; then
-  missing+=("GH_TOKEN")
-fi
-if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
+  echo "ERROR: Missing required environment variable: GH_TOKEN" >&2
   exit 1
 fi
 

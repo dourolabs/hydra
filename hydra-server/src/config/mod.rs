@@ -1278,13 +1278,23 @@ github_app:
         // as a valid AppConfig. This catches drift between the config file and
         // the struct definition.
         let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
-        // Substitute the env-var placeholders with dummy values.
+        // Substitute the env-var placeholders with dummy values. Handle both
+        // the bare ${VAR} form and the ${VAR:-} default-empty form.
         let substituted = raw
-            .replace("${CLAUDE_CODE_OAUTH_TOKEN}", "test-oauth-token")
+            .replace("${CLAUDE_CODE_OAUTH_TOKEN:-}", "test-oauth-token")
+            .replace("${ANTHROPIC_API_KEY:-}", "test-anthropic-api-key")
             .replace("${GH_TOKEN}", "ghp_test_token");
         let config: AppConfig =
             serde_yaml_ng::from_str(&substituted).expect("E2E test config should parse");
         assert_eq!(config.hydra.namespace, "test");
+        assert_eq!(
+            config.hydra.claude_code_oauth_token.as_deref(),
+            Some("test-oauth-token")
+        );
+        assert_eq!(
+            config.hydra.anthropic_api_key.as_deref(),
+            Some("test-anthropic-api-key")
+        );
         assert!(config.auth.is_local());
         assert_eq!(config.auth.local_username(), Some("test-agent"));
         assert!(
@@ -1296,6 +1306,27 @@ github_app:
             "expected local job engine"
         );
         assert_eq!(config.job.default_model, Some("opus".to_string()));
+    }
+
+    #[test]
+    fn e2e_test_config_parses_with_only_anthropic_api_key() {
+        // When ANTHROPIC_API_KEY is set but CLAUDE_CODE_OAUTH_TOKEN is unset,
+        // the ${CLAUDE_CODE_OAUTH_TOKEN:-} placeholder resolves to an empty
+        // string. Verify the config still parses and the empty oauth token is
+        // surfaced as Some("") (the system-secret resolver filters empty
+        // strings before injecting into the worker env).
+        let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
+        let substituted = raw
+            .replace("${CLAUDE_CODE_OAUTH_TOKEN:-}", "")
+            .replace("${ANTHROPIC_API_KEY:-}", "test-anthropic-api-key")
+            .replace("${GH_TOKEN}", "ghp_test_token");
+        let config: AppConfig =
+            serde_yaml_ng::from_str(&substituted).expect("E2E test config should parse");
+        assert_eq!(
+            config.hydra.anthropic_api_key.as_deref(),
+            Some("test-anthropic-api-key")
+        );
+        assert_eq!(config.hydra.claude_code_oauth_token.as_deref(), Some(""));
     }
 
     #[test]
