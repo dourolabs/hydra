@@ -111,8 +111,20 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 # Set NVM environment variable for the worker user
 ENV NVM_DIR=/home/worker/.nvm
 
-# Install node, codex, claude, puppeteer, and playwright as the non-root user
-RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex @anthropic-ai/claude-code puppeteer playwright@1.58.2 @playwright/mcp pnpm"
+# Install node, codex, claude, puppeteer, and playwright as the non-root user.
+# Versions are pinned and --ignore-scripts is set so a future supply-chain
+# compromise of any global tool does not auto-execute on image rebuild.
+# @anthropic-ai/claude-code is installed in a second pass without --ignore-scripts
+# because its postinstall (install.cjs) is required to copy the platform native
+# binary from its optional dependency into bin/claude.exe.
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && \
+    npm install --ignore-scripts -g \
+        @openai/codex@0.130.0 \
+        puppeteer@24.43.1 \
+        playwright@1.58.2 \
+        @playwright/mcp@0.0.75 \
+        pnpm@11.1.1 && \
+    npm install -g @anthropic-ai/claude-code@2.1.139"
 
 # Pre-install Playwright's Chromium so E2E tests work without a per-session download
 RUN bash -c "source $NVM_DIR/nvm.sh && npx playwright install chromium"
