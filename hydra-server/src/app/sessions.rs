@@ -392,7 +392,15 @@ impl AppState {
         ];
 
         for (secret_name, config_fallback) in system_entries {
-            if env_vars.contains_key(secret_name) {
+            // Treat empty/whitespace user overrides as "not set" for AI keys so
+            // they don't shadow a perfectly-valid config fallback. (An empty
+            // CLAUDE_CODE_OAUTH_TOKEN in env_vars would make the worker fail
+            // its `!v.trim().is_empty()` check just as if the var were missing.)
+            let existing_is_nonempty = env_vars
+                .get(secret_name)
+                .is_some_and(|v| !v.trim().is_empty());
+
+            if existing_is_nonempty {
                 info!(
                     username = %creator,
                     secret = secret_name,
@@ -406,21 +414,33 @@ impl AppState {
                 .map(str::to_string)
                 .filter(|v| !v.trim().is_empty());
 
-            if let Some(value) = global_value {
-                info!(
-                    username = %creator,
-                    secret = secret_name,
-                    source = "config",
-                    "system secret resolved from config fallback"
-                );
-                env_vars.insert(secret_name.to_string(), value);
-            } else {
-                info!(
-                    username = %creator,
-                    secret = secret_name,
-                    source = "none",
-                    "system secret not available from user or config"
-                );
+            match global_value {
+                Some(value) => {
+                    if env_vars.contains_key(secret_name) {
+                        info!(
+                            username = %creator,
+                            secret = secret_name,
+                            source = "config",
+                            "user override was empty; falling back to config"
+                        );
+                    } else {
+                        info!(
+                            username = %creator,
+                            secret = secret_name,
+                            source = "config",
+                            "system secret resolved from config fallback"
+                        );
+                    }
+                    env_vars.insert(secret_name.to_string(), value);
+                }
+                None => {
+                    info!(
+                        username = %creator,
+                        secret = secret_name,
+                        source = "none",
+                        "system secret not available from user or config"
+                    );
+                }
             }
         }
 

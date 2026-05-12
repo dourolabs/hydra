@@ -672,6 +672,194 @@ async fn resolve_secrets_injects_listed_user_secrets() {
     assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
 }
 
+// ---- Empty user-secret AI key fallback tests ----
+
+#[tokio::test]
+async fn resolve_secrets_empty_user_ai_key_falls_back_to_config() {
+    // Build a state whose config has a non-empty claude_code_oauth_token so
+    // the resolver has something to fall back to.
+    let mut config = test_app_config();
+    config.hydra.claude_code_oauth_token = Some("config-token".to_string());
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+
+    let secret_manager = test_secret_manager();
+    let username = Username::from("empty-user");
+
+    // User has CLAUDE_CODE_OAUTH_TOKEN stored as an empty string. This is the
+    // production bug shape: a row exists, decrypts to "", and would otherwise
+    // shadow the config fallback.
+    let encrypted_empty = secret_manager.encrypt("").unwrap();
+    store
+        .set_user_secret(
+            &username,
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            &encrypted_empty,
+            false,
+        )
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    assert_eq!(
+        env_vars.get("CLAUDE_CODE_OAUTH_TOKEN").map(String::as_str),
+        Some("config-token"),
+        "empty user override should fall back to config value"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_empty_user_ai_key_no_config_still_empty() {
+    // Config has no claude_code_oauth_token; user has empty value.
+    // Documented behavior: env var ends up empty (the resolver still writes
+    // the empty user value during step 1, and step 2 has nothing to overwrite
+    // it with). The worker's `.trim().is_empty()` check treats this the same
+    // as missing, so this is acceptable.
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("empty-user-no-config");
+
+    let encrypted_empty = secret_manager.encrypt("").unwrap();
+    handles
+        .store
+        .set_user_secret(
+            &username,
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            &encrypted_empty,
+            false,
+        )
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    let resolved = env_vars.get("CLAUDE_CODE_OAUTH_TOKEN");
+    assert!(
+        resolved.is_none() || resolved.map(String::as_str) == Some(""),
+        "with empty user value and no config, key must be absent or empty (got {resolved:?})"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_whitespace_user_ai_key_falls_back_to_config() {
+    // Confirms `.trim()` semantics: a whitespace-only user value is treated
+    // as empty for AI keys and falls back to the config value.
+    let mut config = test_app_config();
+    config.hydra.claude_code_oauth_token = Some("config-token".to_string());
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+
+    let secret_manager = test_secret_manager();
+    let username = Username::from("whitespace-user");
+
+    let encrypted_ws = secret_manager.encrypt("   ").unwrap();
+    store
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted_ws, false)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    assert_eq!(
+        env_vars.get("CLAUDE_CODE_OAUTH_TOKEN").map(String::as_str),
+        Some("config-token"),
+        "whitespace-only user override should fall back to config value"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_non_empty_user_ai_key_still_wins_over_config() {
+    // Regression guard for the priority rule: a non-empty user value must
+    // continue to win over the config fallback after the empty-fallback fix.
+    let mut config = test_app_config();
+    config.hydra.claude_code_oauth_token = Some("config-token".to_string());
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+
+    let secret_manager = test_secret_manager();
+    let username = Username::from("non-empty-user");
+
+    let encrypted = secret_manager.encrypt("user-token").unwrap();
+    store
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted, false)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    assert_eq!(
+        env_vars.get("CLAUDE_CODE_OAUTH_TOKEN").map(String::as_str),
+        Some("user-token"),
+        "non-empty user override must continue to win over config fallback"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_empty_user_custom_secret_still_injected() {
+    // Regression guard: emptiness check applies ONLY to AI keys. A user
+    // explicitly setting MY_CUSTOM_SECRET="" via the frontend must still be
+    // honored (the config-fallback path doesn't apply to non-AI keys anyway,
+    // but this locks in the rule end-to-end).
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("custom-empty");
+
+    let encrypted_empty = secret_manager.encrypt("").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted_empty, false)
+        .await
+        .unwrap();
+
+    let filter = Some(vec!["MY_CUSTOM_SECRET".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert_eq!(
+        env_vars.get("MY_CUSTOM_SECRET").map(String::as_str),
+        Some(""),
+        "explicit empty custom secret should still be injected"
+    );
+}
+
 // ---- Task.secrets filtering tests ----
 
 #[tokio::test]
