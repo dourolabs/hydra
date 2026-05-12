@@ -2,7 +2,7 @@
 
 <!-- workflow-test-readme-v4 branch -->
 Hydra is an open-source AI orchestration layer that lets developers coordinate dozens of agents working simultaneously across tasks, issues, and environments.
-You assign work through an issue tracker, and Hydra automatically spins up agents to implement.
+You assign work through an issue tracker, and Hydra automatically spins up agents to implement it.
 You survey their progress, review their work, and offer course corrections as needed.
 
 ![Hydra Dashboard](docs/images/readme-dashboard-2.gif)
