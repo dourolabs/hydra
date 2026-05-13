@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter } from "react-router-dom";
+import type { ConversationSummary } from "@hydra/api";
 
 // --- Mocks ---
 
@@ -21,6 +22,15 @@ vi.mock("../features/auth/useAuth", () => ({
 
 vi.mock("../api/auth", () => ({
   actorDisplayName: () => "Alice",
+}));
+
+let mockConversations: ConversationSummary[] | undefined = [];
+vi.mock("../features/chat/useConversations", () => ({
+  useConversations: () => ({
+    data: mockConversations,
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 vi.mock("./Sidebar.module.css", () => ({
@@ -44,9 +54,29 @@ function renderSidebar(initialEntry: string = "/") {
 
 const STORAGE_PREFIX = "hydra:sidebar:section:";
 
+function makeConversation(
+  overrides: Partial<ConversationSummary> & {
+    conversation_id: string;
+    updated_at: string;
+  },
+): ConversationSummary {
+  return {
+    conversation_id: overrides.conversation_id,
+    title: overrides.title ?? null,
+    agent_name: overrides.agent_name ?? null,
+    status: overrides.status ?? "idle",
+    event_count: overrides.event_count ?? 0,
+    last_event_preview: overrides.last_event_preview ?? null,
+    creator: overrides.creator ?? "alice",
+    created_at: overrides.created_at ?? overrides.updated_at,
+    updated_at: overrides.updated_at,
+  };
+}
+
 describe("Sidebar section collapse", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    mockConversations = [];
   });
 
   afterEach(() => {
@@ -124,6 +154,7 @@ describe("Sidebar section collapse", () => {
 describe("Sidebar static structure", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    mockConversations = [];
   });
 
   afterEach(() => {
@@ -168,6 +199,7 @@ describe("Sidebar static structure", () => {
 describe("Sidebar dashboard active state", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    mockConversations = [];
   });
 
   afterEach(() => {
@@ -213,5 +245,114 @@ describe("Sidebar dashboard active state", () => {
     expect(patches.className).not.toContain("navItemActive");
     expect(issuesMore.getAttribute("aria-current")).toBeNull();
     expect(patches.getAttribute("aria-current")).toBeNull();
+  });
+});
+
+describe("Sidebar Chats section", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    mockConversations = [];
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    mockConversations = [];
+  });
+
+  it("renders only the More link when there are no conversations", () => {
+    mockConversations = [];
+    renderSidebar();
+    expect(screen.getByTestId("sidebar-section-chats-more")).toBeTruthy();
+    // No chat rows should be present.
+    expect(
+      document.querySelectorAll('[data-testid^="sidebar-chat-row-"]').length,
+    ).toBe(0);
+  });
+
+  it("shows fewer rows when there are fewer than three conversations", () => {
+    mockConversations = [
+      makeConversation({
+        conversation_id: "c-only",
+        title: "Only",
+        updated_at: "2026-05-13T10:00:00Z",
+      }),
+    ];
+    renderSidebar();
+    expect(screen.getByTestId("sidebar-chat-row-c-only")).toBeTruthy();
+    expect(
+      document.querySelectorAll('[data-testid^="sidebar-chat-row-"]').length,
+    ).toBe(1);
+    expect(screen.getByTestId("sidebar-section-chats-more")).toBeTruthy();
+  });
+
+  it("renders the top three conversations sorted by updated_at desc", () => {
+    mockConversations = [
+      makeConversation({
+        conversation_id: "c-old",
+        title: "Oldest",
+        updated_at: "2026-05-10T10:00:00Z",
+      }),
+      makeConversation({
+        conversation_id: "c-new",
+        title: "Newest",
+        updated_at: "2026-05-13T18:00:00Z",
+      }),
+      makeConversation({
+        conversation_id: "c-fourth",
+        title: "Fourth",
+        updated_at: "2026-05-09T08:00:00Z",
+      }),
+      makeConversation({
+        conversation_id: "c-mid",
+        title: "Mid",
+        updated_at: "2026-05-12T12:00:00Z",
+      }),
+    ];
+    renderSidebar();
+
+    const rows = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>(
+        '[data-testid^="sidebar-chat-row-"]',
+      ),
+    );
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
+      "sidebar-chat-row-c-new",
+      "sidebar-chat-row-c-mid",
+      "sidebar-chat-row-c-old",
+    ]);
+    expect(rows.map((r) => r.getAttribute("href"))).toEqual([
+      "/chat/c-new",
+      "/chat/c-mid",
+      "/chat/c-old",
+    ]);
+    expect(rows.map((r) => r.textContent)).toEqual(["Newest", "Mid", "Oldest"]);
+    expect(
+      screen.getByTestId("sidebar-section-chats-more").getAttribute("href"),
+    ).toBe("/chat");
+  });
+
+  it("falls back to last_event_preview then 'Untitled conversation' for the row title", () => {
+    mockConversations = [
+      makeConversation({
+        conversation_id: "c-preview",
+        title: null,
+        last_event_preview: "hello world",
+        updated_at: "2026-05-13T12:00:00Z",
+      }),
+      makeConversation({
+        conversation_id: "c-empty",
+        title: null,
+        last_event_preview: null,
+        updated_at: "2026-05-13T11:00:00Z",
+      }),
+    ];
+    renderSidebar();
+    expect(
+      screen.getByTestId("sidebar-chat-row-c-preview").textContent,
+    ).toBe("hello world");
+    expect(screen.getByTestId("sidebar-chat-row-c-empty").textContent).toBe(
+      "Untitled conversation",
+    );
   });
 });

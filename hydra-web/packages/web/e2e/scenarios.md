@@ -53,6 +53,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@sidebar:documents` — User can browse documents via the sidebar Documents tree and navigate to a document
 
+## Chat
+
+- `@chat:sidebar` — Clicking a chat row in the sidebar navigates to /chat/&lt;id&gt;
+
 ## Error Handling
 
 - `@errors:404` — User sees a not-found message for non-existent entities

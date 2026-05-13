@@ -123,6 +123,7 @@
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-sm);
+  min-width: 0;
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
@@ -131,6 +132,14 @@
 .navItem:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
+}
+
+.navItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .moreLink {
