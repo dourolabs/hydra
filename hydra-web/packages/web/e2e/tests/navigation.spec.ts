@@ -4,17 +4,20 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
   test("sidebar links navigate to correct pages @nav:sidebar", async ({
     authenticatedPage: page,
   }) => {
-    // Navigate to Documents via sidebar
-    await page.locator('nav a[href="/documents"]').click();
+    // Navigate to Documents via the Documents section "More" link.
+    await page.getByTestId("sidebar-section-documents-more").click();
     await expect(page).toHaveURL(/\/documents/);
 
-    // Navigate to Settings via sidebar
-    await page.locator('nav a[href="/settings"]').click();
+    // Navigate to Settings via the Agents entry (Agents is a placeholder
+    // pointing at /settings until phase 3 splits it out).
+    await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/settings/);
 
-    // Navigate to Dashboard via sidebar
-    await page.getByTestId('nav-dashboard').click();
-    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=your-issues$/);
+    // Navigate to the dashboard via the Issues section "More" link.
+    await page.getByTestId("sidebar-section-issues-more").click();
+    await expect(page).toHaveURL(
+      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
+    );
   });
 
   test("deep link to issue detail works @nav:deep-link", async ({

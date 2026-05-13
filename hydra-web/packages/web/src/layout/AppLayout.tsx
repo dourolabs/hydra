@@ -2,7 +2,7 @@ import { Navigate, Outlet } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
-import { IconSidebar } from "./IconSidebar";
+import { Sidebar } from "./Sidebar";
 import styles from "./AppLayout.module.css";
 
 export function AppLayout() {
@@ -23,7 +23,7 @@ export function AppLayout() {
 
   return (
     <div className={styles.layout}>
-      <IconSidebar connectionState={sseState} />
+      <Sidebar connectionState={sseState} />
       <main className={styles.main}>
         <Outlet />
       </main>
