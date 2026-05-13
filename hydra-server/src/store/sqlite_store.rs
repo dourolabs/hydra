@@ -294,6 +294,8 @@ struct AgentRow {
     max_tries: i32,
     max_simultaneous: i32,
     is_assignment_agent: bool,
+    #[sqlx(default)]
+    is_default_conversation_agent: bool,
     secrets: String,
     deleted: bool,
     created_at: String,
@@ -340,6 +342,7 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
         is_assignment_agent: row.is_assignment_agent,
+        is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
         deleted: row.deleted,
         created_at,
@@ -3292,7 +3295,8 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, secrets, deleted, created_at, updated_at \
+                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
         let row = sqlx::query_as::<_, AgentRow>(&sql)
@@ -3311,7 +3315,8 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, secrets, deleted, created_at, updated_at \
+                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
         );
         let rows = sqlx::query_as::<_, AgentRow>(&sql)
@@ -4450,6 +4455,18 @@ impl Store for SqliteStore {
                         return Err(StoreError::AssignmentAgentAlreadyExists);
                     }
                 }
+                if agent.is_default_conversation_agent {
+                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_default_conversation_agent = 1 AND deleted = 0)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_default {
+                        return Err(StoreError::ConversationAgentAlreadyExists);
+                    }
+                }
 
                 let now = Utc::now().to_rfc3339();
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
@@ -4458,9 +4475,9 @@ impl Store for SqliteStore {
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                         is_assignment_agent = ?5, secrets = ?6, deleted = 0, \
-                         created_at = ?7, updated_at = ?8 \
-                     WHERE name = ?9"
+                         is_assignment_agent = ?5, is_default_conversation_agent = ?6, secrets = ?7, \
+                         deleted = 0, created_at = ?8, updated_at = ?9 \
+                     WHERE name = ?10"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
@@ -4468,6 +4485,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(&now)
                     .bind(&now)
@@ -4491,6 +4509,18 @@ impl Store for SqliteStore {
                         return Err(StoreError::AssignmentAgentAlreadyExists);
                     }
                 }
+                if agent.is_default_conversation_agent {
+                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_default_conversation_agent = 1 AND deleted = 0)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_default {
+                        return Err(StoreError::ConversationAgentAlreadyExists);
+                    }
+                }
 
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
@@ -4498,8 +4528,8 @@ impl Store for SqliteStore {
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, is_assignment_agent, \
-                      secrets, deleted, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+                      is_default_conversation_agent, secrets, deleted, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -4508,6 +4538,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_assignment_agent)
+                    .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(agent.deleted)
                     .bind(agent.created_at.to_rfc3339())
@@ -4537,14 +4568,28 @@ impl Store for SqliteStore {
                 return Err(StoreError::AssignmentAgentAlreadyExists);
             }
         }
+        if agent.is_default_conversation_agent {
+            let conflict = sqlx::query_scalar::<_, bool>(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                 WHERE is_default_conversation_agent = 1 AND deleted = 0 AND name != ?1)"
+            ))
+            .bind(&agent.name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+            if conflict {
+                return Err(StoreError::ConversationAgentAlreadyExists);
+            }
+        }
 
         let secrets_json = serde_json::to_string(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                 is_assignment_agent = ?5, secrets = ?6, updated_at = ?7 \
-             WHERE name = ?8"
+                 is_assignment_agent = ?5, is_default_conversation_agent = ?6, secrets = ?7, \
+                 updated_at = ?8 \
+             WHERE name = ?9"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
@@ -4552,6 +4597,7 @@ impl Store for SqliteStore {
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
             .bind(agent.is_assignment_agent)
+            .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
             .bind(Utc::now().to_rfc3339())
             .bind(&agent.name)
@@ -7060,6 +7106,7 @@ mod tests {
             3,
             i32::MAX,
             false,
+            false,
             Vec::new(),
         )
     }
@@ -7078,6 +7125,7 @@ mod tests {
         assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
         assert_eq!(fetched.max_tries, 3);
         assert!(!fetched.is_assignment_agent);
+        assert!(!fetched.is_default_conversation_agent);
     }
 
     #[tokio::test]
@@ -7231,6 +7279,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn default_conversation_agent_uniqueness_on_add() {
+        let store = create_test_store().await;
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
+        let err = store.add_agent(chat2).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_uniqueness_on_update() {
+        let store = create_test_store().await;
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_default_conversation_agent = true;
+        let err = store.update_agent(swe_updated).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_can_update_itself() {
+        let store = create_test_store().await;
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+
+        let mut chat_updated = sample_agent("chat");
+        chat_updated.is_default_conversation_agent = true;
+        chat_updated.max_tries = 10;
+        store.update_agent(chat_updated).await.unwrap();
+
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert_eq!(fetched.max_tries, 10);
+        assert!(fetched.is_default_conversation_agent);
+    }
+
+    #[tokio::test]
+    async fn deleted_default_conversation_agent_allows_new_one() {
+        let store = create_test_store().await;
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+        store.delete_agent("chat").await.unwrap();
+
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
+        store.add_agent(chat2).await.unwrap();
+
+        let fetched = store.get_agent("chat2").await.unwrap();
+        assert!(fetched.is_default_conversation_agent);
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_survives_server_restart() {
+        // Same SQLite file is reopened by a fresh pool, so the flag must persist.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("agents.db");
+        let url = format!("sqlite://{}?mode=rwc", db_path.display());
+
+        {
+            let pool = SqliteStore::init_pool(&url).await.unwrap();
+            SqliteStore::run_migrations(&pool).await.unwrap();
+            let store = SqliteStore::new(pool);
+            let mut chat = sample_agent("chat");
+            chat.is_default_conversation_agent = true;
+            store.add_agent(chat).await.unwrap();
+        }
+
+        let pool = SqliteStore::init_pool(&url).await.unwrap();
+        SqliteStore::run_migrations(&pool).await.unwrap();
+        let store = SqliteStore::new(pool);
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert!(fetched.is_default_conversation_agent);
+    }
+
+    #[tokio::test]
     async fn agent_secrets_round_trip() {
         let store = create_test_store().await;
         let agent = Agent::new(
@@ -7239,6 +7370,7 @@ mod tests {
             Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,
+            false,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
         );

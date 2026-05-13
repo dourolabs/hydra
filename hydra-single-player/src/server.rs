@@ -374,17 +374,20 @@ const FORM_DESIGN_REVIEW: &str = include_str!("../../prompts/forms/design_review
 fn create_default_agents(auth_token: &str) -> Result<()> {
     let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
 
-    let agents: &[(&str, &str, bool)] = &[
-        ("swe", SWE_PROMPT, false),
-        ("pm", PM_PROMPT, true),
-        ("reviewer", REVIEWER_PROMPT, false),
+    // Tuple slots: (name, prompt, is_assignment_agent, is_default_conversation_agent).
+    // All defaults leave is_default_conversation_agent = false — picking a default
+    // conversation agent is a user choice.
+    let agents: &[(&str, &str, bool, bool)] = &[
+        ("swe", SWE_PROMPT, false, false),
+        ("pm", PM_PROMPT, true, false),
+        ("reviewer", REVIEWER_PROMPT, false, false),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
     // so we create a small runtime to drive the async HydraClient calls.
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    for &(name, prompt, is_assignment_agent) in agents {
+    for &(name, prompt, is_assignment_agent, is_default_conversation_agent) in agents {
         let secrets = vec![];
         let request = UpsertAgentRequest::new(
             name,
@@ -394,6 +397,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
             None,
             None,
             is_assignment_agent,
+            is_default_conversation_agent,
             secrets,
         );
 

@@ -2041,6 +2041,17 @@ impl Store for MemoryStore {
             }
         }
 
+        // Validate default-conversation-agent uniqueness.
+        if agent.is_default_conversation_agent {
+            let has_default = self
+                .agents
+                .iter()
+                .any(|e| e.value().is_default_conversation_agent && !e.value().deleted);
+            if has_default {
+                return Err(StoreError::ConversationAgentAlreadyExists);
+            }
+        }
+
         self.agents.insert(agent.name.clone(), agent);
         Ok(())
     }
@@ -2056,6 +2067,18 @@ impl Store for MemoryStore {
             });
             if conflict {
                 return Err(StoreError::AssignmentAgentAlreadyExists);
+            }
+        }
+
+        // Validate default-conversation-agent uniqueness (exclude self).
+        if agent.is_default_conversation_agent {
+            let conflict = self.agents.iter().any(|e| {
+                e.value().is_default_conversation_agent
+                    && !e.value().deleted
+                    && e.key() != &agent.name
+            });
+            if conflict {
+                return Err(StoreError::ConversationAgentAlreadyExists);
             }
         }
 
@@ -6578,6 +6601,7 @@ mod tests {
             3,
             i32::MAX,
             false,
+            false,
             Vec::new(),
         )
     }
@@ -6594,6 +6618,7 @@ mod tests {
         assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
         assert_eq!(fetched.max_tries, 3);
         assert!(!fetched.is_assignment_agent);
+        assert!(!fetched.is_default_conversation_agent);
     }
 
     #[tokio::test]
@@ -6728,6 +6753,86 @@ mod tests {
 
         let fetched = store.get_agent("pm2").await.unwrap();
         assert!(fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_uniqueness_on_add() {
+        let store = MemoryStore::new();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
+        let err = store.add_agent(chat2).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_uniqueness_on_update() {
+        let store = MemoryStore::new();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_default_conversation_agent = true;
+        let err = store.update_agent(swe_updated).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn default_conversation_agent_can_update_itself() {
+        let store = MemoryStore::new();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+
+        let mut chat_updated = sample_agent("chat");
+        chat_updated.is_default_conversation_agent = true;
+        chat_updated.max_tries = 10;
+        store.update_agent(chat_updated).await.unwrap();
+
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert_eq!(fetched.max_tries, 10);
+        assert!(fetched.is_default_conversation_agent);
+    }
+
+    #[tokio::test]
+    async fn deleted_default_conversation_agent_allows_new_one() {
+        let store = MemoryStore::new();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+        store.delete_agent("chat").await.unwrap();
+
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
+        store.add_agent(chat2).await.unwrap();
+
+        let fetched = store.get_agent("chat2").await.unwrap();
+        assert!(fetched.is_default_conversation_agent);
+    }
+
+    #[tokio::test]
+    async fn assignment_and_default_conversation_flags_independent() {
+        let store = MemoryStore::new();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+
+        // Adding a separate agent with only is_default_conversation_agent should succeed.
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
+
+        let pm = store.get_agent("pm").await.unwrap();
+        assert!(pm.is_assignment_agent);
+        assert!(!pm.is_default_conversation_agent);
+        let chat = store.get_agent("chat").await.unwrap();
+        assert!(!chat.is_assignment_agent);
+        assert!(chat.is_default_conversation_agent);
     }
 
     #[tokio::test]

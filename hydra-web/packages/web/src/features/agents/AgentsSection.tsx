@@ -66,9 +66,14 @@ export function AgentsSection() {
                 onEdit={() => setAgentEditTarget(agent)}
                 onDelete={() => setAgentDeleteTarget(agent)}
                 headerExtra={
-                  agent.is_assignment_agent ? (
-                    <span className={styles.assignmentBadge}>assignment</span>
-                  ) : undefined
+                  <>
+                    {agent.is_assignment_agent && (
+                      <span className={styles.assignmentBadge}>assignment</span>
+                    )}
+                    {agent.is_default_conversation_agent && (
+                      <span className={styles.assignmentBadge}>default chat</span>
+                    )}
+                  </>
                 }
               >
                 <div className={sharedStyles.detailRow}>
@@ -95,6 +100,12 @@ export function AgentsSection() {
                   <span className={sharedStyles.detailLabel}>Assignment Agent</span>
                   <span className={sharedStyles.detailValue}>
                     {agent.is_assignment_agent ? "Yes" : "No"}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Default Conversation Agent</span>
+                  <span className={sharedStyles.detailValue}>
+                    {agent.is_default_conversation_agent ? "Yes" : "No"}
                   </span>
                 </div>
                 <div className={sharedStyles.detailRow}>

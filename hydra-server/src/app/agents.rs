@@ -15,6 +15,8 @@ pub enum AgentError {
     NotFound { name: String },
     #[error("only one assignment agent is allowed")]
     AssignmentAgentConflict,
+    #[error("only one default conversation agent is allowed")]
+    ConversationAgentConflict,
     #[error("store error: {0}")]
     Store(#[from] crate::store::StoreError),
 }
@@ -42,6 +44,9 @@ impl AppState {
                 crate::store::StoreError::AssignmentAgentAlreadyExists => {
                     AgentError::AssignmentAgentConflict
                 }
+                crate::store::StoreError::ConversationAgentAlreadyExists => {
+                    AgentError::ConversationAgentConflict
+                }
                 other => AgentError::Store(other),
             })?;
 
@@ -67,6 +72,9 @@ impl AppState {
                 crate::store::StoreError::AgentNotFound(name) => AgentError::NotFound { name },
                 crate::store::StoreError::AssignmentAgentAlreadyExists => {
                     AgentError::AssignmentAgentConflict
+                }
+                crate::store::StoreError::ConversationAgentAlreadyExists => {
+                    AgentError::ConversationAgentConflict
                 }
                 other => AgentError::Store(other),
             })?;
