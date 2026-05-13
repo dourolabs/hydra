@@ -27,6 +27,10 @@ vi.mock("./Sidebar.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("./SidebarDocumentTree", () => ({
+  SidebarDocumentTree: () => <div data-testid="sidebar-doc-tree-mock" />,
+}));
+
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 

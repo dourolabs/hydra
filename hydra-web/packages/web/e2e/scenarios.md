@@ -49,6 +49,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@documents:list` — User can view the documents list
 - `@documents:view-detail` — User can view a document's content
 
+## Sidebar
+
+- `@sidebar:documents` — User can browse documents via the sidebar Documents tree and navigate to a document
+
 ## Error Handling
 
 - `@errors:404` — User sees a not-found message for non-existent entities
