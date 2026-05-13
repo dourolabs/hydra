@@ -1,10 +1,15 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { Avatar, Tooltip } from "@hydra/ui";
+import type { ConversationSummary } from "@hydra/api";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
+import { useConversations } from "../features/chat/useConversations";
+import { conversationTitle } from "../features/chat/conversationTitle";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./Sidebar.module.css";
+
+const CHATS_SECTION_LIMIT = 3;
 
 interface SidebarProps {
   connectionState: SSEConnectionState;
@@ -124,6 +129,17 @@ export function Sidebar({ connectionState }: SidebarProps) {
   const issuesMoreActive = isDashboard && selectedParam === "your-issues";
   const patchesActive = isDashboard && selectedParam === "patches";
 
+  const { data: conversations } = useConversations();
+  const recentChats = useMemo<ConversationSummary[]>(() => {
+    if (!conversations) return [];
+    return [...conversations]
+      .sort(
+        (a, b) =>
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      )
+      .slice(0, CHATS_SECTION_LIMIT);
+  }, [conversations]);
+
   return (
     <nav className={styles.sidebar} aria-label="Primary">
       <div className={styles.header}>
@@ -183,6 +199,20 @@ export function Sidebar({ connectionState }: SidebarProps) {
 
       <div className={styles.sections}>
         <SidebarSection id="chats" label="Chats">
+          {recentChats.map((c) => {
+            const title = conversationTitle(c);
+            return (
+              <NavLink
+                key={c.conversation_id}
+                to={`/chat/${c.conversation_id}`}
+                className={navItemClass}
+                data-testid={`sidebar-chat-row-${c.conversation_id}`}
+                title={title}
+              >
+                <span className={styles.navItemLabel}>{title}</span>
+              </NavLink>
+            );
+          })}
           <NavLink
             to="/chat"
             className={moreLinkClass}
