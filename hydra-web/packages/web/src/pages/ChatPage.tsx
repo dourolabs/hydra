@@ -38,10 +38,6 @@ function ConversationDetails({ conversation }: { conversation: Conversation }) {
           </div>
         )}
         <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Status</span>
-          <span className={styles.metaValue}>{conversation.status}</span>
-        </div>
-        <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Creator</span>
           <span className={styles.metaValue}>{conversation.creator}</span>
         </div>
@@ -89,6 +85,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["conversationEvents", conversationId] });
+      queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
     },
   });
 
@@ -144,7 +141,6 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
             <ChatInput
               onSend={handleSend}
               disabled={sendMutation.isPending}
-              status={conversation.status}
             />
           </div>
         )}
