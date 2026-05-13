@@ -203,6 +203,7 @@ fn normalize_and_build_agent(
         payload.max_tries,
         payload.max_simultaneous,
         payload.is_assignment_agent,
+        payload.is_default_conversation_agent,
         payload.secrets,
     );
 
@@ -227,6 +228,7 @@ fn agent_to_record(agent: Agent, prompt: String, mcp_config: Option<String>) -> 
         agent.max_tries,
         agent.max_simultaneous,
         agent.is_assignment_agent,
+        agent.is_default_conversation_agent,
         agent.secrets,
     )
 }
@@ -306,6 +308,10 @@ fn map_agent_error(err: AgentError) -> ApiError {
         AgentError::AssignmentAgentConflict => {
             error!("assignment agent conflict");
             ApiError::conflict("only one assignment agent is allowed".to_string())
+        }
+        AgentError::ConversationAgentConflict => {
+            error!("default conversation agent conflict");
+            ApiError::conflict("only one default conversation agent is allowed".to_string())
         }
         AgentError::Store(err) => {
             error!(error = %err, "agent store error");

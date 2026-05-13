@@ -44,6 +44,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
       is_assignment_agent: body.is_assignment_agent,
+      is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
     };
     store.create<AgentRecord>(COLLECTION, body.name, agent, null);
@@ -64,6 +65,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
       is_assignment_agent: body.is_assignment_agent,
+      is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
     };
     store.update<AgentRecord>(COLLECTION, name, agent, null);

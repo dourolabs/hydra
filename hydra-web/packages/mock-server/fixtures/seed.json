@@ -726,6 +726,7 @@
       "max_tries": 3,
       "max_simultaneous": 5,
       "is_assignment_agent": true,
+      "is_default_conversation_agent": false,
       "secrets": []
     },
     "reviewer": {
@@ -735,6 +736,7 @@
       "max_tries": 1,
       "max_simultaneous": 5,
       "is_assignment_agent": false,
+      "is_default_conversation_agent": false,
       "secrets": []
     },
     "ops": {
@@ -744,6 +746,7 @@
       "max_tries": 2,
       "max_simultaneous": 3,
       "is_assignment_agent": false,
+      "is_default_conversation_agent": false,
       "secrets": []
     }
   },

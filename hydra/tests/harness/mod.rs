@@ -552,6 +552,7 @@ impl TestHarnessBuilder {
                 3,
                 10,
                 is_assignment,
+                false,
                 Vec::new(),
             );
             store

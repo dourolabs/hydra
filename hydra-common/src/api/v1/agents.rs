@@ -29,10 +29,13 @@ pub struct AgentRecord {
     #[serde(default)]
     pub is_assignment_agent: bool,
     #[serde(default)]
+    pub is_default_conversation_agent: bool,
+    #[serde(default)]
     pub secrets: Vec<String>,
 }
 
 impl AgentRecord {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
@@ -42,6 +45,7 @@ impl AgentRecord {
         max_tries: i32,
         max_simultaneous: i32,
         is_assignment_agent: bool,
+        is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
         Self {
@@ -53,6 +57,7 @@ impl AgentRecord {
             max_tries,
             max_simultaneous,
             is_assignment_agent,
+            is_default_conversation_agent,
             secrets,
         }
     }
@@ -78,10 +83,13 @@ pub struct UpsertAgentRequest {
     #[serde(default)]
     pub is_assignment_agent: bool,
     #[serde(default)]
+    pub is_default_conversation_agent: bool,
+    #[serde(default)]
     pub secrets: Vec<String>,
 }
 
 impl UpsertAgentRequest {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
@@ -90,6 +98,7 @@ impl UpsertAgentRequest {
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
         is_assignment_agent: bool,
+        is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
         Self {
@@ -101,6 +110,7 @@ impl UpsertAgentRequest {
             max_tries,
             max_simultaneous,
             is_assignment_agent,
+            is_default_conversation_agent,
             secrets,
         }
     }
@@ -117,6 +127,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
             is_assignment_agent: request.is_assignment_agent,
+            is_default_conversation_agent: request.is_default_conversation_agent,
             secrets: request.secrets,
         }
     }
@@ -133,6 +144,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
             is_assignment_agent: record.is_assignment_agent,
+            is_default_conversation_agent: record.is_default_conversation_agent,
             secrets: record.secrets,
         }
     }
@@ -177,5 +189,61 @@ pub struct ListAgentsResponse {
 impl ListAgentsResponse {
     pub fn new(agents: Vec<AgentRecord>) -> Self {
         Self { agents }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_record_round_trip_with_default_conversation_flag() {
+        let record = AgentRecord::new(
+            "swe",
+            "do work",
+            "/agents/swe/prompt.md",
+            None,
+            None,
+            3,
+            5,
+            false,
+            true,
+            vec!["OPENAI_API_KEY".to_string()],
+        );
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: AgentRecord = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_default_conversation_agent);
+        assert_eq!(parsed, record);
+    }
+
+    #[test]
+    fn agent_record_deserializes_without_default_conversation_flag() {
+        // Older JSON omits the new field; it must still deserialize.
+        let json = r#"{
+            "name": "swe",
+            "prompt": "",
+            "prompt_path": "/agents/swe/prompt.md",
+            "mcp_config_path": null,
+            "mcp_config": null,
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false,
+            "secrets": []
+        }"#;
+        let parsed: AgentRecord = serde_json::from_str(json).unwrap();
+        assert!(!parsed.is_default_conversation_agent);
+    }
+
+    #[test]
+    fn upsert_agent_request_deserializes_without_default_conversation_flag() {
+        let json = r#"{
+            "name": "swe",
+            "prompt": "draft",
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false
+        }"#;
+        let parsed: UpsertAgentRequest = serde_json::from_str(json).unwrap();
+        assert!(!parsed.is_default_conversation_agent);
     }
 }

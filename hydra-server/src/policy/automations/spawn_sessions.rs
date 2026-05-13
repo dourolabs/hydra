@@ -326,6 +326,7 @@ mod tests {
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
+            false,
             vec![],
         );
         handles.store.add_agent(agent).await?;
@@ -353,6 +354,7 @@ mod tests {
             None,
             max_tries,
             max_simultaneous,
+            false,
             false,
             vec![],
         );

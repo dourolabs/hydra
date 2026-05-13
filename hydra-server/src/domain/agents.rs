@@ -12,6 +12,7 @@ pub struct Agent {
     pub max_tries: i32,
     pub max_simultaneous: i32,
     pub is_assignment_agent: bool,
+    pub is_default_conversation_agent: bool,
     pub secrets: Vec<String>,
     pub deleted: bool,
     pub created_at: DateTime<Utc>,
@@ -19,6 +20,7 @@ pub struct Agent {
 }
 
 impl Agent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         prompt_path: String,
@@ -26,6 +28,7 @@ impl Agent {
         max_tries: i32,
         max_simultaneous: i32,
         is_assignment_agent: bool,
+        is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
         let now = Utc::now();
@@ -36,6 +39,7 @@ impl Agent {
             max_tries,
             max_simultaneous,
             is_assignment_agent,
+            is_default_conversation_agent,
             secrets,
             deleted: false,
             created_at: now,

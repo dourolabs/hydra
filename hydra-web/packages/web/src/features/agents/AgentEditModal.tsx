@@ -29,6 +29,9 @@ export function AgentEditModal({
   const [isAssignmentAgent, setIsAssignmentAgent] = useState(
     agent.is_assignment_agent,
   );
+  const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(
+    agent.is_default_conversation_agent,
+  );
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>(
     agent.secrets ?? [],
   );
@@ -48,7 +51,14 @@ export function AgentEditModal({
   const assignmentConflict =
     isAssignmentAgent && existingAssignmentAgent != null;
 
-  const isValid = prompt.trim().length > 0 && !assignmentConflict;
+  const existingDefaultConversationAgent = agents.find(
+    (a) => a.is_default_conversation_agent && a.name !== agent.name,
+  );
+  const defaultConversationConflict =
+    isDefaultConversationAgent && existingDefaultConversationAgent != null;
+
+  const isValid =
+    prompt.trim().length > 0 && !assignmentConflict && !defaultConversationConflict;
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
@@ -61,9 +71,10 @@ export function AgentEditModal({
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
       is_assignment_agent: isAssignmentAgent,
+      is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
@@ -108,6 +119,21 @@ export function AgentEditModal({
           <p className={styles.fieldError}>
             &quot;{existingAssignmentAgent.name}&quot; is already the assignment
             agent. Only one agent can be the assignment agent at a time.
+          </p>
+        )}
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={isDefaultConversationAgent}
+            onChange={(e) => setIsDefaultConversationAgent(e.target.checked)}
+          />
+          Default Conversation Agent
+        </label>
+        {defaultConversationConflict && (
+          <p className={styles.fieldError}>
+            &quot;{existingDefaultConversationAgent.name}&quot; is already the
+            default conversation agent. Only one agent can be the default
+            conversation agent at a time.
           </p>
         )}
         <SecretsSelector
