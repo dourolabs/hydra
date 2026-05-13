@@ -19,6 +19,7 @@ interface SidebarProps {
   connectionState: SSEConnectionState;
   hidden: boolean;
   onHide: () => void;
+  onOpenSearch: () => void;
 }
 
 const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
@@ -209,7 +210,12 @@ function IssuesSectionContent({
   );
 }
 
-export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
+export function Sidebar({
+  connectionState,
+  hidden,
+  onHide,
+  onOpenSearch,
+}: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
@@ -264,6 +270,7 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
             className={styles.headerSlot}
             data-testid="sidebar-header-search"
             aria-label="Search"
+            onClick={onOpenSearch}
           >
             <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path
