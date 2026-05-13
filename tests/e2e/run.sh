@@ -15,8 +15,13 @@
 #
 # At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set.
 #
-# The script leaves the server running in the background. Use the printed
-# PID or the cleanup trap (on script exit) to stop it.
+# On success, the script exits with status 0 and leaves the server running
+# detached in the background. The server PID is written to
+# /tmp/hydra-e2e/server.pid; the caller is responsible for stopping it
+# (e.g., `kill "$(cat /tmp/hydra-e2e/server.pid)"`).
+#
+# On failure (bootstrap error, health-check timeout, repo-create failure),
+# the script kills any partially-started server and exits non-zero.
 
 set -euo pipefail
 
@@ -26,14 +31,20 @@ CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
 SERVER_URL="http://localhost:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
 HYDRA_SP="${REPO_ROOT}/target/release/hydra-sp"
+PID_FILE="/tmp/hydra-e2e/server.pid"
 SERVER_PID=""
+SUCCESS=0
 
 # --------------------------------------------------------------------------
-# Cleanup
+# Cleanup — only kills the server if bootstrap failed. On success we leave
+# it running detached so the caller can drive scenarios against it.
 # --------------------------------------------------------------------------
 cleanup() {
-  echo "Cleaning up..."
+  if [[ ${SUCCESS} -eq 1 ]]; then
+    return
+  fi
   if [[ -n "${SERVER_PID}" ]]; then
+    echo "Cleaning up failed bootstrap..."
     kill "${SERVER_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" 2>/dev/null || true
     echo "Server process ${SERVER_PID} stopped."
@@ -127,19 +138,25 @@ HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos create dourolabs/hydra-test
 echo "    Repository registered."
 
 # --------------------------------------------------------------------------
-# Print connection info
+# Detach the server and exit cleanly. The server keeps running in the
+# background after this script returns; the caller stops it via the PID
+# file.
 # --------------------------------------------------------------------------
+echo "${SERVER_PID}" > "${PID_FILE}"
+disown "${SERVER_PID}" 2>/dev/null || true
+
 echo ""
 echo "=========================================="
 echo "  Hydra test server is running"
 echo "=========================================="
 echo ""
-echo "  URL:  ${SERVER_URL}"
-echo "  PID:  ${SERVER_PID}"
+echo "  URL:       ${SERVER_URL}"
+echo "  PID:       ${SERVER_PID}"
+echo "  PID file:  ${PID_FILE}"
 echo ""
-echo "The server will be stopped when this script exits."
-echo "Press Ctrl+C to stop, or use 'kill ${SERVER_PID}' from another terminal."
+echo "The server is detached and will keep running after this script exits."
+echo "Stop it with: kill \"\$(cat ${PID_FILE})\""
 echo ""
 
-# Keep the script running so the trap can clean up on Ctrl+C
-wait "${SERVER_PID}"
+SUCCESS=1
+exit 0
