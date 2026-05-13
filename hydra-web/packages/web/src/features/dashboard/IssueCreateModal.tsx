@@ -163,7 +163,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   return (
     <Modal
       open={open}
-      onClose={() => handleClose(onClose, resetAll)}
+      onClose={() => handleClose(onClose)}
       title="Create Issue"
       className={largeModalStyles.largeModal}
     >
