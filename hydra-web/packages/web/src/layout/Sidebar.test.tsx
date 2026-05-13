@@ -30,9 +30,9 @@ vi.mock("./Sidebar.module.css", () => ({
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 
-function renderSidebar() {
+function renderSidebar(initialEntry: string = "/") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Sidebar connectionState="connected" />
     </MemoryRouter>,
   );
@@ -158,5 +158,56 @@ describe("Sidebar static structure", () => {
     expect(
       screen.getByTestId("sidebar-context-secrets").getAttribute("href"),
     ).toBe("/settings");
+  });
+});
+
+describe("Sidebar dashboard active state", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+  });
+
+  it("highlights only Issues > More on /?selected=your-issues", () => {
+    renderSidebar("/?selected=your-issues");
+    const issuesMore = screen.getByTestId("sidebar-section-issues-more");
+    const patches = screen.getByTestId("sidebar-patches");
+    expect(issuesMore.className).toContain("navItemActive");
+    expect(issuesMore.getAttribute("aria-current")).toBe("page");
+    expect(patches.className).not.toContain("navItemActive");
+    expect(patches.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("highlights only Patches on /?selected=patches", () => {
+    renderSidebar("/?selected=patches");
+    const issuesMore = screen.getByTestId("sidebar-section-issues-more");
+    const patches = screen.getByTestId("sidebar-patches");
+    expect(patches.className).toContain("navItemActive");
+    expect(patches.getAttribute("aria-current")).toBe("page");
+    expect(issuesMore.className).not.toContain("navItemActive");
+    expect(issuesMore.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("highlights neither on / with no selected param", () => {
+    renderSidebar("/");
+    const issuesMore = screen.getByTestId("sidebar-section-issues-more");
+    const patches = screen.getByTestId("sidebar-patches");
+    expect(issuesMore.className).not.toContain("navItemActive");
+    expect(patches.className).not.toContain("navItemActive");
+    expect(issuesMore.getAttribute("aria-current")).toBeNull();
+    expect(patches.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("highlights neither on a non-/ pathname even with a matching selected param", () => {
+    renderSidebar("/documents?selected=patches");
+    const issuesMore = screen.getByTestId("sidebar-section-issues-more");
+    const patches = screen.getByTestId("sidebar-patches");
+    expect(issuesMore.className).not.toContain("navItemActive");
+    expect(patches.className).not.toContain("navItemActive");
+    expect(issuesMore.getAttribute("aria-current")).toBeNull();
+    expect(patches.getAttribute("aria-current")).toBeNull();
   });
 });
