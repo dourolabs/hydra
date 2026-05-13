@@ -20,18 +20,16 @@ Verify the full chat conversation lifecycle through the dashboard UI. This scena
 6. Verify the user message appears in the chat message list (aligned right)
 7. Wait for an assistant response to appear (allow up to 2 minutes for the agent session to start and respond)
 8. Verify the assistant message appears in the chat message list (aligned left, rendered as markdown)
-9. Verify the conversation status shows as "Active" in the chat header
-10. Click the "End Chat" button in the chat header
-11. Verify the conversation status changes to "Closed"
-12. Verify the chat input is disabled after closing
-13. Navigate back to the chat list page (`/chat`)
-14. Verify the closed conversation appears in the list with a "Closed" status badge
-15. Click on the closed conversation to reopen it
-16. Verify the conversation history (user message + assistant response + closed event) is displayed
-17. Click the "Resume" button in the chat header
-18. Verify the conversation status changes back to "Active"
-19. Send another message and verify it appears
-20. End the chat again to clean up
+9. Click the "End Chat" button in the chat header
+10. Navigate back to the chat list page (`/chat`)
+11. Verify the closed conversation appears in the list
+12. Click on the closed conversation to reopen it
+13. Verify the conversation history (user message + assistant response + closed event) is displayed
+14. Type and send a new message in the chat input (sending a message to a Closed conversation auto-resumes it; no explicit resume action is required)
+15. Verify the new user message appears in the chat message list
+16. Verify a "Resumed" inline system event appears in the message list (between the prior "Closed" event and the new user message)
+17. Wait for an assistant response to the new message
+18. Click the "End Chat" button again to clean up
 
 ## Expected Results
 
@@ -39,7 +37,7 @@ Verify the full chat conversation lifecycle through the dashboard UI. This scena
 - New conversations can be created with an initial message
 - User messages appear immediately in the UI
 - Assistant responses appear after agent processing (may take up to 2 minutes)
-- Conversations can be closed and the UI reflects the closed state
-- Closed conversations can be resumed
+- Conversations can be ended via the "End Chat" button; the ended conversation still appears in the chat list and its history can be reopened
+- Sending a message to a Closed conversation auto-resumes it; a "Resumed" inline system event appears in the message list and the assistant replies to the new message
 - Conversation history persists across close/resume cycles
 - No JavaScript errors or broken layouts throughout
