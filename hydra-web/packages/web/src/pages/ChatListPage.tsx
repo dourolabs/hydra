@@ -2,18 +2,15 @@ import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@hydra/ui";
-import type { Conversation, ConversationSummary } from "@hydra/api";
+import type { Conversation } from "@hydra/api";
 import { useConversations } from "../features/chat/useConversations";
+import { conversationTitle } from "../features/chat/conversationTitle";
 import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
 import { formatRelativeTime } from "../utils/time";
 import { apiClient } from "../api/client";
 import styles from "./ChatListPage.module.css";
-
-function conversationTitle(c: ConversationSummary): string {
-  return c.title || c.last_event_preview || "Untitled conversation";
-}
 
 export function ChatListPage() {
   const navigate = useNavigate();
