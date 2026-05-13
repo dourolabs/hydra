@@ -96,10 +96,71 @@ function FolderRow({ entry, depth }: NodeProps) {
   );
 }
 
+function HybridRow({ entry, depth }: NodeProps) {
+  const [expanded, setExpanded] = useState(false);
+  const toggle = useCallback(() => setExpanded((p) => !p), []);
+  const { data: childrenData } = useDocumentPathChildren(
+    entry.full_path,
+    expanded,
+  );
+  const children = childrenData?.children ?? [];
+  const { data: docsData, isLoading } = useDocumentSummariesAtPath(
+    entry.full_path,
+  );
+  const doc = docsData?.documents.find((d) => !d.document.deleted);
+
+  return (
+    <>
+      <div className={styles.treeHybrid} style={indentStyle(depth)}>
+        <button
+          type="button"
+          className={styles.treeHybridChevron}
+          onClick={toggle}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse" : "Expand"}
+          data-testid={`sidebar-doc-tree-hybrid-${entry.full_path}`}
+        >
+          <TreeChevron expanded={expanded} />
+        </button>
+        {isLoading || !doc ? (
+          <div
+            className={styles.treeHybridPlaceholder}
+            data-testid={`sidebar-doc-tree-leaf-loading-${entry.full_path}`}
+            title={entry.name}
+          >
+            {entry.name}
+          </div>
+        ) : (
+          <NavLink
+            to={`/documents/${doc.document_id}`}
+            className={hybridLinkClass}
+            data-testid={`sidebar-doc-tree-leaf-${doc.document_id}`}
+            title={entry.name}
+          >
+            {entry.name}
+          </NavLink>
+        )}
+      </div>
+      {expanded &&
+        children.map((child) => (
+          <TreeNode key={child.full_path} entry={child} depth={depth + 1} />
+        ))}
+    </>
+  );
+}
+
+function hybridLinkClass({ isActive }: { isActive: boolean }) {
+  return `${styles.treeHybridLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
+}
+
 function TreeNode({ entry, depth }: NodeProps) {
-  // Render leaf for pure documents (no further folder children).
+  // Pure document (no descendants beyond itself): leaf row.
   if (entry.is_document && Number(entry.child_count) <= 1) {
     return <DocumentLeafRow entry={entry} depth={depth} />;
+  }
+  // Hybrid (document with descendants): chevron + link row.
+  if (entry.is_document && Number(entry.child_count) > 1) {
+    return <HybridRow entry={entry} depth={depth} />;
   }
   return <FolderRow entry={entry} depth={depth} />;
 }
