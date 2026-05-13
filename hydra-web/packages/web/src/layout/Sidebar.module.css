@@ -152,6 +152,37 @@
   color: var(--color-text-primary);
 }
 
+.itemLabel {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
+  border-radius: 999px;
+  padding: 1px 6px;
+  min-width: 18px;
+}
+
+.labelSwatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .moreLink {
   display: flex;
   align-items: center;
