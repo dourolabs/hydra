@@ -1,8 +1,11 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
+import type { LabelRecord } from "@hydra/api";
 import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
+import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import { useLabels } from "../features/labels/useLabels";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./Sidebar.module.css";
 
@@ -114,6 +117,72 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
   return `${styles.moreLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
+function topRecentLabels(labels: readonly LabelRecord[] | undefined): LabelRecord[] {
+  if (!labels || labels.length === 0) return [];
+  return [...labels]
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .slice(0, 3);
+}
+
+interface IssuesSectionContentProps {
+  username: string | null;
+}
+
+function IssuesSectionContent({ username }: IssuesSectionContentProps) {
+  const assignedFilters = useMemo<IssueFilters>(
+    () => (username ? { assignee: username, status: "open" } : {}),
+    [username],
+  );
+  const { data: assignedCount = 0 } = useIssueCount(assignedFilters, !!username);
+  const { data: labels } = useLabels();
+  const recentLabels = useMemo(() => topRecentLabels(labels), [labels]);
+
+  return (
+    <>
+      <NavLink
+        to="/?selected=assigned"
+        end
+        className={navItemClass}
+        data-testid="sidebar-issues-assigned"
+      >
+        <span className={styles.itemLabel}>Assigned to you</span>
+        {assignedCount > 0 && (
+          <span
+            className={styles.badge}
+            data-testid="sidebar-issues-assigned-badge"
+          >
+            {assignedCount}
+          </span>
+        )}
+      </NavLink>
+      {recentLabels.map((label) => (
+        <NavLink
+          key={label.label_id}
+          to={`/?selected=all&label=${encodeURIComponent(label.label_id)}`}
+          end
+          className={navItemClass}
+          data-testid={`sidebar-issues-label-${label.label_id}`}
+        >
+          <span
+            className={styles.labelSwatch}
+            style={{ backgroundColor: label.color }}
+            aria-hidden="true"
+          />
+          <span className={styles.itemLabel}>{label.name}</span>
+        </NavLink>
+      ))}
+      <NavLink
+        to="/?selected=all"
+        end
+        className={navItemClass}
+        data-testid="sidebar-issues-all"
+      >
+        <span className={styles.itemLabel}>All issues</span>
+      </NavLink>
+    </>
+  );
+}
+
 export function Sidebar({ connectionState }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
@@ -187,14 +256,7 @@ export function Sidebar({ connectionState }: SidebarProps) {
         </SidebarSection>
 
         <SidebarSection id="issues" label="Issues">
-          <NavLink
-            to="/?selected=your-issues"
-            end
-            className={moreLinkClass}
-            data-testid="sidebar-section-issues-more"
-          >
-            More
-          </NavLink>
+          <IssuesSectionContent username={displayName} />
         </SidebarSection>
 
         <SidebarSection id="documents" label="Documents">
