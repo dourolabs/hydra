@@ -68,6 +68,25 @@ pub async fn create_session(
             err @ CreateSessionError::IssueAndConversationConflict => {
                 ApiError::bad_request(err.to_string())
             }
+            err @ CreateSessionError::AgentNotFound { .. } => {
+                ApiError::bad_request(err.to_string())
+            }
+            CreateSessionError::AgentLookup { source } => {
+                error!(error = %source, "failed to resolve agent for conversation");
+                ApiError::internal(format!("Failed to resolve agent: {source}"))
+            }
+            CreateSessionError::AgentPromptResolution { path, source } => {
+                error!(error = %source, path = %path, "failed to resolve agent prompt");
+                ApiError::internal(format!(
+                    "Failed to resolve agent prompt at '{path}': {source}"
+                ))
+            }
+            CreateSessionError::AgentMcpConfigResolution { path, source } => {
+                error!(error = %source, path = %path, "failed to resolve agent MCP config");
+                ApiError::internal(format!(
+                    "Failed to resolve agent MCP config at '{path}': {source}"
+                ))
+            }
             CreateSessionError::Store { source } => {
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))

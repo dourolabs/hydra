@@ -446,16 +446,106 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::{AppState, test_helpers::state_with_default_model},
+        app::{
+            AppState, CreateConversationError, CreateSessionError,
+            test_helpers::state_with_default_model,
+        },
         domain::{
             actors::ActorRef,
+            agents::Agent,
             conversations::{ConversationEvent, ConversationStatus},
+            documents::Document,
             issues::SessionSettings,
             sessions::Session,
             users::Username,
         },
+        policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
     use hydra_common::{ConversationId, Versioned, api::v1::sessions::SearchSessionsQuery};
+
+    /// Register an agent and an accompanying prompt document.
+    async fn register_agent_with_prompt(
+        state: &AppState,
+        name: &str,
+        prompt_body: &str,
+        is_default: bool,
+        secrets: Vec<String>,
+    ) {
+        let prompt_path = format!("/agents/{name}/prompt.md");
+        let agent = Agent::new(
+            name.to_string(),
+            prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            is_default,
+            secrets,
+        );
+        state.store.add_agent(agent).await.unwrap();
+
+        let doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: prompt_body.to_string(),
+            path: Some(prompt_path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+    }
+
+    /// Register an agent with both a prompt and an MCP config document.
+    async fn register_agent_with_prompt_and_mcp(
+        state: &AppState,
+        name: &str,
+        prompt_body: &str,
+        mcp_body: &str,
+        secrets: Vec<String>,
+    ) {
+        let prompt_path = format!("/agents/{name}/prompt.md");
+        let mcp_path = format!("/agents/{name}/mcp.json");
+        let agent = Agent::new(
+            name.to_string(),
+            prompt_path.clone(),
+            Some(mcp_path.clone()),
+            1,
+            1,
+            false,
+            false,
+            secrets,
+        );
+        state.store.add_agent(agent).await.unwrap();
+
+        let prompt_doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: prompt_body.to_string(),
+            path: Some(prompt_path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(prompt_doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        let mcp_doc = Document {
+            title: format!("{name} mcp config"),
+            body_markdown: mcp_body.to_string(),
+            path: Some(mcp_path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(mcp_doc, ActorRef::test())
+            .await
+            .unwrap();
+    }
 
     /// Look up the (single) session associated with a conversation by
     /// scanning all sessions and matching on `conversation_id`. Used by tests
@@ -1060,6 +1150,264 @@ mod tests {
             opts.conversation_resume_from,
             Some(expected_resume_from),
             "conversation_resume_from should equal event count before Resumed"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_conversation_with_explicit_agent_name_applies_agent_prompt() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt(&state, "swe", "you are an SWE", false, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("swe".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(session.item.prompt, "you are an SWE");
+    }
+
+    #[tokio::test]
+    async fn create_conversation_with_explicit_agent_applies_secrets_and_mcp_config() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt_and_mcp(
+            &state,
+            "swe",
+            "you are an SWE",
+            r#"{"mcpServers":{"foo":{"command":"foo"}}}"#,
+            vec!["FOO".to_string()],
+        )
+        .await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("swe".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(session.item.secrets, Some(vec!["FOO".to_string()]));
+        assert!(
+            session.item.mcp_config.is_some(),
+            "mcp_config should be set"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_conversation_without_agent_uses_default_conversation_agent() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt(&state, "swe", "default agent prompt", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(session.item.prompt, "default agent prompt");
+        assert_eq!(
+            session
+                .item
+                .env_vars
+                .get(AGENT_NAME_ENV_VAR)
+                .map(String::as_str),
+            Some("swe")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_conversation_without_agent_and_no_default_is_unchanged() {
+        let state = state_with_default_model("default-model");
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(session.item.prompt, "hello");
+        assert!(!session.item.env_vars.contains_key(AGENT_NAME_ENV_VAR));
+        assert_eq!(session.item.secrets, None);
+    }
+
+    #[tokio::test]
+    async fn create_conversation_with_unknown_agent_name_returns_error() {
+        let state = state_with_default_model("default-model");
+
+        let err = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("does-not-exist".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .expect_err("unknown agent should produce an error");
+
+        match err {
+            CreateConversationError::Session {
+                source: CreateSessionError::AgentNotFound { name },
+            } => assert_eq!(name, "does-not-exist"),
+            other => panic!("expected AgentNotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_conversation_merges_agent_secrets_with_session_settings_secrets() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt(
+            &state,
+            "swe",
+            "prompt",
+            false,
+            vec!["AGENT_SECRET".to_string(), "SHARED".to_string()],
+        )
+        .await;
+
+        let settings = SessionSettings {
+            secrets: Some(vec!["SESSION_SECRET".to_string(), "SHARED".to_string()]),
+            ..Default::default()
+        };
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("swe".to_string()),
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        // Agent secrets come first; shared secrets are deduped; order preserved.
+        assert_eq!(
+            session.item.secrets,
+            Some(vec![
+                "AGENT_SECRET".to_string(),
+                "SHARED".to_string(),
+                "SESSION_SECRET".to_string(),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_conversation_reapplies_agent_config() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt_and_mcp(
+            &state,
+            "swe",
+            "agent prompt",
+            r#"{"mcpServers":{}}"#,
+            vec!["FOO".to_string()],
+        )
+        .await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("swe".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        state
+            .resume_conversation(
+                &conversation_id,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let resumed_session_id = events
+            .into_iter()
+            .rev()
+            .find_map(|e| match e.item {
+                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .expect("expected a Resumed event after resume_conversation");
+        let session = state
+            .store()
+            .get_session(&resumed_session_id, false)
+            .await
+            .unwrap();
+        assert_eq!(session.item.prompt, "agent prompt");
+        assert_eq!(session.item.secrets, Some(vec!["FOO".to_string()]));
+        assert!(session.item.mcp_config.is_some());
+        assert_eq!(
+            session
+                .item
+                .env_vars
+                .get(AGENT_NAME_ENV_VAR)
+                .map(String::as_str),
+            Some("swe")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_name_env_var_present_on_conversation_session() {
+        let state = state_with_default_model("default-model");
+        register_agent_with_prompt(&state, "swe", "prompt", false, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                Some("swe".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let session = session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(
+            session
+                .item
+                .env_vars
+                .get(AGENT_NAME_ENV_VAR)
+                .map(String::as_str),
+            Some("swe")
         );
     }
 }
