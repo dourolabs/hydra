@@ -245,6 +245,36 @@ pub enum WorkerMessage {
     },
 }
 
+/// Payload carried inside `WorkerMessage::SessionStateUpload { data }` (as JSON
+/// bytes) so a resumed worker can restore Claude's transcript file on disk and
+/// invoke `claude --resume <session_id>` against the same conversation.
+///
+/// The wire envelope (`SessionStateUpload`) is unchanged; the structured
+/// payload lives inside the `data` bytes. The enum is `#[serde(tag = "version")]`
+/// so future revisions can be added without breaking older workers — an
+/// unknown variant deserialization fails fast and the resumer falls back to
+/// the context-primer path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "version", rename_all = "snake_case")]
+pub enum SessionStatePayload {
+    /// Version 1: Claude's session UUID plus an optional transcript blob.
+    V1 {
+        /// Claude's internal session UUID, extracted from the JSONL stream
+        /// the prior worker observed on Claude's stdout. Used as the
+        /// argument to `claude --resume <session_id>`.
+        session_id: String,
+        /// The bytes of Claude's per-project transcript file at the moment
+        /// of upload. `None` means the worker captured a `session_id` but
+        /// could not read the transcript file (e.g. missing or unreadable);
+        /// in that case the resumer should fall back to the primer path.
+        #[cfg_attr(feature = "ts", ts(type = "number[] | null"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transcript: Option<Vec<u8>>,
+    },
+}
+
 /// Messages sent from the server to the worker over the relay WebSocket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -490,5 +520,59 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn session_state_payload_v1_round_trip_with_transcript() {
+        let payload = SessionStatePayload::V1 {
+            session_id: "abc-123".to_string(),
+            transcript: Some(b"{\"type\":\"summary\"}\n".to_vec()),
+        };
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let parsed: SessionStatePayload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload, parsed);
+        let as_str = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            as_str.contains("\"version\":\"v1\""),
+            "tagged serialization expected, got {as_str}"
+        );
+    }
+
+    #[test]
+    fn session_state_payload_v1_round_trip_without_transcript() {
+        let payload = SessionStatePayload::V1 {
+            session_id: "abc-123".to_string(),
+            transcript: None,
+        };
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let as_str = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            !as_str.contains("transcript"),
+            "missing transcript should be omitted, got {as_str}"
+        );
+        let parsed: SessionStatePayload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload, parsed);
+    }
+
+    #[test]
+    fn session_state_payload_unknown_version_rejected() {
+        // An unknown future version should not silently deserialize — the
+        // resumer must observe the parse failure and fall back to the
+        // primer path.
+        let bytes = br#"{"version":"v999","session_id":"x"}"#;
+        let parsed: Result<SessionStatePayload, _> = serde_json::from_slice(bytes);
+        assert!(parsed.is_err(), "unknown versions must fail to parse");
+    }
+
+    #[test]
+    fn session_state_payload_legacy_raw_bytes_rejected() {
+        // Old workers uploaded raw session_id bytes (not JSON). The new
+        // resumer's parse must reject this so it falls back to the primer.
+        let bytes = b"claude-session-abc";
+        let parsed: Result<SessionStatePayload, _> = serde_json::from_slice(bytes);
+        assert!(
+            parsed.is_err(),
+            "legacy raw bytes must not parse as payload"
+        );
     }
 }
