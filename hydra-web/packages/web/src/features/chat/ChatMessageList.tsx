@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { MarkdownViewer } from "@hydra/ui";
+import { MarkdownViewer, Tooltip } from "@hydra/ui";
 import type { ConversationEvent } from "@hydra/api";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./ChatMessageList.module.css";
@@ -7,8 +7,9 @@ import styles from "./ChatMessageList.module.css";
 function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
   return (
     <div className={styles.systemEvent}>
-      <span className={styles.systemText}>{text}</span>
-      <span className={styles.systemTime}>{formatTimestamp(timestamp)}</span>
+      <Tooltip content={formatTimestamp(timestamp)} trigger="hover-or-click">
+        <span className={styles.systemText}>{text}</span>
+      </Tooltip>
     </div>
   );
 }
@@ -18,19 +19,31 @@ function renderEvent(event: ConversationEvent, index: number) {
     case "user_message":
       return (
         <div key={index} className={styles.messageRow}>
-          <div className={styles.userBubble}>
-            <div className={styles.bubbleContent}>{event.content}</div>
-            <span className={styles.bubbleTime}>{formatTimestamp(event.timestamp)}</span>
-          </div>
+          <Tooltip
+            content={formatTimestamp(event.timestamp)}
+            trigger="hover-or-click"
+            position="top"
+            className={styles.userBubbleWrapper}
+          >
+            <div className={styles.userBubble}>
+              <div className={styles.bubbleContent}>{event.content}</div>
+            </div>
+          </Tooltip>
         </div>
       );
     case "assistant_message":
       return (
         <div key={index} className={styles.messageRow}>
-          <div className={styles.assistantBubble}>
-            <MarkdownViewer content={event.content} className={styles.markdown} />
-            <span className={styles.bubbleTime}>{formatTimestamp(event.timestamp)}</span>
-          </div>
+          <Tooltip
+            content={formatTimestamp(event.timestamp)}
+            trigger="hover-or-click"
+            position="top"
+            className={styles.assistantBubbleWrapper}
+          >
+            <div className={styles.assistantBubble}>
+              <MarkdownViewer content={event.content} className={styles.markdown} />
+            </div>
+          </Tooltip>
         </div>
       );
     case "suspending":

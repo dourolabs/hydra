@@ -25,9 +25,17 @@
   flex-direction: column;
 }
 
-.userBubble {
+.userBubbleWrapper {
   align-self: flex-end;
   max-width: 75%;
+}
+
+.assistantBubbleWrapper {
+  align-self: flex-start;
+  max-width: 75%;
+}
+
+.userBubble {
   background: var(--color-accent-dim);
   color: var(--color-text-primary);
   border-radius: 12px 12px 2px 12px;
@@ -35,8 +43,6 @@
 }
 
 .assistantBubble {
-  align-self: flex-start;
-  max-width: 75%;
   background: var(--color-bg-secondary);
   color: var(--color-text-primary);
   border-radius: 12px 12px 12px 2px;
@@ -53,14 +59,6 @@
   font-size: var(--font-size-sm);
 }
 
-.bubbleTime {
-  display: block;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
-  text-align: right;
-}
-
 .systemEvent {
   display: flex;
   flex-direction: column;
@@ -73,10 +71,4 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   font-style: italic;
-}
-
-.systemTime {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  opacity: 0.7;
 }
