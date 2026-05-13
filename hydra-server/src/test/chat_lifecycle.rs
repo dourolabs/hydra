@@ -22,7 +22,8 @@ use hydra_common::{
     api::v1::{
         conversations::{
             Conversation, ConversationEvent, ConversationStatus, CreateConversationRequest,
-            SendMessageRequest, ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
+            SendMessageRequest, ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect,
+            WorkerMessage,
         },
         sessions::{ListSessionsResponse, WorkerContext},
     },
@@ -1181,6 +1182,198 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         matches!(catch_up.events[3], ConversationEvent::Resumed { .. }),
         "event[3] should be Resumed, got {:?}",
         catch_up.events[3]
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> anyhow::Result<()> {
+    // End-to-end smoke test for the transcript-based ("primary") resume
+    // path. Worker #1 uploads a structured `SessionStatePayload::V1` with a
+    // transcript blob; after /resume, worker #2's catch-up must carry the
+    // same bytes back so it can write the transcript to disk and invoke
+    // `claude --resume`. Verifies the wire envelope is preserved and the
+    // payload survives the store round-trip.
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Worker #1: connect, exchange one turn, then suspend with an upload.
+    let mut ws = connect_relay(&server.base_url(), &initial_session_id).await?;
+    let _ = worker_handshake(
+        &mut ws,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "reply".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+
+    let transcript_bytes = b"{\"type\":\"summary\",\"text\":\"prior turn\"}\n".to_vec();
+    let payload = SessionStatePayload::V1 {
+        session_id: "claude-session-uuid-1".to_string(),
+        transcript: Some(transcript_bytes.clone()),
+    };
+    let payload_bytes = serde_json::to_vec(&payload)?;
+
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: ConversationEvent::Suspending {
+                reason: "idle_timeout".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::SessionStateUpload {
+            data: payload_bytes.clone(),
+        },
+    )
+    .await?;
+    ws.send(tungstenite::Message::Close(None)).await?;
+    drop(ws);
+
+    wait_for_status(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        ConversationStatus::Idle,
+    )
+    .await?;
+
+    // The store must have persisted the exact payload bytes.
+    let stored_state = store
+        .get_conversation_session_state(&conversation_id)
+        .await?;
+    assert_eq!(
+        stored_state.as_deref(),
+        Some(payload_bytes.as_slice()),
+        "SessionStateUpload should be persisted byte-for-byte"
+    );
+
+    // Resume the conversation and connect worker #2.
+    let resumed: Conversation = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/resume",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(resumed.status, ConversationStatus::Active);
+
+    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    assert_ne!(new_session_id, initial_session_id);
+    let new_opts = store
+        .get_session(&new_session_id, false)
+        .await?
+        .item
+        .interactive
+        .expect("resumed session must be interactive");
+
+    let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
+    let catch_up = worker_handshake(
+        &mut ws2,
+        WorkerConnect::Fresh {
+            resume_from_event_index: new_opts.conversation_resume_from,
+        },
+    )
+    .await?;
+
+    let returned_bytes = catch_up
+        .session_state
+        .expect("server must return the persisted session_state for Fresh resume");
+    assert_eq!(
+        returned_bytes, payload_bytes,
+        "catch-up must echo the exact payload bytes the prior worker uploaded"
+    );
+
+    // Sanity-check the bytes still parse as the original payload — i.e.
+    // nothing en-route mutated them.
+    let round_trip: SessionStatePayload = serde_json::from_slice(&returned_bytes)?;
+    match round_trip {
+        SessionStatePayload::V1 {
+            session_id,
+            transcript,
+        } => {
+            assert_eq!(session_id, "claude-session-uuid-1");
+            assert_eq!(transcript, Some(transcript_bytes));
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Result<()> {
+    // `Reconnecting` is a mid-session WS reconnect by the same live worker,
+    // not a fresh resume. session_state is irrelevant on this path and must
+    // be omitted so we don't waste bandwidth shipping the transcript to a
+    // worker that already has it in Claude's process memory.
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hi".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Persist some session_state so the Fresh path would otherwise return it.
+    store
+        .store_conversation_session_state(&conversation_id, b"opaque-bytes".to_vec())
+        .await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let catch_up = worker_handshake(
+        &mut ws,
+        WorkerConnect::Reconnecting {
+            last_received_event_index: 0,
+        },
+    )
+    .await?;
+    assert!(
+        catch_up.session_state.is_none(),
+        "Reconnecting handshakes should not carry session_state, got {:?}",
+        catch_up.session_state
     );
 
     Ok(())
