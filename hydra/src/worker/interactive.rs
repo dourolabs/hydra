@@ -47,9 +47,30 @@ use crate::client::RelayWebSocket;
 /// In both paths, any *pending* `UserMessage` events from the catch-up — ones
 /// that arrived after the prior worker's last `AssistantMessage` — are
 /// forwarded to Claude's stdin so it can respond to them.
+///
+/// # Agent prompt prepend
+///
+/// `prompt` is the conversation's agent prompt (empty when no agent is bound).
+/// Unlike non-interactive mode — where the prompt is passed as a Claude CLI
+/// argument and becomes the entire first turn — interactive mode must
+/// concatenate the prompt into the **same** Claude turn as the user's first
+/// message rather than sending it as a separate turn. The rule is:
+///
+/// - If `prompt` is non-empty AND the catch-up event log contains no
+///   `AssistantMessage` (i.e. Claude has not yet replied in this conversation),
+///   the worker prepends `"{prompt}\n\n"` to the first `UserMessage` it pipes
+///   to Claude's stdin — either a pending message from the catch-up log or the
+///   first message received from the relay if the catch-up was empty. The
+///   prepend happens exactly once per worker process.
+/// - If `prompt` is empty, behavior is identical to the no-agent case.
+/// - If the catch-up already contains an `AssistantMessage`, the prior session
+///   has already exposed Claude to the agent prompt; the primer carries the
+///   historical context forward and the prepend is suppressed.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_interactive(
     ws_stream: RelayWebSocket,
     session_id: &SessionId,
+    prompt: &str,
     model: Option<&str>,
     env: &HashMap<String, String>,
     working_dir: &Path,
@@ -184,6 +205,13 @@ pub async fn run_interactive(
         }
     });
 
+    // Whether the agent prompt still needs to be prepended to the first
+    // UserMessage sent to Claude. We initialize this here — before feeding the
+    // catch-up — so the rule is shared between `feed_catch_up` and the relay
+    // loop and consumed by whichever sends the first UserMessage. See the
+    // doc-comment on this function for the exact prepend rule.
+    let mut prompt_prepend = PromptPrepend::new(prompt, &catch_up.events);
+
     // Feed the catch-up events to Claude's stdin. If we restored a transcript
     // file (primary path), the prior history is already in Claude's view and
     // we only need to forward trailing pending UserMessages. Otherwise we
@@ -193,6 +221,7 @@ pub async fn run_interactive(
         &mut claude_stdin,
         &catch_up.events,
         primary_resume.is_some(),
+        &mut prompt_prepend,
     )
     .await?;
 
@@ -216,6 +245,7 @@ pub async fn run_interactive(
         &mut claude_session_id,
         &home_dir,
         working_dir,
+        &mut prompt_prepend,
     )
     .await?;
 
@@ -447,6 +477,42 @@ where
     Ok(())
 }
 
+/// Tracks the agent-prompt prepend across `feed_catch_up` and the relay loop.
+///
+/// At most one `UserMessage` per worker process is prepended — see the
+/// doc-comment on [`run_interactive`] for the rule. Built once at the top of
+/// `run_interactive`, then threaded through every place that pipes a
+/// `UserMessage` to Claude's stdin so the decision lives in exactly one spot.
+#[derive(Debug)]
+struct PromptPrepend {
+    prompt: String,
+    pending: bool,
+}
+
+impl PromptPrepend {
+    fn new(prompt: &str, catch_up_events: &[ConversationEvent]) -> Self {
+        let has_assistant = catch_up_events
+            .iter()
+            .any(|e| matches!(e, ConversationEvent::AssistantMessage { .. }));
+        let pending = !prompt.is_empty() && !has_assistant;
+        Self {
+            prompt: prompt.to_string(),
+            pending,
+        }
+    }
+
+    /// If a prepend is still pending, return `{prompt}\n\n{content}` and mark
+    /// it consumed; otherwise return `content` unchanged.
+    fn apply(&mut self, content: &str) -> String {
+        if self.pending {
+            self.pending = false;
+            format!("{}\n\n{content}", self.prompt)
+        } else {
+            content.to_string()
+        }
+    }
+}
+
 /// Feed catch-up events to Claude's stdin.
 ///
 /// - When `using_resumed_transcript` is true, the prior history was restored
@@ -455,10 +521,16 @@ where
 /// - When false (primer/fallback path), the prior transcript is wrapped into
 ///   a single primer user message that is fed first, then any pending
 ///   `UserMessage`s follow.
+///
+/// `prompt_prepend` is consumed when the first pending `UserMessage` is
+/// written. The primer (when emitted) is NOT subject to the prepend: it only
+/// applies to actual user-typed messages, and it is suppressed in any case
+/// where the primer is sent (which requires prior assistant history).
 async fn feed_catch_up<W: AsyncWrite + Unpin>(
     claude_stdin: &mut W,
     events: &[ConversationEvent],
     using_resumed_transcript: bool,
+    prompt_prepend: &mut PromptPrepend,
 ) -> Result<()> {
     let (past_context, pending_user_messages) = partition_events(events);
 
@@ -480,7 +552,8 @@ async fn feed_catch_up<W: AsyncWrite + Unpin>(
     }
 
     for content in pending_user_messages {
-        let input_line = build_claude_input(content);
+        let to_send = prompt_prepend.apply(content);
+        let input_line = build_claude_input(&to_send);
         claude_stdin
             .write_all(input_line.as_bytes())
             .await
@@ -591,6 +664,10 @@ fn escape_wrapper_close(content: &str) -> String {
 /// Core relay loop: bidirectional message forwarding between WebSocket and Claude
 /// stdin/stdout. On suspend (idle timeout or SIGTERM), emits Suspending +
 /// (best-effort) SessionStateUpload before returning.
+///
+/// `prompt_prepend` is consumed on the first relay-received `UserMessage` if
+/// `feed_catch_up` did not already do so, ensuring the agent prompt lands on
+/// the first user turn Claude sees in this worker process.
 #[allow(clippy::too_many_arguments)]
 async fn relay_loop<St, Si, W, R>(
     ws_sender: &mut Si,
@@ -601,6 +678,7 @@ async fn relay_loop<St, Si, W, R>(
     claude_session_id: &mut Option<String>,
     home_dir: &Path,
     working_dir: &Path,
+    prompt_prepend: &mut PromptPrepend,
 ) -> Result<LoopExit>
 where
     St: Stream<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
@@ -684,7 +762,8 @@ where
                                 if let ConversationEvent::UserMessage { content, .. } = event {
                                     // Reset idle timer on user input.
                                     idle_deadline.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
-                                    let input_line = build_claude_input(&content);
+                                    let to_send = prompt_prepend.apply(&content);
+                                    let input_line = build_claude_input(&to_send);
                                     if claude_stdin
                                         .write_all(input_line.as_bytes())
                                         .await
@@ -1393,6 +1472,7 @@ mod tests {
         let mut claude_stdin = tokio::io::sink();
         let mut session_id = None;
 
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1402,6 +1482,7 @@ mod tests {
             &mut session_id,
             tmp.path(),
             Path::new("/work"),
+            &mut prompt_prepend,
         )
         .await
         .unwrap();
@@ -1451,6 +1532,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
         let mut session_id = None;
 
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1460,6 +1542,7 @@ mod tests {
             &mut session_id,
             tmp.path(),
             Path::new("/work"),
+            &mut prompt_prepend,
         )
         .await
         .unwrap();
@@ -1523,6 +1606,7 @@ mod tests {
         let mut stdout_reader = BufReader::new(stdout_read);
         let mut session_id = None;
 
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1532,6 +1616,7 @@ mod tests {
             &mut session_id,
             tmp.path(),
             working_dir,
+            &mut prompt_prepend,
         )
         .await
         .unwrap();
@@ -1601,6 +1686,7 @@ mod tests {
         let mut stdout_reader = BufReader::new(stdout_read);
         let mut session_id = None;
 
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1610,6 +1696,7 @@ mod tests {
             &mut session_id,
             tmp.path(),
             working_dir,
+            &mut prompt_prepend,
         )
         .await
         .unwrap();
@@ -1656,6 +1743,7 @@ mod tests {
         let mut claude_stdin = tokio::io::sink();
         let mut session_id = None;
 
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1665,6 +1753,7 @@ mod tests {
             &mut session_id,
             tmp.path(),
             Path::new("/work"),
+            &mut prompt_prepend,
         )
         .await
         .unwrap();
@@ -1691,7 +1780,8 @@ mod tests {
         let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
         let mut claude_stdin = stdin_write;
 
-        feed_catch_up(&mut claude_stdin, &events, false)
+        let mut prompt_prepend = PromptPrepend::new("", &events);
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1736,7 +1826,8 @@ mod tests {
         let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
         let mut claude_stdin = stdin_write;
 
-        feed_catch_up(&mut claude_stdin, &events, true)
+        let mut prompt_prepend = PromptPrepend::new("", &events);
+        feed_catch_up(&mut claude_stdin, &events, true, &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1770,7 +1861,8 @@ mod tests {
         let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
         let mut claude_stdin = stdin_write;
 
-        feed_catch_up(&mut claude_stdin, &events, true)
+        let mut prompt_prepend = PromptPrepend::new("", &events);
+        feed_catch_up(&mut claude_stdin, &events, true, &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1788,7 +1880,8 @@ mod tests {
         let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
         let mut claude_stdin = stdin_write;
 
-        feed_catch_up(&mut claude_stdin, &events, false)
+        let mut prompt_prepend = PromptPrepend::new("", &events);
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1816,12 +1909,284 @@ mod tests {
         let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
         let mut claude_stdin = stdin_write;
 
-        feed_catch_up(&mut claude_stdin, &[], false).await.unwrap();
+        let mut prompt_prepend = PromptPrepend::new("", &[]);
+        feed_catch_up(&mut claude_stdin, &[], false, &mut prompt_prepend)
+            .await
+            .unwrap();
         drop(claude_stdin);
 
         let mut reader = BufReader::new(&mut stdin_read);
         let mut line = String::new();
         let n = reader.read_line(&mut line).await.unwrap();
         assert_eq!(n, 0, "no input expected for empty catch-up");
+    }
+
+    const AGENT_PROMPT: &str = "You are the SWE agent.";
+
+    #[tokio::test]
+    async fn prompt_prepended_to_first_pending_user_message_in_catch_up() {
+        // Catch-up contains a single UserMessage and no AssistantMessage —
+        // the agent prompt must be concatenated into the same Claude turn
+        // as that UserMessage, with `\n\n` separating the two.
+        let events = vec![user_msg("write a fizzbuzz")];
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
+        let mut claude_stdin = stdin_write;
+
+        let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &events);
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+            .await
+            .unwrap();
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let content = parsed["message"]["content"].as_str().unwrap();
+        assert_eq!(content, format!("{AGENT_PROMPT}\n\nwrite a fizzbuzz"));
+
+        let mut trailing = String::new();
+        let n = reader.read_line(&mut trailing).await.unwrap();
+        assert_eq!(n, 0, "exactly one input line expected");
+        assert!(
+            !prompt_prepend.pending,
+            "prepend must be marked consumed after the first send"
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_prepended_to_first_relay_user_message_when_catch_up_empty() {
+        // Catch-up has zero events: the prepend must land on the first
+        // UserMessage received from the relay, and not on the second.
+        tokio::time::pause();
+
+        let tmp = TempDir::new().unwrap();
+        let (ws_tx, _ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+
+        let msg1 = ServerMessage::Event {
+            event: ConversationEvent::UserMessage {
+                content: "first".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let msg2 = ServerMessage::Event {
+            event: ConversationEvent::UserMessage {
+                content: "second".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let stream = vec![
+            Ok::<_, tungstenite::Error>(tungstenite::Message::Text(
+                serde_json::to_string(&msg1).unwrap(),
+            )),
+            Ok::<_, tungstenite::Error>(tungstenite::Message::Text(
+                serde_json::to_string(&msg2).unwrap(),
+            )),
+        ];
+        let mut ws_receiver = futures::stream::iter(stream).chain(futures::stream::pending());
+
+        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
+        let mut stdout_reader = BufReader::new(stdout_read);
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
+        let mut claude_stdin = stdin_write;
+        let mut session_id = None;
+
+        let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &[]);
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+            tmp.path(),
+            Path::new("/work"),
+            &mut prompt_prepend,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, LoopExit::IdleSuspended);
+
+        drop(claude_stdin);
+        let mut reader = BufReader::new(&mut stdin_read);
+
+        let mut line1 = String::new();
+        reader.read_line(&mut line1).await.unwrap();
+        let v1: serde_json::Value = serde_json::from_str(&line1).unwrap();
+        assert_eq!(
+            v1["message"]["content"].as_str().unwrap(),
+            format!("{AGENT_PROMPT}\n\nfirst")
+        );
+
+        let mut line2 = String::new();
+        reader.read_line(&mut line2).await.unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&line2).unwrap();
+        assert_eq!(
+            v2["message"]["content"].as_str().unwrap(),
+            "second",
+            "second relay message must NOT receive the prepend"
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_not_prepended_when_catch_up_contains_assistant_message() {
+        // The catch-up already has an AssistantMessage, so the prior session
+        // exposed Claude to the agent prompt. The primer carries history
+        // forward; the trailing pending UserMessage must NOT be prepended.
+        let events = vec![user_msg("msg1"), assistant_msg("reply1"), user_msg("msg2")];
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
+        let mut claude_stdin = stdin_write;
+
+        let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &events);
+        assert!(
+            !prompt_prepend.pending,
+            "constructor must suppress prepend when catch-up has an AssistantMessage"
+        );
+
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+            .await
+            .unwrap();
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+
+        // First line: primer wrapping msg1/reply1.
+        let mut primer_line = String::new();
+        reader.read_line(&mut primer_line).await.unwrap();
+        let primer: serde_json::Value = serde_json::from_str(&primer_line).unwrap();
+        let primer_content = primer["message"]["content"].as_str().unwrap();
+        assert!(primer_content.contains("<prior-conversation>"));
+        assert!(
+            !primer_content.starts_with(AGENT_PROMPT),
+            "agent prompt must NOT prefix the primer"
+        );
+
+        // Second line: trailing pending user message verbatim.
+        let mut pending_line = String::new();
+        reader.read_line(&mut pending_line).await.unwrap();
+        let pending: serde_json::Value = serde_json::from_str(&pending_line).unwrap();
+        assert_eq!(pending["message"]["content"].as_str().unwrap(), "msg2");
+    }
+
+    #[tokio::test]
+    async fn prompt_not_prepended_when_prompt_is_empty() {
+        // Empty prompt → behavior identical to today: no extra newlines, no
+        // whitespace-only payload sent.
+        let events = vec![user_msg("hello")];
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
+        let mut claude_stdin = stdin_write;
+
+        let mut prompt_prepend = PromptPrepend::new("", &events);
+        assert!(
+            !prompt_prepend.pending,
+            "empty prompt must suppress prepend even with no assistant history"
+        );
+
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+            .await
+            .unwrap();
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["message"]["content"].as_str().unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn prompt_prepended_only_once_across_pending_and_relay() {
+        // Catch-up has a pending UserMessage AND another UserMessage arrives
+        // via the relay. Only the first (the pending one) gets the prepend.
+        tokio::time::pause();
+
+        let tmp = TempDir::new().unwrap();
+        let (ws_tx, _ws_rx) = futures::channel::mpsc::unbounded();
+        let mut ws_sender = ws_tx;
+
+        let events = vec![user_msg("pending-1")];
+
+        let relay_msg = ServerMessage::Event {
+            event: ConversationEvent::UserMessage {
+                content: "relay-1".to_string(),
+                timestamp: Utc::now(),
+            },
+        };
+        let mut ws_receiver = futures::stream::iter(vec![Ok::<_, tungstenite::Error>(
+            tungstenite::Message::Text(serde_json::to_string(&relay_msg).unwrap()),
+        )])
+        .chain(futures::stream::pending());
+
+        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
+        let mut stdout_reader = BufReader::new(stdout_read);
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
+        let mut claude_stdin = stdin_write;
+        let mut session_id = None;
+
+        let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &events);
+
+        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+            .await
+            .unwrap();
+        assert!(
+            !prompt_prepend.pending,
+            "feed_catch_up should have consumed the prepend"
+        );
+
+        let result = relay_loop(
+            &mut ws_sender,
+            &mut ws_receiver,
+            &mut claude_stdin,
+            &mut stdout_reader,
+            Duration::from_millis(50),
+            &mut session_id,
+            tmp.path(),
+            Path::new("/work"),
+            &mut prompt_prepend,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, LoopExit::IdleSuspended);
+
+        drop(claude_stdin);
+        let mut reader = BufReader::new(&mut stdin_read);
+
+        let mut line1 = String::new();
+        reader.read_line(&mut line1).await.unwrap();
+        let v1: serde_json::Value = serde_json::from_str(&line1).unwrap();
+        assert_eq!(
+            v1["message"]["content"].as_str().unwrap(),
+            format!("{AGENT_PROMPT}\n\npending-1")
+        );
+
+        let mut line2 = String::new();
+        reader.read_line(&mut line2).await.unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&line2).unwrap();
+        assert_eq!(
+            v2["message"]["content"].as_str().unwrap(),
+            "relay-1",
+            "the relay-side message must NOT receive a second prepend"
+        );
+    }
+
+    #[test]
+    fn prompt_prepend_new_initializes_pending_only_when_no_assistant_and_prompt_nonempty() {
+        // Truth table for the constructor.
+        let user_only = vec![user_msg("hi")];
+        let with_assistant = vec![user_msg("hi"), assistant_msg("hello")];
+
+        assert!(PromptPrepend::new("p", &user_only).pending);
+        assert!(!PromptPrepend::new("p", &with_assistant).pending);
+        assert!(!PromptPrepend::new("", &user_only).pending);
+        assert!(!PromptPrepend::new("", &with_assistant).pending);
+        assert!(!PromptPrepend::new("", &[]).pending);
+        assert!(PromptPrepend::new("p", &[]).pending);
     }
 }

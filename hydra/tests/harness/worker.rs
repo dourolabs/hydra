@@ -147,6 +147,7 @@ impl WorkerCommands for BashCommands {
         &self,
         _ws_stream: RelayWebSocket,
         _session_id: &SessionId,
+        _prompt: &str,
         _model: Option<&str>,
         _working_dir: &Path,
         _env: &HashMap<String, String>,

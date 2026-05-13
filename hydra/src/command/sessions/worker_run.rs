@@ -193,6 +193,7 @@ pub async fn run(
             .run_interactive(
                 ws_stream,
                 &job,
+                &prompt,
                 model.as_deref(),
                 &repo_path,
                 &execution_env,
