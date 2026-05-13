@@ -1,13 +1,12 @@
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button } from "@hydra/ui";
+import { Button } from "@hydra/ui";
 import type { Conversation, ConversationSummary } from "@hydra/api";
 import { useConversations } from "../features/chat/useConversations";
 import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
-import { normalizeConversationStatus } from "../utils/statusMapping";
 import { formatRelativeTime } from "../utils/time";
 import { apiClient } from "../api/client";
 import styles from "./ChatListPage.module.css";
@@ -76,7 +75,6 @@ export function ChatListPage() {
               <Link to={`/chat/${c.conversation_id}`} className={styles.row}>
                 <div className={styles.rowMain}>
                   <span className={styles.rowTitle}>{conversationTitle(c)}</span>
-                  <Badge status={normalizeConversationStatus(c.status)} />
                 </div>
                 <div className={styles.rowMeta}>
                   <span className={styles.metaItem}>{c.event_count} events</span>

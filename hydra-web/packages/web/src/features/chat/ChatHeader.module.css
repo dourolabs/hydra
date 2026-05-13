@@ -28,18 +28,6 @@
   min-width: 0;
 }
 
-.status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
-}
-
-.statusLabel {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
 .actions {
   display: flex;
   align-items: center;

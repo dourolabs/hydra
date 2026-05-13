@@ -1,18 +1,16 @@
 import { useState, useCallback, type KeyboardEvent } from "react";
 import { Button } from "@hydra/ui";
-import type { ConversationStatus } from "@hydra/api";
 import styles from "./ChatInput.module.css";
 
 interface ChatInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
-  status?: ConversationStatus;
 }
 
-export function ChatInput({ onSend, disabled, status }: ChatInputProps) {
+export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [value, setValue] = useState("");
 
-  const isDisabled = disabled || status === "idle" || status === "closed";
+  const isDisabled = disabled;
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -31,8 +29,6 @@ export function ChatInput({ onSend, disabled, status }: ChatInputProps) {
     [handleSend],
   );
 
-  const placeholder = isDisabled ? "Resume to continue" : "Type a message...";
-
   return (
     <div className={styles.inputBar}>
       <textarea
@@ -40,7 +36,7 @@ export function ChatInput({ onSend, disabled, status }: ChatInputProps) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={placeholder}
+        placeholder="Type a message..."
         disabled={isDisabled}
         rows={1}
       />
