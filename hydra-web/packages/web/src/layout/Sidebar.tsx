@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
@@ -117,6 +117,12 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
 export function Sidebar({ connectionState }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
+  const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
+  const selectedParam = searchParams.get("selected");
+  const isDashboard = pathname === "/";
+  const issuesMoreActive = isDashboard && selectedParam === "your-issues";
+  const patchesActive = isDashboard && selectedParam === "patches";
 
   return (
     <nav className={styles.sidebar} aria-label="Primary">
@@ -187,14 +193,14 @@ export function Sidebar({ connectionState }: SidebarProps) {
         </SidebarSection>
 
         <SidebarSection id="issues" label="Issues">
-          <NavLink
+          <Link
             to="/?selected=your-issues"
-            end
-            className={moreLinkClass}
+            className={`${styles.moreLink}${issuesMoreActive ? ` ${styles.navItemActive}` : ""}`}
+            aria-current={issuesMoreActive ? "page" : undefined}
             data-testid="sidebar-section-issues-more"
           >
             More
-          </NavLink>
+          </Link>
         </SidebarSection>
 
         <SidebarSection id="documents" label="Documents">
@@ -207,14 +213,14 @@ export function Sidebar({ connectionState }: SidebarProps) {
           </NavLink>
         </SidebarSection>
 
-        <NavLink
+        <Link
           to="/?selected=patches"
-          end
-          className={navItemClass}
+          className={`${styles.navItem}${patchesActive ? ` ${styles.navItemActive}` : ""}`}
+          aria-current={patchesActive ? "page" : undefined}
           data-testid="sidebar-patches"
         >
           Patches
-        </NavLink>
+        </Link>
 
         <NavLink
           to="/settings"
