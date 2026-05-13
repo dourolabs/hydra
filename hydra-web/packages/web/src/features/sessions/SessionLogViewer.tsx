@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { LogViewer, Spinner } from "@hydra/ui";
 import { useSessionLogs } from "./useSessionLogs";
 import { splitLogLines } from "./splitLogLines";
+import { sessionLogRegistry } from "../../hooks/sessionLogRegistry";
 import styles from "./SessionLogViewer.module.css";
 
 interface SessionLogViewerProps {
@@ -26,13 +27,13 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
     error: snapshotError,
   } = useSessionLogs(sessionId, !isStreaming);
 
-  // For running sessions: stream logs via SSE
+  // For running sessions: stream logs over the global /api/v1/events SSE via
+  // the session-log registry rather than opening a per-session EventSource.
+  // This keeps the browser's per-origin HTTP/1.1 connection cap from being
+  // saturated by long-lived log streams.
   const [streamLines, setStreamLines] = useState<string[]>([]);
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [streamConnected, setStreamConnected] = useState(false);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
-  // RAF batching: accumulate lines in a ref, flush on animation frame
+  // RAF batching: accumulate lines in a ref, flush on animation frame.
   const pendingLinesRef = useRef<string[]>([]);
   const rafIdRef = useRef<number | null>(null);
 
@@ -43,9 +44,10 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
     pendingLinesRef.current = [];
 
     setStreamLines((prev) => {
-      const combined = prev.length + pending.length > MAX_STREAM_LINES
-        ? [...prev, ...pending].slice(-MAX_STREAM_LINES)
-        : [...prev, ...pending];
+      const combined =
+        prev.length + pending.length > MAX_STREAM_LINES
+          ? [...prev, ...pending].slice(-MAX_STREAM_LINES)
+          : [...prev, ...pending];
       return combined;
     });
   }, []);
@@ -53,64 +55,32 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
   // Follow output toggle state (only relevant when streaming)
   const [followOutput, setFollowOutput] = useState(true);
 
-  const cleanup = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-    pendingLinesRef.current = [];
-  }, []);
-
-  const openLogStream = useCallback(() => {
-    cleanup();
-
-    const es = new EventSource(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/logs?watch=true`,
-    );
-    eventSourceRef.current = es;
-
-    es.onopen = () => {
-      setStreamConnected(true);
-      setStreamError(null);
-    };
-
-    es.onmessage = (event) => {
-      const chunk = event.data as string;
-      if (chunk) {
-        const newLines = splitLogLines(chunk);
-        pendingLinesRef.current.push(...newLines);
-        if (rafIdRef.current === null) {
-          rafIdRef.current = requestAnimationFrame(flushPendingLines);
-        }
-      }
-    };
-
-    es.onerror = () => {
-      // EventSource will automatically try to reconnect.
-      // If the connection is fully closed (readyState === CLOSED), report an error.
-      if (es.readyState === EventSource.CLOSED) {
-        setStreamError("Log stream connection lost.");
-        setStreamConnected(false);
-      }
-    };
-  }, [sessionId, cleanup, flushPendingLines]);
-
   useEffect(() => {
     if (!isStreaming) {
-      cleanup();
+      pendingLinesRef.current = [];
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
       return;
     }
 
-    openLogStream();
+    const handleChunk = (chunk: string) => {
+      if (!chunk) return;
+      const newLines = splitLogLines(chunk);
+      pendingLinesRef.current.push(...newLines);
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(flushPendingLines);
+      }
+    };
+
+    const unsubscribe = sessionLogRegistry.subscribe(sessionId, handleChunk);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
+        // The global SSE handles reconnect; clear the buffer so we don't show
+        // stale chunks while the global stream catches back up.
         setStreamLines([]);
-        openLogStream();
       }
     };
 
@@ -118,9 +88,14 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      cleanup();
+      unsubscribe();
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      pendingLinesRef.current = [];
     };
-  }, [isStreaming, openLogStream, cleanup]);
+  }, [isStreaming, sessionId, flushPendingLines]);
 
   const handleAutoScrollChange = useCallback((isAutoScrolling: boolean) => {
     setFollowOutput(isAutoScrolling);
@@ -135,7 +110,7 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
 
   const lines = isStreaming ? streamLines : snapshotLines;
   const isLoading = !isStreaming && snapshotLoading;
-  const error = isStreaming ? streamError : snapshotError;
+  const error = isStreaming ? null : snapshotError;
 
   if (isLoading) {
     return (
@@ -160,7 +135,7 @@ export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
       {isStreaming && (
         <div className={styles.streamingIndicator}>
           <span className={styles.dot} />
-          {streamConnected ? "Streaming logs\u2026" : "Connecting\u2026"}
+          Streaming logs&hellip;
           <label className={styles.followToggle}>
             <input
               type="checkbox"

@@ -3,13 +3,15 @@ import type { EntityEventData } from "./generated/EntityEventData";
 import type { HeartbeatEventData } from "./generated/HeartbeatEventData";
 import type { ResyncEventData } from "./generated/ResyncEventData";
 import type { ConnectedEventData } from "./generated/ConnectedEventData";
+import type { SessionLogEventData } from "./generated/SessionLogEventData";
 
 /** A parsed SSE event from the hydra-server /v1/events stream. */
 export type HydraEvent =
   | { type: "entity"; eventType: SseEventType; data: EntityEventData; id: number }
   | { type: "connected"; data: ConnectedEventData; id: number }
   | { type: "resync"; data: ResyncEventData; id: number }
-  | { type: "heartbeat"; data: HeartbeatEventData; id: number };
+  | { type: "heartbeat"; data: HeartbeatEventData; id: number }
+  | { type: "session_log"; data: SessionLogEventData; id: number };
 
 /** Callback invoked for each parsed event. */
 export type HydraEventHandler = (event: HydraEvent) => void;
@@ -35,6 +37,7 @@ export interface EventSubscriptionOptions {
 const CONNECTED_EVENTS: ReadonlySet<string> = new Set(["connected"]);
 const RESYNC_EVENTS: ReadonlySet<string> = new Set(["resync"]);
 const HEARTBEAT_EVENTS: ReadonlySet<string> = new Set(["heartbeat"]);
+const SESSION_LOG_EVENTS: ReadonlySet<string> = new Set(["session_log"]);
 
 function parseEvent(eventType: string, data: string, id: string): HydraEvent | null {
   const parsedId = id ? Number(id) : 0;
@@ -47,6 +50,9 @@ function parseEvent(eventType: string, data: string, id: string): HydraEvent | n
   }
   if (HEARTBEAT_EVENTS.has(eventType)) {
     return { type: "heartbeat", data: JSON.parse(data) as HeartbeatEventData, id: parsedId };
+  }
+  if (SESSION_LOG_EVENTS.has(eventType)) {
+    return { type: "session_log", data: JSON.parse(data) as SessionLogEventData, id: parsedId };
   }
 
   // All other event types are entity events
@@ -100,6 +106,7 @@ export class HydraEventSource {
       "label_created",
       "label_updated",
       "label_deleted",
+      "session_log",
       "connected",
       "resync",
       "heartbeat",

@@ -120,6 +120,7 @@ export type { SearchUsersQuery } from "./generated/SearchUsersQuery";
 export type { SelectOption } from "./generated/SelectOption";
 export type { Session } from "./generated/Session";
 export type { SessionId } from "./generated/SessionId";
+export type { SessionLogEventData } from "./generated/SessionLogEventData";
 export type { SessionSettings } from "./generated/SessionSettings";
 export type { SessionStatusUpdate } from "./generated/SessionStatusUpdate";
 export type { SessionSummary } from "./generated/SessionSummary";
