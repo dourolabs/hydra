@@ -3,7 +3,8 @@ packages:
   - "packages/mock-server"
   - "packages/ui"
   - "packages/web"
-onlyBuiltDependencies:
-  - "esbuild"
+onlyBuiltDependencies: '["esbuild"]'
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude: []
+allowBuilds:
+  esbuild: set this to true or false
