@@ -30,10 +30,16 @@ vi.mock("./Sidebar.module.css", () => ({
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 
-function renderSidebar() {
+function renderSidebar(
+  overrides: { hidden?: boolean; onHide?: () => void } = {},
+) {
   return render(
     <MemoryRouter>
-      <Sidebar connectionState="connected" />
+      <Sidebar
+        connectionState="connected"
+        hidden={overrides.hidden ?? false}
+        onHide={overrides.onHide ?? (() => {})}
+      />
     </MemoryRouter>,
   );
 }
@@ -127,15 +133,34 @@ describe("Sidebar static structure", () => {
     window.localStorage.clear();
   });
 
-  it("renders header slots as no-op buttons", () => {
+  it("renders sessions/search header slots as no-op buttons", () => {
     renderSidebar();
     expect(screen.getByTestId("sidebar-header-sessions").tagName).toBe("BUTTON");
     expect(screen.getByTestId("sidebar-header-search").tagName).toBe("BUTTON");
-    expect(screen.getByTestId("sidebar-header-hide").tagName).toBe("BUTTON");
     // Clicking them should not crash.
     fireEvent.click(screen.getByTestId("sidebar-header-sessions"));
     fireEvent.click(screen.getByTestId("sidebar-header-search"));
+  });
+
+  it("invokes onHide when the hide button is clicked", () => {
+    const onHide = vi.fn();
+    renderSidebar({ onHide });
     fireEvent.click(screen.getByTestId("sidebar-header-hide"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the sidebar as inert/aria-hidden when hidden is true", () => {
+    renderSidebar({ hidden: true });
+    const nav = screen.getByTestId("sidebar");
+    expect(nav.getAttribute("aria-hidden")).toBe("true");
+    expect(nav.hasAttribute("inert")).toBe(true);
+  });
+
+  it("does not mark the sidebar inert when hidden is false", () => {
+    renderSidebar({ hidden: false });
+    const nav = screen.getByTestId("sidebar");
+    expect(nav.getAttribute("aria-hidden")).toBeNull();
+    expect(nav.hasAttribute("inert")).toBe(false);
   });
 
   it("renders Patches and Agents as static links to the expected routes", () => {

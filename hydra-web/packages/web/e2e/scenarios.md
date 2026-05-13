@@ -23,6 +23,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@nav:sidebar` — User can navigate between pages using the sidebar
 - `@nav:deep-link` — User can navigate directly to a page via URL
 - `@nav:back-button` — Browser back button works correctly
+- `@nav:sidebar-toggle` — User can hide and restore the sidebar; state persists across reloads
 
 ## Issues
 
