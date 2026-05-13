@@ -25,22 +25,18 @@ Verify that closing a chat conversation and then resuming it preserves the full 
 8. Wait for the assistant reply to appear.
 9. Send **msg3**: `I work on Rust projects. What's 4+4?`
 10. Wait for the assistant reply to appear.
-11. Verify the conversation status shows as "Active" in the chat header.
-12. Click the "End Chat" button in the chat header.
-13. Verify the conversation status changes to "Closed".
-14. Verify the chat input is disabled while the conversation is Closed.
-15. Click the "Resume" button in the chat header.
-16. Verify the conversation status changes back to "Active" and the chat input becomes enabled again.
-17. Verify the message list still shows all 3 prior user messages and all 3 prior assistant replies (no messages were lost across close/resume).
-18. Send **msg4**: `What's my name and what do I work on?`
-19. Wait for the assistant reply to appear (allow up to 2 minutes for the resumed worker to spin up).
-20. Inspect the 4th assistant reply.
+11. Click the "End Chat" button in the chat header.
+12. Verify the message list still shows all 3 prior user messages and all 3 prior assistant replies (no messages were lost when the conversation was closed). Do this BEFORE sending msg4 so the close/resume boundary is observable between msg3 and msg4.
+13. Send **msg4**: `What's my name and what do I work on?` (sending a message to the now-Closed conversation auto-resumes it; no explicit resume action is required).
+14. Verify a "Resumed" inline system event appears in the message list between msg3's assistant reply and msg4.
+15. Wait for the assistant reply to appear (allow up to 2 minutes for the resumed worker to spin up).
+16. Inspect the 4th assistant reply.
 
 ## Expected Results
 
-- After step 19, the chat message list contains exactly 4 user messages and 4 assistant messages (plus event rows for the Closed/Resumed system events between msg3's reply and msg4).
+- After step 15, the chat message list contains exactly 4 user messages and 4 assistant messages (plus event rows for the Closed/Resumed system events between msg3's reply and msg4).
 - No user or assistant message appears more than once — the resumed worker must not have re-replied to msg1/msg2/msg3.
 - The 4th assistant reply must reference both **Alice** (proving the worker has msg1 in its context) and **Rust** (proving the worker has msg3 in its context).
-- The chat input is disabled while the conversation status is Closed (after step 12) and re-enabled once the status returns to Active (after step 15).
-- The conversation history (user messages, assistant replies, Closed event, Resumed event) is preserved and displayed in order across the close/resume boundary.
+- The chat input remains enabled even when the conversation status is Closed — sending a message to a Closed conversation is what auto-resumes it (there is no explicit resume control in the UI).
+- The conversation history (user messages, assistant replies, Closed event, post-msg4 Resumed inline system event) is preserved and displayed in order across the close/resume boundary.
 - No JavaScript errors or broken layouts throughout.
