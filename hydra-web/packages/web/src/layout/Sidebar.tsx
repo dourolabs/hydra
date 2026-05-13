@@ -4,6 +4,7 @@ import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import type { SSEConnectionState } from "../hooks/useSSE";
+import { SidebarDocumentTree } from "./SidebarDocumentTree";
 import styles from "./Sidebar.module.css";
 
 interface SidebarProps {
@@ -204,6 +205,7 @@ export function Sidebar({ connectionState }: SidebarProps) {
         </SidebarSection>
 
         <SidebarSection id="documents" label="Documents">
+          <SidebarDocumentTree />
           <NavLink
             to="/documents"
             className={moreLinkClass}

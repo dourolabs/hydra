@@ -6,13 +6,16 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
+    // Scope assertions to the main page (the sidebar also renders a Documents tree).
+    const main = page.locator("main");
+
     // Top-level path folders should be visible and expanded by default
-    await expect(page.getByRole("button", { name: /research/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /docs/ })).toBeVisible();
+    await expect(main.getByRole("button", { name: /research/ })).toBeVisible();
+    await expect(main.getByRole("button", { name: /docs/ })).toBeVisible();
 
     // Top-level folders are expanded by default, and leaf documents render directly as DocumentRows
     await expect(
-      page.getByText("ADR-001: OAuth2 Migration Strategy")
+      main.getByText("ADR-001: OAuth2 Migration Strategy")
     ).toBeVisible();
   });
 
@@ -21,11 +24,14 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
   }) => {
     await page.goto("/documents");
 
+    // Scope to the main page; the sidebar tree also has links to documents.
+    const main = page.locator("main");
+
     // Top-level folders are expanded by default; leaf documents render directly as DocumentRows
-    await expect(page.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
+    await expect(main.getByText("ADR-001: OAuth2 Migration Strategy")).toBeVisible();
 
     // Click on the document link to navigate to its detail page
-    await page.getByText("ADR-001: OAuth2 Migration Strategy").click();
+    await main.getByText("ADR-001: OAuth2 Migration Strategy").click();
     await expect(page).toHaveURL(/\/documents\/d-seed00001/);
 
     // Verify the document detail page shows the title

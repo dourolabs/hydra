@@ -146,6 +146,83 @@
     color var(--transition-fast);
 }
 
+.docTree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.treeFolder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.treeFolder:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.treeFolderName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeChevron {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.treeChevronOpen {
+  transform: rotate(90deg);
+}
+
+.treeLeaf {
+  display: block;
+  padding: 2px var(--space-2);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.treeLeaf:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.treeLeafPlaceholder {
+  padding: 2px var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .moreLink:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
