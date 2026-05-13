@@ -1,0 +1,97 @@
+.page {
+  composes: page from "./page.module.css";
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.list > :where(:nth-child(odd)) {
+  background-color: var(--color-bg-secondary);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  transition: background 120ms ease;
+}
+
+.row:hover {
+  background: var(--color-bg-hover);
+}
+
+.rowMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sessionId {
+  color: var(--color-accent);
+  font-weight: 600;
+  font-family: var(--font-family-terminal);
+  text-decoration: none;
+}
+
+.sessionId:hover {
+  text-decoration: underline;
+}
+
+.sessionIdPlain {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-family: var(--font-family-terminal);
+}
+
+.prompt {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.metaItem {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.issueLink {
+  color: var(--color-accent-dim);
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.issueLink:hover {
+  color: var(--color-accent);
+}
