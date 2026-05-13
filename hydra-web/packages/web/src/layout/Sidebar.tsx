@@ -9,6 +9,8 @@ import styles from "./Sidebar.module.css";
 
 interface SidebarProps {
   connectionState: SSEConnectionState;
+  hidden: boolean;
+  onHide: () => void;
 }
 
 const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
@@ -115,7 +117,7 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
   return `${styles.moreLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
-export function Sidebar({ connectionState }: SidebarProps) {
+export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
@@ -126,7 +128,13 @@ export function Sidebar({ connectionState }: SidebarProps) {
   const patchesActive = isDashboard && selectedParam === "patches";
 
   return (
-    <nav className={styles.sidebar} aria-label="Primary">
+    <nav
+      className={`${styles.sidebar}${hidden ? ` ${styles.sidebarHidden}` : ""}`}
+      aria-label="Primary"
+      aria-hidden={hidden || undefined}
+      inert={hidden || undefined}
+      data-testid="sidebar"
+    >
       <div className={styles.header}>
         <Tooltip content="Active sessions" position="bottom">
           <button
@@ -170,6 +178,7 @@ export function Sidebar({ connectionState }: SidebarProps) {
             className={styles.headerSlot}
             data-testid="sidebar-header-hide"
             aria-label="Hide sidebar"
+            onClick={onHide}
           >
             <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path
