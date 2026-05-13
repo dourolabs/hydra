@@ -303,4 +303,215 @@ describe("SidebarDocumentTree", () => {
     });
     expect(screen.queryByTestId("sidebar-doc-tree")).toBeNull();
   });
+
+  // --- Hybrid row tests (is_document=true && child_count > 1) ---
+  // The chevron toggle uses testid `sidebar-doc-tree-hybrid-<full_path>`;
+  // the NavLink uses testid `sidebar-doc-tree-leaf-<document_id>`.
+  describe("hybrid rows", () => {
+    it("renders a chevron toggle AND a NavLink to /documents/<id>", async () => {
+      mockListDocumentPaths.mockImplementation(
+        ({ prefix }: { prefix: string | null }) => {
+          if (prefix == null) {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "guide",
+                  full_path: "/guide",
+                  child_count: 3n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          return Promise.resolve(makePathResponse([]));
+        },
+      );
+      mockListDocuments.mockResolvedValue(
+        makeDocumentsResponse("d-guide", "/guide"),
+      );
+
+      renderTree();
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("sidebar-doc-tree-hybrid-/guide"),
+        ).toBeTruthy();
+      });
+      const link = await screen.findByTestId("sidebar-doc-tree-leaf-d-guide");
+      expect(link.getAttribute("href")).toBe("/documents/d-guide");
+    });
+
+    it("clicking the chevron toggles aria-expanded and renders children", async () => {
+      mockListDocumentPaths.mockImplementation(
+        ({ prefix }: { prefix: string | null }) => {
+          if (prefix == null) {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "guide",
+                  full_path: "/guide",
+                  child_count: 3n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          if (prefix === "/guide") {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "chapter-1",
+                  full_path: "/guide/chapter-1",
+                  child_count: 1n,
+                  is_document: true,
+                }),
+                makeEntry({
+                  name: "chapter-2",
+                  full_path: "/guide/chapter-2",
+                  child_count: 1n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          return Promise.resolve(makePathResponse([]));
+        },
+      );
+      // Both the hybrid's own per-row exact-path lookup and the batched
+      // `path_is_exact`-falsy lookup hit `path_prefix: "/guide"`; return the
+      // full set of docs under `/guide` so the children leaves resolve from
+      // the batched map.
+      mockListDocuments.mockImplementation(
+        ({ path_prefix }: { path_prefix: string }) => {
+          if (path_prefix === "/guide") {
+            return Promise.resolve(
+              makeDocumentsResponseMulti([
+                { documentId: "d-guide", path: "/guide" },
+                { documentId: "d-ch1", path: "/guide/chapter-1" },
+                { documentId: "d-ch2", path: "/guide/chapter-2" },
+              ]),
+            );
+          }
+          return Promise.resolve({ documents: [] } as ListDocumentsResponse);
+        },
+      );
+
+      renderTree();
+
+      const chevron = await screen.findByTestId(
+        "sidebar-doc-tree-hybrid-/guide",
+      );
+
+      expect(chevron.getAttribute("aria-expanded")).toBe("false");
+      expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
+        prefix: "/guide",
+      });
+
+      fireEvent.click(chevron);
+
+      await waitFor(() => {
+        expect(chevron.getAttribute("aria-expanded")).toBe("true");
+      });
+      await waitFor(() => {
+        expect(mockListDocumentPaths).toHaveBeenCalledWith({
+          prefix: "/guide",
+        });
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("sidebar-doc-tree-leaf-d-ch1")).toBeTruthy();
+      });
+      expect(screen.getByTestId("sidebar-doc-tree-leaf-d-ch2")).toBeTruthy();
+    });
+
+    it("clicking the chevron does NOT navigate (does not click the link)", async () => {
+      mockListDocumentPaths.mockImplementation(
+        ({ prefix }: { prefix: string | null }) => {
+          if (prefix == null) {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "guide",
+                  full_path: "/guide",
+                  child_count: 3n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          return Promise.resolve(makePathResponse([]));
+        },
+      );
+      mockListDocuments.mockResolvedValue(
+        makeDocumentsResponse("d-guide", "/guide"),
+      );
+
+      renderTree();
+
+      const link = await screen.findByTestId("sidebar-doc-tree-leaf-d-guide");
+      const linkClick = vi.fn();
+      link.addEventListener("click", linkClick);
+
+      const chevron = screen.getByTestId("sidebar-doc-tree-hybrid-/guide");
+      fireEvent.click(chevron);
+
+      await waitFor(() => {
+        expect(chevron.getAttribute("aria-expanded")).toBe("true");
+      });
+      expect(linkClick).not.toHaveBeenCalled();
+    });
+
+    it("clicking the link does NOT toggle expansion", async () => {
+      mockListDocumentPaths.mockImplementation(
+        ({ prefix }: { prefix: string | null }) => {
+          if (prefix == null) {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "guide",
+                  full_path: "/guide",
+                  child_count: 3n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          if (prefix === "/guide") {
+            return Promise.resolve(
+              makePathResponse([
+                makeEntry({
+                  name: "chapter-1",
+                  full_path: "/guide/chapter-1",
+                  child_count: 1n,
+                  is_document: true,
+                }),
+              ]),
+            );
+          }
+          return Promise.resolve(makePathResponse([]));
+        },
+      );
+      mockListDocuments.mockResolvedValue(
+        makeDocumentsResponse("d-guide", "/guide"),
+      );
+
+      renderTree();
+
+      const link = await screen.findByTestId("sidebar-doc-tree-leaf-d-guide");
+      const chevron = screen.getByTestId("sidebar-doc-tree-hybrid-/guide");
+
+      expect(chevron.getAttribute("aria-expanded")).toBe("false");
+
+      // Click on the link itself (the name) — should not toggle.
+      fireEvent.click(link);
+
+      // aria-expanded stays false, and children fetch is not triggered.
+      expect(chevron.getAttribute("aria-expanded")).toBe("false");
+      expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
+        prefix: "/guide",
+      });
+      expect(
+        screen.queryByTestId("sidebar-doc-tree-leaf-loading-/guide/chapter-1"),
+      ).toBeNull();
+    });
+  });
 });

@@ -251,6 +251,67 @@
   white-space: nowrap;
 }
 
+.treeHybrid {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+}
+
+.treeHybridChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.treeHybridChevron:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.treeHybridLink {
+  flex: 1;
+  display: block;
+  padding: 2px var(--space-2);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.treeHybridLink:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.treeHybridPlaceholder {
+  flex: 1;
+  padding: 2px var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .moreLink:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
