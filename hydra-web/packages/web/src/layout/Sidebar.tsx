@@ -1,8 +1,11 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
+import type { LabelRecord } from "@hydra/api";
 import { Avatar, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
+import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import { useLabels } from "../features/labels/useLabels";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
 import styles from "./Sidebar.module.css";
@@ -115,14 +118,98 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
   return `${styles.moreLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
+function topRecentLabels(labels: readonly LabelRecord[] | undefined): LabelRecord[] {
+  if (!labels || labels.length === 0) return [];
+  return [...labels]
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .slice(0, 3);
+}
+
+interface IssuesSectionContentProps {
+  username: string | null;
+  isDashboard: boolean;
+  selectedParam: string | null;
+  labelParam: string | null;
+}
+
+function IssuesSectionContent({
+  username,
+  isDashboard,
+  selectedParam,
+  labelParam,
+}: IssuesSectionContentProps) {
+  const assignedFilters = useMemo<IssueFilters>(
+    () => (username ? { assignee: username, status: "open" } : {}),
+    [username],
+  );
+  const { data: assignedCount = 0 } = useIssueCount(assignedFilters, !!username);
+  const { data: labels } = useLabels();
+  const recentLabels = useMemo(() => topRecentLabels(labels), [labels]);
+
+  const assignedActive = isDashboard && selectedParam === "assigned";
+  const allActive =
+    isDashboard && selectedParam === "all" && !labelParam;
+
+  return (
+    <>
+      <Link
+        to="/?selected=assigned"
+        className={`${styles.navItem}${assignedActive ? ` ${styles.navItemActive}` : ""}`}
+        aria-current={assignedActive ? "page" : undefined}
+        data-testid="sidebar-issues-assigned"
+      >
+        <span className={styles.itemLabel}>Assigned to you</span>
+        {assignedCount > 0 && (
+          <span
+            className={styles.badge}
+            data-testid="sidebar-issues-assigned-badge"
+          >
+            {assignedCount}
+          </span>
+        )}
+      </Link>
+      {recentLabels.map((label) => {
+        const labelActive =
+          isDashboard &&
+          selectedParam === "all" &&
+          labelParam === label.label_id;
+        return (
+          <Link
+            key={label.label_id}
+            to={`/?selected=all&label=${encodeURIComponent(label.label_id)}`}
+            className={`${styles.navItem}${labelActive ? ` ${styles.navItemActive}` : ""}`}
+            aria-current={labelActive ? "page" : undefined}
+            data-testid={`sidebar-issues-label-${label.label_id}`}
+          >
+            <span
+              className={styles.labelSwatch}
+              style={{ backgroundColor: label.color }}
+              aria-hidden="true"
+            />
+            <span className={styles.itemLabel}>{label.name}</span>
+          </Link>
+        );
+      })}
+      <Link
+        to="/?selected=all"
+        className={`${styles.navItem}${allActive ? ` ${styles.navItemActive}` : ""}`}
+        aria-current={allActive ? "page" : undefined}
+        data-testid="sidebar-issues-all"
+      >
+        <span className={styles.itemLabel}>All issues</span>
+      </Link>
+    </>
+  );
+}
+
 export function Sidebar({ connectionState }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const selectedParam = searchParams.get("selected");
+  const labelParam = searchParams.get("label");
   const isDashboard = pathname === "/";
-  const issuesMoreActive = isDashboard && selectedParam === "your-issues";
   const patchesActive = isDashboard && selectedParam === "patches";
 
   return (
@@ -194,14 +281,12 @@ export function Sidebar({ connectionState }: SidebarProps) {
         </SidebarSection>
 
         <SidebarSection id="issues" label="Issues">
-          <Link
-            to="/?selected=your-issues"
-            className={`${styles.moreLink}${issuesMoreActive ? ` ${styles.navItemActive}` : ""}`}
-            aria-current={issuesMoreActive ? "page" : undefined}
-            data-testid="sidebar-section-issues-more"
-          >
-            More
-          </Link>
+          <IssuesSectionContent
+            username={displayName}
+            isDashboard={isDashboard}
+            selectedParam={selectedParam}
+            labelParam={labelParam}
+          />
         </SidebarSection>
 
         <SidebarSection id="documents" label="Documents">

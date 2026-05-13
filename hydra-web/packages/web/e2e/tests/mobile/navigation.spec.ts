@@ -12,10 +12,10 @@ test.describe("Mobile Navigation @mobile:nav", () => {
     await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/settings/);
 
-    // Navigate to the dashboard via the Issues section "More" link.
-    await page.getByTestId("sidebar-section-issues-more").click();
+    // Navigate to the dashboard via the Issues > All issues link.
+    await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
+      /^http:\/\/localhost:\d+\/\?selected=all$/,
     );
   });
 

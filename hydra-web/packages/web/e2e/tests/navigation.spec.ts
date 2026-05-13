@@ -13,10 +13,38 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
     await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/settings/);
 
-    // Navigate to the dashboard via the Issues section "More" link.
-    await page.getByTestId("sidebar-section-issues-more").click();
+    // Navigate to the dashboard via the Issues > All issues link.
+    await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
+      /^http:\/\/localhost:\d+\/\?selected=all$/,
+    );
+  });
+
+  test("Issues section items deep-link to the dashboard @nav:sidebar", async ({
+    authenticatedPage: page,
+  }) => {
+    // Assigned to you → dashboard with Assigned filter selected.
+    await page.getByTestId("sidebar-issues-assigned").click();
+    await expect(page).toHaveURL(
+      /^http:\/\/localhost:\d+\/\?selected=assigned$/,
+    );
+
+    // All issues → dashboard with All filter selected.
+    await page.getByTestId("sidebar-issues-all").click();
+    await expect(page).toHaveURL(
+      /^http:\/\/localhost:\d+\/\?selected=all$/,
+    );
+
+    // Clicking a recent-label row deep-links to ?selected=all&label=<id>.
+    const labelRow = page.locator('[data-testid^="sidebar-issues-label-"]').first();
+    await expect(labelRow).toBeVisible();
+    const labelTestId = await labelRow.getAttribute("data-testid");
+    const labelId = labelTestId!.replace("sidebar-issues-label-", "");
+    await labelRow.click();
+    await expect(page).toHaveURL(
+      new RegExp(
+        `^http://localhost:\\d+/\\?selected=all&label=${labelId}$`,
+      ),
     );
   });
 

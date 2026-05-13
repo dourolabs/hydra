@@ -85,6 +85,7 @@ export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
+  const labelParam = searchParams.get("label");
   const [filterRootId, setFilterRootId] = useState<string | null>(() => {
     // URL param takes priority over localStorage
     if (selectedParam && VALID_FILTERS.includes(selectedParam)) return selectedParam;
@@ -100,9 +101,11 @@ export function DashboardPage() {
   const [selectedPatchStatus, setSelectedPatchStatus] = useState<PatchStatus | null>(
     savedFilters?.selectedPatchStatus ?? null,
   );
-  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(
-    savedFilters?.selectedLabelId ?? null,
-  );
+  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(() => {
+    // URL param takes priority over localStorage on first render
+    if (labelParam) return labelParam;
+    return savedFilters?.selectedLabelId ?? null;
+  });
 
   // Persist filter state to localStorage
   useEffect(() => {
