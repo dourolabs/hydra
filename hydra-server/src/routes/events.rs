@@ -1,5 +1,6 @@
 use crate::app::{AppState, ServerEvent, event_bus::MutationPayload};
 use crate::domain::actors::Actor;
+use crate::job_engine::JobStatus;
 use axum::{
     Extension,
     extract::{Query, State},
@@ -9,7 +10,7 @@ use axum::{
     },
 };
 use chrono::{DateTime, Utc};
-use futures::channel::mpsc;
+use futures::{StreamExt, channel::mpsc};
 use hydra_common::{
     LabelId, NotificationId,
     api::v1::{
@@ -17,7 +18,7 @@ use hydra_common::{
         error::ApiError,
         events::{
             ConnectedEventData, EntityEventData, EventsQuery, HeartbeatEventData,
-            LAST_EVENT_ID_HEADER, ResyncEventData, SseEventType,
+            LAST_EVENT_ID_HEADER, ResyncEventData, SessionLogEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
         patches::PatchVersionRecord,
@@ -57,6 +58,17 @@ pub async fn get_events(
     let current_seq = state.event_bus().current_seq();
 
     let (tx, rx) = mpsc::unbounded::<Result<Event, Infallible>>();
+
+    // When the caller subscribes to one or more `session_ids`, multiplex each
+    // subscribed session's log stream into this SSE stream so the browser only
+    // needs a single EventSource per tab (rather than one per visible session).
+    // Each spawned forwarder shares the same `tx`; when the SSE response is
+    // dropped the channel closes and the forwarders exit on their next send.
+    if let Some(session_ids) = filter.session_ids.clone() {
+        for session_id in session_ids {
+            spawn_session_log_forwarder(state.clone(), session_id, tx.clone());
+        }
+    }
 
     tokio::spawn(async move {
         // Send initial event based on whether this is a first connect or reconnect.
@@ -833,6 +845,58 @@ async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
         .id(event.seq().to_string())
         .json_data(&data)
         .unwrap_or_else(|_| Event::default().data("{}"))
+}
+
+/// Spawns a background task that streams log chunks for `session_id` and
+/// forwards them as `session_log` SSE events on the shared `tx` channel. The
+/// task exits when the session has no live log stream, when the log source
+/// closes, or when the SSE client disconnects (detected via `tx` send error).
+fn spawn_session_log_forwarder(
+    state: AppState,
+    session_id: SessionId,
+    tx: mpsc::UnboundedSender<Result<Event, Infallible>>,
+) {
+    tokio::spawn(async move {
+        let job = match state.job_engine.find_job_by_hydra_id(&session_id).await {
+            Ok(job) => job,
+            Err(err) => {
+                info!(
+                    session_id = %session_id,
+                    error = ?err,
+                    "session_log: no job found for subscribed session; skipping log forwarding"
+                );
+                return;
+            }
+        };
+
+        let follow = job.status == JobStatus::Running;
+        let mut receiver = match state.job_engine.get_logs_stream(&session_id, follow) {
+            Ok(r) => r,
+            Err(err) => {
+                warn!(
+                    session_id = %session_id,
+                    error = ?err,
+                    "session_log: failed to open log stream"
+                );
+                return;
+            }
+        };
+
+        let session_id_str = session_id.to_string();
+        while let Some(chunk) = receiver.next().await {
+            let payload = SessionLogEventData {
+                session_id: session_id_str.clone(),
+                chunk,
+            };
+            let event = Event::default()
+                .event(SseEventType::SessionLog.as_str())
+                .json_data(&payload)
+                .unwrap_or_else(|_| Event::default().data("{}"));
+            if tx.unbounded_send(Ok(event)).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 #[cfg(test)]

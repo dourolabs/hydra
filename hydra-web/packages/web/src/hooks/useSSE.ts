@@ -3,11 +3,13 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueSummaryRecord,
+  SessionLogEventData,
   SessionSummaryRecord,
   ConversationSummary,
   ListIssuesResponse,
   ListSessionsResponse,
 } from "@hydra/api";
+import { sessionLogRegistry } from "./sessionLogRegistry";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
 
@@ -33,6 +35,17 @@ const ENTITY_EVENT_TYPES = [
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
+const SESSION_IDS_RECONNECT_DEBOUNCE_MS = 200;
+const BASE_EVENT_TYPES_QUERY =
+  "types=issues,sessions,patches,documents,labels,conversations";
+
+function buildEventsUrl(sessionIds: readonly string[]): string {
+  if (sessionIds.length === 0) {
+    return `/api/v1/events?${BASE_EVENT_TYPES_QUERY}`;
+  }
+  const ids = sessionIds.map((id) => encodeURIComponent(id)).join(",");
+  return `/api/v1/events?${BASE_EVENT_TYPES_QUERY}&session_ids=${ids}`;
+}
 
 // ---------------------------------------------------------------------------
 // Cache-update helpers — eliminate repeated version-guard & list-upsert logic
@@ -175,6 +188,8 @@ export function useSSE(): SSEConnectionState {
   const lastEventIdRef = useRef<string | null>(null);
   const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectingRef = useRef(false);
+  const sessionIdsReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentSessionIdsKeyRef = useRef<string>("");
 
   const debouncedInvalidate = useCallback(() => {
     if (invalidateTimerRef.current) {
@@ -304,7 +319,9 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource("/api/v1/events?types=issues,sessions,patches,documents,labels,conversations");
+    const sessionIds = sessionLogRegistry.sessionIds();
+    currentSessionIdsKeyRef.current = sessionIds.join(",");
+    const es = new EventSource(buildEventsUrl(sessionIds));
     esRef.current = es;
 
     es.onopen = () => {
@@ -350,6 +367,21 @@ export function useSSE(): SSEConnectionState {
       // No-op: confirms connection is alive
     });
 
+    // Multiplexed session log chunks for any session IDs included in the
+    // EventSource URL via the `session_ids` filter — route each chunk to its
+    // SessionLogViewer subscriber(s) via the registry.
+    es.addEventListener("session_log", (e: MessageEvent) => {
+      if (e.lastEventId) {
+        lastEventIdRef.current = e.lastEventId;
+      }
+      try {
+        const data: SessionLogEventData = JSON.parse(e.data);
+        sessionLogRegistry.dispatch(data.session_id, data.chunk);
+      } catch {
+        // Ignore malformed payloads
+      }
+    });
+
     es.onerror = () => {
       es.close();
       esRef.current = null;
@@ -379,7 +411,49 @@ export function useSSE(): SSEConnectionState {
         clearTimeout(invalidateTimerRef.current);
         invalidateTimerRef.current = null;
       }
+      if (sessionIdsReconnectTimerRef.current) {
+        clearTimeout(sessionIdsReconnectTimerRef.current);
+        sessionIdsReconnectTimerRef.current = null;
+      }
     };
+  }, [connect]);
+
+  // EventSource URLs can't be changed after construction — when the registered
+  // SessionLogViewer set changes, close and reopen the EventSource with the
+  // updated `session_ids` filter. Debounce so rapid mount/unmount churn (e.g.,
+  // navigating between session pages) coalesces into a single reconnect.
+  useEffect(() => {
+    const unsubscribe = sessionLogRegistry.onChange(() => {
+      const nextKey = sessionLogRegistry.sessionIds().join(",");
+      if (nextKey === currentSessionIdsKeyRef.current) {
+        return;
+      }
+      if (sessionIdsReconnectTimerRef.current) {
+        clearTimeout(sessionIdsReconnectTimerRef.current);
+      }
+      sessionIdsReconnectTimerRef.current = setTimeout(() => {
+        sessionIdsReconnectTimerRef.current = null;
+        if (
+          sessionLogRegistry.sessionIds().join(",") ===
+          currentSessionIdsKeyRef.current
+        ) {
+          return;
+        }
+        if (esRef.current) {
+          esRef.current.close();
+          esRef.current = null;
+        }
+        connectingRef.current = false;
+        retriesRef.current = 0;
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        connect();
+      }, SESSION_IDS_RECONNECT_DEBOUNCE_MS);
+    });
+
+    return unsubscribe;
   }, [connect]);
 
   // Reconnect and refresh caches when the page becomes visible again

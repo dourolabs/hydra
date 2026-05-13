@@ -135,6 +135,7 @@ mod ts_export {
         crate::events::ConnectedEventData::export_all(&cfg).expect("ConnectedEventData");
         crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
         crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
+        crate::events::SessionLogEventData::export_all(&cfg).expect("SessionLogEventData");
 
         // API v1: labels
         crate::labels::Label::export_all(&cfg).expect("Label");

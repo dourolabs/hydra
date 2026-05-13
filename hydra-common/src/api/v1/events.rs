@@ -91,6 +91,7 @@ pub enum SseEventType {
     ConversationCreated,
     ConversationUpdated,
     ConversationEventCreated,
+    SessionLog,
     Connected,
     Resync,
     Heartbeat,
@@ -117,6 +118,7 @@ impl SseEventType {
             Self::ConversationCreated => "conversation_created",
             Self::ConversationUpdated => "conversation_updated",
             Self::ConversationEventCreated => "conversation_event_created",
+            Self::SessionLog => "session_log",
             Self::Connected => "connected",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
@@ -147,6 +149,7 @@ impl std::str::FromStr for SseEventType {
             "conversation_created" => Ok(Self::ConversationCreated),
             "conversation_updated" => Ok(Self::ConversationUpdated),
             "conversation_event_created" => Ok(Self::ConversationEventCreated),
+            "session_log" => Ok(Self::SessionLog),
             "connected" => Ok(Self::Connected),
             "snapshot" => Ok(Self::Connected),
             "resync" => Ok(Self::Resync),
@@ -195,4 +198,17 @@ pub struct ResyncEventData {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct HeartbeatEventData {
     pub server_time: DateTime<Utc>,
+}
+
+/// Data payload for `session_log` events, emitted on `/v1/events` when the
+/// caller has subscribed to one or more `session_ids`. Carries a single log
+/// chunk for the named session so consumers can multiplex per-session log
+/// streams over the global events SSE rather than opening a separate
+/// EventSource per session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SessionLogEventData {
+    pub session_id: String,
+    pub chunk: String,
 }

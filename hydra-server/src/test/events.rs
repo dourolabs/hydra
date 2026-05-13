@@ -1,6 +1,12 @@
-use crate::test_utils::{spawn_test_server, test_client};
+use crate::job_engine::{JobEngine, JobStatus};
+use crate::test_utils::{
+    MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client,
+    test_state_with_engine_handles,
+};
+use hydra_common::SessionId;
 use hydra_common::api::v1::issues::UpsertIssueResponse;
 use serde_json::json;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn events_endpoint_returns_sse_content_type() -> anyhow::Result<()> {
@@ -202,6 +208,72 @@ async fn events_endpoint_sends_resync_on_reconnect() -> anyhow::Result<()> {
     assert!(
         accumulated.contains("event: resync"),
         "expected resync event on reconnect, got: {accumulated}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn events_endpoint_multiplexes_session_logs_for_subscribed_sessions() -> anyhow::Result<()> {
+    let mock_engine = Arc::new(MockJobEngine::new());
+
+    let session_a = SessionId::new();
+    let session_b = SessionId::new();
+    mock_engine.insert_job(&session_a, JobStatus::Running).await;
+    mock_engine.insert_job(&session_b, JobStatus::Running).await;
+    mock_engine
+        .set_logs(&session_a, vec!["alpha-line\n".to_string()])
+        .await;
+    mock_engine
+        .set_logs(&session_b, vec!["beta-line\n".to_string()])
+        .await;
+
+    let job_engine: Arc<dyn JobEngine> = mock_engine.clone();
+    let handles = test_state_with_engine_handles(job_engine);
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let url = format!("{}/v1/events?session_ids={}", server.base_url(), session_a,);
+    let mut response = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await?;
+    assert!(response.status().is_success());
+
+    let mut accumulated = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), response.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                accumulated.push_str(&String::from_utf8_lossy(&chunk));
+                if accumulated.contains("alpha-line") {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    assert!(
+        accumulated.contains("event: session_log"),
+        "expected session_log event in stream, got: {accumulated}",
+    );
+    assert!(
+        accumulated.contains("alpha-line"),
+        "expected log chunk for subscribed session A, got: {accumulated}",
+    );
+    assert!(
+        accumulated.contains(&session_a.to_string()),
+        "session_log payload should include subscribed session_id {session_a}, got: {accumulated}",
+    );
+    assert!(
+        !accumulated.contains("beta-line"),
+        "stream must not include log chunks for unsubscribed session B, got: {accumulated}",
+    );
+    assert!(
+        !accumulated.contains(&session_b.to_string()),
+        "stream must not reference unsubscribed session B id {session_b}, got: {accumulated}",
     );
 
     Ok(())
