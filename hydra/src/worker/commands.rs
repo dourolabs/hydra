@@ -61,10 +61,17 @@ pub trait WorkerCommands: Send + Sync {
     ) -> Result<String>;
 
     /// Run Claude in interactive mode, bridging a relay WebSocket with Claude's stdin/stdout.
+    ///
+    /// `prompt` is the conversation's agent prompt (empty when no agent is bound).
+    /// Interactive workers must prepend it to the first user turn sent to Claude
+    /// rather than passing it as a CLI argument; see
+    /// [`super::interactive::run_interactive`] for the exact rule.
+    #[allow(clippy::too_many_arguments)]
     async fn run_interactive(
         &self,
         ws_stream: RelayWebSocket,
         session_id: &SessionId,
+        prompt: &str,
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
@@ -327,6 +334,7 @@ impl WorkerCommands for CodexCommands {
         &self,
         _ws_stream: RelayWebSocket,
         _session_id: &SessionId,
+        _prompt: &str,
         _model: Option<&str>,
         _working_dir: &Path,
         _env: &HashMap<String, String>,
@@ -595,6 +603,7 @@ impl WorkerCommands for ClaudeCommands {
         &self,
         ws_stream: RelayWebSocket,
         session_id: &SessionId,
+        prompt: &str,
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
@@ -604,6 +613,7 @@ impl WorkerCommands for ClaudeCommands {
         super::interactive::run_interactive(
             ws_stream,
             session_id,
+            prompt,
             model,
             env,
             working_dir,
@@ -645,6 +655,7 @@ impl WorkerCommands for ModelAwareCommands {
         &self,
         ws_stream: RelayWebSocket,
         session_id: &SessionId,
+        prompt: &str,
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
@@ -657,6 +668,7 @@ impl WorkerCommands for ModelAwareCommands {
                     .run_interactive(
                         ws_stream,
                         session_id,
+                        prompt,
                         model,
                         working_dir,
                         env,
@@ -670,6 +682,7 @@ impl WorkerCommands for ModelAwareCommands {
                     .run_interactive(
                         ws_stream,
                         session_id,
+                        prompt,
                         model,
                         working_dir,
                         env,
