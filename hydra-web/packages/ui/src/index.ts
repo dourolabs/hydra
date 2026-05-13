@@ -35,7 +35,7 @@ export { Modal } from "./components/Modal";
 export type { ModalProps } from "./components/Modal";
 
 export { Tooltip } from "./components/Tooltip";
-export type { TooltipProps } from "./components/Tooltip";
+export type { TooltipProps, TooltipTrigger } from "./components/Tooltip";
 
 export { Avatar } from "./components/Avatar";
 export type { AvatarProps } from "./components/Avatar";
