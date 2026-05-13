@@ -274,7 +274,7 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()> {
+async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -301,9 +301,10 @@ async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()>
         .send()
         .await?;
 
-    // Try to send a message — should fail with 409
+    // Sending a message to a Closed conversation should succeed and
+    // implicitly transition it back to Active (mirrors a Resume click).
     let msg_request = SendMessageRequest {
-        content: "Should fail".to_string(),
+        content: "back from the dead".to_string(),
     };
     let response = client
         .post(format!(
@@ -315,7 +316,49 @@ async fn send_message_to_closed_conversation_returns_409() -> anyhow::Result<()>
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Conversation should now be Active again.
+    let conversation: Conversation = client
+        .get(format!(
+            "{}/v1/conversations/{}",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        conversation.status,
+        hydra_common::api::v1::conversations::ConversationStatus::Active
+    );
+
+    // Event log should end with Resumed immediately followed by the new UserMessage.
+    let events: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{}/events",
+            server.base_url(),
+            created.conversation_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let trailing: Vec<&ConversationEvent> = events.iter().rev().take(2).collect();
+    assert!(
+        matches!(
+            trailing[0],
+            ConversationEvent::UserMessage { content, .. } if content == "back from the dead"
+        ),
+        "second-to-last event should be the new UserMessage, got {:?}",
+        trailing[0]
+    );
+    assert!(
+        matches!(trailing[1], ConversationEvent::Resumed { .. }),
+        "the event before the UserMessage should be Resumed, got {:?}",
+        trailing[1]
+    );
 
     Ok(())
 }

@@ -41,8 +41,11 @@ pub enum SendMessageError {
         #[source]
         source: StoreError,
     },
-    #[error("conversation is not active (status: {status:?})")]
-    NotActive { status: ConversationStatus },
+    #[error("failed to create session for conversation")]
+    Session {
+        #[source]
+        source: CreateSessionError,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -68,6 +71,38 @@ pub enum ResumeConversationError {
         #[source]
         source: CreateSessionError,
     },
+}
+
+#[derive(Debug, Error)]
+enum ResumeInactiveError {
+    #[error("failed to access conversation store")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+    #[error("failed to create session for conversation")]
+    Session {
+        #[source]
+        source: CreateSessionError,
+    },
+}
+
+impl From<ResumeInactiveError> for SendMessageError {
+    fn from(err: ResumeInactiveError) -> Self {
+        match err {
+            ResumeInactiveError::Store { source } => SendMessageError::Store { source },
+            ResumeInactiveError::Session { source } => SendMessageError::Session { source },
+        }
+    }
+}
+
+impl From<ResumeInactiveError> for ResumeConversationError {
+    fn from(err: ResumeInactiveError) -> Self {
+        match err {
+            ResumeInactiveError::Store { source } => ResumeConversationError::Store { source },
+            ResumeInactiveError::Session { source } => ResumeConversationError::Session { source },
+        }
+    }
 }
 
 impl AppState {
@@ -140,6 +175,7 @@ impl AppState {
         conversation_id: &ConversationId,
         content: String,
         actor_ref: ActorRef,
+        creator: Username,
     ) -> Result<api_conversations::ConversationEvent, SendMessageError> {
         let versioned = self
             .store()
@@ -147,11 +183,11 @@ impl AppState {
             .await
             .map_err(|source| SendMessageError::Store { source })?;
 
-        // Verify conversation is Active
+        // If not Active, transparently resume before recording the new message.
+        // This mirrors clicking "Resume" in the UI but is driven by the send.
         if versioned.item.status != ConversationStatus::Active {
-            return Err(SendMessageError::NotActive {
-                status: versioned.item.status,
-            });
+            self.resume_inactive_conversation(conversation_id, actor_ref.clone(), creator)
+                .await?;
         }
 
         // Append UserMessage event
@@ -316,13 +352,35 @@ impl AppState {
             return Err(ResumeConversationError::AlreadyActive);
         }
 
+        self.resume_inactive_conversation(conversation_id, actor_ref, creator)
+            .await?;
+
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| ResumeConversationError::Store { source })?;
+
+        Ok(versioned)
+    }
+
+    /// Shared body of "resume an inactive conversation": create a new
+    /// interactive session anchored at the current event-count snapshot,
+    /// append a Resumed event, and flip the conversation status to Active.
+    /// Callers are responsible for guarding against already-Active state.
+    async fn resume_inactive_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        actor_ref: ActorRef,
+        creator: Username,
+    ) -> Result<(), ResumeInactiveError> {
         // Capture event count BEFORE appending Resumed — this is the index the
         // worker should skip past on catch-up.
         let current_events = self
             .store()
             .get_conversation_events(conversation_id)
             .await
-            .map_err(|source| ResumeConversationError::Store { source })?;
+            .map_err(|source| ResumeInactiveError::Store { source })?;
         let resume_from_event_index = current_events.len();
 
         // Create a new interactive session linked to the conversation.
@@ -339,7 +397,7 @@ impl AppState {
         let session_id = self
             .create_session(session_request, actor_ref.clone(), creator)
             .await
-            .map_err(|source| ResumeConversationError::Session { source })?;
+            .map_err(|source| ResumeInactiveError::Session { source })?;
 
         // Mark this session as a resume by setting conversation_resume_from on
         // its InteractiveOptions.
@@ -347,7 +405,7 @@ impl AppState {
             .store()
             .get_session(&session_id, false)
             .await
-            .map_err(|source| ResumeConversationError::Store { source })?
+            .map_err(|source| ResumeInactiveError::Store { source })?
             .item;
         if let Some(opts) = session.interactive.as_mut() {
             opts.conversation_resume_from = Some(resume_from_event_index);
@@ -355,7 +413,7 @@ impl AppState {
         self.store
             .update_session_with_actor(&session_id, session, actor_ref.clone())
             .await
-            .map_err(|source| ResumeConversationError::Store { source })?;
+            .map_err(|source| ResumeInactiveError::Store { source })?;
 
         // Append Resumed event
         let event = ConversationEvent::Resumed {
@@ -365,25 +423,23 @@ impl AppState {
         self.store
             .append_conversation_event_with_actor(conversation_id, event, actor_ref.clone())
             .await
-            .map_err(|source| ResumeConversationError::Store { source })?;
+            .map_err(|source| ResumeInactiveError::Store { source })?;
 
-        // Update conversation status
+        // Update conversation status to Active
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| ResumeInactiveError::Store { source })?;
         let mut updated = versioned.item;
         updated.status = ConversationStatus::Active;
         self.store
             .update_conversation_with_actor(conversation_id, updated, actor_ref)
             .await
-            .map_err(|source| ResumeConversationError::Store { source })?;
-
-        // Return updated conversation
-        let versioned = self
-            .store()
-            .get_conversation(conversation_id, false)
-            .await
-            .map_err(|source| ResumeConversationError::Store { source })?;
+            .map_err(|source| ResumeInactiveError::Store { source })?;
 
         info!(conversation_id = %conversation_id, session_id = %session_id, "conversation resumed");
-        Ok(versioned)
+        Ok(())
     }
 }
 
@@ -723,11 +779,21 @@ mod tests {
 
         // Send a couple of messages to add events.
         state
-            .send_message(&conversation_id, "first".to_string(), ActorRef::test())
+            .send_message(
+                &conversation_id,
+                "first".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
             .await
             .unwrap();
         state
-            .send_message(&conversation_id, "second".to_string(), ActorRef::test())
+            .send_message(
+                &conversation_id,
+                "second".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
             .await
             .unwrap();
 
@@ -767,6 +833,219 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Resumed event after resume_conversation");
+        let session = state
+            .store()
+            .get_session(&resumed_session_id, false)
+            .await
+            .unwrap();
+        let opts = session
+            .item
+            .interactive
+            .as_ref()
+            .expect("session should be interactive");
+        assert_eq!(
+            opts.conversation_resume_from,
+            Some(expected_resume_from),
+            "conversation_resume_from should equal event count before Resumed"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_from_active_appends_only_user_message() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let events_before = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let count_before = events_before.len();
+
+        state
+            .send_message(
+                &conversation_id,
+                "second".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let events_after = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            events_after.len(),
+            count_before + 1,
+            "send_message on an Active conversation should append exactly one event"
+        );
+        let last = events_after.last().expect("expected at least one event");
+        assert!(
+            matches!(
+                last.item,
+                ConversationEvent::UserMessage { ref content, .. } if content == "second"
+            ),
+            "expected the trailing event to be the new UserMessage, got {:?}",
+            last.item
+        );
+        assert!(
+            !events_after
+                .iter()
+                .any(|e| matches!(e.item, ConversationEvent::Resumed { .. })),
+            "no Resumed event should be appended when conversation is already Active"
+        );
+
+        let versioned = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(versioned.item.status, ConversationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn send_message_from_closed_resumes_and_appends_user_message() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        state
+            .send_message(
+                &conversation_id,
+                "hello".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let last_two: Vec<_> = events.iter().rev().take(2).collect();
+        assert!(
+            matches!(
+                last_two[0].item,
+                ConversationEvent::UserMessage { ref content, .. } if content == "hello"
+            ),
+            "second-to-last event should be the new UserMessage, got {:?}",
+            last_two[0].item
+        );
+        assert!(
+            matches!(last_two[1].item, ConversationEvent::Resumed { .. }),
+            "last event before UserMessage should be Resumed, got {:?}",
+            last_two[1].item
+        );
+
+        let versioned = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(versioned.item.status, ConversationStatus::Active);
+
+        // The resume should have produced a second session linked to the same
+        // conversation (the original session created by create_conversation
+        // plus the resume-on-send session).
+        let sessions = state
+            .store()
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        let matching = sessions
+            .into_iter()
+            .filter(|(_, s)| s.item.conversation_id() == Some(&conversation_id))
+            .count();
+        assert!(
+            matching >= 2,
+            "expected at least two sessions for the conversation after resume-on-send, got {matching}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_from_closed_sets_conversation_resume_from() {
+        let state = state_with_default_model("default-model");
+        let settings = SessionSettings::default();
+
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                settings,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        // send_message captures the event count *before* it appends the
+        // Resumed event, so this snapshot taken now is the expected value.
+        let events_before_resume = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let expected_resume_from = events_before_resume.len();
+
+        state
+            .send_message(
+                &conversation_id,
+                "hello".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let resumed_session_id = events
+            .into_iter()
+            .rev()
+            .find_map(|e| match e.item {
+                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
+                _ => None,
+            })
+            .expect("expected a Resumed event after send_message on closed conversation");
         let session = state
             .store()
             .get_session(&resumed_session_id, false)
