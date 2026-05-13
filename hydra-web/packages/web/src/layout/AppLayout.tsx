@@ -1,13 +1,15 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { Spinner } from "@hydra/ui";
+import { Spinner, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
 import { Sidebar } from "./Sidebar";
+import { useSidebarHidden } from "./useSidebarHidden";
 import styles from "./AppLayout.module.css";
 
 export function AppLayout() {
   const { user, loading } = useAuth();
   const sseState = useSSE();
+  const { hidden, hide, show } = useSidebarHidden();
 
   if (loading) {
     return (
@@ -23,7 +25,26 @@ export function AppLayout() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar connectionState={sseState} />
+      <Sidebar connectionState={sseState} hidden={hidden} onHide={hide} />
+      {hidden && (
+        <Tooltip content="Show sidebar" position="right">
+          <button
+            type="button"
+            className={styles.floatingRestore}
+            onClick={show}
+            aria-label="Show sidebar"
+            data-testid="sidebar-restore"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        </Tooltip>
+      )}
       <main className={styles.main}>
         <Outlet />
       </main>

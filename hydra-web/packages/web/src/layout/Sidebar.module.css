@@ -10,6 +10,25 @@
   padding: var(--space-2);
   gap: var(--space-2);
   box-sizing: border-box;
+  overflow: hidden;
+  transition:
+    width 175ms ease,
+    padding 175ms ease,
+    border-right-color 175ms ease;
+}
+
+.sidebarHidden {
+  width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
 }
 
 .header {
@@ -261,6 +280,19 @@
     min-height: auto;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+    max-height: 100vh;
+    transition:
+      max-height 175ms ease,
+      padding 175ms ease,
+      border-bottom-color 175ms ease;
+  }
+
+  .sidebarHidden {
+    width: 100%;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-color: transparent;
   }
 
   .sections {

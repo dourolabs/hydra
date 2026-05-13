@@ -30,10 +30,20 @@ vi.mock("./Sidebar.module.css", () => ({
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 
-function renderSidebar(initialEntry: string = "/") {
+function renderSidebar(
+  overrides: {
+    hidden?: boolean;
+    onHide?: () => void;
+    initialEntry?: string;
+  } = {},
+) {
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Sidebar connectionState="connected" />
+    <MemoryRouter initialEntries={[overrides.initialEntry ?? "/"]}>
+      <Sidebar
+        connectionState="connected"
+        hidden={overrides.hidden ?? false}
+        onHide={overrides.onHide ?? (() => {})}
+      />
     </MemoryRouter>,
   );
 }
@@ -127,15 +137,34 @@ describe("Sidebar static structure", () => {
     window.localStorage.clear();
   });
 
-  it("renders header slots as no-op buttons", () => {
+  it("renders sessions/search header slots as no-op buttons", () => {
     renderSidebar();
     expect(screen.getByTestId("sidebar-header-sessions").tagName).toBe("BUTTON");
     expect(screen.getByTestId("sidebar-header-search").tagName).toBe("BUTTON");
-    expect(screen.getByTestId("sidebar-header-hide").tagName).toBe("BUTTON");
     // Clicking them should not crash.
     fireEvent.click(screen.getByTestId("sidebar-header-sessions"));
     fireEvent.click(screen.getByTestId("sidebar-header-search"));
+  });
+
+  it("invokes onHide when the hide button is clicked", () => {
+    const onHide = vi.fn();
+    renderSidebar({ onHide });
     fireEvent.click(screen.getByTestId("sidebar-header-hide"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the sidebar as inert/aria-hidden when hidden is true", () => {
+    renderSidebar({ hidden: true });
+    const nav = screen.getByTestId("sidebar");
+    expect(nav.getAttribute("aria-hidden")).toBe("true");
+    expect(nav.hasAttribute("inert")).toBe(true);
+  });
+
+  it("does not mark the sidebar inert when hidden is false", () => {
+    renderSidebar({ hidden: false });
+    const nav = screen.getByTestId("sidebar");
+    expect(nav.getAttribute("aria-hidden")).toBeNull();
+    expect(nav.hasAttribute("inert")).toBe(false);
   });
 
   it("renders Patches and Agents as static links to the expected routes", () => {
@@ -172,7 +201,7 @@ describe("Sidebar dashboard active state", () => {
   });
 
   it("highlights only Issues > More on /?selected=your-issues", () => {
-    renderSidebar("/?selected=your-issues");
+    renderSidebar({ initialEntry: "/?selected=your-issues" });
     const issuesMore = screen.getByTestId("sidebar-section-issues-more");
     const patches = screen.getByTestId("sidebar-patches");
     expect(issuesMore.className).toContain("navItemActive");
@@ -182,7 +211,7 @@ describe("Sidebar dashboard active state", () => {
   });
 
   it("highlights only Patches on /?selected=patches", () => {
-    renderSidebar("/?selected=patches");
+    renderSidebar({ initialEntry: "/?selected=patches" });
     const issuesMore = screen.getByTestId("sidebar-section-issues-more");
     const patches = screen.getByTestId("sidebar-patches");
     expect(patches.className).toContain("navItemActive");
@@ -192,7 +221,7 @@ describe("Sidebar dashboard active state", () => {
   });
 
   it("highlights neither on / with no selected param", () => {
-    renderSidebar("/");
+    renderSidebar({ initialEntry: "/" });
     const issuesMore = screen.getByTestId("sidebar-section-issues-more");
     const patches = screen.getByTestId("sidebar-patches");
     expect(issuesMore.className).not.toContain("navItemActive");
@@ -202,7 +231,7 @@ describe("Sidebar dashboard active state", () => {
   });
 
   it("highlights neither on a non-/ pathname even with a matching selected param", () => {
-    renderSidebar("/documents?selected=patches");
+    renderSidebar({ initialEntry: "/documents?selected=patches" });
     const issuesMore = screen.getByTestId("sidebar-section-issues-more");
     const patches = screen.getByTestId("sidebar-patches");
     expect(issuesMore.className).not.toContain("navItemActive");
