@@ -20,10 +20,15 @@ use crate::client::RelayWebSocket;
 /// Run an interactive Claude session, bridging between a relay WebSocket and
 /// Claude's stdin/stdout via `--input-format stream-json --output-format stream-json`.
 ///
-/// When `conversation_resume_from` is `Some(n)`, the worker sends it as
-/// `resume_from_event_index` in the WorkerConnect handshake so the server
-/// responds with a catch-up that includes `session_state` for restoring the
-/// prior Claude session via `claude --resume <session_id>`.
+/// When `conversation_resume_from` is `Some(n)`, the worker is starting in a
+/// brand-new container after the prior session was suspended or closed. The
+/// server replays the full conversation event log in the catch-up, and the
+/// worker reconstructs context by feeding a "primer" message wrapping the
+/// transcript into Claude's stdin before forwarding any pending user input.
+///
+/// We do **not** use `claude --resume <session_id>` to restore prior context:
+/// that command reads a local JSONL transcript from Claude's per-host state
+/// directory, which does not exist inside a fresh hydra worker container.
 pub async fn run_interactive(
     ws_stream: RelayWebSocket,
     session_id: &SessionId,
@@ -50,8 +55,9 @@ pub async fn run_interactive(
 
     println!("WebSocket connected, sending handshake");
 
-    // Send WorkerConnect handshake. If this is a resume, include the event
-    // index so the server skips replayed events and ships session_state.
+    // Send WorkerConnect handshake. The server ignores `resume_from_event_index`
+    // for Fresh handshakes and always replies with the full event log; we keep
+    // the value for the wire-protocol contract and so the server can log it.
     let handshake = WorkerConnect::Fresh {
         resume_from_event_index: conversation_resume_from,
     };
@@ -86,16 +92,8 @@ pub async fn run_interactive(
         catch_up.events.len()
     );
 
-    // The idle-timeout upload writes the Claude session_id as UTF-8 bytes, so
-    // parse it back the same way. Empty strings are treated as no session.
-    let resume_session_id = parse_session_state(catch_up.session_state.as_deref());
-
-    if let Some(ref sid) = resume_session_id {
-        println!("Resuming Claude session: {sid}");
-    }
-
     // Spawn Claude in long-lived interactive mode.
-    let claude_args = build_claude_args(model, resume_session_id.as_deref());
+    let claude_args = build_claude_args(model);
 
     eprintln!("Claude CLI args (interactive): {claude_args:?}");
 
@@ -144,21 +142,8 @@ pub async fn run_interactive(
         }
     });
 
-    // Feed catch-up user messages to Claude's stdin.
-    for event in &catch_up.events {
-        if let ConversationEvent::UserMessage { content, .. } = event {
-            let input_line = build_claude_input(content);
-            claude_stdin
-                .write_all(input_line.as_bytes())
-                .await
-                .context("failed to write catch-up message to claude stdin")?;
-            claude_stdin
-                .flush()
-                .await
-                .context("failed to flush catch-up message to claude stdin")?;
-            println!("Fed catch-up user message to Claude stdin");
-        }
-    }
+    // Reconstruct context from the catch-up event log.
+    feed_catch_up(&mut claude_stdin, &catch_up.events).await?;
 
     // Set up stdout reader with StreamFormatter.
     let mut stdout_reader = BufReader::new(claude_stdout);
@@ -216,6 +201,138 @@ pub async fn run_interactive(
     let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
 
     Ok(())
+}
+
+/// Feed catch-up events to Claude's stdin. If the event log contains any
+/// `AssistantMessage` events, the prior history up through the most recent
+/// reply is wrapped into a single "primer" user message and sent first so
+/// Claude treats it as historical context. Any trailing `UserMessage` events
+/// (sent before the new worker connected) are then forwarded normally so
+/// Claude can respond to them.
+async fn feed_catch_up<W: AsyncWrite + Unpin>(
+    claude_stdin: &mut W,
+    events: &[ConversationEvent],
+) -> Result<()> {
+    let (past_context, pending_user_messages) = partition_events(events);
+
+    if !past_context.is_empty() {
+        let primer = build_context_primer(&past_context);
+        let primer_line = build_claude_input(&primer);
+        claude_stdin
+            .write_all(primer_line.as_bytes())
+            .await
+            .context("failed to write context primer to claude stdin")?;
+        claude_stdin
+            .flush()
+            .await
+            .context("failed to flush context primer to claude stdin")?;
+        println!(
+            "Fed context primer ({} prior events) to Claude stdin",
+            past_context.len()
+        );
+    }
+
+    for content in pending_user_messages {
+        let input_line = build_claude_input(content);
+        claude_stdin
+            .write_all(input_line.as_bytes())
+            .await
+            .context("failed to write catch-up user message to claude stdin")?;
+        claude_stdin
+            .flush()
+            .await
+            .context("failed to flush catch-up user message to claude stdin")?;
+        println!("Fed catch-up user message to Claude stdin");
+    }
+
+    Ok(())
+}
+
+/// Partition a catch-up event log into:
+///
+/// 1. `past_context`: every `UserMessage` and `AssistantMessage` up to and
+///    including the most recent `AssistantMessage`. This is the part Claude
+///    needs to see as historical context. System events (Suspending, Resumed,
+///    Closed) are filtered out.
+/// 2. `pending`: `UserMessage` content strings that appeared **after** the
+///    last `AssistantMessage`. These are messages the prior worker did not
+///    get to reply to and that the resumed Claude should respond to.
+///
+/// If there are no `AssistantMessage` events at all, every `UserMessage` is
+/// treated as pending (no prior context yet) and `past_context` is empty.
+fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, Vec<&str>) {
+    let last_assistant_idx = events
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, e)| matches!(e, ConversationEvent::AssistantMessage { .. }))
+        .map(|(i, _)| i);
+
+    let mut past_context: Vec<&ConversationEvent> = Vec::new();
+    let mut pending: Vec<&str> = Vec::new();
+
+    match last_assistant_idx {
+        Some(idx) => {
+            for event in &events[..=idx] {
+                if matches!(
+                    event,
+                    ConversationEvent::UserMessage { .. }
+                        | ConversationEvent::AssistantMessage { .. }
+                ) {
+                    past_context.push(event);
+                }
+            }
+            for event in &events[idx + 1..] {
+                if let ConversationEvent::UserMessage { content, .. } = event {
+                    pending.push(content.as_str());
+                }
+            }
+        }
+        None => {
+            for event in events {
+                if let ConversationEvent::UserMessage { content, .. } = event {
+                    pending.push(content.as_str());
+                }
+            }
+        }
+    }
+
+    (past_context, pending)
+}
+
+/// Build a single primer message that wraps the prior transcript so Claude
+/// can use it as historical context without re-running any actions. The
+/// caller is responsible for sending this as a user-typed message before any
+/// pending input.
+fn build_context_primer(past_context: &[&ConversationEvent]) -> String {
+    let mut transcript = String::new();
+    for event in past_context {
+        match event {
+            ConversationEvent::UserMessage { content, .. } => {
+                transcript.push_str("User: ");
+                transcript.push_str(content);
+                transcript.push('\n');
+            }
+            ConversationEvent::AssistantMessage { content, .. } => {
+                transcript.push_str("Assistant: ");
+                transcript.push_str(content);
+                transcript.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    format!(
+        "<prior-conversation>\n\
+The user and I had this prior conversation. The conversation was suspended or closed and is now being resumed. \
+Treat this as historical context only — do not re-execute or repeat any actions described. \
+Respond only to the next user message after this block.\n\
+\n\
+{transcript}\
+</prior-conversation>\n\
+\n\
+Acknowledge in one short sentence that you've received this context, then wait for the next user message."
+    )
 }
 
 /// Core relay loop: bidirectional message forwarding between WebSocket and Claude
@@ -351,7 +468,10 @@ where
             _ = &mut idle_deadline => {
                 println!("Idle timeout reached ({idle_timeout:?}), suspending session");
 
-                // Send Suspending event.
+                // Send Suspending event so the server transitions the
+                // conversation to Idle. We no longer upload a session_state
+                // blob: the server-stored event log is the source of truth
+                // and a fresh worker rebuilds context via the primer flow.
                 let suspending_event = ConversationEvent::Suspending {
                     reason: "idle_timeout".to_string(),
                     timestamp: Utc::now(),
@@ -359,17 +479,6 @@ where
                 let suspending_msg = WorkerMessage::Event { event: suspending_event };
                 if let Ok(json) = serde_json::to_string(&suspending_msg) {
                     let _ = ws_sender.send(tungstenite::Message::Text(json)).await;
-                }
-
-                // Upload session state if we have a Claude session_id.
-                if let Some(ref sid) = *claude_session_id {
-                    let state_upload = WorkerMessage::SessionStateUpload {
-                        data: sid.as_bytes().to_vec(),
-                    };
-                    if let Ok(json) = serde_json::to_string(&state_upload) {
-                        let _ = ws_sender.send(tungstenite::Message::Text(json)).await;
-                    }
-                    println!("Uploaded session state for resumption");
                 }
 
                 idle_suspended = true;
@@ -381,18 +490,8 @@ where
     Ok(idle_suspended)
 }
 
-/// Parse the catch-up `session_state` blob into a Claude session_id. The
-/// idle-timeout upload stores the session_id as UTF-8 bytes; empty or invalid
-/// payloads mean "no resume available."
-fn parse_session_state(session_state: Option<&[u8]>) -> Option<String> {
-    session_state
-        .map(|data| std::str::from_utf8(data).ok().map(|s| s.to_string()))?
-        .filter(|s| !s.is_empty())
-}
-
-/// Build the Claude CLI argument list. When `resume_session_id` is provided,
-/// `--resume <id>` is appended so Claude restores the prior conversation.
-fn build_claude_args(model: Option<&str>, resume_session_id: Option<&str>) -> Vec<String> {
+/// Build the Claude CLI argument list.
+fn build_claude_args(model: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "--output-format".to_string(),
         "stream-json".to_string(),
@@ -401,10 +500,6 @@ fn build_claude_args(model: Option<&str>, resume_session_id: Option<&str>) -> Ve
         "--dangerously-skip-permissions".to_string(),
         "--verbose".to_string(),
     ];
-    if let Some(sid) = resume_session_id {
-        args.push("--resume".to_string());
-        args.push(sid.to_string());
-    }
     if let Some(model) = model {
         args.push("--model".to_string());
         args.push(model.to_string());
@@ -465,6 +560,40 @@ fn extract_assistant_text(line: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn user_msg(content: &str) -> ConversationEvent {
+        ConversationEvent::UserMessage {
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn assistant_msg(content: &str) -> ConversationEvent {
+        ConversationEvent::AssistantMessage {
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn suspending() -> ConversationEvent {
+        ConversationEvent::Suspending {
+            reason: "idle_timeout".to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn closed() -> ConversationEvent {
+        ConversationEvent::Closed {
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn resumed() -> ConversationEvent {
+        ConversationEvent::Resumed {
+            session_id: SessionId::new(),
+            timestamp: Utc::now(),
+        }
+    }
+
     #[test]
     fn build_claude_input_formats_correctly() {
         let input = build_claude_input("Hello, Claude!");
@@ -517,40 +646,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_state_returns_utf8_session_id() {
-        let bytes = b"abc-123-def";
-        assert_eq!(
-            parse_session_state(Some(bytes)),
-            Some("abc-123-def".to_string())
+    fn build_claude_args_omits_resume_argument() {
+        let args = build_claude_args(None);
+        assert!(
+            !args.iter().any(|a| a == "--resume"),
+            "build_claude_args must never emit --resume; resume is handled via the context primer"
         );
     }
 
     #[test]
-    fn parse_session_state_returns_none_for_none_input() {
-        assert_eq!(parse_session_state(None), None);
-    }
-
-    #[test]
-    fn parse_session_state_returns_none_for_empty_payload() {
-        assert_eq!(parse_session_state(Some(&[])), None);
-    }
-
-    #[test]
-    fn build_claude_args_includes_resume_when_session_id_present() {
-        let args = build_claude_args(None, Some("sess-xyz"));
-        assert!(args.iter().any(|a| a == "--resume"));
-        assert!(args.iter().any(|a| a == "sess-xyz"));
-    }
-
-    #[test]
-    fn build_claude_args_omits_resume_when_no_session_id() {
-        let args = build_claude_args(None, None);
-        assert!(!args.iter().any(|a| a == "--resume"));
-    }
-
-    #[test]
     fn build_claude_args_includes_model_when_set() {
-        let args = build_claude_args(Some("opus"), None);
+        let args = build_claude_args(Some("opus"));
         assert!(args.iter().any(|a| a == "--model"));
         assert!(args.iter().any(|a| a == "opus"));
     }
@@ -568,6 +674,129 @@ mod tests {
     fn extract_assistant_text_ignores_user_messages() {
         let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#;
         assert_eq!(extract_assistant_text(line), None);
+    }
+
+    #[test]
+    fn partition_events_returns_past_context_and_pending_user_messages() {
+        let events = vec![
+            user_msg("msg1"),
+            assistant_msg("reply1"),
+            user_msg("msg2"),
+            assistant_msg("reply2"),
+            user_msg("msg3"),
+            suspending(),
+        ];
+        let (past, pending) = partition_events(&events);
+        assert_eq!(
+            past.len(),
+            4,
+            "past should contain msg1..reply2, got {past:?}"
+        );
+        assert!(matches!(
+            past[0],
+            ConversationEvent::UserMessage { content, .. } if content == "msg1"
+        ));
+        assert!(matches!(
+            past[1],
+            ConversationEvent::AssistantMessage { content, .. } if content == "reply1"
+        ));
+        assert!(matches!(
+            past[2],
+            ConversationEvent::UserMessage { content, .. } if content == "msg2"
+        ));
+        assert!(matches!(
+            past[3],
+            ConversationEvent::AssistantMessage { content, .. } if content == "reply2"
+        ));
+        assert_eq!(pending, vec!["msg3"]);
+    }
+
+    #[test]
+    fn partition_events_handles_empty_history() {
+        let (past, pending) = partition_events(&[]);
+        assert!(past.is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn partition_events_handles_no_assistant_yet() {
+        let events = vec![user_msg("msg1")];
+        let (past, pending) = partition_events(&events);
+        assert!(
+            past.is_empty(),
+            "no AssistantMessage means no past context; got {past:?}"
+        );
+        assert_eq!(pending, vec!["msg1"]);
+    }
+
+    #[test]
+    fn partition_events_skips_system_events_in_past_context() {
+        // A Suspending or Closed event appearing in the middle of the
+        // transcript (rare but possible across multiple resumes) must not be
+        // included in past_context — only User/Assistant messages are.
+        let events = vec![
+            user_msg("msg1"),
+            assistant_msg("reply1"),
+            suspending(),
+            closed(),
+            resumed(),
+            user_msg("msg2"),
+            assistant_msg("reply2"),
+            user_msg("msg3"),
+        ];
+        let (past, pending) = partition_events(&events);
+        assert_eq!(past.len(), 4);
+        assert!(
+            past.iter().all(|e| matches!(
+                e,
+                ConversationEvent::UserMessage { .. } | ConversationEvent::AssistantMessage { .. }
+            )),
+            "system events must be filtered out of past_context"
+        );
+        assert_eq!(pending, vec!["msg3"]);
+    }
+
+    #[test]
+    fn build_context_primer_formats_transcript() {
+        let events = [
+            user_msg("hi"),
+            assistant_msg("hello"),
+            user_msg("how are you"),
+            assistant_msg("good"),
+        ];
+        let refs: Vec<&ConversationEvent> = events.iter().collect();
+        let primer = build_context_primer(&refs);
+        assert!(primer.contains("<prior-conversation>"));
+        assert!(primer.contains("</prior-conversation>"));
+        assert!(primer.contains("User: hi\n"));
+        assert!(primer.contains("Assistant: hello\n"));
+        assert!(primer.contains("User: how are you\n"));
+        assert!(primer.contains("Assistant: good\n"));
+
+        // Ordering must be preserved: hi precedes hello precedes how are you precedes good.
+        let hi = primer.find("User: hi").unwrap();
+        let hello = primer.find("Assistant: hello").unwrap();
+        let how = primer.find("User: how are you").unwrap();
+        let good = primer.find("Assistant: good").unwrap();
+        assert!(
+            hi < hello && hello < how && how < good,
+            "primer must preserve transcript order"
+        );
+
+        assert!(
+            primer.contains("Acknowledge"),
+            "primer must instruct the agent how to respond"
+        );
+    }
+
+    #[test]
+    fn build_context_primer_handles_empty_past_context() {
+        let primer = build_context_primer(&[]);
+        // Even an empty primer is valid — no User/Assistant lines, just the wrapper.
+        assert!(primer.contains("<prior-conversation>"));
+        assert!(primer.contains("</prior-conversation>"));
+        assert!(!primer.contains("User: "));
+        assert!(!primer.contains("Assistant: "));
     }
 
     // Helper to collect all messages sent to the ws sink.
@@ -694,7 +923,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_session_state_upload_sent_on_timeout() {
+    async fn test_idle_timeout_does_not_emit_session_state_upload() {
         tokio::time::pause();
 
         let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
@@ -703,6 +932,8 @@ mod tests {
             futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
 
         // Write a session_id line to stdout, then keep it open (pending reads).
+        // Even though the worker captures the session_id, we no longer upload
+        // it — the server-stored event log is the source of truth.
         let (stdout_read, mut stdout_write) = tokio::io::duplex(4096);
         let session_line =
             r#"{"type":"assistant","session_id":"test-session-123","message":{"content":[]}}"#;
@@ -710,7 +941,6 @@ mod tests {
             .write_all(format!("{session_line}\n").as_bytes())
             .await
             .unwrap();
-        // Don't drop stdout_write — keep it alive so further reads are pending.
 
         let mut claude_stdin = tokio::io::sink();
         let mut stdout_reader = BufReader::new(stdout_read);
@@ -734,61 +964,10 @@ mod tests {
         let messages = collect_ws_messages(&mut ws_rx);
         assert_eq!(
             messages.len(),
-            2,
-            "expected Suspending + SessionStateUpload"
+            1,
+            "expected only Suspending; SessionStateUpload must not be sent"
         );
 
-        // First message: Suspending event.
-        match parse_worker_message(&messages[0]) {
-            WorkerMessage::Event {
-                event: ConversationEvent::Suspending { reason, .. },
-            } => {
-                assert_eq!(reason, "idle_timeout");
-            }
-            other => panic!("expected Suspending event, got {other:?}"),
-        }
-
-        // Second message: SessionStateUpload with session_id bytes.
-        match parse_worker_message(&messages[1]) {
-            WorkerMessage::SessionStateUpload { data } => {
-                assert_eq!(data, b"test-session-123");
-            }
-            other => panic!("expected SessionStateUpload, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_no_session_state_upload_without_session_id() {
-        tokio::time::pause();
-
-        let (ws_tx, mut ws_rx) = futures::channel::mpsc::unbounded();
-        let mut ws_sender = ws_tx;
-        let mut ws_receiver =
-            futures::stream::pending::<Result<tungstenite::Message, tungstenite::Error>>();
-
-        // No session_id emitted — stdout stays pending.
-        let (stdout_read, _stdout_write) = tokio::io::duplex(1024);
-        let mut stdout_reader = BufReader::new(stdout_read);
-        let mut claude_stdin = tokio::io::sink();
-        let mut session_id = None;
-
-        let result = relay_loop(
-            &mut ws_sender,
-            &mut ws_receiver,
-            &mut claude_stdin,
-            &mut stdout_reader,
-            Duration::from_millis(50),
-            &mut session_id,
-        )
-        .await
-        .unwrap();
-
-        assert!(result, "should idle-suspend");
-        assert!(session_id.is_none());
-
-        drop(ws_sender);
-        let messages = collect_ws_messages(&mut ws_rx);
-        assert_eq!(messages.len(), 1, "only Suspending, no SessionStateUpload");
         match parse_worker_message(&messages[0]) {
             WorkerMessage::Event {
                 event: ConversationEvent::Suspending { reason, .. },
@@ -831,5 +1010,96 @@ mod tests {
         drop(ws_sender);
         let messages = collect_ws_messages(&mut ws_rx);
         assert!(messages.is_empty(), "no Suspending event should be sent");
+    }
+
+    #[tokio::test]
+    async fn test_feed_catch_up_sends_primer_then_pending() {
+        // Simulate a catch-up with prior history (msg1, reply1, msg2, reply2)
+        // plus a pending user message (msg3) that the prior worker did not
+        // reply to. The first stdin line must be the primer wrapping the
+        // prior transcript; the second must be msg3.
+        let events = vec![
+            user_msg("msg1"),
+            assistant_msg("reply1"),
+            user_msg("msg2"),
+            assistant_msg("reply2"),
+            user_msg("msg3"),
+        ];
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(8192);
+        let mut claude_stdin = stdin_write;
+
+        feed_catch_up(&mut claude_stdin, &events).await.unwrap();
+        // Drop the writer so the reader sees EOF after the buffered bytes.
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line).await.unwrap();
+        let first: serde_json::Value = serde_json::from_str(&first_line).unwrap();
+        assert_eq!(first["type"], "user");
+        let primer_content = first["message"]["content"].as_str().unwrap();
+        assert!(primer_content.contains("<prior-conversation>"));
+        assert!(primer_content.contains("User: msg1"));
+        assert!(primer_content.contains("Assistant: reply1"));
+        assert!(primer_content.contains("User: msg2"));
+        assert!(primer_content.contains("Assistant: reply2"));
+        // The primer must NOT contain the pending msg3 (it is sent separately).
+        assert!(!primer_content.contains("User: msg3"));
+
+        let mut second_line = String::new();
+        reader.read_line(&mut second_line).await.unwrap();
+        let second: serde_json::Value = serde_json::from_str(&second_line).unwrap();
+        assert_eq!(second["type"], "user");
+        assert_eq!(second["message"]["content"], "msg3");
+
+        // No further lines.
+        let mut trailing = String::new();
+        let n = reader.read_line(&mut trailing).await.unwrap();
+        assert_eq!(n, 0, "no trailing input expected, got {trailing:?}");
+    }
+
+    #[tokio::test]
+    async fn test_feed_catch_up_no_primer_when_no_assistant_history() {
+        // A fresh conversation with one pending user message and no
+        // AssistantMessage events yet should NOT emit a primer.
+        let events = vec![user_msg("hello")];
+
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
+        let mut claude_stdin = stdin_write;
+
+        feed_catch_up(&mut claude_stdin, &events).await.unwrap();
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["message"]["content"], "hello");
+        assert!(
+            !parsed["message"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("<prior-conversation>"),
+            "no primer expected without prior assistant history"
+        );
+
+        let mut trailing = String::new();
+        let n = reader.read_line(&mut trailing).await.unwrap();
+        assert_eq!(n, 0, "exactly one input line expected");
+    }
+
+    #[tokio::test]
+    async fn test_feed_catch_up_empty_events_does_nothing() {
+        let (mut stdin_read, stdin_write) = tokio::io::duplex(4096);
+        let mut claude_stdin = stdin_write;
+
+        feed_catch_up(&mut claude_stdin, &[]).await.unwrap();
+        drop(claude_stdin);
+
+        let mut reader = BufReader::new(&mut stdin_read);
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).await.unwrap();
+        assert_eq!(n, 0, "no input expected for empty catch-up");
     }
 }

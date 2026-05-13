@@ -255,6 +255,17 @@ async fn handle_relay_socket(
 }
 
 /// Build the WorkerCatchUp payload based on the worker's connect message.
+///
+/// For `Fresh` connections, we always return the full event log: a Fresh
+/// handshake means a brand-new worker process (typically in a new container
+/// for resume) that needs the entire conversation history to rebuild context.
+/// The `resume_from_event_index` field is ignored — see the resume design in
+/// `hydra/src/worker/interactive.rs` for how the worker reconstructs context
+/// from the replayed events.
+///
+/// For `Reconnecting` connections, we keep the skip behavior. That path is a
+/// mid-session WebSocket reconnect where the same worker process is still
+/// alive and only needs the deltas it missed.
 async fn build_catch_up(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
@@ -265,21 +276,11 @@ async fn build_catch_up(
         .get_conversation_events(conversation_id)
         .await?;
 
-    let (skip_count, include_session_state) = match worker_connect {
-        WorkerConnect::Fresh {
-            resume_from_event_index,
-        } => {
-            let skip = resume_from_event_index.unwrap_or(0);
-            // Include session state for Fresh connections that are resuming.
-            let include_state = resume_from_event_index.is_some();
-            (skip, include_state)
-        }
+    let skip_count = match worker_connect {
+        WorkerConnect::Fresh { .. } => 0,
         WorkerConnect::Reconnecting {
             last_received_event_index,
-        } => {
-            // Send events after the last one the worker received.
-            (last_received_event_index + 1, false)
-        }
+        } => last_received_event_index + 1,
     };
 
     let events: Vec<ConversationEvent> = all_events
@@ -288,18 +289,9 @@ async fn build_catch_up(
         .map(|v| v.item.into())
         .collect();
 
-    let session_state = if include_session_state {
-        state
-            .store()
-            .get_conversation_session_state(conversation_id)
-            .await?
-    } else {
-        None
-    };
-
     Ok(WorkerCatchUp {
         events,
-        session_state,
+        session_state: None,
     })
 }
 
