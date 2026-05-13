@@ -343,7 +343,12 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
 }
 
 #[tokio::test]
-async fn resume_after_idle_replays_session_state_in_catch_up() -> anyhow::Result<()> {
+async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Result<()> {
+    // Regression test for the "agent forgets prior context on resume" bug.
+    // The fake worker passes the real `resume_from_event_index` value that
+    // the resumed session was created with; the server must respond with the
+    // full event log (UserMessage + AssistantMessage + Suspending) regardless,
+    // so the new worker can rebuild context from it.
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state, store.clone()).await?;
     let client = test_client();
@@ -394,13 +399,6 @@ async fn resume_after_idle_replays_session_state_in_catch_up() -> anyhow::Result
         },
     )
     .await?;
-    send_worker_message(
-        &mut ws,
-        WorkerMessage::SessionStateUpload {
-            data: b"claude-session-xyz".to_vec(),
-        },
-    )
-    .await?;
     ws.send(tungstenite::Message::Close(None)).await?;
     drop(ws);
 
@@ -412,9 +410,8 @@ async fn resume_after_idle_replays_session_state_in_catch_up() -> anyhow::Result
     )
     .await?;
 
-    // Phase 2: resume the conversation. A new session must be created with
-    // conversation_resume_from set so its catch-up skips replayed events and
-    // includes the prior session_state for `claude --resume`.
+    // Phase 2: resume the conversation. A new session is created with
+    // conversation_resume_from set to the pre-Resumed event count.
     let resumed: Conversation = client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/resume",
@@ -462,8 +459,9 @@ async fn resume_after_idle_replays_session_state_in_catch_up() -> anyhow::Result
         "conversation_resume_from should equal pre-Resumed event count"
     );
 
-    // Phase 3: connect as the new worker. The Fresh catch-up should skip the
-    // already-replayed events and include the stored session_state.
+    // Phase 3: connect as the new worker, passing the real worker's value of
+    // resume_from_event_index. The server must still return the FULL event
+    // log so the new worker can reconstruct context from it.
     let mut ws2 = connect_relay(&server.base_url(), &resumed_session_id).await?;
     let catch_up = worker_handshake(
         &mut ws2,
@@ -472,18 +470,44 @@ async fn resume_after_idle_replays_session_state_in_catch_up() -> anyhow::Result
         },
     )
     .await?;
+    assert!(
+        catch_up.session_state.is_none(),
+        "the server no longer uses session_state; catch-up should report None, got {:?}",
+        catch_up.session_state
+    );
+
+    // Expected sequence: UserMessage, AssistantMessage, Suspending, Resumed.
     assert_eq!(
-        catch_up.session_state.as_deref(),
-        Some(b"claude-session-xyz".as_slice()),
-        "catch-up on resume must include the stored Claude session_state"
+        catch_up.events.len(),
+        4,
+        "Fresh catch-up must return the full event log; got {:?}",
+        catch_up.events
     );
     assert!(
-        catch_up
-            .events
-            .iter()
-            .all(|e| !matches!(e, ConversationEvent::Suspending { .. })),
-        "Suspending event should not be replayed; got {:?}",
-        catch_up.events
+        matches!(
+            &catch_up.events[0],
+            ConversationEvent::UserMessage { content, .. } if content == "first user message"
+        ),
+        "event[0] should be the initial user message, got {:?}",
+        catch_up.events[0]
+    );
+    assert!(
+        matches!(
+            &catch_up.events[1],
+            ConversationEvent::AssistantMessage { content, .. } if content == "first agent reply"
+        ),
+        "event[1] should be the prior assistant reply, got {:?}",
+        catch_up.events[1]
+    );
+    assert!(
+        matches!(catch_up.events[2], ConversationEvent::Suspending { .. }),
+        "event[2] should be Suspending, got {:?}",
+        catch_up.events[2]
+    );
+    assert!(
+        matches!(catch_up.events[3], ConversationEvent::Resumed { .. }),
+        "event[3] should be Resumed, got {:?}",
+        catch_up.events[3]
     );
 
     // Phase 4: send a new user message and verify the worker receives it via
@@ -848,14 +872,20 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "resume must create a brand-new session"
     );
 
-    // Phase 6: connect fake-worker #2 and handshake as Fresh with no
-    // resume_from_event_index — the server must return the full prior event
-    // log so the new worker can reconstruct context.
+    // Phase 6: connect fake-worker #2 and handshake as Fresh with the
+    // resume_from_event_index value the real worker would send (the
+    // conversation_resume_from on the resumed session). The server must
+    // ignore that value and return the full prior event log so the new
+    // worker can reconstruct context.
+    let new_session = store.get_session(&new_session_id, false).await?.item;
+    let new_opts = new_session
+        .interactive
+        .expect("resumed session must be interactive");
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
     let catch_up2 = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: None,
+            resume_from_event_index: new_opts.conversation_resume_from,
         },
     )
     .await?;
@@ -1000,6 +1030,157 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "exactly one Suspending, one Closed, one Resumed event in the final \
          history; got Suspending={suspending_count}, Closed={closed_count}, \
          Resumed={resumed_count}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn close_then_resume_replays_full_history_with_no_session_state() -> anyhow::Result<()> {
+    // Regression test for the user-reported "agent forgets context on resume"
+    // bug. When the user /closes a chat, the worker is killed without
+    // uploading session_state. After /resume, the new worker must still
+    // receive the full prior event log in its catch-up so it can rebuild
+    // context — even though no session_state was ever persisted.
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    // Phase 1: create the conversation and exchange one full user/assistant turn.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("first user message".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    let mut ws = connect_relay(&server.base_url(), &initial_session_id).await?;
+    let _catch_up = worker_handshake(
+        &mut ws,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "first agent reply".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    // Drop the WS without sending Suspending/SessionStateUpload — simulating
+    // the worker being killed by /close.
+    drop(ws);
+
+    // Phase 2: /close the conversation. No session_state is uploaded.
+    let closed: Conversation = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/close",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(closed.status, ConversationStatus::Closed);
+
+    // Sanity: confirm no session_state was persisted by the prior worker.
+    let stored_state = store
+        .get_conversation_session_state(&conversation_id)
+        .await?;
+    assert!(
+        stored_state.is_none(),
+        "no SessionStateUpload was ever sent, so session_state must be None"
+    );
+
+    // Phase 3: /resume creates a new session with conversation_resume_from
+    // set to the event count snapshotted at /resume time.
+    let resumed: Conversation = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/resume",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(resumed.status, ConversationStatus::Active);
+
+    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    assert_ne!(
+        new_session_id, initial_session_id,
+        "resume must create a brand-new session"
+    );
+    let new_session = store.get_session(&new_session_id, false).await?.item;
+    let new_opts = new_session
+        .interactive
+        .expect("resumed session must be interactive");
+    let events_len_at_resume = new_opts
+        .conversation_resume_from
+        .expect("conversation_resume_from must be set on a session created by /resume");
+
+    // Phase 4: connect fake-worker #2 with the real worker's
+    // resume_from_event_index value. The server must return the FULL event
+    // log including the prior UserMessage + AssistantMessage so the new
+    // worker can rebuild context.
+    let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
+    let catch_up = worker_handshake(
+        &mut ws2,
+        WorkerConnect::Fresh {
+            resume_from_event_index: Some(events_len_at_resume),
+        },
+    )
+    .await?;
+
+    assert!(
+        catch_up.session_state.is_none(),
+        "no session_state was uploaded, so catch-up must report None"
+    );
+
+    // Expected sequence: UserMessage("first user message"), AssistantMessage("first agent reply"), Closed, Resumed.
+    assert_eq!(
+        catch_up.events.len(),
+        4,
+        "expected the full event log on resume, got {:?}",
+        catch_up.events
+    );
+    assert!(
+        matches!(
+            &catch_up.events[0],
+            ConversationEvent::UserMessage { content, .. } if content == "first user message"
+        ),
+        "event[0] should be the initial user message, got {:?}",
+        catch_up.events[0]
+    );
+    assert!(
+        matches!(
+            &catch_up.events[1],
+            ConversationEvent::AssistantMessage { content, .. } if content == "first agent reply"
+        ),
+        "event[1] should be the prior assistant reply (the key context the \
+         worker would otherwise have lost), got {:?}",
+        catch_up.events[1]
+    );
+    assert!(
+        matches!(catch_up.events[2], ConversationEvent::Closed { .. }),
+        "event[2] should be Closed, got {:?}",
+        catch_up.events[2]
+    );
+    assert!(
+        matches!(catch_up.events[3], ConversationEvent::Resumed { .. }),
+        "event[3] should be Resumed, got {:?}",
+        catch_up.events[3]
     );
 
     Ok(())
