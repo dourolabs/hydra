@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import type { PathChildEntry } from "@hydra/api";
+import type { DocumentSummaryRecord, PathChildEntry } from "@hydra/api";
 import { useDocumentPathChildren } from "../features/documents/useDocumentPathChildren";
 import { useDocumentSummariesAtPath } from "../features/documents/useDocumentSummariesAtPath";
+import { useDocumentSummariesUnderPath } from "../features/documents/useDocumentSummariesUnderPath";
 import styles from "./Sidebar.module.css";
 
 const TOP_LEVEL_LIMIT = 10;
@@ -36,11 +37,30 @@ function leafLinkClass({ isActive }: { isActive: boolean }) {
 interface NodeProps {
   entry: PathChildEntry;
   depth: number;
+  pathToDoc?: Map<string, DocumentSummaryRecord>;
+  pathToDocLoading?: boolean;
 }
 
-function DocumentLeafRow({ entry, depth }: NodeProps) {
-  const { data, isLoading } = useDocumentSummariesAtPath(entry.full_path);
-  const doc = data?.documents.find((d) => !d.document.deleted);
+function DocumentLeafRow({
+  entry,
+  depth,
+  pathToDoc,
+  pathToDocLoading,
+}: NodeProps) {
+  const fallback = useDocumentSummariesAtPath(
+    entry.full_path,
+    pathToDoc === undefined,
+  );
+
+  let doc: DocumentSummaryRecord | undefined;
+  let isLoading: boolean;
+  if (pathToDoc !== undefined) {
+    doc = pathToDoc.get(entry.full_path);
+    isLoading = pathToDocLoading ?? false;
+  } else {
+    doc = fallback.data?.documents.find((d) => !d.document.deleted);
+    isLoading = fallback.isLoading;
+  }
 
   if (isLoading || !doc) {
     return (
@@ -74,6 +94,19 @@ function FolderRow({ entry, depth }: NodeProps) {
   const { data } = useDocumentPathChildren(entry.full_path, expanded);
   const children = data?.children ?? [];
 
+  const { data: docsData, isLoading: docsLoading } =
+    useDocumentSummariesUnderPath(entry.full_path, expanded);
+  const pathToDoc = useMemo(() => {
+    const map = new Map<string, DocumentSummaryRecord>();
+    for (const record of docsData?.documents ?? []) {
+      if (record.document.deleted) continue;
+      const path = record.document.path;
+      if (path == null) continue;
+      if (!map.has(path)) map.set(path, record);
+    }
+    return map;
+  }, [docsData]);
+
   return (
     <>
       <button
@@ -90,16 +123,29 @@ function FolderRow({ entry, depth }: NodeProps) {
       </button>
       {expanded &&
         children.map((child) => (
-          <TreeNode key={child.full_path} entry={child} depth={depth + 1} />
+          <TreeNode
+            key={child.full_path}
+            entry={child}
+            depth={depth + 1}
+            pathToDoc={pathToDoc}
+            pathToDocLoading={docsLoading}
+          />
         ))}
     </>
   );
 }
 
-function TreeNode({ entry, depth }: NodeProps) {
+function TreeNode({ entry, depth, pathToDoc, pathToDocLoading }: NodeProps) {
   // Render leaf for pure documents (no further folder children).
   if (entry.is_document && Number(entry.child_count) <= 1) {
-    return <DocumentLeafRow entry={entry} depth={depth} />;
+    return (
+      <DocumentLeafRow
+        entry={entry}
+        depth={depth}
+        pathToDoc={pathToDoc}
+        pathToDocLoading={pathToDocLoading}
+      />
+    );
   }
   return <FolderRow entry={entry} depth={depth} />;
 }
