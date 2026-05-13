@@ -16,7 +16,7 @@ const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
   disconnected: "Disconnected",
 };
 
-const SECTION_STORAGE_PREFIX = "hydra.sidebar.section.";
+const SECTION_STORAGE_PREFIX = "hydra:sidebar:section:";
 
 function readSectionExpanded(id: string, defaultValue: boolean): boolean {
   if (typeof window === "undefined") return defaultValue;

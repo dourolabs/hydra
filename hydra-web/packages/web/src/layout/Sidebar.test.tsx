@@ -38,7 +38,7 @@ function renderSidebar() {
   );
 }
 
-const STORAGE_PREFIX = "hydra.sidebar.section.";
+const STORAGE_PREFIX = "hydra:sidebar:section:";
 
 describe("Sidebar section collapse", () => {
   beforeEach(() => {
