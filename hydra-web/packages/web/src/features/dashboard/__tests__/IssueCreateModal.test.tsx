@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 // --- Mocks ---
@@ -18,14 +18,19 @@ vi.mock("@hydra/ui", () => ({
   Modal: ({
     open,
     title,
+    onClose,
     children,
   }: {
     open: boolean;
     title?: string;
+    onClose: () => void;
     children: ReactNode;
   }) =>
     open ? (
       <div role="dialog" aria-label={title}>
+        <button aria-label="Close" onClick={onClose}>
+          Close
+        </button>
         {children}
       </div>
     ) : null,
@@ -104,6 +109,10 @@ describe("IssueCreateModal", () => {
     sessionStorage.clear();
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it("includes provided agent names in the Assignee dropdown after expanding More options", () => {
     render(
       <IssueCreateModal
@@ -132,5 +141,72 @@ describe("IssueCreateModal", () => {
     const select = screen.getByLabelText("Assignee") as HTMLSelectElement;
     const optionLabels = Array.from(select.options).map((o) => o.textContent);
     expect(optionLabels).toEqual(["Unassigned"]);
+  });
+
+  it("preserves drafts when the modal is dismissed (Modal onClose)", () => {
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <IssueCreateModal open onClose={onClose} assignees={[]} />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Draft title" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Draft description" },
+    });
+
+    // Dismiss via the Modal's Close affordance (Escape / backdrop / header ✕).
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // sessionStorage retains the drafts.
+    expect(sessionStorage.getItem("hydra:draft:issue-create-modal:title")).toBe(
+      JSON.stringify("Draft title"),
+    );
+    expect(
+      sessionStorage.getItem("hydra:draft:issue-create-modal:description"),
+    ).toBe(JSON.stringify("Draft description"));
+
+    // Remount and verify the drafts are restored into the inputs.
+    unmount();
+    render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+      "Draft title",
+    );
+    expect(
+      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
+    ).toBe("Draft description");
+  });
+
+  it("clears drafts when the user clicks Cancel", () => {
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <IssueCreateModal open onClose={onClose} assignees={[]} />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Draft title" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Draft description" },
+    });
+
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    expect(sessionStorage.getItem("hydra:draft:issue-create-modal:title")).toBe(
+      null,
+    );
+    expect(
+      sessionStorage.getItem("hydra:draft:issue-create-modal:description"),
+    ).toBe(null);
+
+    unmount();
+    render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("");
+    expect(
+      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
+    ).toBe("");
   });
 });

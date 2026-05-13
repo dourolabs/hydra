@@ -74,4 +74,67 @@ test.describe("Issue Create @issues:create", () => {
     await modal.getByRole("button", { name: "Cancel" }).click();
     await expect(modal).not.toBeVisible();
   });
+
+  test("clears draft when Cancel is clicked @issues:create", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=all");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toBeVisible();
+
+    await modal
+      .getByPlaceholder("Short summary (optional)")
+      .fill("Cancel clears");
+    await modal
+      .getByPlaceholder("Describe the issue...")
+      .fill("Should be cleared");
+
+    await modal.getByRole("button", { name: "Cancel" }).click();
+    await expect(modal).not.toBeVisible();
+
+    // Reopen — fields should be empty.
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await expect(modal).toBeVisible();
+    await expect(
+      modal.getByPlaceholder("Short summary (optional)"),
+    ).toHaveValue("");
+    await expect(modal.getByPlaceholder("Describe the issue...")).toHaveValue(
+      "",
+    );
+  });
+
+  test("preserves draft on dismiss @issues:create", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=all");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toBeVisible();
+
+    await modal
+      .getByPlaceholder("Short summary (optional)")
+      .fill("Preserved title");
+    await modal
+      .getByPlaceholder("Describe the issue...")
+      .fill("Preserved description");
+
+    // Dismiss via Escape (same path as backdrop click and header ✕).
+    await page.keyboard.press("Escape");
+    await expect(modal).not.toBeVisible();
+
+    // Reopen — draft values should still be there.
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await expect(modal).toBeVisible();
+    await expect(
+      modal.getByPlaceholder("Short summary (optional)"),
+    ).toHaveValue("Preserved title");
+    await expect(modal.getByPlaceholder("Describe the issue...")).toHaveValue(
+      "Preserved description",
+    );
+  });
 });
