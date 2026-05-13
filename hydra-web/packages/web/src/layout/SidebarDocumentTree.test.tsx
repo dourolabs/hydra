@@ -51,25 +51,35 @@ function makePathResponse(
   return { children };
 }
 
+function makeDocumentRecord(documentId: string, path: string) {
+  return {
+    document_id: documentId,
+    version: 1n,
+    timestamp: "2026-01-01T00:00:00Z",
+    creation_time: "2026-01-01T00:00:00Z",
+    document: {
+      title: `Doc ${documentId}`,
+      path,
+      deleted: false,
+      labels: [],
+    },
+  };
+}
+
 function makeDocumentsResponse(
   documentId: string,
   path: string,
 ): ListDocumentsResponse {
   return {
-    documents: [
-      {
-        document_id: documentId,
-        version: 1n,
-        timestamp: "2026-01-01T00:00:00Z",
-        creation_time: "2026-01-01T00:00:00Z",
-        document: {
-          title: `Doc ${documentId}`,
-          path,
-          deleted: false,
-          labels: [],
-        },
-      },
-    ],
+    documents: [makeDocumentRecord(documentId, path)],
+  } as ListDocumentsResponse;
+}
+
+function makeDocumentsResponseMulti(
+  docs: Array<{ documentId: string; path: string }>,
+): ListDocumentsResponse {
+  return {
+    documents: docs.map((d) => makeDocumentRecord(d.documentId, d.path)),
   } as ListDocumentsResponse;
 }
 
@@ -225,15 +235,13 @@ describe("SidebarDocumentTree", () => {
       },
     );
     mockListDocuments.mockImplementation(
-      ({ path_prefix }: { path_prefix: string }) => {
-        if (path_prefix === "/research/adr-001") {
+      (query: { path_prefix: string; path_is_exact?: boolean }) => {
+        if (query.path_prefix === "/research") {
           return Promise.resolve(
-            makeDocumentsResponse("d-adr001", "/research/adr-001"),
-          );
-        }
-        if (path_prefix === "/research/adr-002") {
-          return Promise.resolve(
-            makeDocumentsResponse("d-adr002", "/research/adr-002"),
+            makeDocumentsResponseMulti([
+              { documentId: "d-adr001", path: "/research/adr-001" },
+              { documentId: "d-adr002", path: "/research/adr-002" },
+            ]),
           );
         }
         return Promise.resolve({ documents: [] } as ListDocumentsResponse);
@@ -251,6 +259,7 @@ describe("SidebarDocumentTree", () => {
     expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
       prefix: "/research",
     });
+    expect(mockListDocuments).not.toHaveBeenCalled();
 
     fireEvent.click(folder);
 
@@ -268,6 +277,15 @@ describe("SidebarDocumentTree", () => {
       expect(screen.getByTestId("sidebar-doc-tree-leaf-d-adr001")).toBeTruthy();
     });
     expect(screen.getByTestId("sidebar-doc-tree-leaf-d-adr002")).toBeTruthy();
+
+    // Exactly one batched listDocuments call for the folder prefix — no N+1 per leaf.
+    expect(mockListDocuments).toHaveBeenCalledTimes(1);
+    const docsCallArg = mockListDocuments.mock.calls[0]?.[0] as {
+      path_prefix: string;
+      path_is_exact?: boolean;
+    };
+    expect(docsCallArg.path_prefix).toBe("/research");
+    expect(docsCallArg.path_is_exact).toBeFalsy();
 
     // Collapsing hides the children.
     fireEvent.click(folder);
