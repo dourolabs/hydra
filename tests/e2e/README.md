@@ -88,8 +88,12 @@ export CLAUDE_CODE_OAUTH_TOKEN="your-oauth-token"
 # export ANTHROPIC_API_KEY="your-anthropic-api-key"
 export GH_TOKEN="your-github-pat"
 
-# Bootstrap a test server
+# Bootstrap a test server. Returns immediately after the server is healthy;
+# the server keeps running detached in the background.
 ./tests/e2e/run.sh
+
+# Stop the server when you're done.
+kill "$(cat /tmp/hydra-e2e/server.pid)"
 ```
 
 ### What the Runner Does
@@ -106,7 +110,7 @@ The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra singl
 
 The `hydra-sp` symlink points to the `hydra` binary and exists to avoid conflicting with a production `hydra` CLI when testing Hydra-in-Hydra. The `HYDRA_SERVER_URL` env var is set explicitly on repo registration to target the local test instance.
 
-The script keeps the server running in the foreground and cleans up on exit (Ctrl+C).
+On success, the script exits with status 0 and leaves the server running detached in the background. It writes the server PID to `/tmp/hydra-e2e/server.pid`; the caller is responsible for stopping the server when done (e.g., `kill "$(cat /tmp/hydra-e2e/server.pid)"`). If bootstrap fails (health-check timeout, repo-create error, etc.), the script kills any partially-started server and exits non-zero.
 
 The tester agent (running in the top-level Hydra instance) is responsible for executing
 test scenarios against the server using Playwright MCP. The tester agent's prompt and MCP
