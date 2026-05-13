@@ -1,4 +1,5 @@
 use crate::test_utils::{spawn_test_server, test_client};
+use hydra_common::agents::UpsertAgentRequest;
 use hydra_common::api::v1::conversations::{
     Conversation, ConversationEvent, ConversationSummary, CreateConversationRequest,
     SendMessageRequest, UpdateConversationRequest,
@@ -10,6 +11,26 @@ use reqwest::StatusCode;
 async fn create_conversation_returns_conversation_with_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
+
+    // Conversation references "test-agent"; register it first so resolution
+    // succeeds (unknown agent names now return 400).
+    let agent_request = UpsertAgentRequest::new(
+        "test-agent",
+        "test agent prompt",
+        3,
+        1,
+        None,
+        None,
+        false,
+        false,
+        vec![],
+    );
+    let agent_response = client
+        .post(format!("{}/v1/agents", server.base_url()))
+        .json(&agent_request)
+        .send()
+        .await?;
+    assert!(agent_response.status().is_success());
 
     let request = CreateConversationRequest {
         message: Some("Hello, agent!".to_string()),

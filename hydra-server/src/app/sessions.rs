@@ -1,4 +1,5 @@
 use crate::{
+    app::AgentError,
     config::non_empty,
     domain::{
         actors::ActorRef,
@@ -7,6 +8,7 @@ use crate::{
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
+    policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
@@ -45,6 +47,25 @@ pub enum CreateSessionError {
     },
     #[error("issue_id and conversation_id are mutually exclusive on CreateSessionRequest")]
     IssueAndConversationConflict,
+    #[error("conversation references unknown agent '{name}'")]
+    AgentNotFound { name: String },
+    #[error("failed to resolve agent for conversation")]
+    AgentLookup {
+        #[source]
+        source: AgentError,
+    },
+    #[error("failed to resolve agent prompt at '{path}'")]
+    AgentPromptResolution {
+        path: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("failed to resolve agent MCP config at '{path}'")]
+    AgentMcpConfigResolution {
+        path: String,
+        #[source]
+        source: anyhow::Error,
+    },
     #[error("failed to store session")]
     Store {
         #[source]
@@ -96,32 +117,43 @@ impl AppState {
             return Err(CreateSessionError::IssueAndConversationConflict);
         }
 
-        let env_vars = request.variables;
+        let mut env_vars = request.variables;
         let store = self.store.as_ref();
 
         // Derive session settings from whichever of conversation/issue is linked.
         // `create_conversation` persists the conversation before calling this method,
         // so the lookup below succeeds when invoked from that path.
-        let derived_settings = if let Some(conversation_id) = request.conversation_id.as_ref() {
-            let conversation = store
-                .get_conversation(conversation_id, false)
-                .await
-                .map_err(|source| CreateSessionError::ConversationLookup {
-                    source,
-                    conversation_id: conversation_id.clone(),
+        // For conversation-linked sessions, also resolve the conversation's agent
+        // so we can apply its prompt, secrets, and MCP config to the session.
+        let (derived_settings, resolved_agent) =
+            if let Some(conversation_id) = request.conversation_id.as_ref() {
+                let conversation = store
+                    .get_conversation(conversation_id, false)
+                    .await
+                    .map_err(|source| CreateSessionError::ConversationLookup {
+                        source,
+                        conversation_id: conversation_id.clone(),
+                    })?;
+                let agent_name = conversation.item.agent_name.clone();
+                let agent = self
+                    .resolve_conversation_agent(agent_name.as_deref())
+                    .await
+                    .map_err(|err| match err {
+                        AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
+                        other => CreateSessionError::AgentLookup { source: other },
+                    })?;
+                (Some(conversation.item.session_settings), agent)
+            } else if let Some(issue_id) = request.issue_id.as_ref() {
+                let issue = store.get_issue(issue_id, false).await.map_err(|source| {
+                    CreateSessionError::IssueLookup {
+                        source,
+                        issue_id: issue_id.clone(),
+                    }
                 })?;
-            Some(conversation.item.session_settings)
-        } else if let Some(issue_id) = request.issue_id.as_ref() {
-            let issue = store.get_issue(issue_id, false).await.map_err(|source| {
-                CreateSessionError::IssueLookup {
-                    source,
-                    issue_id: issue_id.clone(),
-                }
-            })?;
-            Some(issue.item.session_settings)
-        } else {
-            None
-        };
+                (Some(issue.item.session_settings), None)
+            } else {
+                (None, None)
+            };
 
         let session_settings = derived_settings
             .map(|settings| self.apply_session_settings_defaults(settings))
@@ -144,6 +176,49 @@ impl AppState {
         let secrets = session_settings
             .as_ref()
             .and_then(|settings| settings.secrets.clone());
+
+        // If a conversation agent was resolved, apply its prompt, MCP config,
+        // secrets, and AGENT_NAME env var. Mirrors `agent_queue.rs::build_task`.
+        let mut prompt = request.prompt;
+        let mut mcp_config = None;
+        let mut secrets = secrets;
+        if let Some(agent) = resolved_agent.as_ref() {
+            prompt = self
+                .resolve_agent_prompt(&agent.prompt_path)
+                .await
+                .map_err(|source| CreateSessionError::AgentPromptResolution {
+                    path: agent.prompt_path.clone(),
+                    source,
+                })?;
+
+            if let Some(path) = agent.mcp_config_path.as_deref() {
+                mcp_config = self
+                    .resolve_agent_mcp_config(path)
+                    .await
+                    .map_err(|source| CreateSessionError::AgentMcpConfigResolution {
+                        path: path.to_string(),
+                        source,
+                    })?;
+            }
+
+            let merged_secrets = {
+                let mut seen = HashSet::new();
+                let mut merged = Vec::new();
+                for s in agent.secrets.iter().chain(secrets.iter().flatten()) {
+                    if seen.insert(s.clone()) {
+                        merged.push(s.clone());
+                    }
+                }
+                if merged.is_empty() {
+                    None
+                } else {
+                    Some(merged)
+                }
+            };
+            secrets = merged_secrets;
+
+            env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
+        }
 
         if let Some(settings) = session_settings {
             if let Some(remote_url) = settings.remote_url.clone() {
@@ -183,7 +258,7 @@ impl AppState {
             None
         };
         let session = Session::new(
-            request.prompt,
+            prompt,
             context,
             request.issue_id.clone(),
             creator,
@@ -193,7 +268,7 @@ impl AppState {
             cpu_limit,
             memory_limit,
             secrets,
-            None,
+            mcp_config,
             interactive,
             Status::Created,
             None,

@@ -33,6 +33,27 @@ impl AppState {
         })
     }
 
+    /// Resolves the agent that should be applied to a conversation session.
+    ///
+    /// - If `agent_name` is `Some`, fetches that agent by name; returns
+    ///   `AgentError::NotFound` if the agent does not exist.
+    /// - If `agent_name` is `None`, scans the agent list for the single
+    ///   non-deleted agent flagged `is_default_conversation_agent`. Returns
+    ///   `Ok(None)` if no such agent exists.
+    pub async fn resolve_conversation_agent(
+        &self,
+        agent_name: Option<&str>,
+    ) -> Result<Option<Agent>, AgentError> {
+        if let Some(name) = agent_name {
+            return self.get_agent(name).await.map(Some);
+        }
+
+        let agents = self.list_agents().await?;
+        Ok(agents
+            .into_iter()
+            .find(|agent| agent.is_default_conversation_agent && !agent.deleted))
+    }
+
     pub async fn create_agent(&self, agent: Agent) -> Result<Agent, AgentError> {
         self.store
             .add_agent(agent.clone())
