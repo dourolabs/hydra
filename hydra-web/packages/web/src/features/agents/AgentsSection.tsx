@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Panel, Button } from "@hydra/ui";
+import { Button } from "@hydra/ui";
 import type { AgentRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useAgents } from "../../hooks/useAgents";
@@ -46,83 +46,79 @@ export function AgentsSection() {
         />
       )}
 
-      <Panel
-        header={
-          <div className={sharedStyles.panelHeaderRow}>
-            <span className={sharedStyles.sectionTitle}>Agents</span>
-            <Button variant="primary" size="sm" onClick={() => setAgentCreateOpen(true)}>
-              Add Agent
-            </Button>
-          </div>
-        }
-      >
-        {agents && agents.length === 0 && <EmptyState message="No agents configured." />}
-        {agents && agents.length > 0 && (
-          <div className={sharedStyles.itemList}>
-            {agents.map((agent) => (
-              <ExpandableRow
-                key={agent.name}
-                name={agent.name}
-                onEdit={() => setAgentEditTarget(agent)}
-                onDelete={() => setAgentDeleteTarget(agent)}
-                headerExtra={
-                  <>
-                    {agent.is_assignment_agent && (
-                      <span className={styles.assignmentBadge}>assignment</span>
-                    )}
-                    {agent.is_default_conversation_agent && (
-                      <span className={styles.assignmentBadge}>default chat</span>
-                    )}
-                  </>
-                }
-              >
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Prompt Path</span>
-                  <span className={sharedStyles.detailValueTerminal}>
-                    {agent.prompt_path || <span className={sharedStyles.dimText}>—</span>}
-                  </span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>MCP Config Path</span>
-                  <span className={sharedStyles.detailValueTerminal}>
-                    {agent.mcp_config_path || <span className={sharedStyles.dimText}>—</span>}
-                  </span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Max Tries</span>
-                  <span className={sharedStyles.detailValue}>{agent.max_tries}</span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Max Simultaneous</span>
-                  <span className={sharedStyles.detailValue}>{agent.max_simultaneous}</span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Assignment Agent</span>
-                  <span className={sharedStyles.detailValue}>
-                    {agent.is_assignment_agent ? "Yes" : "No"}
-                  </span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Default Conversation Agent</span>
-                  <span className={sharedStyles.detailValue}>
-                    {agent.is_default_conversation_agent ? "Yes" : "No"}
-                  </span>
-                </div>
-                <div className={sharedStyles.detailRow}>
-                  <span className={sharedStyles.detailLabel}>Secrets</span>
-                  <span className={sharedStyles.detailValue}>
-                    {agent.secrets && agent.secrets.length > 0 ? (
-                      agent.secrets.join(", ")
-                    ) : (
-                      <span className={sharedStyles.dimText}>None</span>
-                    )}
-                  </span>
-                </div>
-              </ExpandableRow>
-            ))}
-          </div>
-        )}
-      </Panel>
+      <div className={sharedStyles.sectionHeader}>
+        <span className={sharedStyles.sectionTitle}>Agents</span>
+        <Button variant="primary" size="sm" onClick={() => setAgentCreateOpen(true)}>
+          Add Agent
+        </Button>
+      </div>
+
+      {agents && agents.length === 0 && <EmptyState message="No agents configured." />}
+      {agents && agents.length > 0 && (
+        <div className={sharedStyles.itemList}>
+          {agents.map((agent) => (
+            <ExpandableRow
+              key={agent.name}
+              name={agent.name}
+              onEdit={() => setAgentEditTarget(agent)}
+              onDelete={() => setAgentDeleteTarget(agent)}
+              headerExtra={
+                <>
+                  {agent.is_assignment_agent && (
+                    <span className={styles.assignmentBadge}>assignment</span>
+                  )}
+                  {agent.is_default_conversation_agent && (
+                    <span className={styles.assignmentBadge}>default chat</span>
+                  )}
+                </>
+              }
+            >
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Prompt Path</span>
+                <span className={sharedStyles.detailValueTerminal}>
+                  {agent.prompt_path || <span className={sharedStyles.dimText}>—</span>}
+                </span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>MCP Config Path</span>
+                <span className={sharedStyles.detailValueTerminal}>
+                  {agent.mcp_config_path || <span className={sharedStyles.dimText}>—</span>}
+                </span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Max Tries</span>
+                <span className={sharedStyles.detailValue}>{agent.max_tries}</span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Max Simultaneous</span>
+                <span className={sharedStyles.detailValue}>{agent.max_simultaneous}</span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Assignment Agent</span>
+                <span className={sharedStyles.detailValue}>
+                  {agent.is_assignment_agent ? "Yes" : "No"}
+                </span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Default Conversation Agent</span>
+                <span className={sharedStyles.detailValue}>
+                  {agent.is_default_conversation_agent ? "Yes" : "No"}
+                </span>
+              </div>
+              <div className={sharedStyles.detailRow}>
+                <span className={sharedStyles.detailLabel}>Secrets</span>
+                <span className={sharedStyles.detailValue}>
+                  {agent.secrets && agent.secrets.length > 0 ? (
+                    agent.secrets.join(", ")
+                  ) : (
+                    <span className={sharedStyles.dimText}>None</span>
+                  )}
+                </span>
+              </div>
+            </ExpandableRow>
+          ))}
+        </div>
+      )}
 
       <AgentCreateModal
         open={agentCreateOpen}
