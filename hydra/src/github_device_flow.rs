@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
 use crate::{
-    client::{HydraClient, HydraClientUnauthenticated},
+    client::{HydraClient, HydraClientTimeouts, HydraClientUnauthenticated},
     config,
 };
 
@@ -16,6 +16,7 @@ pub async fn login_with_github_device_flow(
     client: &HydraClientUnauthenticated,
     config_path: &Path,
     server_url: &str,
+    timeouts: &HydraClientTimeouts,
 ) -> Result<HydraClient> {
     let device_flow = client
         .device_start()
@@ -61,7 +62,7 @@ pub async fn login_with_github_device_flow(
 
     config::store_auth_token(config_path, server_url, &login_token)?;
 
-    let auth_client = HydraClient::new(client.base_url().as_str(), login_token)
+    let auth_client = HydraClient::new(client.base_url().as_str(), login_token, timeouts)
         .context("failed to create authenticated client")?;
     let whoami = auth_client
         .whoami()
@@ -205,9 +206,11 @@ mod tests {
         let config_path = temp.path().join("config.toml");
         let server_url = server.base_url();
 
-        let _auth_client = login_with_github_device_flow(&client, &config_path, &server_url)
-            .await
-            .expect("login");
+        let timeouts = HydraClientTimeouts::default();
+        let _auth_client =
+            login_with_github_device_flow(&client, &config_path, &server_url, &timeouts)
+                .await
+                .expect("login");
 
         start_mock.assert();
         poll_mock.assert();

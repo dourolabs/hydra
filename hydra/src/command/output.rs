@@ -1298,7 +1298,7 @@ pub fn render_conversation_summary_records(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::HydraClient;
+    use crate::client::{HydraClient, HydraClientTimeouts};
     use chrono::Utc;
     use httpmock::prelude::*;
     use hydra_common::{
@@ -1313,7 +1313,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_output_format_auto_prefers_pretty_for_users() {
         let server = MockServer::start();
-        let client = HydraClient::new(server.base_url(), TEST_HYDRA_TOKEN).expect("client");
+        let client = HydraClient::new(
+            server.base_url(),
+            TEST_HYDRA_TOKEN,
+            &HydraClientTimeouts::default(),
+        )
+        .expect("client");
         let whoami = WhoAmIResponse::new(ActorIdentity::User {
             username: "user".into(),
         });
@@ -1334,7 +1339,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_output_format_auto_prefers_jsonl_for_tasks() {
         let server = MockServer::start();
-        let client = HydraClient::new(server.base_url(), TEST_HYDRA_TOKEN).expect("client");
+        let client = HydraClient::new(
+            server.base_url(),
+            TEST_HYDRA_TOKEN,
+            &HydraClientTimeouts::default(),
+        )
+        .expect("client");
         let whoami = WhoAmIResponse::new(ActorIdentity::Session {
             session_id: SessionId::from_str("s-task").expect("task id"),
             creator: "test-creator".into(),

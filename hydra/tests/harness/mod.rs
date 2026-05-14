@@ -6,7 +6,7 @@ pub mod user_handle;
 mod worker;
 
 use anyhow::{Context, Result};
-use hydra::client::{HydraClient, HydraClientInterface};
+use hydra::client::{HydraClient, HydraClientInterface, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
     issues::{
@@ -275,7 +275,11 @@ impl TestHarness {
                 default: true,
             }],
         };
-        HydraClient::from_config(&config, self.default_user_token())
+        HydraClient::from_config(
+            &config,
+            self.default_user_token(),
+            &HydraClientTimeouts::default(),
+        )
     }
 
     /// Create a `HydraClient` authenticated as the named user.
@@ -288,7 +292,7 @@ impl TestHarness {
                 default: true,
             }],
         };
-        HydraClient::from_config(&config, user.token())
+        HydraClient::from_config(&config, user.token(), &HydraClientTimeouts::default())
     }
 
     /// Run a worker for the given job, executing the provided shell commands

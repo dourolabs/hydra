@@ -12,3 +12,10 @@ pub const ENV_HYDRA_ISSUE_ID: &str = "HYDRA_ISSUE_ID";
 pub const ENV_HYDRA_TOKEN: &str = "HYDRA_TOKEN";
 pub const ENV_HYDRA_DOCUMENTS_DIR: &str = "HYDRA_DOCUMENTS_DIR";
 pub const ENV_BROWSER: &str = "BROWSER";
+
+/// Overall request timeout for the HydraClient HTTP client, in seconds.
+pub const ENV_HYDRA_HTTP_TIMEOUT_SECS: &str = "HYDRA_HTTP_TIMEOUT_SECS";
+/// Connect timeout for the HydraClient HTTP client, in seconds.
+pub const ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS: &str = "HYDRA_HTTP_CONNECT_TIMEOUT_SECS";
+/// Idle connection pool timeout for the HydraClient HTTP client, in seconds.
+pub const ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS: &str = "HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS";

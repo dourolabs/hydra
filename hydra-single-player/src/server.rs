@@ -10,7 +10,7 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Subcommand, ValueEnum};
 
-use hydra::client::HydraClient;
+use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{self, expand_path};
 use hydra::constants::DEFAULT_CONFIG_FILE;
 use hydra_common::api::v1::agents::UpsertAgentRequest;
@@ -372,7 +372,11 @@ const FORM_DESIGN_REVIEW: &str = include_str!("../../prompts/forms/design_review
 /// Create the default agents (swe, pm, reviewer) and upload their prompts
 /// to the running server via the HydraClient.
 fn create_default_agents(auth_token: &str) -> Result<()> {
-    let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
+    let client = HydraClient::new(
+        LOCAL_SERVER_URL,
+        auth_token,
+        &HydraClientTimeouts::default(),
+    )?;
 
     // Tuple slots: (name, prompt, is_assignment_agent, is_default_conversation_agent).
     // All defaults leave is_default_conversation_agent = false — picking a default
@@ -436,7 +440,11 @@ fn upload_default_documents(auth_token: &str) -> Result<()> {
         ),
     ];
 
-    let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
+    let client = HydraClient::new(
+        LOCAL_SERVER_URL,
+        auth_token,
+        &HydraClientTimeouts::default(),
+    )?;
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
     for (title, body, path) in documents {
@@ -868,7 +876,11 @@ fn wait_for_auth_token(token_path: &Path) -> Result<String> {
 
 /// Verify that the auth token is accepted by the server by calling GET /v1/whoami.
 fn verify_auth_token(auth_token: &str) -> Result<()> {
-    let client = HydraClient::new(LOCAL_SERVER_URL, auth_token)?;
+    let client = HydraClient::new(
+        LOCAL_SERVER_URL,
+        auth_token,
+        &HydraClientTimeouts::default(),
+    )?;
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     rt.block_on(client.whoami()).context(
         "auth token verification failed — the server rejected the token. \
