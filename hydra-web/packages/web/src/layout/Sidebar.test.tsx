@@ -608,11 +608,13 @@ describe("Sidebar Chats section", () => {
 });
 
 describe("Sidebar + New Chat button", () => {
-  it("renders the + New Chat button as the first row in the Chats section", () => {
+  it("renders the New Chat button as the first row in the Chats section", () => {
     renderSidebar();
     const newChatButton = screen.getByTestId("sidebar-chat-new");
     expect(newChatButton).toBeTruthy();
-    expect(newChatButton.textContent).toContain("+ New Chat");
+    expect(newChatButton.textContent).toContain("New Chat");
+    expect(newChatButton.textContent).not.toContain("+");
+    expect(newChatButton.querySelector("svg")).not.toBeNull();
   });
 
   it("calls apiClient.createConversation and navigates to the new conversation on click", async () => {
@@ -643,11 +645,13 @@ describe("Sidebar + New Chat button", () => {
 });
 
 describe("Sidebar + New Issue button", () => {
-  it("renders the + New Issue button as the first row in the Issues section", () => {
+  it("renders the New Issue button as the first row in the Issues section", () => {
     renderSidebar();
     const newIssueButton = screen.getByTestId("sidebar-issues-new");
     expect(newIssueButton).toBeTruthy();
-    expect(newIssueButton.textContent).toContain("+ New Issue");
+    expect(newIssueButton.textContent).toContain("New Issue");
+    expect(newIssueButton.textContent).not.toContain("+");
+    expect(newIssueButton.querySelector("svg")).not.toBeNull();
   });
 
   it("navigates to /?create-issue=1 on click from a non-dashboard page", () => {
@@ -668,6 +672,16 @@ describe("Sidebar + New Issue button", () => {
 });
 
 describe("Sidebar See All active highlight", () => {
+  it("uses the seeAllLink class instead of navItem on the See All rows", () => {
+    renderSidebar({ initialEntry: "/" });
+    const chatsSeeAll = screen.getByTestId("sidebar-section-chats-more");
+    const docsSeeAll = screen.getByTestId("sidebar-section-documents-more");
+    expect(chatsSeeAll.className).toContain("seeAllLink");
+    expect(chatsSeeAll.className).not.toContain("navItem");
+    expect(docsSeeAll.className).toContain("seeAllLink");
+    expect(docsSeeAll.className).not.toContain("navItem");
+  });
+
   it("highlights Chats See All only when path is exactly /chat", () => {
     renderSidebar({ initialEntry: "/chat" });
     const seeAll = screen.getByTestId("sidebar-section-chats-more");

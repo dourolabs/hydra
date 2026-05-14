@@ -20,6 +20,7 @@ import {
   DocumentsIcon,
   IssuesIcon,
   PatchesIcon,
+  PlusIcon,
 } from "./SidebarIcons";
 import styles from "./Sidebar.module.css";
 
@@ -132,6 +133,10 @@ function navItemClass({ isActive }: { isActive: boolean }) {
   return `${styles.navItem}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
+function seeAllLinkClass({ isActive }: { isActive: boolean }) {
+  return `${styles.seeAllLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
+}
+
 function topRecentLabels(labels: readonly LabelRecord[] | undefined): LabelRecord[] {
   if (!labels || labels.length === 0) return [];
   return [...labels]
@@ -174,7 +179,8 @@ function IssuesSectionContent({
         onClick={onNewIssue}
         data-testid="sidebar-issues-new"
       >
-        <span className={styles.navItemLabel}>+ New Issue</span>
+        <PlusIcon />
+        <span className={styles.navItemLabel}>New Issue</span>
       </button>
       <Link
         to="/?selected=assigned"
@@ -288,8 +294,9 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
             disabled={createChatMutation.isPending}
             data-testid="sidebar-chat-new"
           >
+            <PlusIcon />
             <span className={styles.navItemLabel}>
-              {createChatMutation.isPending ? "Creating…" : "+ New Chat"}
+              {createChatMutation.isPending ? "Creating…" : "New Chat"}
             </span>
           </button>
           {recentChats.map((c) => {
@@ -309,7 +316,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           <NavLink
             to="/chat"
             end
-            className={navItemClass}
+            className={seeAllLinkClass}
             data-testid="sidebar-section-chats-more"
           >
             See All
@@ -331,7 +338,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           <NavLink
             to="/documents"
             end
-            className={navItemClass}
+            className={seeAllLinkClass}
             data-testid="sidebar-section-documents-more"
           >
             See All
