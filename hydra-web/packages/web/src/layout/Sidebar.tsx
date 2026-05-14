@@ -376,7 +376,7 @@ export function Sidebar({
 
         <SidebarSection id="context" label="Context">
           <NavLink
-            to="/settings"
+            to="/repositories"
             className={moreLinkClass}
             data-testid="sidebar-context-repositories"
           >

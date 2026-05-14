@@ -253,13 +253,13 @@ describe("Sidebar static structure", () => {
     );
   });
 
-  it("renders Context children pointing at /settings", () => {
+  it("renders Context children pointing at their respective routes", () => {
     renderSidebar();
     expect(
       screen
         .getByTestId("sidebar-context-repositories")
         .getAttribute("href"),
-    ).toBe("/settings");
+    ).toBe("/repositories");
     expect(
       screen.getByTestId("sidebar-context-secrets").getAttribute("href"),
     ).toBe("/settings");

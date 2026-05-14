@@ -122,6 +122,17 @@ export const router = createBrowserRouter([
             ),
           })),
       },
+      {
+        path: "repositories",
+        lazy: () =>
+          import("./pages/RepositoriesPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.RepositoriesPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
     ],
   },
 ]);
