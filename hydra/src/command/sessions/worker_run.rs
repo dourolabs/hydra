@@ -24,6 +24,7 @@ use crate::git::{
     stage_all_changes, workdir_diff,
 };
 use crate::worker::commands::WorkerCommands;
+use crate::worker::reaper::reap_other_processes;
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -282,6 +283,24 @@ pub async fn run(
             }
         }
     };
+
+    // Phase: reap orphans. After the agent execution phase, any background
+    // process the agent kicked off (e.g. `pnpm dev`, `vite`, `mock-server`,
+    // or a script that backgrounded itself with `> /dev/null 2>&1 &`) is now
+    // an orphan we don't want — it would keep the worker pod alive past its
+    // useful end. The kill-process-group path in `worker::commands` only
+    // catches children that kept stdout open; this is the namespace-wide
+    // safety net for everything else. See `worker::reaper` for the safety
+    // boundary (PID-namespace isolation required, which the worker has in
+    // both K8s and local-Docker single-player setups).
+    log_status("Phase: reap orphans — starting");
+    let reap_start = Instant::now();
+    let reap_summary = reap_other_processes().await;
+    let reap_elapsed = reap_start.elapsed().as_secs_f64();
+    log_status(format!(
+        "Phase: reap orphans — completed ({} victims, {} survived to SIGKILL) ({reap_elapsed:.2}s)",
+        reap_summary.sigterm_sent, reap_summary.sigkill_sent
+    ));
 
     if base_commit.is_some() {
         log_status("Phase: git finalize — starting");
