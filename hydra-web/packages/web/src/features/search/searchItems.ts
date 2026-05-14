@@ -18,8 +18,7 @@ export interface SearchItem {
   kind: SearchItemKind;
   id: string;
   label: string;
-  /** Destination path. `null` means the row is not navigable (e.g. orphan session). */
-  href: string | null;
+  href: string;
 }
 
 export function issueToItem(record: IssueSummaryRecord): SearchItem {
@@ -61,15 +60,12 @@ export function conversationToItem(c: ConversationSummary): SearchItem {
 }
 
 export function sessionToItem(record: SessionSummaryRecord): SearchItem {
-  const spawnedFrom = record.session.spawned_from;
   const prompt = record.session.prompt?.trim();
   const label = prompt ? prompt : record.session_id;
   return {
     kind: "session",
     id: record.session_id,
     label,
-    href: spawnedFrom
-      ? `/issues/${spawnedFrom}/sessions/${record.session_id}/logs`
-      : null,
+    href: `/sessions/${record.session_id}`,
   };
 }

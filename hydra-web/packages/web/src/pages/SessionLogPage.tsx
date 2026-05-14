@@ -21,7 +21,7 @@ const TABS = [
 
 export function SessionLogPage() {
   const { issueId, sessionId } = useParams<{
-    issueId: string;
+    issueId?: string;
     sessionId: string;
   }>();
   const { data: record, isLoading, error } = useSession(sessionId ?? "");
@@ -71,10 +71,14 @@ export function SessionLogPage() {
   return (
     <div className={styles.page}>
       <Breadcrumbs
-        items={[
-          { label: "Dashboard", to: "/" },
-          { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
-        ]}
+        items={
+          issueId
+            ? [
+                { label: "Dashboard", to: "/" },
+                { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+              ]
+            : [{ label: "Sessions", to: "/sessions" }]
+        }
         current={`Session ${sessionId}`}
       />
 
@@ -123,12 +127,14 @@ export function SessionLogPage() {
               )}
             </div>
             <div className={styles.meta}>
-              <div className={styles.metaItem}>
-                <span className={styles.metaLabel}>Issue</span>
-                <Link to={`/issues/${issueId}`} className={styles.metaLink}>
-                  {issueId}
-                </Link>
-              </div>
+              {issueId && (
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Issue</span>
+                  <Link to={`/issues/${issueId}`} className={styles.metaLink}>
+                    {issueId}
+                  </Link>
+                </div>
+              )}
               <div className={styles.metaItem}>
                 <span className={styles.metaLabel}>Runtime</span>
                 <span className={styles.metaValue}>

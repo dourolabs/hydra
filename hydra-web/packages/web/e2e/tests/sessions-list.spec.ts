@@ -35,7 +35,7 @@ test.describe("Sessions list page @sessions:list", () => {
     expect(ids.some((id) => terminalIds.has(id))).toBe(true);
   });
 
-  test("clicking a session linked to an issue navigates to its log page @sessions:list", async ({
+  test("clicking a session row navigates to the universal session detail page @sessions:list", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/sessions");
@@ -43,6 +43,6 @@ test.describe("Sessions list page @sessions:list", () => {
     const row = page.getByTestId("sessions-list-row-t-seed00002");
     await expect(row).toBeVisible();
     await row.getByText("t-seed00002").click();
-    await expect(page).toHaveURL(/\/issues\/i-seed00002\/sessions\/t-seed00002\/logs$/);
+    await expect(page).toHaveURL(/\/sessions\/t-seed00002$/);
   });
 });

@@ -253,7 +253,8 @@ describe("GlobalSearchModal rendering", () => {
     expect(screen.queryByTestId("global-search-group-patch")).toBeNull();
   });
 
-  it("disables the row for an orphan session (no spawned_from)", async () => {
+  it("renders the orphan session row as a clickable link to /sessions/<id>", async () => {
+    const onClose = vi.fn();
     listIssues.mockResolvedValue({ issues: [] });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
@@ -262,13 +263,21 @@ describe("GlobalSearchModal rendering", () => {
       sessions: [sessionRow("s-orphan", "lonely", null)],
     });
 
-    renderModal();
+    renderModal({ onClose });
     await typeQuery("foo");
 
     const orphan = screen.getByTestId(
       "global-search-row-session-s-orphan",
     ) as HTMLButtonElement;
-    expect(orphan.disabled).toBe(true);
+    expect(orphan.disabled).toBe(false);
+
+    fireEvent.click(orphan);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(
+        "/sessions/s-orphan",
+      ),
+    );
   });
 });
 
@@ -346,16 +355,14 @@ describe("GlobalSearchModal keyboard navigation", () => {
     );
   });
 
-  it("Session row routes to the issue-scoped logs path", async () => {
+  it("Session row routes to the universal /sessions/<id> path", async () => {
     const onClose = vi.fn();
     renderModal({ onClose });
     await typeQuery("foo");
     fireEvent.click(screen.getByTestId("global-search-row-session-s-1"));
     expect(onClose).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(screen.getByTestId("location").textContent).toBe(
-        "/issues/i-spawned/sessions/s-1/logs",
-      ),
+      expect(screen.getByTestId("location").textContent).toBe("/sessions/s-1"),
     );
   });
 });
