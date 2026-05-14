@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROMPTS_DIR="${REPO_ROOT}/prompts/agents"
 
-AGENTS=("swe" "pm" "reviewer")
+AGENTS=("swe" "pm" "reviewer" "chat")
 
 # Validate that all prompt files exist before creating agents
 for agent in "${AGENTS[@]}"; do
@@ -31,6 +31,9 @@ for agent in "${AGENTS[@]}"; do
   EXTRA_FLAGS=()
   if [[ "$agent" == "pm" ]]; then
     EXTRA_FLAGS+=("--is-assignment-agent")
+  fi
+  if [[ "$agent" == "chat" ]]; then
+    EXTRA_FLAGS+=("--is-default-conversation-agent")
   fi
 
   create_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
