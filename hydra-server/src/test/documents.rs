@@ -370,7 +370,10 @@ async fn documents_filter_by_has_path() -> anyhow::Result<()> {
             .error_for_status()?;
     }
 
-    // has_path=true returns only documents with a path
+    // has_path=true returns only documents with a path. The
+    // `spawn_test_server` helper seeds a `/agents/.../prompt.md` document
+    // for the default conversation agent, so filter that one out before
+    // checking the test-created documents.
     let mut query = SearchDocumentsQuery::default();
     query.has_path = Some(true);
     let result: ListDocumentsResponse = client
@@ -380,8 +383,13 @@ async fn documents_filter_by_has_path() -> anyhow::Result<()> {
         .await?
         .json()
         .await?;
-    assert_eq!(result.documents.len(), 1);
-    assert_eq!(result.documents[0].document.title, "With Path");
+    let with_path_test_docs: Vec<_> = result
+        .documents
+        .iter()
+        .filter(|d| d.document.title != "default test agent prompt")
+        .collect();
+    assert_eq!(with_path_test_docs.len(), 1);
+    assert_eq!(with_path_test_docs[0].document.title, "With Path");
 
     // has_path=false returns only documents without a path
     let mut query = SearchDocumentsQuery::default();
@@ -396,14 +404,20 @@ async fn documents_filter_by_has_path() -> anyhow::Result<()> {
     assert_eq!(result.documents.len(), 1);
     assert_eq!(result.documents[0].document.title, "Without Path");
 
-    // No has_path filter returns all documents
+    // No has_path filter returns all test-created documents (plus the seeded
+    // default agent prompt).
     let result: ListDocumentsResponse = client
         .get(format!("{base}/v1/documents"))
         .send()
         .await?
         .json()
         .await?;
-    assert_eq!(result.documents.len(), 2);
+    let test_docs: Vec<_> = result
+        .documents
+        .iter()
+        .filter(|d| d.document.title != "default test agent prompt")
+        .collect();
+    assert_eq!(test_docs.len(), 2);
 
     Ok(())
 }
