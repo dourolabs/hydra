@@ -1,11 +1,24 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 import {
   SIDEBAR_HIDDEN_STORAGE_KEY,
   useSidebarHidden,
 } from "./useSidebarHidden";
+
+function mockMatchMedia(matches: boolean) {
+  vi.spyOn(window, "matchMedia").mockReturnValue({
+    matches,
+    media: "",
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => true,
+  } as unknown as MediaQueryList);
+}
 
 describe("useSidebarHidden", () => {
   beforeEach(() => {
@@ -14,9 +27,23 @@ describe("useSidebarHidden", () => {
 
   afterEach(() => {
     window.localStorage.clear();
+    vi.restoreAllMocks();
   });
 
-  it("defaults to visible when no value is stored", () => {
+  it("defaults to visible when no value is stored (desktop viewport)", () => {
+    const { result } = renderHook(() => useSidebarHidden());
+    expect(result.current.hidden).toBe(false);
+  });
+
+  it("defaults to hidden when no value is stored on a mobile viewport", () => {
+    mockMatchMedia(true);
+    const { result } = renderHook(() => useSidebarHidden());
+    expect(result.current.hidden).toBe(true);
+  });
+
+  it("respects a stored '0' even on a mobile viewport", () => {
+    mockMatchMedia(true);
+    window.localStorage.setItem(SIDEBAR_HIDDEN_STORAGE_KEY, "0");
     const { result } = renderHook(() => useSidebarHidden());
     expect(result.current.hidden).toBe(false);
   });

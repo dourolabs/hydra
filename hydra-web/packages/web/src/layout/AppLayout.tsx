@@ -38,7 +38,7 @@ export function AppLayout() {
   return (
     <BreadcrumbsProvider>
       <div className={styles.layout}>
-        <Sidebar connectionState={sseState} hidden={hidden} />
+        <Sidebar connectionState={sseState} hidden={hidden} onHide={hide} />
         <div className={styles.contentColumn}>
           <SiteHeader
             hidden={hidden}
