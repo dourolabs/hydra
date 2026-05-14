@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ConversationSummary, LabelRecord } from "@hydra/api";
 
@@ -46,9 +46,11 @@ vi.mock("../features/labels/useLabels", () => ({
 }));
 
 const getVersionMock = vi.fn();
+const createConversationMock = vi.fn();
 vi.mock("../api/client", () => ({
   apiClient: {
     getVersion: (...args: unknown[]) => getVersionMock(...args),
+    createConversation: (...args: unknown[]) => createConversationMock(...args),
   },
 }));
 
@@ -62,6 +64,16 @@ vi.mock("./SidebarDocumentTree", () => ({
 
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
+
+function LocationDisplay() {
+  const location = useLocation();
+  return (
+    <div data-testid="location">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
+}
 
 function renderSidebar(
   overrides: {
@@ -79,6 +91,7 @@ function renderSidebar(
           connectionState="connected"
           hidden={overrides.hidden ?? false}
         />
+        <LocationDisplay />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -124,6 +137,7 @@ beforeEach(() => {
   issueCountMock.mockReturnValue({ data: 0 });
   labelsMock.mockReturnValue({ data: [] });
   getVersionMock.mockResolvedValue({ version: "1.2.3" });
+  createConversationMock.mockReset();
 });
 
 afterEach(() => {
@@ -133,6 +147,7 @@ afterEach(() => {
   issueCountMock.mockReset();
   labelsMock.mockReset();
   getVersionMock.mockReset();
+  createConversationMock.mockReset();
 });
 
 describe("Sidebar header block removed", () => {
@@ -558,6 +573,94 @@ describe("Sidebar Chats section", () => {
     expect(screen.getByTestId("sidebar-chat-row-c-empty").textContent).toBe(
       "Untitled conversation",
     );
+  });
+});
+
+describe("Sidebar + New Chat button", () => {
+  it("renders the + New Chat button as the first row in the Chats section", () => {
+    renderSidebar();
+    const newChatButton = screen.getByTestId("sidebar-chat-new");
+    expect(newChatButton).toBeTruthy();
+    expect(newChatButton.textContent).toContain("+ New Chat");
+  });
+
+  it("calls apiClient.createConversation and navigates to the new conversation on click", async () => {
+    createConversationMock.mockResolvedValue({ conversation_id: "c-new42" });
+    renderSidebar();
+    const newChatButton = screen.getByTestId("sidebar-chat-new");
+    fireEvent.click(newChatButton);
+    await waitFor(() => {
+      expect(createConversationMock).toHaveBeenCalledWith({});
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location").textContent).toBe("/chat/c-new42");
+    });
+  });
+
+  it("disables the button and shows Creating… while the mutation is pending", async () => {
+    createConversationMock.mockReturnValue(new Promise(() => {}));
+    renderSidebar();
+    const newChatButton = screen.getByTestId(
+      "sidebar-chat-new",
+    ) as HTMLButtonElement;
+    fireEvent.click(newChatButton);
+    await waitFor(() => {
+      expect(newChatButton.textContent).toContain("Creating");
+    });
+    expect(newChatButton.disabled).toBe(true);
+  });
+});
+
+describe("Sidebar + New Issue button", () => {
+  it("renders the + New Issue button as the first row in the Issues section", () => {
+    renderSidebar();
+    const newIssueButton = screen.getByTestId("sidebar-issues-new");
+    expect(newIssueButton).toBeTruthy();
+    expect(newIssueButton.textContent).toContain("+ New Issue");
+  });
+
+  it("navigates to /?create-issue=1 on click from a non-dashboard page", () => {
+    renderSidebar({ initialEntry: "/documents/foo" });
+    fireEvent.click(screen.getByTestId("sidebar-issues-new"));
+    expect(screen.getByTestId("location").textContent).toBe(
+      "/?create-issue=1",
+    );
+  });
+
+  it("navigates to /?create-issue=1 on click from the dashboard", () => {
+    renderSidebar({ initialEntry: "/" });
+    fireEvent.click(screen.getByTestId("sidebar-issues-new"));
+    expect(screen.getByTestId("location").textContent).toBe(
+      "/?create-issue=1",
+    );
+  });
+});
+
+describe("Sidebar See All active highlight", () => {
+  it("highlights Chats See All only when path is exactly /chat", () => {
+    renderSidebar({ initialEntry: "/chat" });
+    const seeAll = screen.getByTestId("sidebar-section-chats-more");
+    expect(seeAll.className).toContain("navItemActive");
+    expect(seeAll.textContent).toContain("See All");
+  });
+
+  it("does NOT highlight Chats See All on /chat/:id", () => {
+    renderSidebar({ initialEntry: "/chat/c-abc" });
+    const seeAll = screen.getByTestId("sidebar-section-chats-more");
+    expect(seeAll.className).not.toContain("navItemActive");
+  });
+
+  it("highlights Documents See All only when path is exactly /documents", () => {
+    renderSidebar({ initialEntry: "/documents" });
+    const seeAll = screen.getByTestId("sidebar-section-documents-more");
+    expect(seeAll.className).toContain("navItemActive");
+    expect(seeAll.textContent).toContain("See All");
+  });
+
+  it("does NOT highlight Documents See All on /documents/:id", () => {
+    renderSidebar({ initialEntry: "/documents/d-abc" });
+    const seeAll = screen.getByTestId("sidebar-section-documents-more");
+    expect(seeAll.className).not.toContain("navItemActive");
   });
 });
 

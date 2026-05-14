@@ -82,9 +82,31 @@ export function DashboardPage() {
   }, []);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const createIssueParam = searchParams.get("create-issue");
+  const [createModalOpen, setCreateModalOpen] = useState(
+    () => createIssueParam !== null && createIssueParam !== "",
+  );
   const selectedParam = searchParams.get("selected");
   const labelParam = searchParams.get("label");
+
+  useEffect(() => {
+    if (createIssueParam !== null && createIssueParam !== "") {
+      setCreateModalOpen(true);
+    }
+  }, [createIssueParam]);
+
+  const handleCreateModalClose = useCallback(() => {
+    setCreateModalOpen(false);
+    if (createIssueParam !== null) {
+      setSearchParams(
+        (prev) => {
+          prev.delete("create-issue");
+          return prev;
+        },
+        { replace: true },
+      );
+    }
+  }, [createIssueParam, setSearchParams]);
   const [filterRootId, setFilterRootId] = useState<string | null>(() => {
     // URL param takes priority over localStorage
     if (selectedParam && VALID_FILTERS.includes(selectedParam)) return selectedParam;
@@ -399,7 +421,7 @@ export function DashboardPage() {
       </button>
       <IssueCreateModal
         open={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
+        onClose={handleCreateModalClose}
         assignees={assignees}
       />
     </div>
