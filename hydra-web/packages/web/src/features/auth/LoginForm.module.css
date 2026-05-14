@@ -50,16 +50,3 @@
   font-size: var(--font-size-sm);
   text-align: center;
 }
-
-.switchLink {
-  all: unset;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-}
-
-.switchLink:hover {
-  color: var(--color-text-primary);
-  text-decoration: underline;
-}

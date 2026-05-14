@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import type { WhoAmIResponse, DeviceStartResponse } from "@hydra/api";
 import {
   fetchMe,
-  login as apiLogin,
   logout as apiLogout,
   deviceStart,
   devicePoll,
@@ -27,18 +26,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     isGithubAuthAvailable().then(setGithubAuthAvailable);
-  }, []);
-
-  const login = useCallback(async (token: string) => {
-    setError(null);
-    try {
-      const u = await apiLogin(token);
-      setUser(u);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Login failed";
-      setError(msg);
-      throw err;
-    }
   }, []);
 
   const cancelDeviceFlow = useCallback(() => {
@@ -93,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, loginWithDevice, cancelDeviceFlow, logout, githubAuthAvailable, deviceFlowInfo }}>
+    <AuthContext.Provider value={{ user, loading, error, loginWithDevice, cancelDeviceFlow, logout, githubAuthAvailable, deviceFlowInfo }}>
       {children}
     </AuthContext.Provider>
   );

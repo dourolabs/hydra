@@ -68,31 +68,6 @@ export function createAuthRoutes(): Hono {
 export function createBffAuthRoutes(): Hono {
   const app = new Hono();
 
-  // POST /auth/login — validate token, set cookie, return whoami response
-  app.post("/login", async (c) => {
-    const body = await c.req.json<{ token?: string }>();
-    const token = body.token;
-
-    if (!token) {
-      return c.json({ error: "token is required" }, 400);
-    }
-
-    if (token !== DEV_TOKEN) {
-      return c.json({ error: "invalid token" }, 401);
-    }
-
-    setCookie(c, COOKIE_NAME, token, {
-      httpOnly: true,
-      sameSite: "Strict",
-      path: "/",
-    });
-
-    const resp: WhoAmIResponse = {
-      actor: { type: "user", username: DEV_USERNAME },
-    };
-    return c.json(resp);
-  });
-
   // GET /auth/me — check cookie, return whoami response or 401
   app.get("/me", (c) => {
     const token = getCookie(c, COOKIE_NAME);
