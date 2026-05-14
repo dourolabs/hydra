@@ -27,7 +27,6 @@ import {
   ChatIcon,
   ContextIcon,
   DocumentsIcon,
-  DoubleChevronLeftIcon,
   IssuesIcon,
   PatchesIcon,
   PlusIcon,
@@ -318,21 +317,6 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
         data-testid="sidebar"
         onClick={handleNavClick}
       >
-        {!isMobile && (
-          <div className={styles.topBar}>
-            <Tooltip content="Hide sidebar" position="left">
-              <button
-                type="button"
-                className={styles.hideButton}
-                onClick={onHide}
-                aria-label="Hide sidebar"
-                data-testid="sidebar-hide"
-              >
-                <DoubleChevronLeftIcon />
-              </button>
-            </Tooltip>
-          </div>
-        )}
         <div className={styles.sections}>
           <SidebarSection id="chats" label="Chats" icon={<ChatIcon />}>
             <button

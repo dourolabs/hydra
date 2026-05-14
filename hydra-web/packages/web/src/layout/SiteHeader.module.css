@@ -3,11 +3,24 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
-  height: 44px;
+  height: var(--site-header-height);
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
   box-sizing: border-box;
+  transition: padding-left 175ms ease;
+}
+
+/* When the sidebar is hidden (desktop), reserve padding-left equal to the
+ * sidebar width so breadcrumbs do not shift under the left chrome. */
+.siteHeaderReservedChrome {
+  padding-left: calc(var(--sidebar-width) + var(--space-3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .siteHeader {
+    transition: none;
+  }
 }
 
 .breadcrumbsSlot {

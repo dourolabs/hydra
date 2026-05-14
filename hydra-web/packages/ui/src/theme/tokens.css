@@ -86,6 +86,7 @@
   --font-family-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
   --font-family-terminal: "Mona Sans", -apple-system, sans-serif;
   --font-family-sans: "Inter", -apple-system, sans-serif;
+  --font-family-display: "Audiowide", "Mona Sans", -apple-system, sans-serif;
   --font-size-xxs: 0.625rem;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
@@ -119,4 +120,6 @@
 
   /* Layout */
   --mobile-nav-height: 56px;
+  --sidebar-width: 240px;
+  --site-header-height: 44px;
 }

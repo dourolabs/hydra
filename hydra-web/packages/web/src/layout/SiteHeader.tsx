@@ -48,9 +48,14 @@ export function SiteHeader({
   const { items, current } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
-  const showHamburger = isMobile || hidden;
+  // Desktop hamburger lives in the AppLayout left chrome (always visible);
+  // SiteHeader only renders its own hamburger on mobile.
+  const showHamburger = isMobile;
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
+  // On desktop, when the sidebar collapses to width 0, reserve padding-left so
+  // breadcrumbs do not shift under the chrome.
+  const reserveChrome = !isMobile && hidden;
   const sessionsLabel =
     activeSessionCount === 0
       ? "no sessions"
@@ -60,7 +65,10 @@ export function SiteHeader({
   const sessionsActive = activeSessionCount > 0;
 
   return (
-    <header className={styles.siteHeader} data-testid="site-header">
+    <header
+      className={`${styles.siteHeader}${reserveChrome ? ` ${styles.siteHeaderReservedChrome}` : ""}`}
+      data-testid="site-header"
+    >
       {showHamburger && (
         <Tooltip
           content={toggleLabel}

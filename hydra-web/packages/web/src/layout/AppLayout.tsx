@@ -13,6 +13,7 @@ import {
 } from "../features/dashboard/useIssueCreateModal";
 import { Sidebar } from "./Sidebar";
 import { SiteHeader } from "./SiteHeader";
+import { AppChrome } from "./AppChrome";
 import { BreadcrumbsProvider } from "./BreadcrumbsProvider";
 import { useSidebarHidden } from "./useSidebarHidden";
 import styles from "./AppLayout.module.css";
@@ -57,6 +58,7 @@ export function AppLayout() {
     <BreadcrumbsProvider>
       <IssueCreateModalProvider>
         <div className={styles.layout}>
+          <AppChrome hidden={hidden} onHide={hide} onShow={show} />
           <Sidebar connectionState={sseState} hidden={hidden} onHide={hide} />
           <div className={styles.contentColumn}>
             <SiteHeader

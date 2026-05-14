@@ -141,10 +141,11 @@ describe("SiteHeader hamburger conditional rendering", () => {
     expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
   });
 
-  it("renders the hamburger on desktop when sidebar is hidden", () => {
+  it("does NOT render the hamburger on desktop when sidebar is hidden", () => {
+    // Desktop hamburger now lives in the AppLayout left chrome, not here.
     mockMatchMedia(false);
     renderHeader({ hidden: true });
-    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+    expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
   });
 
   it("renders the hamburger on mobile regardless of hidden state", () => {
@@ -157,19 +158,7 @@ describe("SiteHeader hamburger conditional rendering", () => {
   });
 });
 
-describe("SiteHeader sidebar toggle", () => {
-  it("calls onShow when sidebar is hidden and the toggle is clicked", () => {
-    // When the sidebar is hidden, the toggle is rendered on desktop and is
-    // the "Show sidebar" button.
-    mockMatchMedia(false);
-    const onHide = vi.fn();
-    const onShow = vi.fn();
-    renderHeader({ hidden: true, onHide, onShow });
-    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
-    expect(onShow).toHaveBeenCalledTimes(1);
-    expect(onHide).not.toHaveBeenCalled();
-  });
-
+describe("SiteHeader sidebar toggle (mobile)", () => {
   it("calls onHide when on mobile and the toggle is clicked", () => {
     // On mobile, the hamburger is always present; when the sidebar is open
     // it acts as the hide control.
@@ -180,6 +169,16 @@ describe("SiteHeader sidebar toggle", () => {
     fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
     expect(onHide).toHaveBeenCalledTimes(1);
     expect(onShow).not.toHaveBeenCalled();
+  });
+
+  it("calls onShow when on mobile and the toggle is clicked while hidden", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    const onShow = vi.fn();
+    renderHeader({ hidden: true, onHide, onShow });
+    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
+    expect(onShow).toHaveBeenCalledTimes(1);
+    expect(onHide).not.toHaveBeenCalled();
   });
 
   it("uses the right aria-label depending on hidden state", () => {
@@ -194,6 +193,32 @@ describe("SiteHeader sidebar toggle", () => {
     expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
       "Show sidebar",
     );
+  });
+});
+
+describe("SiteHeader breadcrumb pin", () => {
+  it("reserves left padding on desktop when the sidebar is hidden", () => {
+    // The desktop chrome occupies the top-left corner; the SiteHeader must
+    // pad-in by the sidebar width so breadcrumbs stay anchored at the same
+    // x-coordinate whether the sidebar is open or hidden.
+    mockMatchMedia(false);
+    renderHeader({ hidden: true });
+    const header = screen.getByTestId("site-header");
+    expect(header.className).toContain("siteHeaderReservedChrome");
+  });
+
+  it("does not reserve left padding on desktop when the sidebar is open", () => {
+    mockMatchMedia(false);
+    renderHeader({ hidden: false });
+    const header = screen.getByTestId("site-header");
+    expect(header.className).not.toContain("siteHeaderReservedChrome");
+  });
+
+  it("does not reserve left padding on mobile (chrome is not rendered)", () => {
+    mockMatchMedia(true);
+    renderHeader({ hidden: true });
+    const header = screen.getByTestId("site-header");
+    expect(header.className).not.toContain("siteHeaderReservedChrome");
   });
 });
 
