@@ -44,6 +44,7 @@
 }
 
 .headerSlot {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -58,6 +59,24 @@
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
+}
+
+.headerBadge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
+  border-radius: 999px;
+  padding: 1px 5px;
+  min-width: 16px;
+  pointer-events: none;
 }
 
 .headerSlot:hover {
