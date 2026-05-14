@@ -5,14 +5,6 @@
   flex-direction: column;
 }
 
-.dashboardRow {
-  display: flex;
-  flex-direction: row;
-  flex: 1;
-  min-height: 0;
-  margin-left: calc(-1 * var(--space-4));
-}
-
 .createButton {
   display: flex;
   align-items: center;
@@ -45,11 +37,6 @@
   .page {
     height: calc(100vh - var(--mobile-nav-height) - var(--space-6));
     height: calc(100dvh - var(--mobile-nav-height) - var(--space-6));
-  }
-
-  .dashboardRow {
-    flex-direction: column;
-    margin-left: 0;
   }
 
   .createButton {
