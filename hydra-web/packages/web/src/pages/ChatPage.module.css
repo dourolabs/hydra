@@ -23,9 +23,17 @@
   width: 100%;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 768px) {
   .chatLayout {
     flex-direction: column;
+    height: auto;
+    min-height: 100%;
+  }
+
+  .chatPane {
+    flex: 0 0 auto;
+    height: 70vh;
+    min-height: 0;
   }
 }
 
