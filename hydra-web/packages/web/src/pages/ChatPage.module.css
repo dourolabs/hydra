@@ -1,15 +1,31 @@
 .chatLayout {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--space-4);
   height: 100%;
-  max-width: 960px;
-  margin: 0 auto;
+  min-height: 0;
   width: 100%;
 }
 
-@media (max-width: 768px) {
+.chatPane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.statusLayout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+@media (max-width: 960px) {
   .chatLayout {
-    max-width: 100%;
+    flex-direction: column;
   }
 }
 
@@ -25,38 +41,4 @@
 
 .error {
   composes: error from "./page.module.css";
-}
-
-.chatTabContent {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  flex: 1;
-  min-height: 0;
-}
-
-.sectionBody {
-  composes: sectionBody from "../features/detail.module.css";
-}
-
-.detailsTab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.meta {
-  composes: meta from "../features/detail.module.css";
-}
-
-.metaItem {
-  composes: metaItem from "../features/detail.module.css";
-}
-
-.metaLabel {
-  composes: metaLabel from "../features/detail.module.css";
-}
-
-.metaValue {
-  composes: metaValue from "../features/detail.module.css";
 }
