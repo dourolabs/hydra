@@ -180,6 +180,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("spawn_sessions", |params| {
         Ok(Box::new(SpawnSessionsAutomation::new(params)?))
     });
+    registry.register_automation("spawn_conversation_sessions", |params| {
+        Ok(Box::new(SpawnConversationSessionsAutomation::new(params)?))
+    });
     registry.register_automation("start_created_sessions", |params| {
         Ok(Box::new(StartCreatedSessionsAutomation::new(params)?))
     });
