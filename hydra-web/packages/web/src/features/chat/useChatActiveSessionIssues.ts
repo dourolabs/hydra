@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -23,28 +24,31 @@ export function useChatActiveSessionIssues(): ActiveSessionIssuesResult {
     staleTime: 30_000,
   });
 
-  const sessions = sessionsQuery.data?.sessions ?? [];
-
-  const sessionsByIssue = new Map<string, SessionSummaryRecord[]>();
-  for (const session of sessions) {
-    const issueId = session.session.spawned_from;
-    if (!issueId) continue;
-    const list = sessionsByIssue.get(issueId);
-    if (list) {
-      list.push(session);
-    } else {
-      sessionsByIssue.set(issueId, [session]);
+  const { sessionsByIssue, orderedIssueIds } = useMemo(() => {
+    const sessions = sessionsQuery.data?.sessions ?? [];
+    const byIssue = new Map<string, SessionSummaryRecord[]>();
+    for (const session of sessions) {
+      const issueId = session.session.spawned_from;
+      if (!issueId) continue;
+      const list = byIssue.get(issueId);
+      if (list) {
+        list.push(session);
+      } else {
+        byIssue.set(issueId, [session]);
+      }
     }
-  }
 
-  const orderedIssueIds = Array.from(sessionsByIssue.entries())
-    .map(([issueId, sess]) => ({
-      issueId,
-      latest: sess.reduce((max, s) => (s.timestamp > max ? s.timestamp : max), ""),
-    }))
-    .sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : 0))
-    .slice(0, MAX_DISPLAYED)
-    .map((e) => e.issueId);
+    const ordered = Array.from(byIssue.entries())
+      .map(([issueId, sess]) => ({
+        issueId,
+        latest: sess.reduce((max, s) => (s.timestamp > max ? s.timestamp : max), ""),
+      }))
+      .sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : 0))
+      .slice(0, MAX_DISPLAYED)
+      .map((e) => e.issueId);
+
+    return { sessionsByIssue: byIssue, orderedIssueIds: ordered };
+  }, [sessionsQuery.data]);
 
   const idsParam = orderedIssueIds.join(",");
   const issuesQuery = useQuery({

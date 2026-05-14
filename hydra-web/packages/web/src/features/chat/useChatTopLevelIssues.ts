@@ -29,7 +29,6 @@ export function useChatTopLevelIssues(excludeIds: Set<string>): TopLevelIssuesRe
 
   const filtered = (query.data ?? [])
     .filter((issue) => !hasChildOf(issue) && !excludeIds.has(issue.issue_id))
-    .slice()
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0))
     .slice(0, MAX_DISPLAYED);
 
