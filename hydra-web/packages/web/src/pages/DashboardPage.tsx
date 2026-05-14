@@ -15,9 +15,8 @@ import type { WorkItem } from "../features/dashboard/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
-import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
-import { useAgents } from "../hooks/useAgents";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DashboardPage.module.css";
 
@@ -84,30 +83,9 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const createIssueParam = searchParams.get("create-issue");
-  const [createModalOpen, setCreateModalOpen] = useState(
-    () => createIssueParam !== null && createIssueParam !== "",
-  );
   const labelParam = searchParams.get("label");
 
-  useEffect(() => {
-    if (createIssueParam !== null && createIssueParam !== "") {
-      setCreateModalOpen(true);
-    }
-  }, [createIssueParam]);
-
-  const handleCreateModalClose = useCallback(() => {
-    setCreateModalOpen(false);
-    if (createIssueParam !== null) {
-      setSearchParams(
-        (prev) => {
-          prev.delete("create-issue");
-          return prev;
-        },
-        { replace: true },
-      );
-    }
-  }, [createIssueParam, setSearchParams]);
+  const { open: openCreateIssueModal } = useIssueCreateModal();
   const [filterRootId, setFilterRootId] = useState<string | null>(() => {
     // URL param takes priority over localStorage
     if (selectedParam && VALID_FILTERS.includes(selectedParam)) return selectedParam;
@@ -245,18 +223,6 @@ export function DashboardPage() {
         ? isFetchingNextPatches
         : isFetchingNextDocuments
       : isFetchingNextIssues;
-
-  const { data: agents } = useAgents();
-  const assignees = useMemo(() => {
-    const set = new Set<string>();
-    for (const record of issues) {
-      if (record.issue.assignee) set.add(record.issue.assignee);
-    }
-    for (const agent of agents ?? []) {
-      set.add(agent.name);
-    }
-    return Array.from(set).sort();
-  }, [issues, agents]);
 
   // Per-issue tree construction via relationships API
   const {
@@ -416,15 +382,10 @@ export function DashboardPage() {
       <button
         type="button"
         className={styles.createButton}
-        onClick={() => setCreateModalOpen(true)}
+        onClick={openCreateIssueModal}
       >
         + Create Issue
       </button>
-      <IssueCreateModal
-        open={createModalOpen}
-        onClose={handleCreateModalClose}
-        assignees={assignees}
-      />
     </div>
   );
 }
