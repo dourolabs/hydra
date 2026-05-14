@@ -30,11 +30,6 @@
   max-width: 75%;
 }
 
-.assistantBubbleWrapper {
-  align-self: flex-start;
-  max-width: 75%;
-}
-
 .userBubble {
   background: var(--color-accent-dim);
   color: var(--color-text-primary);
@@ -42,11 +37,10 @@
   padding: var(--space-2) var(--space-3);
 }
 
-.assistantBubble {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  border-radius: 12px 12px 12px 2px;
-  padding: var(--space-2) var(--space-3);
+.assistantContent {
+  width: 100%;
+  max-width: var(--chat-content-max, 880px);
+  margin: 0 auto;
 }
 
 .bubbleContent {

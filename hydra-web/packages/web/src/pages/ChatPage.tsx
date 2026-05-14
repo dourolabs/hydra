@@ -1,8 +1,8 @@
 import { useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
-import type { ConversationEvent } from "@hydra/api";
+import type { Conversation, ConversationEvent } from "@hydra/api";
 import { useConversation, useConversationEvents } from "../features/chat/useConversations";
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
@@ -13,6 +13,7 @@ import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatPage.module.css";
 
 function ExistingChatPage({ conversationId }: { conversationId: string }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: conversation, isLoading, error } = useConversation(conversationId);
   const { data: events } = useConversationEvents(conversationId);
@@ -50,12 +51,39 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
     },
   });
 
+  const closeMutation = useMutation({
+    mutationFn: () => apiClient.closeConversation(conversationId),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["conversation", conversationId] });
+      const previous = queryClient.getQueryData<Conversation>(["conversation", conversationId]);
+      queryClient.setQueryData<Conversation>(
+        ["conversation", conversationId],
+        (old) => old ? { ...old, status: "closed" as const } : old,
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["conversation", conversationId], context.previous);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      navigate("/chat");
+    },
+  });
+
   const handleSend = useCallback(
     (content: string) => {
       sendMutation.mutate(content);
     },
     [sendMutation],
   );
+
+  const handleEndChat = useCallback(() => {
+    closeMutation.mutate();
+  }, [closeMutation]);
 
   if (isLoading) {
     return (
@@ -84,6 +112,8 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
 
   if (!conversation) return null;
 
+  const canClose = conversation.status !== "closed";
+
   return (
     <div className={styles.chatLayout}>
       <div className={styles.chatPane}>
@@ -92,6 +122,8 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         <ChatInput
           onSend={handleSend}
           disabled={sendMutation.isPending}
+          onEndChat={canClose ? handleEndChat : undefined}
+          endChatDisabled={closeMutation.isPending}
         />
       </div>
       <ChatRightPanel conversation={conversation} />

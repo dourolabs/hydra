@@ -38,11 +38,9 @@ function renderEvent(event: ConversationEvent, index: number) {
             content={formatTimestamp(event.timestamp)}
             trigger="hover-or-click"
             position="top"
-            className={styles.assistantBubbleWrapper}
+            className={styles.assistantContent}
           >
-            <div className={styles.assistantBubble}>
-              <MarkdownViewer content={event.content} className={styles.markdown} />
-            </div>
+            <MarkdownViewer content={event.content} className={styles.markdown} />
           </Tooltip>
         </div>
       );
