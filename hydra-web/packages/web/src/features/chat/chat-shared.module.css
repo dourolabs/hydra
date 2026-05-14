@@ -1,17 +1,3 @@
-.back {
-  color: var(--color-accent-dim);
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  padding: 0;
-  white-space: nowrap;
-}
-
-.back:hover {
-  color: var(--color-accent);
-}
-
 .title {
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);

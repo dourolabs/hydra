@@ -5,9 +5,16 @@ import styles from "./ChatInput.module.css";
 interface ChatInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
+  onEndChat?: () => void;
+  endChatDisabled?: boolean;
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  disabled,
+  onEndChat,
+  endChatDisabled,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
 
   const isDisabled = disabled;
@@ -48,6 +55,16 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
       >
         Send
       </Button>
+      {onEndChat && (
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={onEndChat}
+          disabled={endChatDisabled}
+        >
+          End Chat
+        </Button>
+      )}
     </div>
   );
 }
