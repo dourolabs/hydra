@@ -44,21 +44,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_login_is_noop_in_single_player() {
-        let app = test_bff_app();
-
-        let req = Request::builder()
-            .method("POST")
-            .uri("/auth/login")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{}"#))
-            .unwrap();
-
-        let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), http::StatusCode::OK);
-    }
-
-    #[tokio::test]
     async fn auth_logout_returns_404_in_single_player() {
         let app = test_bff_app();
 

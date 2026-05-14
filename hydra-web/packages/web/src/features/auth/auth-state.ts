@@ -5,7 +5,6 @@ export interface AuthState {
   user: WhoAmIResponse | null;
   loading: boolean;
   error: string | null;
-  login: (token: string) => Promise<void>;
   loginWithDevice: () => Promise<void>;
   cancelDeviceFlow: () => void;
   logout: () => Promise<void>;

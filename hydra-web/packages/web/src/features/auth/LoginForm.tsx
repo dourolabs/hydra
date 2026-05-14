@@ -1,51 +1,12 @@
-import { useState, useCallback, useRef, useEffect, type FormEvent, type ReactNode } from "react";
-import { Button, Input, fallbackCopyText } from "@hydra/ui";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { Button, fallbackCopyText } from "@hydra/ui";
 import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
 
-type LoginMode = "default" | "token";
-
-function TokenForm({
-  onSubmit,
-  token,
-  setToken,
-  error,
-  submitting,
-  footer,
-}: {
-  onSubmit: (e: FormEvent) => void;
-  token: string;
-  setToken: (v: string) => void;
-  error: string | null;
-  submitting: boolean;
-  footer?: ReactNode;
-}) {
-  return (
-    <form className={styles.form} onSubmit={onSubmit}>
-      <Input
-        data-testid="token-input"
-        label="Hydra Token"
-        type="password"
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
-        placeholder="Enter your hydra token"
-        error={error ?? undefined}
-        autoFocus
-      />
-      <Button data-testid="login-button" type="submit" variant="primary" disabled={submitting || !token.trim()}>
-        {submitting ? "Logging in\u2026" : "Log in"}
-      </Button>
-      {footer}
-    </form>
-  );
-}
-
 export function LoginForm() {
-  const { login, loginWithDevice, cancelDeviceFlow, error: authError, githubAuthAvailable, deviceFlowInfo } = useAuth();
-  const [token, setToken] = useState("");
+  const { loginWithDevice, cancelDeviceFlow, error: authError, githubAuthAvailable, deviceFlowInfo } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [mode, setMode] = useState<LoginMode>("default");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -67,21 +28,6 @@ export function LoginForm() {
       setSubmitting(false);
     }
   }, [loginWithDevice]);
-
-  async function handleTokenSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!token.trim()) return;
-
-    setSubmitting(true);
-    setError(null);
-    try {
-      await login(token.trim());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   async function handleCopyCode() {
     if (!deviceFlowInfo) return;
@@ -114,16 +60,13 @@ export function LoginForm() {
     return null;
   }
 
-  // Token-only mode (local auth, no GitHub)
+  // GitHub auth not configured — single-player mode auto-authenticates before
+  // reaching this page, so this only renders in misconfigured multi-player setups.
   if (!githubAuthAvailable) {
     return (
-      <TokenForm
-        onSubmit={handleTokenSubmit}
-        token={token}
-        setToken={setToken}
-        error={displayError}
-        submitting={submitting}
-      />
+      <div className={styles.form}>
+        <p className={styles.instructions}>GitHub authentication is not configured.</p>
+      </div>
     );
   }
 
@@ -167,31 +110,6 @@ export function LoginForm() {
     );
   }
 
-  // Token input mode
-  if (mode === "token") {
-    return (
-      <TokenForm
-        onSubmit={handleTokenSubmit}
-        token={token}
-        setToken={setToken}
-        error={displayError}
-        submitting={submitting}
-        footer={
-          <button
-            type="button"
-            className={styles.switchLink}
-            onClick={() => {
-              setMode("default");
-              setError(null);
-            }}
-          >
-            Sign in with GitHub instead
-          </button>
-        }
-      />
-    );
-  }
-
   // Default mode — show GitHub sign-in button
   return (
     <div className={styles.form}>
@@ -204,16 +122,6 @@ export function LoginForm() {
         {submitting ? "Starting…" : "Sign in with GitHub"}
       </Button>
       {displayError && <p className={styles.error}>{displayError}</p>}
-      <button
-        type="button"
-        className={styles.switchLink}
-        onClick={() => {
-          setMode("token");
-          setError(null);
-        }}
-      >
-        Sign in with token
-      </button>
     </div>
   );
 }
