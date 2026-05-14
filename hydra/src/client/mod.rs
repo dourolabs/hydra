@@ -809,6 +809,9 @@ impl HydraClient {
     }
 
     /// Call `POST /v1/sessions/:session_id/status` to update the recorded agent status.
+    ///
+    /// Returns [`ConflictError`] when the server responds with 409 Conflict
+    /// (i.e., the session status was already submitted by a prior worker invocation).
     pub async fn set_session_status(
         &self,
         job_id: &SessionId,
@@ -821,7 +824,18 @@ impl HydraClient {
             .json(status)
             .send()
             .await
-            .context("failed to submit set session status request")?
+            .context("failed to submit set session status request")?;
+
+        if response.status() == StatusCode::CONFLICT {
+            let body_text = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiErrorBody>(&body_text)
+                .ok()
+                .map(|body| body.error)
+                .unwrap_or(body_text);
+            return Err(ConflictError { message }.into());
+        }
+
+        let response = response
             .error_for_status_with_body(
                 "hydra-server returned an error while setting session status",
             )
