@@ -19,9 +19,14 @@ const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
 /// the conversation exists. The automation is idempotent — if an active session
 /// already exists for the conversation it is a no-op.
 ///
+/// The automation resolves the conversation's agent (the one named on the
+/// conversation, or the registered default conversation agent) and uses the
+/// agent's prompt as the session's prompt. If no agent can be resolved, a
+/// warning is logged and the session is not spawned.
+///
 /// Currently runs alongside the synchronous spawn path in
-/// `app/conversations.rs`; in that case the active-session check trips on
-/// subsequent invocations so behavior is unchanged.
+/// `app/conversations.rs`; the active-session check trips on subsequent
+/// invocations so a redundant session is never created.
 pub struct SpawnConversationSessionsAutomation;
 
 impl SpawnConversationSessionsAutomation {
@@ -83,31 +88,51 @@ impl Automation for SpawnConversationSessionsAutomation {
             return Ok(());
         }
 
-        // Skip if no agent is set on the conversation and there is no default
-        // conversation agent: there is nothing for create_session to use as the
-        // prompt source. (When an explicit agent name is missing,
-        // resolve_conversation_agent looks for a registered default; if there
-        // is no default and no explicit agent, create_session would still
-        // succeed but produce a session with no agent prompt, mirroring the
-        // sync path's behavior. We preserve that behavior so this automation
-        // remains a no-op shadow of the sync path.)
-        if conversation.agent_name.is_none() {
-            let has_default = match ctx.app_state.resolve_conversation_agent(None).await {
-                Ok(agent) => agent.is_some(),
-                Err(err) => {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        conversation_id = %conversation_id,
-                        error = %err,
-                        "failed to resolve default conversation agent"
-                    );
-                    return Ok(());
-                }
-            };
-            if !has_default {
+        // Resolve the agent (either the one named on the conversation or the
+        // registered default). The agent's prompt is what we'll seed the
+        // session with — this differs from the sync path in
+        // `app/conversations.rs`, which passes the user message and lets
+        // `create_session` re-resolve the prompt internally. Doing the lookup
+        // here means the automation owns the prompt and we can emit a clear
+        // warning when no agent is configured at all.
+        let agent = match ctx
+            .app_state
+            .resolve_conversation_agent(conversation.agent_name.as_deref())
+            .await
+        {
+            Ok(Some(agent)) => agent,
+            Ok(None) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    "no agent configured for conversation and no default conversation agent registered; not spawning session"
+                );
                 return Ok(());
             }
-        }
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    error = %err,
+                    "failed to resolve conversation agent; not spawning session"
+                );
+                return Ok(());
+            }
+        };
+
+        let agent_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
+            Ok(prompt) => prompt,
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    agent = %agent.name,
+                    error = %err,
+                    "failed to resolve agent prompt; not spawning session"
+                );
+                return Ok(());
+            }
+        };
 
         // Check whether an active session already exists for this conversation.
         let query = SearchSessionsQuery::new(
@@ -145,7 +170,7 @@ impl Automation for SpawnConversationSessionsAutomation {
         };
 
         let request = CreateSessionRequest::new(
-            String::new(),
+            agent_prompt,
             None,
             BundleSpec::None,
             HashMap::new(),
@@ -330,6 +355,20 @@ mod tests {
             .into_iter()
             .filter(|(_, s)| s.item.conversation_id() == Some(conversation_id))
             .count()
+    }
+
+    async fn spawned_session_prompt(
+        state: &AppState,
+        conversation_id: &ConversationId,
+    ) -> Option<String> {
+        let sessions = state
+            .list_sessions_with_query(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        sessions
+            .into_iter()
+            .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
+            .map(|(_, s)| s.item.prompt.clone())
     }
 
     #[tokio::test]
@@ -611,5 +650,33 @@ mod tests {
 
         automation.execute(&ctx).await.unwrap();
         assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn spawned_session_uses_agent_prompt() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "you are an SWE", false).await;
+
+        let conversation = make_conversation(Some("swe"));
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        assert_eq!(
+            spawned_session_prompt(&state, &conversation_id).await,
+            Some("you are an SWE".to_string())
+        );
     }
 }
