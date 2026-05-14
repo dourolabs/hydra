@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
+    future::Future,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -9,7 +10,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use hydra_common::{
     constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
-    session_status::SessionStatusUpdate,
+    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{Bundle, WorkerContext},
     IssueId, SessionId,
 };
@@ -24,6 +25,19 @@ use crate::git::{
 };
 use crate::worker::commands::WorkerCommands;
 use crate::{client::HydraClientInterface, command::output::CommandContext};
+
+/// Per-phase timeout for the pre-agent document sync.
+const SYNC_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Per-phase timeout for the post-agent git finalize step.
+const FINALIZE_TASK_RUN_TIMEOUT: Duration = Duration::from_secs(120);
+/// Per-phase timeout for pushing documents back to hydra-server.
+const PUSH_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(120);
+/// Per-attempt timeout for uploading the build cache.
+const BUILD_CACHE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+/// Per-attempt timeout for submitting the final session status.
+const SUBMIT_SESSION_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum number of attempts when submitting the final session status.
+const SUBMIT_SESSION_STATUS_MAX_ATTEMPTS: u32 = 3;
 
 pub async fn run(
     client: &dyn HydraClientInterface,
@@ -145,32 +159,44 @@ pub async fn run(
         }
     }
 
+    let mut errors = Vec::new();
+
     // Sync documents to a well-known sibling directory next to the repo checkout (best-effort).
     let documents_path = dest.join("documents");
     std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
     let documents_path = documents_path
         .canonicalize()
         .context("failed to canonicalize documents directory path")?;
-    match sync_documents(
-        client,
-        SyncArgs {
-            directory: Some(documents_path.clone()),
-            path_prefix: None,
-            clean: false,
-        },
+    match tokio::time::timeout(
+        SYNC_DOCUMENTS_TIMEOUT,
+        sync_documents(
+            client,
+            SyncArgs {
+                directory: Some(documents_path.clone()),
+                path_prefix: None,
+                clean: false,
+            },
+        ),
     )
     .await
     {
-        Ok(()) => {
+        Ok(Ok(())) => {
             execution_env.insert(
                 ENV_HYDRA_DOCUMENTS_DIR.to_string(),
                 documents_path.to_string_lossy().to_string(),
             );
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             log_status(format!(
                 "Warning: document sync failed, continuing without HYDRA_DOCUMENTS_DIR: {err}"
             ));
+        }
+        Err(_) => {
+            let secs = SYNC_DOCUMENTS_TIMEOUT.as_secs();
+            log_status(format!(
+                "Warning: document sync timed out after {secs}s, continuing without HYDRA_DOCUMENTS_DIR"
+            ));
+            errors.push(anyhow!("document sync timed out after {secs}s"));
         }
     }
 
@@ -180,7 +206,6 @@ pub async fn run(
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
-    let mut errors = Vec::new();
     let agent_start = Instant::now();
 
     let last_message = if let Some(interactive_opts) = interactive {
@@ -258,13 +283,38 @@ pub async fn run(
     if base_commit.is_some() {
         log_status("Phase: git finalize — starting");
         let git_start = Instant::now();
-        if let Err(err) = finalize_task_run(&repo_path, &job, github_token.as_deref()) {
-            let elapsed = git_start.elapsed().as_secs_f64();
-            log_status(format!("Phase: git finalize — failed ({elapsed:.2}s)"));
-            errors.push(err.context("failed to finalize task output branches"));
-        } else {
-            let elapsed = git_start.elapsed().as_secs_f64();
-            log_status(format!("Phase: git finalize — completed ({elapsed:.2}s)"));
+        let repo_path_for_finalize = repo_path.clone();
+        let job_for_finalize = job.clone();
+        let token_for_finalize = github_token.clone();
+        let finalize_future = tokio::task::spawn_blocking(move || {
+            finalize_task_run(
+                &repo_path_for_finalize,
+                &job_for_finalize,
+                token_for_finalize.as_deref(),
+            )
+        });
+        match tokio::time::timeout(FINALIZE_TASK_RUN_TIMEOUT, finalize_future).await {
+            Ok(Ok(Ok(()))) => {
+                let elapsed = git_start.elapsed().as_secs_f64();
+                log_status(format!("Phase: git finalize — completed ({elapsed:.2}s)"));
+            }
+            Ok(Ok(Err(err))) => {
+                let elapsed = git_start.elapsed().as_secs_f64();
+                log_status(format!("Phase: git finalize — failed ({elapsed:.2}s)"));
+                errors.push(err.context("failed to finalize task output branches"));
+            }
+            Ok(Err(join_err)) => {
+                let elapsed = git_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: git finalize — task panicked ({elapsed:.2}s): {join_err}"
+                ));
+                errors.push(anyhow!("git finalize task panicked: {join_err}"));
+            }
+            Err(_) => {
+                let secs = FINALIZE_TASK_RUN_TIMEOUT.as_secs();
+                log_status(format!("Phase: git finalize — timed out after {secs}s"));
+                errors.push(anyhow!("git finalize timed out after {secs}s"));
+            }
         }
     }
 
@@ -272,26 +322,37 @@ pub async fn run(
     if execution_env.contains_key(ENV_HYDRA_DOCUMENTS_DIR) {
         log_status("Phase: document push — starting");
         let doc_push_start = Instant::now();
-        if let Err(err) = push_documents(
-            client,
-            PushArgs {
-                directory: Some(documents_path.clone()),
-                dry_run: false,
-                path_prefix: None,
-                issue_id: execution_env
-                    .get(ENV_HYDRA_ISSUE_ID)
-                    .and_then(|v| v.parse().ok()),
-            },
+        match tokio::time::timeout(
+            PUSH_DOCUMENTS_TIMEOUT,
+            push_documents(
+                client,
+                PushArgs {
+                    directory: Some(documents_path.clone()),
+                    dry_run: false,
+                    path_prefix: None,
+                    issue_id: execution_env
+                        .get(ENV_HYDRA_ISSUE_ID)
+                        .and_then(|v| v.parse().ok()),
+                },
+            ),
         )
         .await
         {
-            let elapsed = doc_push_start.elapsed().as_secs_f64();
-            log_status(format!(
-                "Phase: document push — failed ({elapsed:.2}s): {err}"
-            ));
-        } else {
-            let elapsed = doc_push_start.elapsed().as_secs_f64();
-            log_status(format!("Phase: document push — completed ({elapsed:.2}s)"));
+            Ok(Ok(())) => {
+                let elapsed = doc_push_start.elapsed().as_secs_f64();
+                log_status(format!("Phase: document push — completed ({elapsed:.2}s)"));
+            }
+            Ok(Err(err)) => {
+                let elapsed = doc_push_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: document push — failed ({elapsed:.2}s): {err}"
+                ));
+            }
+            Err(_) => {
+                let secs = PUSH_DOCUMENTS_TIMEOUT.as_secs();
+                log_status(format!("Phase: document push — timed out after {secs}s"));
+                errors.push(anyhow!("document push timed out after {secs}s"));
+            }
         }
     }
 
@@ -312,21 +373,23 @@ pub async fn run(
                             ));
                         } else {
                             const MAX_ATTEMPTS: u32 = 3;
-                            let mut last_error = None;
+                            let mut last_error: Option<anyhow::Error> = None;
                             for attempt in 1..=MAX_ATTEMPTS {
                                 log_status(format!(
                                     "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
                                 ));
-                                match client
-                                    .build_and_upload_cache(
+                                let upload_result = tokio::time::timeout(
+                                    BUILD_CACHE_UPLOAD_TIMEOUT,
+                                    client.build_and_upload_cache(
                                         &repo_path,
                                         worker_home_dir.as_deref(),
                                         service_repo_name.clone(),
                                         &git_sha,
-                                    )
-                                    .await
-                                {
-                                    Ok((key, timings)) => {
+                                    ),
+                                )
+                                .await;
+                                match upload_result {
+                                    Ok(Ok((key, timings))) => {
                                         let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                         log_status(format!(
                                             "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
@@ -336,12 +399,29 @@ pub async fn run(
                                         last_error = None;
                                         break;
                                     }
-                                    Err(err) => {
-                                        last_error = Some(err);
+                                    Ok(Err(err)) => {
+                                        last_error = Some(err.into());
                                         if attempt < MAX_ATTEMPTS {
                                             let delay_secs = 2u64.pow(attempt);
                                             log_status(format!(
                                                 "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                            ));
+                                            tokio::time::sleep(Duration::from_secs(delay_secs))
+                                                .await;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let secs = BUILD_CACHE_UPLOAD_TIMEOUT.as_secs();
+                                        log_status(format!(
+                                            "Build cache upload attempt {attempt} timed out after {secs}s"
+                                        ));
+                                        last_error = Some(anyhow!(
+                                            "build cache upload timed out after {secs}s"
+                                        ));
+                                        if attempt < MAX_ATTEMPTS {
+                                            let delay_secs = 2u64.pow(attempt);
+                                            log_status(format!(
+                                                "Retrying build cache upload in {delay_secs}s..."
                                             ));
                                             tokio::time::sleep(Duration::from_secs(delay_secs))
                                                 .await;
@@ -444,29 +524,82 @@ async fn submit_session_status(
     job: &SessionId,
     status: SessionStatusUpdate,
 ) -> Result<()> {
-    log_status(format!(
-        "Updating status for session '{job}' via hydra-server…"
-    ));
-    match client.set_session_status(job, &status).await {
-        Ok(response) => {
-            let last_message_length = status
-                .last_message()
-                .map(|message| message.len())
-                .unwrap_or(0);
-            log_status(format!(
-                "Status updated for session '{}'. Stored last message length: {}",
-                response.session_id, last_message_length,
-            ));
-            Ok(())
+    let last_message_length = status
+        .last_message()
+        .map(|message| message.len())
+        .unwrap_or(0);
+    submit_session_status_with_retry(
+        job,
+        last_message_length,
+        SUBMIT_SESSION_STATUS_TIMEOUT,
+        SUBMIT_SESSION_STATUS_MAX_ATTEMPTS,
+        || client.set_session_status(job, &status),
+    )
+    .await
+}
+
+/// Retry loop for session status submission.
+///
+/// Each attempt is bounded by `attempt_timeout`. On timeout or any other error
+/// (except an HTTP 409 Conflict, which is treated as success), the attempt is
+/// retried with exponential backoff up to `max_attempts` times. The 409 case
+/// covers an already-submitted status from a prior worker invocation.
+async fn submit_session_status_with_retry<F, Fut>(
+    job: &SessionId,
+    last_message_length: usize,
+    attempt_timeout: Duration,
+    max_attempts: u32,
+    mut submit: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<SetSessionStatusResponse>>,
+{
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 1..=max_attempts {
+        log_status(format!(
+            "Updating status for session '{job}' via hydra-server (attempt {attempt}/{max_attempts})…"
+        ));
+        match tokio::time::timeout(attempt_timeout, submit()).await {
+            Ok(Ok(response)) => {
+                log_status(format!(
+                    "Status updated for session '{}'. Stored last message length: {}",
+                    response.session_id, last_message_length,
+                ));
+                return Ok(());
+            }
+            Ok(Err(err)) if err.to_string().contains("409 Conflict") => {
+                log_status(format!(
+                    "Status for session '{job}' was already set (conflict); ignoring."
+                ));
+                return Ok(());
+            }
+            Ok(Err(err)) => {
+                log_status(format!(
+                    "Status submission attempt {attempt}/{max_attempts} failed: {err}"
+                ));
+                last_error = Some(err);
+            }
+            Err(_) => {
+                let secs = attempt_timeout.as_secs();
+                log_status(format!(
+                    "Status submission attempt {attempt}/{max_attempts} timed out after {secs}s"
+                ));
+                last_error = Some(anyhow!("status submission timed out after {secs}s"));
+            }
         }
-        Err(err) if err.to_string().contains("409 Conflict") => {
+
+        if attempt < max_attempts {
+            let delay = Duration::from_secs(2u64.pow(attempt));
             log_status(format!(
-                "Status for session '{job}' was already set (conflict); ignoring."
+                "Retrying status submission in {}s...",
+                delay.as_secs()
             ));
-            Ok(())
+            tokio::time::sleep(delay).await;
         }
-        Err(err) => Err(err),
     }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("status submission failed without an error message")))
 }
 
 fn initialize_tracking_branches(
@@ -1160,6 +1293,176 @@ mod tests {
         checkout.safe();
         repo.checkout_head(Some(&mut checkout))
             .context("failed to checkout 'main' in upstream repo")?;
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn phase_timeout_records_error_and_status_submission_still_runs() -> Result<()> {
+        // Mirror the inline pattern used in `run`: wrap a slow phase in
+        // `tokio::time::timeout`, push the timeout onto `errors`, then carry on
+        // to status submission. The acceptance criteria require that a phase
+        // timeout never short-circuits the final status update.
+        let phase_timeout = Duration::from_millis(50);
+        let mut errors: Vec<anyhow::Error> = Vec::new();
+
+        let slow_phase = async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok::<(), anyhow::Error>(())
+        };
+        match tokio::time::timeout(phase_timeout, slow_phase).await {
+            Ok(_) => panic!("expected the slow phase to time out"),
+            Err(_) => errors.push(anyhow!(
+                "phase timed out after {}s",
+                phase_timeout.as_secs()
+            )),
+        }
+        assert_eq!(errors.len(), 1, "phase timeout must push to errors");
+
+        // Status submission is still invoked, and (because errors is non-empty)
+        // production code would send Failed { reason }; here we just verify the
+        // submission helper succeeds rather than being skipped.
+        let job = task_id("t-phase-timeout");
+        let job_for_response = job.clone();
+        let submission =
+            submit_session_status_with_retry(&job, 0, Duration::from_secs(1), 1, || {
+                let job = job_for_response.clone();
+                async move {
+                    Ok(hydra_common::session_status::SetSessionStatusResponse::new(
+                        job,
+                        hydra_common::task_status::Status::Failed,
+                    ))
+                }
+            })
+            .await;
+
+        assert!(
+            submission.is_ok(),
+            "status submission must run even when a prior phase timed out"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_session_status_retries_after_transport_failure() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let job = task_id("t-status-retry");
+        let job_for_response = job.clone();
+        let attempts = AtomicUsize::new(0);
+
+        let result = submit_session_status_with_retry(&job, 7, Duration::from_secs(30), 3, || {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            let job = job_for_response.clone();
+            async move {
+                if attempt == 0 {
+                    Err(anyhow!("simulated transport failure"))
+                } else {
+                    Ok(hydra_common::session_status::SetSessionStatusResponse::new(
+                        job,
+                        hydra_common::task_status::Status::Complete,
+                    ))
+                }
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "status submission should succeed on the retry: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "expected exactly one retry after the initial transport failure"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_session_status_gives_up_after_max_attempts() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let job = task_id("t-status-fail");
+        let attempts = AtomicUsize::new(0);
+
+        let result = submit_session_status_with_retry(&job, 0, Duration::from_secs(30), 3, || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async { Err(anyhow!("simulated persistent failure")) }
+        })
+        .await;
+
+        assert!(
+            result.is_err(),
+            "status submission should fail after exhausting retries"
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            3,
+            "should make exactly max_attempts attempts"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_session_status_treats_409_as_success() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let job = task_id("t-status-conflict");
+        let attempts = AtomicUsize::new(0);
+
+        let result = submit_session_status_with_retry(&job, 0, Duration::from_secs(30), 3, || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async { Err(anyhow!("hydra-server responded with 409 Conflict")) }
+        })
+        .await;
+
+        assert!(result.is_ok(), "409 Conflict must be treated as success");
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "409 should short-circuit retries"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_session_status_retries_on_timeout() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let job = task_id("t-status-timeout");
+        let job_for_response = job.clone();
+        let attempts = AtomicUsize::new(0);
+
+        let result =
+            submit_session_status_with_retry(&job, 0, Duration::from_millis(50), 3, || {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                let job = job_for_response.clone();
+                async move {
+                    if attempt == 0 {
+                        // Sleep longer than the attempt timeout to force a timeout retry.
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        unreachable!("attempt should have been cancelled by timeout")
+                    } else {
+                        Ok(hydra_common::session_status::SetSessionStatusResponse::new(
+                            job,
+                            hydra_common::task_status::Status::Complete,
+                        ))
+                    }
+                }
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "status submission should succeed after the timeout retry: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "expected exactly one retry after the timeout"
+        );
         Ok(())
     }
 }
