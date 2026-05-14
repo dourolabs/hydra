@@ -91,6 +91,8 @@ export function createSessionRoutes(store: Store): Hono {
     const spawnedFrom = c.req.query("spawned_from");
     const spawnedFromIds = c.req.query("spawned_from_ids");
     const status = c.req.query("status");
+    const limitParam = c.req.query("limit");
+    const countParam = c.req.query("count");
 
     const items = store.list<Session>(COLLECTION, includeDeleted);
 
@@ -113,10 +115,21 @@ export function createSessionRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => statuses.has(entry.data.status));
     }
 
+    const totalCount = filtered.length;
+    if (limitParam !== undefined && limitParam !== null) {
+      const limit = Number(limitParam);
+      if (Number.isFinite(limit) && limit >= 0) {
+        filtered = filtered.slice(0, limit);
+      }
+    }
+
     const sessions: SessionSummaryRecord[] = filtered.map(({ id, entry }) =>
       toSummaryRecord(id, entry.version, entry.timestamp, entry.data),
     );
-    const resp: ListSessionsResponse = { sessions };
+    const resp: ListSessionsResponse = {
+      sessions,
+      total_count: countParam === "true" ? BigInt(totalCount) : undefined,
+    };
     return c.json(resp);
   });
 
