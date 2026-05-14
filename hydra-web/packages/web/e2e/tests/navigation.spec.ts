@@ -81,40 +81,49 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     authenticatedPage: page,
   }) => {
     const sidebar = page.getByTestId("sidebar");
-    const toggleButton = page.getByTestId("site-header-toggle-sidebar");
+    const hideButton = page.getByTestId("sidebar-hide");
+    const headerToggle = page.getByTestId("site-header-toggle-sidebar");
 
-    // Initially the sidebar is visible and has non-zero width.
+    // Initially the sidebar is visible with the in-sidebar << hide control
+    // present, and the header hamburger is NOT in the DOM (desktop).
     await expect(sidebar).toBeVisible();
+    await expect(hideButton).toBeVisible();
+    await expect(headerToggle).toHaveCount(0);
     const initialBox = await sidebar.boundingBox();
     expect(initialBox?.width ?? 0).toBeGreaterThan(100);
 
-    // Clicking the toggle hides the sidebar; the same button stays in the
-    // header and now restores it.
-    await toggleButton.click();
+    // Clicking the in-sidebar << button hides the sidebar; the header
+    // hamburger now mounts as the "Show sidebar" restore control.
+    await hideButton.click();
     await expect
       .poll(async () => (await sidebar.boundingBox())?.width ?? -1)
       .toBeLessThan(5);
-    await expect(toggleButton).toHaveAttribute("aria-label", "Show sidebar");
+    await expect(headerToggle).toBeVisible();
+    await expect(headerToggle).toHaveAttribute("aria-label", "Show sidebar");
 
     // localStorage records the hidden state for next reload.
     expect(
       await page.evaluate(() => localStorage.getItem("hydra-sidebar-hidden")),
     ).toBe("1");
 
-    // After reload, the sidebar stays hidden and the toggle still says "Show".
+    // After reload, the sidebar stays hidden and the header toggle is still
+    // present with the same aria-label.
     await page.reload();
     await expect
       .poll(async () => (await sidebar.boundingBox())?.width ?? -1)
       .toBeLessThan(5);
-    await expect(toggleButton).toHaveAttribute("aria-label", "Show sidebar");
+    await expect(headerToggle).toBeVisible();
+    await expect(headerToggle).toHaveAttribute("aria-label", "Show sidebar");
 
-    // Restoring brings the sidebar back; main content is still functional, as
+    // Restoring brings the sidebar back; the header toggle unmounts and the
+    // in-sidebar << button is back. Main content is still functional, as
     // shown by navigation via the Documents "More" link.
-    await toggleButton.click();
-    await expect(toggleButton).toHaveAttribute("aria-label", "Hide sidebar");
+    await headerToggle.click();
     await expect
       .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
       .toBeGreaterThan(100);
+    await expect(headerToggle).toHaveCount(0);
+    await expect(hideButton).toBeVisible();
     expect(
       await page.evaluate(() => localStorage.getItem("hydra-sidebar-hidden")),
     ).toBe("0");

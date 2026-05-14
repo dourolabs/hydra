@@ -76,8 +76,37 @@ function renderHeader(opts: RenderOpts = {}) {
   );
 }
 
+type ChangeListener = (e: MediaQueryListEvent) => void;
+function mockMatchMedia(matches: boolean) {
+  const listeners: ChangeListener[] = [];
+  const mql = {
+    matches,
+    media: "",
+    onchange: null,
+    addEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") listeners.push(handler);
+    },
+    removeEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") {
+        const idx = listeners.indexOf(handler);
+        if (idx !== -1) listeners.splice(idx, 1);
+      }
+    },
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => true,
+  };
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: () => mql as unknown as MediaQueryList,
+  });
+}
+
 beforeEach(() => {
   activeSessionCountMock.mockReturnValue({ data: 0 });
+  // Default matchMedia stub: desktop. Mobile tests override via mockMatchMedia(true).
+  mockMatchMedia(false);
 });
 
 afterEach(() => {
@@ -87,6 +116,9 @@ afterEach(() => {
 
 describe("SiteHeader hamburger placement", () => {
   it("tags the hamburger's flex child (Tooltip wrapper) with hamburgerSlot for mobile reordering", () => {
+    // The hamburger is only rendered when on mobile (or when the sidebar is
+    // hidden). Use the mobile viewport so the toggle exists.
+    mockMatchMedia(true);
     renderHeader();
     const toggle = screen.getByTestId("site-header-toggle-sidebar");
     // The flex child of <header> is the Tooltip wrapper around the button,
@@ -102,17 +134,34 @@ describe("SiteHeader hamburger placement", () => {
   });
 });
 
-describe("SiteHeader sidebar toggle", () => {
-  it("calls onHide when sidebar is shown and the toggle is clicked", () => {
-    const onHide = vi.fn();
-    const onShow = vi.fn();
-    renderHeader({ hidden: false, onHide, onShow });
-    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
-    expect(onHide).toHaveBeenCalledTimes(1);
-    expect(onShow).not.toHaveBeenCalled();
+describe("SiteHeader hamburger conditional rendering", () => {
+  it("does NOT render the hamburger on desktop when sidebar is visible", () => {
+    mockMatchMedia(false);
+    renderHeader({ hidden: false });
+    expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
   });
 
+  it("renders the hamburger on desktop when sidebar is hidden", () => {
+    mockMatchMedia(false);
+    renderHeader({ hidden: true });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+  });
+
+  it("renders the hamburger on mobile regardless of hidden state", () => {
+    mockMatchMedia(true);
+    renderHeader({ hidden: false });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+    cleanup();
+    renderHeader({ hidden: true });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+  });
+});
+
+describe("SiteHeader sidebar toggle", () => {
   it("calls onShow when sidebar is hidden and the toggle is clicked", () => {
+    // When the sidebar is hidden, the toggle is rendered on desktop and is
+    // the "Show sidebar" button.
+    mockMatchMedia(false);
     const onHide = vi.fn();
     const onShow = vi.fn();
     renderHeader({ hidden: true, onHide, onShow });
@@ -121,7 +170,21 @@ describe("SiteHeader sidebar toggle", () => {
     expect(onHide).not.toHaveBeenCalled();
   });
 
+  it("calls onHide when on mobile and the toggle is clicked", () => {
+    // On mobile, the hamburger is always present; when the sidebar is open
+    // it acts as the hide control.
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    const onShow = vi.fn();
+    renderHeader({ hidden: false, onHide, onShow });
+    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+    expect(onShow).not.toHaveBeenCalled();
+  });
+
   it("uses the right aria-label depending on hidden state", () => {
+    // On mobile, the toggle is always present and reflects the current state.
+    mockMatchMedia(true);
     const { unmount } = renderHeader({ hidden: false });
     expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
       "Hide sidebar",
