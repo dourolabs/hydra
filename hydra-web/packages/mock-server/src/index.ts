@@ -21,6 +21,7 @@ import { createEventRoutes } from "./routes/events.js";
 import { createLabelRoutes } from "./routes/labels.js";
 import { createRelationRoutes } from "./routes/relations.js";
 import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
+import { createConversationRoutes } from "./routes/conversations.js";
 import { loadSeedData } from "./seed.js";
 
 const store = new Store();
@@ -123,6 +124,7 @@ app.route("", createMergeQueueRoutes());
 app.route("", createRelationRoutes(store));
 app.route("", createEventRoutes(store));
 app.route("", createSecretRoutes());
+app.route("", createConversationRoutes(store));
 
 export interface MockServerHandle {
   port: number;

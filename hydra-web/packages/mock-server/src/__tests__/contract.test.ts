@@ -299,6 +299,100 @@ describe("Sessions", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Conversations
+// ---------------------------------------------------------------------------
+describe("Conversations", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
+  it("seed conversation is reachable via get + events", async () => {
+    const conversation = await client.getConversation("c-seed00001");
+    expect(conversation.conversation_id).toBe("c-seed00001");
+    expect(conversation.title).toBe("Welcome to Hydra");
+    expect(conversation.status).toBe("active");
+
+    const events = await client.getConversationEvents("c-seed00001");
+    expect(events.length).toBeGreaterThanOrEqual(3);
+    expect(events[0].type).toBe("user_message");
+  });
+
+  it("list returns summaries with event_count and preview", async () => {
+    const list = await client.listConversations();
+    const seed = list.find((c) => c.conversation_id === "c-seed00001");
+    expect(seed).toBeDefined();
+    expect(seed!.event_count).toBeGreaterThan(0);
+    expect(seed!.last_event_preview).toBeTruthy();
+  });
+
+  it("round-trip: create → get → list → send → events → close → resume", async () => {
+    const created = await client.createConversation({ message: "Initial hello" });
+    expect(created.conversation_id).toMatch(/^c-/);
+    expect(created.status).toBe("active");
+    const cid = created.conversation_id;
+
+    const fetched = await client.getConversation(cid);
+    expect(fetched.conversation_id).toBe(cid);
+
+    const list = await client.listConversations();
+    expect(list.some((c) => c.conversation_id === cid)).toBe(true);
+
+    // sendMessage appends a user_message event
+    await client.sendMessage(cid, { content: "Follow-up" });
+    const events = await client.getConversationEvents(cid);
+    expect(events.length).toBe(2);
+    expect(events[0]).toMatchObject({ type: "user_message", content: "Initial hello" });
+    expect(events[1]).toMatchObject({ type: "user_message", content: "Follow-up" });
+
+    // close sets status to closed and appends a closed event
+    await client.closeConversation(cid);
+    const afterClose = await client.getConversation(cid);
+    expect(afterClose.status).toBe("closed");
+    const closedEvents = await client.getConversationEvents(cid);
+    expect(closedEvents[closedEvents.length - 1].type).toBe("closed");
+
+    // resume flips back to active
+    const resumed = await client.resumeConversation(cid);
+    expect(resumed.status).toBe("active");
+    expect(resumed.conversation_id).toBe(cid);
+  });
+
+  it("filters list by status and q", async () => {
+    const active = await client.listConversations({ status: "active" });
+    expect(active.every((c) => c.status === "active")).toBe(true);
+    expect(active.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
+
+    const closed = await client.listConversations({ status: "closed" });
+    expect(closed.every((c) => c.status === "closed")).toBe(true);
+
+    const matches = await client.listConversations({ q: "welcome" });
+    expect(matches.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
+  });
+
+  it("GET on unknown id returns 404", async () => {
+    await expect(client.getConversation("c-does-not-exist")).rejects.toBeInstanceOf(ApiError);
+    await expect(client.getConversationEvents("c-does-not-exist")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("dev/reset restores seed conversation and clears transient ones", async () => {
+    const created = await client.createConversation({ message: "transient" });
+    const cid = created.conversation_id;
+    expect((await client.getConversation(cid)).conversation_id).toBe(cid);
+
+    await resetServer();
+
+    // Seed is back
+    const seed = await client.getConversation("c-seed00001");
+    expect(seed.conversation_id).toBe("c-seed00001");
+    const seedEvents = await client.getConversationEvents("c-seed00001");
+    expect(seedEvents.length).toBeGreaterThanOrEqual(3);
+
+    // Transient one is gone
+    await expect(client.getConversation(cid)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Patches
 // ---------------------------------------------------------------------------
 describe("Patches", () => {
@@ -997,5 +1091,11 @@ describe("Seed data", () => {
   it("seed agents are loaded", async () => {
     const list = await client.listAgents();
     expect(list.agents.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("seed conversations are loaded", async () => {
+    const list = await client.listConversations();
+    expect(list.length).toBeGreaterThanOrEqual(1);
+    expect(list.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
   });
 });

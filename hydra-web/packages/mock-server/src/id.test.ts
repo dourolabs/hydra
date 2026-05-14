@@ -22,6 +22,11 @@ describe("generateId", () => {
     expect(id).toMatch(/^d-[a-f0-9]{9}$/);
   });
 
+  it("generates conversation IDs with c- prefix", () => {
+    const id = generateId("conversation");
+    expect(id).toMatch(/^c-[a-f0-9]{9}$/);
+  });
+
   it("generates unique IDs", () => {
     const ids = new Set<string>();
     for (let i = 0; i < 100; i++) {
