@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Panel, Button } from "@hydra/ui";
+import { Button } from "@hydra/ui";
 import type { RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -45,75 +45,71 @@ export function RepositoriesSection() {
         />
       )}
 
-      <Panel
-        header={
-          <div className={sharedStyles.panelHeaderRow}>
-            <span className={sharedStyles.sectionTitle}>Repositories</span>
-            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-              Add Repository
-            </Button>
-          </div>
-        }
-      >
-        {repositories && repositories.length === 0 && (
-          <EmptyState message="No repositories configured." />
-        )}
-        {repositories && repositories.length > 0 && (
-          <div className={sharedStyles.itemList}>
-            {repositories.map((repo) => {
-              const pw = repo.repository.patch_workflow;
-              const reviewerCount = pw?.review_requests?.length ?? 0;
-              const hasMerge = !!pw?.merge_request?.assignee;
-              const parts: string[] = [];
-              if (reviewerCount > 0) {
-                parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
-              }
-              if (hasMerge) {
-                parts.push("merge");
-              }
-              const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
+      <div className={sharedStyles.sectionHeader}>
+        <span className={sharedStyles.sectionTitle}>Repositories</span>
+        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+          Add Repository
+        </Button>
+      </div>
 
-              return (
-                <ExpandableRow
-                  key={repo.name}
-                  name={repo.name}
-                  onEdit={() => setEditTarget(repo)}
-                  onDelete={() => setDeleteTarget(repo)}
-                >
-                  <div className={sharedStyles.detailRow}>
-                    <span className={sharedStyles.detailLabel}>Remote URL</span>
-                    <span className={sharedStyles.detailValueTerminal}>
-                      {repo.repository.remote_url}
-                    </span>
-                  </div>
-                  <div className={sharedStyles.detailRow}>
-                    <span className={sharedStyles.detailLabel}>Default Branch</span>
-                    <span className={sharedStyles.detailValue}>
-                      {repo.repository.default_branch ?? (
-                        <span className={sharedStyles.dimText}>—</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className={sharedStyles.detailRow}>
-                    <span className={sharedStyles.detailLabel}>Default Image</span>
-                    <span className={sharedStyles.detailValueTerminal}>
-                      {repo.repository.default_image ?? (
-                        <span className={sharedStyles.dimText}>—</span>
-                      )}
-                    </span>
-                  </div>
-                  <div className={sharedStyles.detailRow}>
-                    <span className={sharedStyles.detailLabel}>Patch Workflow</span>
-                    <span className={sharedStyles.detailValue}>
-                      {workflowSummary ?? <span className={sharedStyles.dimText}>—</span>}
-                    </span>
-                  </div>
-                </ExpandableRow>
-              );
-            })}
-          </div>
-        )}
-      </Panel>
+      {repositories && repositories.length === 0 && (
+        <EmptyState message="No repositories configured." />
+      )}
+      {repositories && repositories.length > 0 && (
+        <div className={sharedStyles.itemList}>
+          {repositories.map((repo) => {
+            const pw = repo.repository.patch_workflow;
+            const reviewerCount = pw?.review_requests?.length ?? 0;
+            const hasMerge = !!pw?.merge_request?.assignee;
+            const parts: string[] = [];
+            if (reviewerCount > 0) {
+              parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
+            }
+            if (hasMerge) {
+              parts.push("merge");
+            }
+            const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
+
+            return (
+              <ExpandableRow
+                key={repo.name}
+                name={repo.name}
+                onEdit={() => setEditTarget(repo)}
+                onDelete={() => setDeleteTarget(repo)}
+              >
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Remote URL</span>
+                  <span className={sharedStyles.detailValueTerminal}>
+                    {repo.repository.remote_url}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Default Branch</span>
+                  <span className={sharedStyles.detailValue}>
+                    {repo.repository.default_branch ?? (
+                      <span className={sharedStyles.dimText}>—</span>
+                    )}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Default Image</span>
+                  <span className={sharedStyles.detailValueTerminal}>
+                    {repo.repository.default_image ?? (
+                      <span className={sharedStyles.dimText}>—</span>
+                    )}
+                  </span>
+                </div>
+                <div className={sharedStyles.detailRow}>
+                  <span className={sharedStyles.detailLabel}>Patch Workflow</span>
+                  <span className={sharedStyles.detailValue}>
+                    {workflowSummary ?? <span className={sharedStyles.dimText}>—</span>}
+                  </span>
+                </div>
+              </ExpandableRow>
+            );
+          })}
+        </div>
+      )}
 
       <RepositoryCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
 

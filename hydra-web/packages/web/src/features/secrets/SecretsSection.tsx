@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Button, Panel, Spinner } from "@hydra/ui";
+import { Button, Spinner } from "@hydra/ui";
 import { useUsername } from "../auth/useUsername";
 import { useSecrets } from "./useSecrets";
 import { SecretRow } from "./SecretRow";
 import { AddSecretForm } from "./AddSecretForm";
+import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./SecretsSection.module.css";
 
 const KNOWN_SECRETS = [
@@ -27,7 +28,7 @@ export function SecretsSection() {
   const [adding, setAdding] = useState(false);
 
   return (
-    <div>
+    <>
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
@@ -37,16 +38,13 @@ export function SecretsSection() {
       {error && <p className={styles.error}>Failed to load secrets: {(error as Error).message}</p>}
 
       {data && (
-        <Panel
-          header={
-            <div className={styles.panelHeaderRow}>
-              <span className={styles.sectionTitle}>Secrets</span>
-              <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-                Add Secret
-              </Button>
-            </div>
-          }
-        >
+        <>
+          <div className={sharedStyles.sectionHeader}>
+            <span className={sharedStyles.sectionTitle}>Secrets</span>
+            <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+              Add Secret
+            </Button>
+          </div>
           <div className={styles.secretList}>
             {KNOWN_SECRETS.map((secret) => (
               <SecretRow
@@ -74,8 +72,8 @@ export function SecretsSection() {
             adding={adding}
             onClose={() => setAdding(false)}
           />
-        </Panel>
+        </>
       )}
-    </div>
+    </>
   );
 }
