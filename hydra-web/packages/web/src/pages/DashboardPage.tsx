@@ -3,20 +3,17 @@ import { useSearchParams } from "react-router-dom";
 import type { IssueStatus, PatchStatus } from "@hydra/api";
 import {
   usePaginatedIssues,
-  useIssueCount,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
 import { usePaginatedPatches } from "../features/dashboard/usePaginatedPatches";
 import { usePaginatedDocuments } from "../features/dashboard/usePaginatedDocuments";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import { FilterBar } from "../features/dashboard/FilterBar";
 import type { WorkItem } from "../features/dashboard/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
-import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -93,8 +90,6 @@ export function DashboardPage() {
       return savedFilters.filterRootId;
     return "your-issues";
   });
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedIssueStatus, setSelectedIssueStatus] = useState<IssueStatus | null>(
     savedFilters?.selectedIssueStatus ?? null,
   );
@@ -106,6 +101,14 @@ export function DashboardPage() {
     if (labelParam) return labelParam;
     return savedFilters?.selectedLabelId ?? null;
   });
+
+  // Sync filterRootId from the URL so the global app sidebar (which only
+  // updates `?selected=…`) can switch tabs from within the dashboard.
+  useEffect(() => {
+    if (selectedParam && VALID_FILTERS.includes(selectedParam)) {
+      setFilterRootId((current) => (current === selectedParam ? current : selectedParam));
+    }
+  }, [selectedParam]);
 
   // Persist filter state to localStorage
   useEffect(() => {
@@ -218,15 +221,6 @@ export function DashboardPage() {
         : isFetchingNextDocuments
       : isFetchingNextIssues;
 
-  // Badge count query for "Assigned to You" — only open status
-  const assignedCountFilters = useMemo<IssueFilters>(() => {
-    if (!username) return {};
-    return { assignee: username, status: "open" };
-  }, [username]);
-
-  const assignedEnabled = !!username;
-  const { data: assignedCount = 0 } = useIssueCount(assignedCountFilters, assignedEnabled);
-
   const { data: agents } = useAgents();
   const assignees = useMemo(() => {
     const set = new Set<string>();
@@ -324,42 +318,6 @@ export function DashboardPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleFilterChange = useCallback(
-    (rootId: string | null) => {
-      setFilterRootId(rootId);
-      // Reset filters when switching tabs
-      setSelectedIssueStatus(null);
-      setSelectedPatchStatus(null);
-      setSelectedLabelId(null);
-      // Clear search so the selected nav item takes effect
-      setSearchValue("");
-      setSearchQuery("");
-      clearTimeout(debounceRef.current);
-      setSearchParams(
-        (prev) => {
-          prev.set("selected", rootId ?? "your-issues");
-          return prev;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
-  const handleToggleSidebar = useCallback(() => {
-    const next = !sidebarCollapsed;
-    writeCollapsed(next);
-    setSidebarCollapsed(next);
-  }, [sidebarCollapsed]);
-
-  const handleToggleDrawer = useCallback(() => {
-    setDrawerOpen((v) => !v);
-  }, []);
-
-  const handleDrawerClose = useCallback(() => {
-    setDrawerOpen(false);
-  }, []);
-
   const fetchNextPage = useCallback(() => {
     if (isSearching) {
       if (hasNextIssues && !isFetchingNextIssues) fetchNextIssues();
@@ -396,53 +354,40 @@ export function DashboardPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.dashboardRow}>
-        <IssueFilterSidebar
-          activeFilter={isSearching ? null : filterRootId}
-          onFilterChange={handleFilterChange}
-          collapsed={sidebarCollapsed}
-          drawerOpen={drawerOpen}
-          onDrawerClose={handleDrawerClose}
-          assignedCount={assignedCount}
-        />
-        <HeterogeneousItemList
-          items={allWorkItems}
-          sessionsByIssue={sessionsByIssue}
-          childStatusMap={childStatusMap}
-          isActiveMap={isActiveMap}
-          isLoading={isLoading}
-          treeLoading={pageTreeLoading}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={handleToggleSidebar}
-          onToggleDrawer={handleToggleDrawer}
-          filterRootId={filterRootId}
-          searchValue={searchValue}
-          onSearchChange={handleSearchChange}
-          inboxLabelId={isInboxFilter && inboxLabel ? inboxLabel.label_id : undefined}
-          hasNextPage={hasNextPage ?? false}
-          isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={handleLoadMore}
-          filterBar={
-            !isSearching ? (
-              <FilterBar
-                tabKind={
-                  filterRootId === "patches"
-                    ? "patches"
-                    : filterRootId === "documents"
-                      ? "documents"
-                      : "issues"
-                }
-                selectedIssueStatus={selectedIssueStatus}
-                onIssueStatusChange={setSelectedIssueStatus}
-                selectedPatchStatus={selectedPatchStatus}
-                onPatchStatusChange={setSelectedPatchStatus}
-                selectedLabelId={selectedLabelId}
-                onLabelChange={setSelectedLabelId}
-              />
-            ) : undefined
-          }
-        />
-      </div>
+      <HeterogeneousItemList
+        items={allWorkItems}
+        sessionsByIssue={sessionsByIssue}
+        childStatusMap={childStatusMap}
+        isActiveMap={isActiveMap}
+        isLoading={isLoading}
+        treeLoading={pageTreeLoading}
+        filterRootId={filterRootId}
+        searchValue={searchValue}
+        onSearchChange={handleSearchChange}
+        inboxLabelId={isInboxFilter && inboxLabel ? inboxLabel.label_id : undefined}
+        hasNextPage={hasNextPage ?? false}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={handleLoadMore}
+        filterBar={
+          !isSearching ? (
+            <FilterBar
+              tabKind={
+                filterRootId === "patches"
+                  ? "patches"
+                  : filterRootId === "documents"
+                    ? "documents"
+                    : "issues"
+              }
+              selectedIssueStatus={selectedIssueStatus}
+              onIssueStatusChange={setSelectedIssueStatus}
+              selectedPatchStatus={selectedPatchStatus}
+              onPatchStatusChange={setSelectedPatchStatus}
+              selectedLabelId={selectedLabelId}
+              onLabelChange={setSelectedLabelId}
+            />
+          ) : undefined
+        }
+      />
       <button
         type="button"
         className={styles.createButton}

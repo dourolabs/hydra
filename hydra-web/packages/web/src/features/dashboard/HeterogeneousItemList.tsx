@@ -13,9 +13,6 @@ interface HeterogeneousItemListProps {
   isActiveMap: Map<string, boolean>;
   isLoading: boolean;
   treeLoading?: boolean;
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-  onToggleDrawer: () => void;
   filterRootId: string | null;
   searchValue: string;
   onSearchChange: (value: string) => void;
@@ -37,9 +34,6 @@ export function HeterogeneousItemList({
   isActiveMap,
   isLoading,
   treeLoading,
-  sidebarCollapsed,
-  onToggleSidebar,
-  onToggleDrawer,
   filterRootId,
   searchValue,
   onSearchChange,
@@ -54,51 +48,13 @@ export function HeterogeneousItemList({
     [items],
   );
 
-  const hamburgerButton = (
-    <button
-      type="button"
-      className={styles.drawerToggle}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggleDrawer();
-      }}
-      aria-label="Open issue menu"
-    >
-      <svg
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        width="16"
-        height="16"
-      >
-        <path
-          fillRule="evenodd"
-          d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-          clipRule="evenodd"
-        />
-      </svg>
-    </button>
-  );
-
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <button
-          type="button"
-          className={styles.sidebarToggle}
-          onClick={onToggleSidebar}
-          aria-label={
-            sidebarCollapsed
-              ? "Expand filter sidebar"
-              : "Collapse filter sidebar"
-          }
-        >
-          {sidebarCollapsed ? "\u25B6" : "\u25C0"}
-        </button>
         <SearchBox
           value={searchValue}
           onChange={onSearchChange}
           placeholder="Search..."
-          leftElement={hamburgerButton}
         />
       </div>
 
