@@ -17,6 +17,7 @@ import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useLabels } from "../features/labels/useLabels";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { SSEConnectionState } from "../hooks/useSSE";
@@ -258,9 +259,10 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
     },
   });
 
+  const { open: openIssueCreate } = useIssueCreateModal();
   const handleNewIssue = useCallback(() => {
-    navigate("/?create-issue=1");
-  }, [navigate]);
+    openIssueCreate();
+  }, [openIssueCreate]);
 
   // On mobile, auto-close the drawer when the user taps a navigation link
   // (anchor). Section toggle buttons live inside the same <nav> but are

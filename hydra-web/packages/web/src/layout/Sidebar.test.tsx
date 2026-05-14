@@ -62,6 +62,15 @@ vi.mock("./SidebarDocumentTree", () => ({
   SidebarDocumentTree: () => <div data-testid="sidebar-doc-tree-mock" />,
 }));
 
+const openIssueCreateModalMock = vi.fn();
+vi.mock("../features/dashboard/useIssueCreateModal", () => ({
+  useIssueCreateModal: () => ({
+    isOpen: false,
+    open: openIssueCreateModalMock,
+    close: vi.fn(),
+  }),
+}));
+
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 
@@ -167,6 +176,7 @@ beforeEach(() => {
   labelsMock.mockReturnValue({ data: [] });
   getVersionMock.mockResolvedValue({ version: "1.2.3" });
   createConversationMock.mockReset();
+  openIssueCreateModalMock.mockReset();
   // Default matchMedia stub: desktop (no media query matches). Individual
   // tests can override via mockMatchMedia(true) to simulate mobile.
   mockMatchMedia(false);
@@ -180,6 +190,7 @@ afterEach(() => {
   labelsMock.mockReset();
   getVersionMock.mockReset();
   createConversationMock.mockReset();
+  openIssueCreateModalMock.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -703,20 +714,18 @@ describe("Sidebar + New Issue button", () => {
     expect(newIssueButton.textContent).toContain("+ New Issue");
   });
 
-  it("navigates to /?create-issue=1 on click from a non-dashboard page", () => {
+  it("opens the issue create modal via context without navigating from a non-dashboard page", () => {
     renderSidebar({ initialEntry: "/documents/foo" });
     fireEvent.click(screen.getByTestId("sidebar-issues-new"));
-    expect(screen.getByTestId("location").textContent).toBe(
-      "/?create-issue=1",
-    );
+    expect(openIssueCreateModalMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("location").textContent).toBe("/documents/foo");
   });
 
-  it("navigates to /?create-issue=1 on click from the dashboard", () => {
+  it("opens the issue create modal via context without navigating from the dashboard", () => {
     renderSidebar({ initialEntry: "/" });
     fireEvent.click(screen.getByTestId("sidebar-issues-new"));
-    expect(screen.getByTestId("location").textContent).toBe(
-      "/?create-issue=1",
-    );
+    expect(openIssueCreateModalMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("location").textContent).toBe("/");
   });
 });
 
