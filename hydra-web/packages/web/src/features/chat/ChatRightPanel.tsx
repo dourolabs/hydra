@@ -21,6 +21,7 @@ export function ChatRightPanel({ conversation }: ChatRightPanelProps) {
     <div className={styles.wrapper}>
       <Panel
         className={styles.panel}
+        fillHeight
         header={
           <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
         }

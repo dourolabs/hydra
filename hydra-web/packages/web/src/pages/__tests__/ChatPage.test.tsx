@@ -143,6 +143,10 @@ vi.mock("../../utils/time", () => ({
   formatTimestamp: (s: string) => s,
 }));
 
+vi.mock("../../layout/useBreadcrumbs", () => ({
+  useBreadcrumbs: () => {},
+}));
+
 // --- Import after mocks ---
 const { ChatPage } = await import("../ChatPage");
 
