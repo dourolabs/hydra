@@ -34,7 +34,7 @@ export function PatchDetailPage() {
     breadcrumbItems = [{ label: "Dashboard", to: "/" }];
   }
 
-  useBreadcrumbs(breadcrumbItems, `Patch ${patchId}`);
+  useBreadcrumbs(breadcrumbItems, record?.patch.title || `Patch ${patchId}`);
 
   return (
     <div className={styles.page}>

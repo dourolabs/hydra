@@ -24,7 +24,7 @@ test.describe("Mobile Navigation @mobile:nav", () => {
   }) => {
     await page.goto("/issues/i-seed00001");
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00001")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("Platform v2.0 Migration")
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Platform v2.0 Migration" })
