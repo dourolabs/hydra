@@ -60,6 +60,7 @@ function renderSidebar(
   overrides: {
     hidden?: boolean;
     onHide?: () => void;
+    onOpenSearch?: () => void;
     initialEntry?: string;
   } = {},
 ) {
@@ -73,6 +74,7 @@ function renderSidebar(
           connectionState="connected"
           hidden={overrides.hidden ?? false}
           onHide={overrides.onHide ?? (() => {})}
+          onOpenSearch={overrides.onOpenSearch ?? (() => {})}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -199,13 +201,19 @@ describe("Sidebar section collapse", () => {
 });
 
 describe("Sidebar static structure", () => {
-  it("renders sessions/search header slots as no-op buttons", () => {
+  it("renders sessions header slot as a no-op button", () => {
     renderSidebar();
     expect(screen.getByTestId("sidebar-header-sessions").tagName).toBe("BUTTON");
-    expect(screen.getByTestId("sidebar-header-search").tagName).toBe("BUTTON");
-    // Clicking them should not crash.
+    // Clicking should not crash.
     fireEvent.click(screen.getByTestId("sidebar-header-sessions"));
+  });
+
+  it("invokes onOpenSearch when the search button is clicked", () => {
+    const onOpenSearch = vi.fn();
+    renderSidebar({ onOpenSearch });
+    expect(screen.getByTestId("sidebar-header-search").tagName).toBe("BUTTON");
     fireEvent.click(screen.getByTestId("sidebar-header-search"));
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 
   it("invokes onHide when the hide button is clicked", () => {

@@ -1,0 +1,138 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  z-index: 1000;
+  animation: fadeIn var(--transition-fast);
+}
+
+.modal {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  width: min(640px, calc(100vw - 2rem));
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideIn var(--transition-normal);
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.inputIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-family: inherit;
+  padding: 0;
+}
+
+.input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.results {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.hint {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.group {
+  padding: var(--space-2) 0;
+}
+
+.groupHeading {
+  padding: 0 var(--space-4) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.row:hover:not(:disabled) {
+  background-color: var(--color-bg-tertiary);
+}
+
+.rowSelected {
+  background-color: var(--color-bg-tertiary);
+}
+
+.rowDisabled {
+  cursor: default;
+  color: var(--color-text-tertiary);
+}
+
+.rowLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

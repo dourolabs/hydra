@@ -1,7 +1,10 @@
+import { useCallback, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { Spinner, Tooltip } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
+import { GlobalSearchModal } from "../features/search/GlobalSearchModal";
+import { useGlobalSearchShortcut } from "../features/search/useGlobalSearchShortcut";
 import { Sidebar } from "./Sidebar";
 import { useSidebarHidden } from "./useSidebarHidden";
 import styles from "./AppLayout.module.css";
@@ -10,6 +13,13 @@ export function AppLayout() {
   const { user, loading } = useAuth();
   const sseState = useSSE();
   const { hidden, hide, show } = useSidebarHidden();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const toggleSearch = useCallback(() => setSearchOpen((prev) => !prev), []);
+
+  useGlobalSearchShortcut(toggleSearch);
 
   if (loading) {
     return (
@@ -25,7 +35,12 @@ export function AppLayout() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar connectionState={sseState} hidden={hidden} onHide={hide} />
+      <Sidebar
+        connectionState={sseState}
+        hidden={hidden}
+        onHide={hide}
+        onOpenSearch={openSearch}
+      />
       {hidden && (
         <Tooltip content="Show sidebar" position="right">
           <button
@@ -48,6 +63,7 @@ export function AppLayout() {
       <main className={styles.main}>
         <Outlet />
       </main>
+      <GlobalSearchModal open={searchOpen} onClose={closeSearch} />
     </div>
   );
 }
