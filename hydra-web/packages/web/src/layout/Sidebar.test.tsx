@@ -249,7 +249,7 @@ describe("Sidebar static structure", () => {
       "/?selected=patches",
     );
     expect(screen.getByTestId("sidebar-agents").getAttribute("href")).toBe(
-      "/settings",
+      "/agents",
     );
   });
 

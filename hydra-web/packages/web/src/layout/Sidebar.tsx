@@ -367,7 +367,7 @@ export function Sidebar({
         </Link>
 
         <NavLink
-          to="/settings"
+          to="/agents"
           className={navItemClass}
           data-testid="sidebar-agents"
         >
