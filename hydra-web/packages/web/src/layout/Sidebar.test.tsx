@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -48,6 +48,13 @@ vi.mock("../features/labels/useLabels", () => ({
 
 vi.mock("../features/sessions/useActiveSessionCount", () => ({
   useActiveSessionCount: () => activeSessionCountMock(),
+}));
+
+const getVersionMock = vi.fn();
+vi.mock("../api/client", () => ({
+  apiClient: {
+    getVersion: (...args: unknown[]) => getVersionMock(...args),
+  },
 }));
 
 vi.mock("./Sidebar.module.css", () => ({
@@ -132,6 +139,7 @@ beforeEach(() => {
   issueCountMock.mockReturnValue({ data: 0 });
   labelsMock.mockReturnValue({ data: [] });
   activeSessionCountMock.mockReturnValue({ data: 0 });
+  getVersionMock.mockResolvedValue({ version: "1.2.3" });
 });
 
 afterEach(() => {
@@ -141,6 +149,7 @@ afterEach(() => {
   issueCountMock.mockReset();
   labelsMock.mockReset();
   activeSessionCountMock.mockReset();
+  getVersionMock.mockReset();
 });
 
 describe("Sidebar section collapse", () => {
@@ -608,5 +617,34 @@ describe("Sidebar Chats section", () => {
     expect(screen.getByTestId("sidebar-chat-row-c-empty").textContent).toBe(
       "Untitled conversation",
     );
+  });
+});
+
+describe("Sidebar version badge", () => {
+  it("renders the version badge once apiClient.getVersion resolves", async () => {
+    getVersionMock.mockResolvedValue({ version: "9.9.9" });
+    renderSidebar();
+    const badge = await screen.findByTestId("sidebar-version");
+    expect(badge.textContent).toBe("9.9.9");
+  });
+
+  it("renders nothing when apiClient.getVersion rejects", async () => {
+    getVersionMock.mockRejectedValue(new Error("boom"));
+    renderSidebar();
+    await waitFor(() => expect(getVersionMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("sidebar-version")).toBeNull();
+  });
+
+  it("does not render the badge before the version has loaded", () => {
+    let resolve: ((value: { version: string }) => void) | undefined;
+    getVersionMock.mockReturnValue(
+      new Promise<{ version: string }>((r) => {
+        resolve = r;
+      }),
+    );
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-version")).toBeNull();
+    // Cleanup: resolve the pending promise so React state updates don't leak.
+    resolve?.({ version: "x" });
   });
 });

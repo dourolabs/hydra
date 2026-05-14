@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
-import type { LabelRecord } from "@hydra/api";
+import type { LabelRecord, VersionResponse } from "@hydra/api";
 import { Avatar, Tooltip } from "@hydra/ui";
 import type { ConversationSummary } from "@hydra/api";
+import { apiClient } from "../api/client";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
@@ -228,6 +229,16 @@ export function Sidebar({
 
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
 
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    apiClient
+      .getVersion()
+      .then((res: VersionResponse) => setVersion(res.version))
+      .catch(() => {
+        /* silently ignore -- badge stays hidden */
+      });
+  }, []);
+
   const { data: conversations } = useConversations();
   const recentChats = useMemo<ConversationSummary[]>(() => {
     if (!conversations) return [];
@@ -432,6 +443,12 @@ export function Sidebar({
                 </svg>
               </button>
             </Tooltip>
+          </div>
+        )}
+
+        {version && (
+          <div className={styles.version} data-testid="sidebar-version">
+            {version}
           </div>
         )}
       </div>

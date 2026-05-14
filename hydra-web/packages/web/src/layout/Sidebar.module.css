@@ -463,6 +463,12 @@
   height: 16px;
 }
 
+.version {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
 @media (max-width: 768px) {
   .sidebar {
     width: 100%;
