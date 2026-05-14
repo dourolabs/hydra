@@ -24,7 +24,10 @@ use crate::git::{
     stage_all_changes, workdir_diff,
 };
 use crate::worker::commands::WorkerCommands;
-use crate::{client::HydraClientInterface, command::output::CommandContext};
+use crate::{
+    client::{ConflictError, HydraClientInterface},
+    command::output::CommandContext,
+};
 
 /// Per-phase timeout for the pre-agent document sync.
 const SYNC_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(60);
@@ -541,9 +544,11 @@ async fn submit_session_status(
 /// Retry loop for session status submission.
 ///
 /// Each attempt is bounded by `attempt_timeout`. On timeout or any other error
-/// (except an HTTP 409 Conflict, which is treated as success), the attempt is
-/// retried with exponential backoff up to `max_attempts` times. The 409 case
-/// covers an already-submitted status from a prior worker invocation.
+/// (except a [`ConflictError`], which is treated as success), the attempt is
+/// retried with exponential backoff up to `max_attempts` times. The conflict
+/// case covers an already-submitted status from a prior worker invocation and
+/// is detected structurally via `downcast_ref` rather than by string-matching
+/// the error display.
 async fn submit_session_status_with_retry<F, Fut>(
     job: &SessionId,
     last_message_length: usize,
@@ -568,7 +573,7 @@ where
                 ));
                 return Ok(());
             }
-            Ok(Err(err)) if err.to_string().contains("409 Conflict") => {
+            Ok(Err(err)) if err.downcast_ref::<ConflictError>().is_some() => {
                 log_status(format!(
                     "Status for session '{job}' was already set (conflict); ignoring."
                 ));
@@ -1413,11 +1418,16 @@ mod tests {
 
         let result = submit_session_status_with_retry(&job, 0, Duration::from_secs(30), 3, || {
             attempts.fetch_add(1, Ordering::SeqCst);
-            async { Err(anyhow!("hydra-server responded with 409 Conflict")) }
+            async {
+                Err(ConflictError {
+                    message: "already submitted".into(),
+                }
+                .into())
+            }
         })
         .await;
 
-        assert!(result.is_ok(), "409 Conflict must be treated as success");
+        assert!(result.is_ok(), "ConflictError must be treated as success");
         assert_eq!(
             attempts.load(Ordering::SeqCst),
             1,
