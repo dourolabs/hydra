@@ -63,3 +63,9 @@
   min-width: 16px;
   pointer-events: none;
 }
+
+@media (max-width: 768px) {
+  .hamburgerSlot {
+    order: 999;
+  }
+}

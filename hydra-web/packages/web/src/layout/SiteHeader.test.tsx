@@ -81,6 +81,16 @@ afterEach(() => {
   activeSessionCountMock.mockReset();
 });
 
+describe("SiteHeader hamburger placement", () => {
+  it("tags the hamburger button with the hamburgerSlot class for mobile reordering", () => {
+    renderHeader();
+    const toggle = screen.getByTestId("site-header-toggle-sidebar");
+    // CSS module classnames are proxied to their keys in tests, so the rendered
+    // className includes the literal "hamburgerSlot" token.
+    expect(toggle.className).toContain("hamburgerSlot");
+  });
+});
+
 describe("SiteHeader sidebar toggle", () => {
   it("calls onHide when sidebar is shown and the toggle is clicked", () => {
     const onHide = vi.fn();

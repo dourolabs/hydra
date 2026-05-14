@@ -64,7 +64,7 @@ export function SiteHeader({
       <Tooltip content={toggleLabel} position="bottom">
         <button
           type="button"
-          className={styles.iconSlot}
+          className={`${styles.iconSlot} ${styles.hamburgerSlot}`}
           onClick={onToggleSidebar}
           aria-label={toggleLabel}
           data-testid="site-header-toggle-sidebar"
