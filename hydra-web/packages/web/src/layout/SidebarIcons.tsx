@@ -81,6 +81,23 @@ export function AgentsIcon() {
   );
 }
 
+export function DoubleChevronLeftIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="11 4 5 10 11 16" />
+      <polyline points="17 4 11 10 17 16" />
+    </svg>
+  );
+}
+
 export function ContextIcon() {
   return (
     <svg

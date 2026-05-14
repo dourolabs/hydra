@@ -76,8 +76,37 @@ function renderHeader(opts: RenderOpts = {}) {
   );
 }
 
+type ChangeListener = (e: MediaQueryListEvent) => void;
+function mockMatchMedia(matches: boolean) {
+  const listeners: ChangeListener[] = [];
+  const mql = {
+    matches,
+    media: "",
+    onchange: null,
+    addEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") listeners.push(handler);
+    },
+    removeEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") {
+        const idx = listeners.indexOf(handler);
+        if (idx !== -1) listeners.splice(idx, 1);
+      }
+    },
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => true,
+  };
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: () => mql as unknown as MediaQueryList,
+  });
+}
+
 beforeEach(() => {
   activeSessionCountMock.mockReturnValue({ data: 0 });
+  // Default to desktop. Individual tests can override via mockMatchMedia(true).
+  mockMatchMedia(false);
 });
 
 afterEach(() => {
@@ -85,9 +114,36 @@ afterEach(() => {
   activeSessionCountMock.mockReset();
 });
 
+describe("SiteHeader hamburger visibility", () => {
+  it("does NOT render the hamburger on desktop when sidebar is visible", () => {
+    mockMatchMedia(false);
+    renderHeader({ hidden: false });
+    expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
+  });
+
+  it("renders the hamburger on desktop when sidebar is hidden", () => {
+    mockMatchMedia(false);
+    renderHeader({ hidden: true });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+  });
+
+  it("renders the hamburger on mobile when sidebar is visible", () => {
+    mockMatchMedia(true);
+    renderHeader({ hidden: false });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+  });
+
+  it("renders the hamburger on mobile when sidebar is hidden", () => {
+    mockMatchMedia(true);
+    renderHeader({ hidden: true });
+    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
+  });
+});
+
 describe("SiteHeader hamburger placement", () => {
   it("tags the hamburger's flex child (Tooltip wrapper) with hamburgerSlot for mobile reordering", () => {
-    renderHeader();
+    mockMatchMedia(true);
+    renderHeader({ hidden: false });
     const toggle = screen.getByTestId("site-header-toggle-sidebar");
     // The flex child of <header> is the Tooltip wrapper around the button,
     // not the button itself. The reordering class must live on that wrapper
@@ -103,16 +159,8 @@ describe("SiteHeader hamburger placement", () => {
 });
 
 describe("SiteHeader sidebar toggle", () => {
-  it("calls onHide when sidebar is shown and the toggle is clicked", () => {
-    const onHide = vi.fn();
-    const onShow = vi.fn();
-    renderHeader({ hidden: false, onHide, onShow });
-    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
-    expect(onHide).toHaveBeenCalledTimes(1);
-    expect(onShow).not.toHaveBeenCalled();
-  });
-
   it("calls onShow when sidebar is hidden and the toggle is clicked", () => {
+    mockMatchMedia(false);
     const onHide = vi.fn();
     const onShow = vi.fn();
     renderHeader({ hidden: true, onHide, onShow });
@@ -121,12 +169,26 @@ describe("SiteHeader sidebar toggle", () => {
     expect(onHide).not.toHaveBeenCalled();
   });
 
+  it("calls onHide on mobile when sidebar is visible and the toggle is clicked", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    const onShow = vi.fn();
+    renderHeader({ hidden: false, onHide, onShow });
+    fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+    expect(onShow).not.toHaveBeenCalled();
+  });
+
   it("uses the right aria-label depending on hidden state", () => {
+    // hidden=false rendered on mobile (hamburger is shown there)
+    mockMatchMedia(true);
     const { unmount } = renderHeader({ hidden: false });
     expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
       "Hide sidebar",
     );
     unmount();
+    // hidden=true on desktop also renders the hamburger
+    mockMatchMedia(false);
     renderHeader({ hidden: true });
     expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
       "Show sidebar",

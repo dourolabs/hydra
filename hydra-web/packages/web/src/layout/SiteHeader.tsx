@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
 import { Tooltip } from "@hydra/ui";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
 import styles from "./SiteHeader.module.css";
+
+const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 interface SiteHeaderProps {
   hidden: boolean;
@@ -51,22 +54,26 @@ function SessionsIcon() {
 export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderProps) {
   const { items, current } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
+  const showHamburger = isMobile || hidden;
 
   return (
     <header className={styles.siteHeader} data-testid="site-header">
-      <Tooltip content={toggleLabel} position="right" className={styles.hamburgerSlot}>
-        <button
-          type="button"
-          className={styles.iconSlot}
-          onClick={onToggleSidebar}
-          aria-label={toggleLabel}
-          data-testid="site-header-toggle-sidebar"
-        >
-          <HamburgerIcon />
-        </button>
-      </Tooltip>
+      {showHamburger && (
+        <Tooltip content={toggleLabel} position="right" className={styles.hamburgerSlot}>
+          <button
+            type="button"
+            className={styles.iconSlot}
+            onClick={onToggleSidebar}
+            aria-label={toggleLabel}
+            data-testid="site-header-toggle-sidebar"
+          >
+            <HamburgerIcon />
+          </button>
+        </Tooltip>
+      )}
 
       <div className={styles.breadcrumbsSlot} data-testid="site-header-breadcrumbs">
         {current !== null && <Breadcrumbs items={items} current={current} />}
