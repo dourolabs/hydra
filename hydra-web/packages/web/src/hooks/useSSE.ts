@@ -222,6 +222,9 @@ export function useSSE(): SSEConnectionState {
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);
+          // Also refresh the all-sessions list used by /sessions; the
+          // spawned-from upsert above does not touch it.
+          queryClient.invalidateQueries({ queryKey: ["sessions", "all"] });
         } else {
           queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }

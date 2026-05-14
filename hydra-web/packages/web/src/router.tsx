@@ -46,6 +46,17 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "sessions",
+        lazy: () =>
+          import("./pages/SessionsListPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.SessionsListPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "chat",
         lazy: () =>
           import("./pages/ChatListPage").then((m) => ({
