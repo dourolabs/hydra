@@ -13,6 +13,10 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/settings/);
 
+    // Navigate to the Sessions list via the sidebar header active-sessions slot.
+    await page.getByTestId("sidebar-header-sessions").click();
+    await expect(page).toHaveURL(/\/sessions$/);
+
     // Navigate to the dashboard via the Issues > All issues link.
     await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(

@@ -228,6 +228,10 @@ export function useSSE(): SSEConnectionState {
         } else {
           queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }
+        // Sidebar active-sessions badge count. The spawnedFrom branch above
+        // does not broadly invalidate ["sessions"], so refresh the count
+        // query explicitly on every session event.
+        queryClient.invalidateQueries({ queryKey: ["sessions", "activeCount"] });
         // Directly update batch session caches so hasActiveTask recomputes
         upsertBatchSession(queryClient, entity_id, record);
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {

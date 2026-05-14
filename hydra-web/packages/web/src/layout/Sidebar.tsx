@@ -9,6 +9,7 @@ import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useLabels } from "../features/labels/useLabels";
+import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
 import styles from "./Sidebar.module.css";
@@ -219,6 +220,8 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
   const isDashboard = pathname === "/";
   const patchesActive = isDashboard && selectedParam === "patches";
 
+  const { data: activeSessionCount = 0 } = useActiveSessionCount();
+
   const { data: conversations } = useConversations();
   const recentChats = useMemo<ConversationSummary[]>(() => {
     if (!conversations) return [];
@@ -240,8 +243,8 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
     >
       <div className={styles.header}>
         <Tooltip content="Active sessions" position="bottom">
-          <button
-            type="button"
+          <Link
+            to="/sessions"
             className={styles.headerSlot}
             data-testid="sidebar-header-sessions"
             aria-label="Active sessions"
@@ -253,7 +256,15 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
                 clipRule="evenodd"
               />
             </svg>
-          </button>
+            {activeSessionCount > 0 && (
+              <span
+                className={styles.headerBadge}
+                data-testid="sidebar-header-sessions-badge"
+              >
+                {activeSessionCount}
+              </span>
+            )}
+          </Link>
         </Tooltip>
 
         <div className={styles.headerSpacer} />
