@@ -133,8 +133,9 @@ vi.mock("../../features/dashboard/filterStorage", () => ({
   writeFilterState: vi.fn(),
 }));
 
+const useBreadcrumbsMock = vi.fn();
 vi.mock("../../layout/useBreadcrumbs", () => ({
-  useBreadcrumbs: vi.fn(),
+  useBreadcrumbs: (...args: unknown[]) => useBreadcrumbsMock(...args),
 }));
 
 vi.mock("../DashboardPage.module.css", () => ({
@@ -191,5 +192,25 @@ describe("DashboardPage create-issue query param", () => {
     expect(screen.queryByTestId("issue-create-modal")).toBeNull();
     const location = screen.getByTestId("location").textContent ?? "";
     expect(location.includes("create-issue")).toBe(false);
+  });
+});
+
+describe("DashboardPage breadcrumb label", () => {
+  it("publishes 'Issues' breadcrumb on the default view", () => {
+    renderDashboard("/");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Issues");
+    expect(useBreadcrumbsMock).not.toHaveBeenCalledWith([], "Patches");
+  });
+
+  it("publishes 'Issues' breadcrumb when selected is a non-patches tab", () => {
+    renderDashboard("/?selected=assigned");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Issues");
+    expect(useBreadcrumbsMock).not.toHaveBeenCalledWith([], "Patches");
+  });
+
+  it("publishes 'Patches' breadcrumb when ?selected=patches", () => {
+    renderDashboard("/?selected=patches");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Patches");
+    expect(useBreadcrumbsMock).not.toHaveBeenCalledWith([], "Issues");
   });
 });

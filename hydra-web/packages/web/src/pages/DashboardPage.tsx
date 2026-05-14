@@ -62,7 +62,10 @@ function buildServerFilters(
 }
 
 export function DashboardPage() {
-  useBreadcrumbs([], "Dashboard");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedParam = searchParams.get("selected");
+  const breadcrumbLabel = selectedParam === "patches" ? "Patches" : "Issues";
+  useBreadcrumbs([], breadcrumbLabel);
   const { user } = useAuth();
   const savedFilters = useMemo(() => readFilterState(), []);
   const [searchValue, setSearchValue] = useState(savedFilters?.searchValue ?? "");
@@ -81,12 +84,10 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const [searchParams, setSearchParams] = useSearchParams();
   const createIssueParam = searchParams.get("create-issue");
   const [createModalOpen, setCreateModalOpen] = useState(
     () => createIssueParam !== null && createIssueParam !== "",
   );
-  const selectedParam = searchParams.get("selected");
   const labelParam = searchParams.get("label");
 
   useEffect(() => {
