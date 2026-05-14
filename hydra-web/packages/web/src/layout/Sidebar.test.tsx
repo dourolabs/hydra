@@ -166,6 +166,26 @@ describe("Sidebar section icons", () => {
     },
   );
 
+  it.each(sectionIds)(
+    "renders %s section header children in order [icon, label, chevron]",
+    (id) => {
+      renderSidebar();
+      const header = screen.getByTestId(`sidebar-section-${id}`);
+      const children = Array.from(header.children);
+      expect(children.length).toBe(3);
+      // First child is the section icon SVG (no "chevron" class).
+      expect(children[0].tagName.toLowerCase()).toBe("svg");
+      expect(children[0].getAttribute("class") ?? "").not.toContain("chevron");
+      // Second child is the label span.
+      expect(children[1].tagName.toLowerCase()).toBe("span");
+      expect(children[1].className).toContain("sectionLabel");
+      // Third child is the chevron SVG, with the .chevron class that the
+      // stylesheet uses to set opacity:0 at rest and opacity:1 on hover/focus.
+      expect(children[2].tagName.toLowerCase()).toBe("svg");
+      expect(children[2].getAttribute("class") ?? "").toContain("chevron");
+    },
+  );
+
   it("renders an icon SVG inside the Patches standalone link", () => {
     renderSidebar();
     const link = screen.getByTestId("sidebar-patches");
