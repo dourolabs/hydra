@@ -8,10 +8,9 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await page.getByTestId("sidebar-section-documents-more").click();
     await expect(page).toHaveURL(/\/documents/);
 
-    // Navigate to Settings via the Agents entry (Agents is a placeholder
-    // pointing at /settings until phase 3 splits it out).
+    // Navigate to the Agents page via the Agents sidebar entry.
     await page.getByTestId("sidebar-agents").click();
-    await expect(page).toHaveURL(/\/settings/);
+    await expect(page).toHaveURL(/\/agents/);
 
     // Navigate to the Sessions list via the sidebar header active-sessions slot.
     await page.getByTestId("sidebar-header-sessions").click();
