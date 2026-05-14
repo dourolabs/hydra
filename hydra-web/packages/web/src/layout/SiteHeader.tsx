@@ -48,12 +48,7 @@ function SessionsIcon() {
   );
 }
 
-export function SiteHeader({
-  hidden,
-  onHide,
-  onShow,
-  onOpenSearch,
-}: SiteHeaderProps) {
+export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderProps) {
   const { items, current } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
   const onToggleSidebar = hidden ? onShow : onHide;
@@ -61,10 +56,10 @@ export function SiteHeader({
 
   return (
     <header className={styles.siteHeader} data-testid="site-header">
-      <Tooltip content={toggleLabel} position="right">
+      <Tooltip content={toggleLabel} position="right" className={styles.hamburgerSlot}>
         <button
           type="button"
-          className={`${styles.iconSlot} ${styles.hamburgerSlot}`}
+          className={styles.iconSlot}
           onClick={onToggleSidebar}
           aria-label={toggleLabel}
           data-testid="site-header-toggle-sidebar"
@@ -98,10 +93,7 @@ export function SiteHeader({
         >
           <SessionsIcon />
           {activeSessionCount > 0 && (
-            <span
-              className={styles.badge}
-              data-testid="site-header-sessions-badge"
-            >
+            <span className={styles.badge} data-testid="site-header-sessions-badge">
               {activeSessionCount}
             </span>
           )}
