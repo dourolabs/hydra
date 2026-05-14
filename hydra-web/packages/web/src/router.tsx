@@ -123,6 +123,17 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "secrets",
+        lazy: () =>
+          import("./pages/SecretsPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.SecretsPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "settings",
         lazy: () =>
           import("./pages/SettingsPage").then((m) => ({

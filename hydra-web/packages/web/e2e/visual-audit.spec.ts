@@ -20,6 +20,7 @@ const AUTHENTICATED_PAGES = [
   { name: "sessions-list", path: "/sessions" },
   { name: "repositories", path: "/repositories" },
   { name: "agents", path: "/agents" },
+  { name: "secrets", path: "/secrets" },
 ];
 
 async function captureScreenshot(
