@@ -17,6 +17,7 @@ const AUTHENTICATED_PAGES = [
   { name: "document-detail", path: "/documents/d-seed00001" },
   { name: "settings", path: "/settings" },
   { name: "session-log", path: "/issues/i-seed00005/sessions/t-seed00001/logs" },
+  { name: "sessions-list", path: "/sessions" },
 ];
 
 async function captureScreenshot(
