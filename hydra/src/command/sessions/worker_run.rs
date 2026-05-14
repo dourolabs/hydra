@@ -24,6 +24,7 @@ use crate::git::{
     stage_all_changes, workdir_diff,
 };
 use crate::worker::commands::WorkerCommands;
+use crate::worker::reaper::reap_other_processes;
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -282,6 +283,22 @@ pub async fn run(
             }
         }
     };
+
+    // Reap any non-self processes the agent left behind (backgrounded dev
+    // servers, scripts that ran `foo &`, etc.) before moving on to git
+    // finalize. The existing pgrp-kill in `worker/commands.rs::run_claude` is
+    // gated on the stdout pipe staying open and on victims sharing the
+    // claude pgid; this is the systemic safety net that catches the rest.
+    // See `worker/reaper.rs` for the safety boundary (assumes isolated PID
+    // namespace; only safe in the worker container).
+    log_status("Phase: reap orphans — starting");
+    let reap_start = Instant::now();
+    let reap_stats = reap_other_processes().await;
+    let reap_elapsed = reap_start.elapsed().as_secs_f64();
+    log_status(format!(
+        "Phase: reap orphans — completed ({} victims, {} sigkilled, {:.2}s)",
+        reap_stats.sigtermed, reap_stats.sigkilled, reap_elapsed
+    ));
 
     if base_commit.is_some() {
         log_status("Phase: git finalize — starting");
