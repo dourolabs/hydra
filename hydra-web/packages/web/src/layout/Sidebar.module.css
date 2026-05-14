@@ -54,11 +54,9 @@
   background: none;
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   border-radius: var(--radius-md);
   text-align: left;
   transition:
@@ -73,6 +71,13 @@
 
 .sectionLabel {
   flex: 1;
+}
+
+.sectionIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: currentColor;
 }
 
 .chevron {
@@ -103,6 +108,7 @@
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   min-width: 0;
   transition:
     background var(--transition-fast),
