@@ -383,7 +383,7 @@ export function Sidebar({
             Repositories
           </NavLink>
           <NavLink
-            to="/settings"
+            to="/secrets"
             className={moreLinkClass}
             data-testid="sidebar-context-secrets"
           >
