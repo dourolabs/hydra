@@ -50,7 +50,3 @@ export function sortSessions(
 
   return [...active, ...terminal];
 }
-
-export function isActiveStatus(status: string): boolean {
-  return ACTIVE_STATUSES.has(status);
-}
