@@ -54,31 +54,113 @@ fn state_with_idle_timeout_secs(secs: u64) -> (AppState, Arc<dyn Store>) {
 /// Find the (currently-only) interactive session linked to `conversation_id`
 /// by scanning the store. Tests use this to discover the session id that the
 /// fake worker should connect to via the relay WebSocket.
+///
+/// The session is spawned asynchronously by
+/// `SpawnConversationSessionsAutomation`, so this poll-waits briefly for it
+/// to appear before failing.
 async fn find_session_for_conversation(
     store: &Arc<dyn Store>,
     conversation_id: &ConversationId,
 ) -> SessionId {
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
-    let sessions = store
-        .list_sessions(&SearchSessionsQuery::default())
-        .await
-        .expect("list sessions");
-    let mut matching: Vec<(SessionId, Session)> = sessions
-        .into_iter()
-        .filter_map(|(id, v)| {
-            if v.item.conversation_id() == Some(conversation_id) {
-                Some((id, v.item))
-            } else {
-                None
-            }
-        })
-        .collect();
-    // Pick the most recently-created session if multiple exist (e.g. after resume).
-    matching.sort_by_key(|(_, s)| s.creation_time);
-    matching
-        .pop()
-        .map(|(id, _)| id)
-        .expect("expected a session for the conversation")
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let sessions = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .expect("list sessions");
+        let mut matching: Vec<(SessionId, Session)> = sessions
+            .into_iter()
+            .filter_map(|(id, v)| {
+                if v.item.conversation_id() == Some(conversation_id) {
+                    Some((id, v.item))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Pick the most recently-created session if multiple exist (e.g. after resume).
+        matching.sort_by_key(|(_, s)| s.creation_time);
+        if let Some((id, _)) = matching.pop() {
+            return id;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("no session for conversation {conversation_id} appeared in time");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Poll until a session whose id is NOT one of `exclude` shows up linked to
+/// `conversation_id`. Used after `/resume` to wait for the
+/// `SpawnConversationSessionsAutomation` to spawn the new session — the
+/// previously-active session is still in the store with status Running, so a
+/// naive `find_session_for_conversation` call would return it immediately.
+async fn find_new_session_for_conversation(
+    store: &Arc<dyn Store>,
+    conversation_id: &ConversationId,
+    exclude: &SessionId,
+) -> SessionId {
+    use hydra_common::api::v1::sessions::SearchSessionsQuery;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let sessions = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .expect("list sessions");
+        let mut matching: Vec<(SessionId, Session)> = sessions
+            .into_iter()
+            .filter_map(|(id, v)| {
+                if &id != exclude && v.item.conversation_id() == Some(conversation_id) {
+                    Some((id, v.item))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        matching.sort_by_key(|(_, s)| s.creation_time);
+        if let Some((id, _)) = matching.pop() {
+            return id;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "no new session for conversation {conversation_id} (excluding {exclude}) appeared in time"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Poll the events endpoint until a `Resumed` event appears, then return its
+/// session_id.
+async fn poll_resumed_session_id(
+    client: &reqwest::Client,
+    base_url: &str,
+    conversation_id: &ConversationId,
+) -> Option<SessionId> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let events: Vec<ConversationEvent> = client
+            .get(format!(
+                "{base_url}/v1/conversations/{conversation_id}/events"
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        if let Some(id) = events.iter().rev().find_map(|e| match e {
+            ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
+            _ => None,
+        }) {
+            return Some(id);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 type WsStream =
@@ -424,23 +506,11 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         .await?;
     assert_eq!(resumed.status, ConversationStatus::Active);
 
-    // Find the Resumed event's session_id — that's the new session.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
-            server.base_url()
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let resumed_session_id = events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
-            _ => None,
-        })
+    // Find the Resumed event's session_id — that's the new session. The
+    // automation spawns the new session and appends `Resumed`
+    // asynchronously, so poll until it shows up.
+    let resumed_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
+        .await
         .expect("expected a Resumed event after /resume");
     assert_ne!(
         resumed_session_id, initial_session_id,
@@ -1291,7 +1361,12 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
         .await?;
     assert_eq!(resumed.status, ConversationStatus::Active);
 
-    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    // After /resume the previous session is still in the store with
+    // status Running (it hasn't been transitioned to a terminal state by
+    // any worker lifecycle path in this test). `find_new_session_for_conversation`
+    // polls for the new session that the automation spawns.
+    let new_session_id =
+        find_new_session_for_conversation(&store, &conversation_id, &initial_session_id).await;
     assert_ne!(new_session_id, initial_session_id);
     let new_opts = store
         .get_session(&new_session_id, false)

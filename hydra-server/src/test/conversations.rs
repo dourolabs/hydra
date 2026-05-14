@@ -6,6 +6,29 @@ use hydra_common::api::v1::conversations::{
 };
 use hydra_common::api::v1::sessions::ListSessionsResponse;
 use reqwest::StatusCode;
+use std::time::Duration;
+
+/// Poll `f` until it returns `Some` or the timeout elapses. Used in
+/// integration tests to wait for the asynchronous
+/// `SpawnConversationSessionsAutomation` to settle.
+async fn poll_until<T, F, Fut>(timeout: Duration, mut f: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Some(value) = f().await {
+            return Some(value);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+const POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn create_conversation_returns_conversation_with_session() -> anyhow::Result<()> {
@@ -82,16 +105,22 @@ async fn create_conversation_without_message_starts_with_zero_events() -> anyhow
         hydra_common::api::v1::conversations::ConversationStatus::Active
     );
 
-    let sessions: ListSessionsResponse = client
-        .get(format!("{}/v1/sessions", server.base_url()))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(
-        !sessions.sessions.is_empty(),
-        "expected create_conversation to create a session"
-    );
+    // Poll for the session — it's spawned asynchronously by
+    // `SpawnConversationSessionsAutomation` against the default conversation
+    // agent seeded by `spawn_test_server`.
+    poll_until(POLL_TIMEOUT, || async {
+        let sessions: ListSessionsResponse = client
+            .get(format!("{}/v1/sessions", server.base_url()))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        (!sessions.sessions.is_empty()).then_some(())
+    })
+    .await
+    .expect("expected create_conversation to spawn a session");
 
     let events: Vec<serde_json::Value> = client
         .get(format!(
@@ -355,30 +384,37 @@ async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()
         hydra_common::api::v1::conversations::ConversationStatus::Active
     );
 
-    // Event log should end with Resumed immediately followed by the new UserMessage.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let trailing: Vec<&ConversationEvent> = events.iter().rev().take(2).collect();
+    // Wait for the resume-on-send to settle: the automation appends a
+    // `Resumed` event and spawns a second session asynchronously. Because the
+    // spawn is async, the *order* of `Resumed` vs the new `UserMessage` is
+    // no longer guaranteed in the event log — the test only verifies both
+    // are present.
+    let events = poll_until(POLL_TIMEOUT, || async {
+        let events: Vec<ConversationEvent> = client
+            .get(format!(
+                "{}/v1/conversations/{}/events",
+                server.base_url(),
+                created.conversation_id
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        events
+            .iter()
+            .any(|e| matches!(e, ConversationEvent::Resumed { .. }))
+            .then_some(events)
+    })
+    .await
+    .expect("expected a Resumed event after resume-on-send");
     assert!(
-        matches!(
-            trailing[0],
+        events.iter().any(|e| matches!(
+            e,
             ConversationEvent::UserMessage { content, .. } if content == "back from the dead"
-        ),
-        "second-to-last event should be the new UserMessage, got {:?}",
-        trailing[0]
-    );
-    assert!(
-        matches!(trailing[1], ConversationEvent::Resumed { .. }),
-        "the event before the UserMessage should be Resumed, got {:?}",
-        trailing[1]
+        )),
+        "expected the new UserMessage to be appended in the event log, got {events:?}"
     );
 
     Ok(())
@@ -508,24 +544,28 @@ async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
         hydra_common::api::v1::conversations::ConversationStatus::Active
     );
 
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let resumed_session_id = events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
+    // Wait for the resume to settle — the automation appends the Resumed
+    // event and spawns the second session asynchronously.
+    let resumed_session_id = poll_until(POLL_TIMEOUT, || async {
+        let events: Vec<ConversationEvent> = client
+            .get(format!(
+                "{}/v1/conversations/{}/events",
+                server.base_url(),
+                created.conversation_id
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        events.iter().rev().find_map(|e| match e {
             ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
             _ => None,
         })
-        .expect("expected a Resumed event after /resume");
+    })
+    .await
+    .expect("expected a Resumed event after /resume");
     let sessions: ListSessionsResponse = client
         .get(format!("{}/v1/sessions", server.base_url()))
         .send()
@@ -656,24 +696,50 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify all events are recorded
-    let events: Vec<serde_json::Value> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    // Events: UserMessage("Hello"), UserMessage("First message"), Closed, Resumed, UserMessage("After resume")
-    assert_eq!(events.len(), 5);
+    // Verify all events are recorded. The resume produces a `Resumed` event
+    // asynchronously via the automation, so poll until it appears. The
+    // relative order of `Resumed` and the post-resume `UserMessage` is no
+    // longer guaranteed (it depends on whether the automation processes the
+    // status flip before or after the new UserMessage is appended), so this
+    // test only verifies the multi-set of event types is correct.
+    let events = poll_until(POLL_TIMEOUT, || async {
+        let events: Vec<serde_json::Value> = client
+            .get(format!(
+                "{}/v1/conversations/{}/events",
+                server.base_url(),
+                created.conversation_id
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        events
+            .iter()
+            .any(|e| e["type"] == "resumed")
+            .then_some(events)
+    })
+    .await
+    .expect("expected a Resumed event in the event log after resume");
+    // Expected event multiset: 3× user_message, 1× closed, 1× resumed.
+    assert_eq!(events.len(), 5, "got events: {events:?}");
+    let user_message_count = events
+        .iter()
+        .filter(|e| e["type"] == "user_message")
+        .count();
+    let closed_count = events.iter().filter(|e| e["type"] == "closed").count();
+    let resumed_count = events.iter().filter(|e| e["type"] == "resumed").count();
+    assert_eq!(user_message_count, 3, "got events: {events:?}");
+    assert_eq!(closed_count, 1, "got events: {events:?}");
+    assert_eq!(resumed_count, 1, "got events: {events:?}");
+    // The first two events were written synchronously by create_conversation
+    // + send_message and must appear in chronological order; the close event
+    // came next. Everything after the close (Resumed and the post-resume
+    // UserMessage) is order-flexible per the async automation.
     assert_eq!(events[0]["type"], "user_message");
     assert_eq!(events[1]["type"], "user_message");
     assert_eq!(events[2]["type"], "closed");
-    assert_eq!(events[3]["type"], "resumed");
-    assert_eq!(events[4]["type"], "user_message");
 
     Ok(())
 }

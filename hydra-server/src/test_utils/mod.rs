@@ -270,6 +270,7 @@ pub async fn spawn_test_server_with_state(
     store: Arc<dyn Store>,
 ) -> anyhow::Result<TestServer> {
     seed_test_actor(store.as_ref()).await?;
+    seed_default_conversation_agent(store.as_ref()).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let app = crate::build_router(&state).with_state(state.clone());
@@ -296,6 +297,61 @@ async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
         Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
         Err(err) => Err(anyhow::anyhow!("failed to seed test user actor: {err}")),
     }
+}
+
+/// Register a default conversation agent so that integration tests creating
+/// conversations without an explicit `agent_name` get a session spawned by
+/// the `SpawnConversationSessionsAutomation`. The automation refuses to
+/// spawn unless an agent can be resolved; this seed lets test conversations
+/// fall through to the agent's empty prompt by default.
+async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()> {
+    use crate::domain::{agents::Agent, documents::Document};
+
+    let prompt_path = "/agents/default-test-agent/prompt.md".to_string();
+    let agent = Agent::new(
+        "default-test-agent".to_string(),
+        prompt_path.clone(),
+        None,
+        1,
+        1,
+        false,
+        true,
+        vec![],
+    );
+    match store.add_agent(agent).await {
+        Ok(_) => {}
+        Err(StoreError::AgentAlreadyExists(_))
+        | Err(StoreError::ConversationAgentAlreadyExists) => {}
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed to seed default conversation agent: {err}"
+            ));
+        }
+    }
+
+    let doc = Document {
+        title: "default test agent prompt".to_string(),
+        body_markdown: String::new(),
+        path: Some(
+            prompt_path
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
+        ),
+        created_by: None,
+        deleted: false,
+    };
+    store
+        .add_document(doc, &ActorRef::test())
+        .await
+        .map(|_| ())
+        .or_else(|err| match err {
+            // Multiple test runs may share a store; tolerate a re-seeded
+            // document path.
+            StoreError::Internal(_) => Ok(()),
+            other => Err(anyhow::anyhow!(
+                "failed to seed default conversation agent prompt: {other}"
+            )),
+        })
 }
 
 async fn wait_for_server_ready(base_url: &str) -> anyhow::Result<()> {
