@@ -31,64 +31,6 @@
   }
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.headerSpacer {
-  flex: 1;
-}
-
-.headerSlot {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  padding: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.headerBadge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-size-xxs);
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-status-blocked);
-  background: var(--color-status-blocked-bg);
-  border-radius: 999px;
-  padding: 1px 5px;
-  min-width: 16px;
-  pointer-events: none;
-}
-
-.headerSlot:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-}
-
-.headerSlot svg {
-  width: 18px;
-  height: 18px;
-}
-
 .sections {
   display: flex;
   flex-direction: column;

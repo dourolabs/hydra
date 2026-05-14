@@ -81,6 +81,11 @@ vi.mock("../SessionsListPage.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+const useBreadcrumbsMock = vi.fn();
+vi.mock("../../layout/useBreadcrumbs", () => ({
+  useBreadcrumbs: (...args: unknown[]) => useBreadcrumbsMock(...args),
+}));
+
 // --- Import after mocks ---
 const { SessionsListPage } = await import("../SessionsListPage");
 
@@ -117,7 +122,14 @@ function reset() {
 describe("SessionsListPage", () => {
   beforeEach(() => {
     reset();
+    useBreadcrumbsMock.mockReset();
     cleanup();
+  });
+
+  it("publishes a single-segment Sessions breadcrumb on mount", () => {
+    allSessionsState.data = [];
+    render(<SessionsListPage />);
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Sessions");
   });
 
   it("renders the loading state while data is loading", () => {

@@ -54,12 +54,12 @@ test.describe("Global search modal @global-search", () => {
     await expect(page.getByTestId("global-search-modal")).toHaveCount(0);
   });
 
-  test("clicking the sidebar magnifying-glass opens the modal", async ({
+  test("clicking the site-header magnifying-glass opens the modal", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/");
     await expect(page.getByTestId("global-search-modal")).toHaveCount(0);
-    await page.getByTestId("sidebar-header-search").click();
+    await page.getByTestId("site-header-search").click();
     await expect(page.getByTestId("global-search-modal")).toBeVisible();
     await expect(page.getByTestId("global-search-input")).toBeFocused();
   });

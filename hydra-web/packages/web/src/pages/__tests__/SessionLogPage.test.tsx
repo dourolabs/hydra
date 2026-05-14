@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, cleanup } from "@testing-library/react";
 import React from "react";
 import type { SessionVersionRecord } from "@hydra/api";
 
@@ -123,23 +123,9 @@ vi.mock("../../utils/time", () => ({
   getRuntime: () => "1m",
 }));
 
-vi.mock("../../layout/Breadcrumbs", () => ({
-  Breadcrumbs: ({
-    items,
-    current,
-  }: {
-    items: { label: string; to: string }[];
-    current: string;
-  }) => (
-    <nav data-testid="breadcrumbs">
-      {items.map((item) => (
-        <a key={item.to} href={item.to}>
-          {item.label}
-        </a>
-      ))}
-      <span data-testid="breadcrumb-current">{current}</span>
-    </nav>
-  ),
+const useBreadcrumbsMock = vi.fn();
+vi.mock("../../layout/useBreadcrumbs", () => ({
+  useBreadcrumbs: (...args: unknown[]) => useBreadcrumbsMock(...args),
 }));
 
 vi.mock("../SessionLogPage.module.css", () => ({
@@ -182,6 +168,7 @@ function reset() {
 
 beforeEach(() => {
   reset();
+  useBreadcrumbsMock.mockReset();
 });
 
 afterEach(() => {
@@ -189,37 +176,30 @@ afterEach(() => {
 });
 
 describe("SessionLogPage", () => {
-  it("renders breadcrumbs with Dashboard and Issue when issueId is in URL", () => {
+  it("publishes Dashboard / Issue breadcrumbs when issueId is in URL", () => {
     params.issueId = "i-1";
     params.sessionId = "t-1";
     sessionState.data = makeRecord("t-1");
 
     render(<SessionLogPage />);
 
-    const breadcrumbs = screen.getByTestId("breadcrumbs");
-    const links = breadcrumbs.querySelectorAll("a");
-    expect(links).toHaveLength(2);
-    expect(links[0].textContent).toBe("Dashboard");
-    expect(links[0].getAttribute("href")).toBe("/");
-    expect(links[1].textContent).toBe("Issue i-1");
-    expect(links[1].getAttribute("href")).toBe("/issues/i-1");
-    expect(screen.getByTestId("breadcrumb-current").textContent).toBe(
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [
+        { label: "Dashboard", to: "/" },
+        { label: "Issue i-1", to: "/issues/i-1" },
+      ],
       "Session t-1",
     );
   });
 
-  it("renders breadcrumbs with only Sessions when issueId is absent", () => {
+  it("publishes a Sessions breadcrumb when issueId is absent", () => {
     params.sessionId = "t-orphan";
     sessionState.data = makeRecord("t-orphan");
 
     render(<SessionLogPage />);
 
-    const breadcrumbs = screen.getByTestId("breadcrumbs");
-    const links = breadcrumbs.querySelectorAll("a");
-    expect(links).toHaveLength(1);
-    expect(links[0].textContent).toBe("Sessions");
-    expect(links[0].getAttribute("href")).toBe("/sessions");
-    expect(screen.getByTestId("breadcrumb-current").textContent).toBe(
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Sessions", to: "/sessions" }],
       "Session t-orphan",
     );
   });
@@ -230,8 +210,6 @@ describe("SessionLogPage", () => {
 
     render(<SessionLogPage />);
 
-    // No anchor pointing to /issues/* should be rendered in the meta header
-    // (the breadcrumbs only contain the /sessions link).
     const anchors = Array.from(document.querySelectorAll("a"));
     const issueAnchors = anchors.filter((a) =>
       a.getAttribute("href")?.startsWith("/issues/"),
@@ -250,7 +228,6 @@ describe("SessionLogPage", () => {
     const issueLinks = anchors.filter(
       (a) => a.getAttribute("href") === "/issues/i-1",
     );
-    // Breadcrumb link + meta-header link.
-    expect(issueLinks.length).toBeGreaterThanOrEqual(2);
+    expect(issueLinks.length).toBeGreaterThanOrEqual(1);
   });
 });
