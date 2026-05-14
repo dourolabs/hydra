@@ -252,26 +252,13 @@ describe("Sidebar header block removed", () => {
     expect(screen.queryByTestId("sidebar-header-search")).toBeNull();
     expect(screen.queryByTestId("sidebar-header-hide")).toBeNull();
   });
-});
 
-describe("Sidebar hide button", () => {
-  it("renders the sidebar-hide button on desktop with aria-label 'Hide sidebar'", () => {
+  it("does not render the in-sidebar hide button (lives in AppLayout chrome now)", () => {
+    // Both desktop and mobile: the sidebar no longer owns a hide control.
     mockMatchMedia(false);
-    renderSidebar();
-    const button = screen.getByTestId("sidebar-hide");
-    expect(button.getAttribute("aria-label")).toBe("Hide sidebar");
-    expect(button.querySelector("svg")).not.toBeNull();
-  });
-
-  it("calls onHide when the sidebar-hide button is clicked on desktop", () => {
-    mockMatchMedia(false);
-    const onHide = vi.fn();
-    renderSidebar({ onHide });
-    fireEvent.click(screen.getByTestId("sidebar-hide"));
-    expect(onHide).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not render the sidebar-hide button on mobile", () => {
+    const { unmount } = renderSidebar();
+    expect(screen.queryByTestId("sidebar-hide")).toBeNull();
+    unmount();
     mockMatchMedia(true);
     renderSidebar();
     expect(screen.queryByTestId("sidebar-hide")).toBeNull();

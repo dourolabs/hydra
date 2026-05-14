@@ -5,6 +5,70 @@
   height: 100dvh;
   background: var(--color-bg-primary);
   overflow: hidden;
+  position: relative;
+}
+
+/*
+ * Fixed top-left chrome: hamburger + Hydra wordmark. Positioned absolutely so
+ * it stays put when the sidebar is toggled. On desktop with the sidebar open,
+ * the chrome overlays the top-left of the sidebar (matching background); when
+ * the sidebar is hidden, the chrome overlays the left edge of the SiteHeader
+ * (also matching background), and SiteHeader reserves padding-left for it so
+ * the breadcrumbs do not shift.
+ */
+.leftChrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: var(--site-header-height);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  box-sizing: border-box;
+  z-index: 5;
+}
+
+/* When the sidebar is hidden the chrome sits inside the SiteHeader; carry the
+ * header's bottom border across the chrome so the seam stays continuous. */
+.leftChromeOnHeader {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chromeToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.chromeToggle:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.chromeToggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 768px) {
+  .leftChrome {
+    /* Mobile keeps the existing drawer behaviour with a SiteHeader hamburger. */
+    display: none;
+  }
 }
 
 .contentColumn {

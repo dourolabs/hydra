@@ -3,16 +3,16 @@ import { test, expect } from "../fixtures/auth";
 // site-header-sessions was dropped: the active-sessions slot is now a labelled
 // pill ("no sessions" / "N sessions") with no wrapping Tooltip.
 //
-// The sidebar-hide control split (per-viewport rather than a single shared
-// hamburger): on desktop the in-sidebar << button hosts the left-anchored
-// tooltip; on mobile the header hamburger still does. Each viewport iterates
-// its own trigger list.
+// The hamburger lives in different places per viewport: on desktop it is
+// pinned in the AppLayout left chrome (no wrapping tooltip — it stays in the
+// corner so a tooltip would just clutter); on mobile it lives in the header
+// with its existing tooltip. We only iterate triggers that wrap a tooltip.
 const VIEWPORTS = [
   {
     name: "desktop 1440x900",
     width: 1440,
     height: 900,
-    triggers: ["sidebar-hide", "site-header-search"],
+    triggers: ["site-header-search"],
   },
   {
     name: "mobile 375x812",
