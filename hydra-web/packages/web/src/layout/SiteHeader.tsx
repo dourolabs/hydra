@@ -61,7 +61,7 @@ export function SiteHeader({
 
   return (
     <header className={styles.siteHeader} data-testid="site-header">
-      <Tooltip content={toggleLabel} position="bottom">
+      <Tooltip content={toggleLabel} position="right">
         <button
           type="button"
           className={styles.iconSlot}
