@@ -151,17 +151,34 @@
   flex-shrink: 0;
 }
 
-.moreLink {
+.actionButton {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  width: 100%;
   padding: var(--space-1) var(--space-2);
+  border: none;
   border-radius: var(--radius-md);
-  color: var(--color-text-tertiary);
-  text-decoration: none;
+  background: none;
+  color: var(--color-text-secondary);
+  text-align: left;
+  font-family: inherit;
   font-size: var(--font-size-sm);
+  cursor: pointer;
+  min-width: 0;
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
+}
+
+.actionButton:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.actionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .docTree {
@@ -300,11 +317,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-
-.moreLink:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
 }
 
 .navItemActive {

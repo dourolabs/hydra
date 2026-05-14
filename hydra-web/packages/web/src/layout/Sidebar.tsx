@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useSearchParams } from "react-router-dom";
-import type { LabelRecord, VersionResponse } from "@hydra/api";
+import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Conversation, LabelRecord, VersionResponse } from "@hydra/api";
 import { Avatar, Tooltip } from "@hydra/ui";
 import type { ConversationSummary } from "@hydra/api";
 import { apiClient } from "../api/client";
@@ -131,10 +132,6 @@ function navItemClass({ isActive }: { isActive: boolean }) {
   return `${styles.navItem}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
-function moreLinkClass({ isActive }: { isActive: boolean }) {
-  return `${styles.moreLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
-}
-
 function topRecentLabels(labels: readonly LabelRecord[] | undefined): LabelRecord[] {
   if (!labels || labels.length === 0) return [];
   return [...labels]
@@ -147,6 +144,7 @@ interface IssuesSectionContentProps {
   isDashboard: boolean;
   selectedParam: string | null;
   labelParam: string | null;
+  onNewIssue: () => void;
 }
 
 function IssuesSectionContent({
@@ -154,6 +152,7 @@ function IssuesSectionContent({
   isDashboard,
   selectedParam,
   labelParam,
+  onNewIssue,
 }: IssuesSectionContentProps) {
   const assignedFilters = useMemo<IssueFilters>(
     () => (username ? { assignee: username, status: "open" } : {}),
@@ -169,6 +168,14 @@ function IssuesSectionContent({
 
   return (
     <>
+      <button
+        type="button"
+        className={styles.actionButton}
+        onClick={onNewIssue}
+        data-testid="sidebar-issues-new"
+      >
+        <span className={styles.navItemLabel}>+ New Issue</span>
+      </button>
       <Link
         to="/?selected=assigned"
         className={`${styles.navItem}${assignedActive ? ` ${styles.navItemActive}` : ""}`}
@@ -224,6 +231,8 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const selectedParam = searchParams.get("selected");
   const labelParam = searchParams.get("label");
   const isDashboard = pathname === "/";
@@ -250,6 +259,18 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
       .slice(0, CHATS_SECTION_LIMIT);
   }, [conversations]);
 
+  const createChatMutation = useMutation({
+    mutationFn: () => apiClient.createConversation({}),
+    onSuccess: (conversation: Conversation) => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      navigate(`/chat/${conversation.conversation_id}`);
+    },
+  });
+
+  const handleNewIssue = useCallback(() => {
+    navigate("/?create-issue=1");
+  }, [navigate]);
+
   return (
     <nav
       className={`${styles.sidebar}${hidden ? ` ${styles.sidebarHidden}` : ""}`}
@@ -260,6 +281,17 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
     >
       <div className={styles.sections}>
         <SidebarSection id="chats" label="Chats" icon={<ChatIcon />}>
+          <button
+            type="button"
+            className={styles.actionButton}
+            onClick={() => createChatMutation.mutate()}
+            disabled={createChatMutation.isPending}
+            data-testid="sidebar-chat-new"
+          >
+            <span className={styles.navItemLabel}>
+              {createChatMutation.isPending ? "Creating…" : "+ New Chat"}
+            </span>
+          </button>
           {recentChats.map((c) => {
             const title = conversationTitle(c);
             return (
@@ -276,10 +308,11 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           })}
           <NavLink
             to="/chat"
-            className={moreLinkClass}
+            end
+            className={navItemClass}
             data-testid="sidebar-section-chats-more"
           >
-            More
+            See All
           </NavLink>
         </SidebarSection>
 
@@ -289,6 +322,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
             isDashboard={isDashboard}
             selectedParam={selectedParam}
             labelParam={labelParam}
+            onNewIssue={handleNewIssue}
           />
         </SidebarSection>
 
@@ -296,10 +330,11 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           <SidebarDocumentTree />
           <NavLink
             to="/documents"
-            className={moreLinkClass}
+            end
+            className={navItemClass}
             data-testid="sidebar-section-documents-more"
           >
-            More
+            See All
           </NavLink>
         </SidebarSection>
 
@@ -325,14 +360,14 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
         <SidebarSection id="context" label="Context" icon={<ContextIcon />}>
           <NavLink
             to="/repositories"
-            className={moreLinkClass}
+            className={navItemClass}
             data-testid="sidebar-context-repositories"
           >
             Repositories
           </NavLink>
           <NavLink
             to="/secrets"
-            className={moreLinkClass}
+            className={navItemClass}
             data-testid="sidebar-context-secrets"
           >
             Secrets
