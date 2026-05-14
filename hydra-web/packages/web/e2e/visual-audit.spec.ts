@@ -18,6 +18,8 @@ const AUTHENTICATED_PAGES = [
   { name: "session-log", path: "/issues/i-seed00005/sessions/t-seed00001/logs" },
   { name: "session-detail", path: "/sessions/t-seed00001" },
   { name: "sessions-list", path: "/sessions" },
+  { name: "chats-list", path: "/chat" },
+  { name: "chat-detail", path: "/chat/c-seed00001" },
   { name: "repositories", path: "/repositories" },
   { name: "agents", path: "/agents" },
   { name: "secrets", path: "/secrets" },

@@ -161,7 +161,7 @@ Each screenshot is named `{viewport}-{page}.png`, for example:
 
 #### Pages captured
 
-Login, dashboard, issue detail, patch detail, documents list, document detail, settings, and session log page.
+Login, dashboard, issue detail, patch detail, documents list, document detail, session log, session detail, sessions list, chats list, chat detail, repositories, agents, and secrets.
 
 ### Contract tests
 

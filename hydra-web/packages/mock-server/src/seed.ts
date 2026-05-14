@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
-import type { Issue, Session, Patch, Document, Repository, AgentRecord } from "@hydra/api";
+import type { Issue, Session, Patch, Document, Repository, AgentRecord, Conversation, ConversationEvent } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
+import { clearConversationEvents, setConversationEvents } from "./routes/conversations.js";
 
 interface LabelData {
   name: string;
@@ -26,6 +27,8 @@ interface SeedData {
   agents: Record<string, AgentRecord>;
   labels?: Record<string, LabelData>;
   label_associations?: LabelAssociationSeed[];
+  conversations?: Record<string, Conversation>;
+  conversation_events?: Record<string, ConversationEvent[]>;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +42,7 @@ function loadFixture(): SeedData {
 export function loadSeedData(store: Store): void {
   store.clear();
   clearAssociations();
+  clearConversationEvents();
 
   const seed = loadFixture();
 
@@ -84,7 +88,22 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  if (seed.conversations) {
+    for (const [id, conversation] of Object.entries(seed.conversations)) {
+      store.create<Conversation>("conversations", id, conversation, "conversation");
+    }
+  }
+
+  let conversationEventCount = 0;
+  if (seed.conversation_events) {
+    for (const [id, events] of Object.entries(seed.conversation_events)) {
+      setConversationEvents(id, events);
+      conversationEventCount += events.length;
+    }
+  }
+
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
+  const conversationCount = seed.conversations ? Object.keys(seed.conversations).length : 0;
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
     `${Object.keys(seed.sessions).length} sessions, ` +
@@ -92,6 +111,8 @@ export function loadSeedData(store: Store): void {
     `${Object.keys(seed.documents).length} documents, ` +
     `${Object.keys(seed.repositories).length} repositories, ` +
     `${Object.keys(seed.agents).length} agents, ` +
-    `${labelCount} labels`,
+    `${labelCount} labels, ` +
+    `${conversationCount} conversations, ` +
+    `${conversationEventCount} conversation events`,
   );
 }

@@ -5,6 +5,7 @@ const PREFIXES = {
   session: "t-",
   patch: "p-",
   document: "d-",
+  conversation: "c-",
 } as const;
 
 export type EntityType = keyof typeof PREFIXES;
