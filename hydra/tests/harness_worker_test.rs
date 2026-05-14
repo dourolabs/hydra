@@ -4,6 +4,15 @@ use anyhow::Result;
 use hydra_common::task_status::Status;
 use std::str::FromStr;
 
+#[cfg(unix)]
+use std::path::Path;
+#[cfg(unix)]
+use std::process::Stdio;
+#[cfg(unix)]
+use std::time::Duration;
+#[cfg(unix)]
+use tokio::process::Command;
+
 /// Integration test: create issue -> create job -> run_worker with git commit
 /// + patch create -> verify patch exists and job completes.
 #[tokio::test]
@@ -73,6 +82,56 @@ async fn run_worker_captures_command_outputs() -> Result<()> {
     );
     assert_eq!(result.outputs[0].status, 0, "echo should succeed");
 
+    Ok(())
+}
+
+/// Regression guard for the worker_run::run reaper (see hydra/src/worker/reaper.rs).
+///
+/// The reaper SIGTERMs every other process in the namespace after the agent
+/// phase. Inside a worker pod the worker is PID 1, so it only sees its own
+/// children; inside cargo-nextest the worker is **not** PID 1, so reaping
+/// indiscriminately would SIGTERM the test runner. The reaper gate
+/// (`std::process::id() == 1`) makes it a no-op outside a worker container —
+/// this test pins that behavior end-to-end by spawning a sentinel `sleep 60`
+/// before the worker run and asserting it survives.
+#[cfg(unix)]
+#[tokio::test]
+async fn run_worker_does_not_reap_test_runner_processes() -> Result<()> {
+    let mut sentinel = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("failed to spawn sentinel sleep");
+    let sentinel_pid = sentinel.id().expect("sentinel should have a pid");
+    // Give the kernel a beat to materialize /proc/<pid>.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        Path::new(&format!("/proc/{sentinel_pid}")).exists(),
+        "sentinel pid {sentinel_pid} should exist before the worker run",
+    );
+
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/reaper-noop-test")
+        .build()
+        .await?;
+    let user = harness.default_user();
+    let repo = hydra_common::RepoName::from_str("acme/reaper-noop-test")?;
+    let job_id = user.create_session(&repo, "reaper noop test").await?;
+
+    let _result = harness.run_worker(&job_id, vec!["echo reaper-noop"]).await?;
+
+    // Real assertion: the sentinel must still be running. If the reaper had
+    // run as if it owned the namespace, it would have SIGTERMed this PID.
+    assert!(
+        Path::new(&format!("/proc/{sentinel_pid}")).exists(),
+        "sentinel pid {sentinel_pid} must survive worker_run::run — the reaper \
+         must not fire in the cargo-nextest harness (it is not PID 1 here)",
+    );
+
+    let _ = sentinel.kill().await;
     Ok(())
 }
 

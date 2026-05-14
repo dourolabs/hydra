@@ -9,13 +9,29 @@
 //!
 //! # Safety boundary
 //!
-//! **This function assumes the worker runs inside an isolated PID namespace**
-//! (a K8s pod or a Docker container). In that context PID 1 is the worker
-//! itself (or, in single-player setups, a direct child of PID 1), and reaping
-//! "every other process in the namespace" only touches processes the agent
-//! started. **Invoking this on a developer's laptop would SIGTERM unrelated
-//! user processes.** `worker_run::run` is only entered from session execution
-//! contexts so this is safe in practice.
+//! Reaping every other process in the PID namespace is only safe when the
+//! worker owns that namespace — i.e., the worker process is PID 1. In
+//! production both the K8s job engine and the local-Docker job engine launch
+//! the container with `command: ["hydra"], args: ["sessions", "worker-run",
+//! ...]`, so the worker is the container's PID 1 inside its isolated PID
+//! namespace. In that case "every other process in the namespace" is by
+//! construction the agent's transitive children and nothing else.
+//!
+//! `worker_run::run` is **also** reachable from:
+//!   * the integration test harness (`hydra/tests/harness/worker.rs`), which
+//!     calls it directly from inside a cargo-nextest test binary, where PID 1
+//!     is the host's init / systemd / nextest parent;
+//!   * the local process job engine
+//!     (`hydra-server/src/job_engine/local_job_engine.rs`), which spawns
+//!     `hydra sessions worker-run` as a subprocess of hydra-server on a
+//!     developer's laptop.
+//!
+//! In neither of those contexts is the worker PID 1, and indiscriminate
+//! reaping would SIGTERM the parent test runner / developer's shell. To stay
+//! safe we **only reap when `std::process::id() == 1`** — i.e., when the
+//! worker has been hoisted to be its namespace's init. Any other invocation
+//! becomes a no-op and a status log line, so call sites don't need to know
+//! about the gate.
 //!
 //! The companion in-band shutdown paths
 //! (`worker::commands::kill_process_group` / `worker::interactive`) remain in
@@ -39,6 +55,10 @@ pub(crate) struct ReapSummary {
     /// Number of victims that were still alive after the grace period and
     /// received SIGKILL.
     pub sigkill_sent: usize,
+    /// `true` if the reaper short-circuited because the worker is not PID 1
+    /// (i.e. doesn't own its PID namespace). See module docs for the safety
+    /// boundary.
+    pub skipped_not_pid1: bool,
 }
 
 /// Reap every non-self process alive in the current PID namespace.
@@ -47,9 +67,25 @@ pub(crate) struct ReapSummary {
 /// short grace period, then SIGKILLs any survivor. PIDs that vanish mid-scan
 /// (the normal race) and PIDs whose `/proc` entries can't be read are skipped
 /// without failing the whole call. See module docs for the safety boundary.
+///
+/// Returns immediately with `skipped_not_pid1 = true` if the worker is not the
+/// namespace's PID 1 — a strong signal that we're not in an isolated worker
+/// container (test harness, local process job engine, ad-hoc invocation on a
+/// developer laptop). This is the safety guard that prevents the reaper from
+/// SIGTERMing the cargo-nextest parent during integration tests.
 #[cfg(unix)]
 pub(crate) async fn reap_other_processes() -> ReapSummary {
     let self_pid = std::process::id();
+    if self_pid != 1 {
+        log(format!(
+            "Reaper: skipping — worker is pid {self_pid}, not pid 1; \
+             reaping requires an isolated PID namespace where the worker is init",
+        ));
+        return ReapSummary {
+            skipped_not_pid1: true,
+            ..ReapSummary::default()
+        };
+    }
     let victims = collect_victim_pids(self_pid);
     reap_pids(&victims).await
 }
@@ -205,6 +241,45 @@ mod tests {
     use std::process::Stdio;
     use std::time::Instant;
     use tokio::process::Command;
+
+    /// The gate is the whole point of this revision: `reap_other_processes()`
+    /// must do nothing — and crucially must not send any signals — when the
+    /// caller is not PID 1. Tests always run as a cargo-nextest subprocess,
+    /// so `std::process::id() != 1`, so the call must short-circuit.
+    #[tokio::test]
+    async fn reap_other_processes_is_noop_when_not_pid1() {
+        assert_ne!(
+            std::process::id(),
+            1,
+            "test runner should not be PID 1 — otherwise this test can't verify the gate",
+        );
+
+        let mut sentinel = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn sentinel sleep");
+        let sentinel_pid = sentinel.id().expect("sentinel should have a pid");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let summary = reap_other_processes().await;
+
+        assert!(
+            summary.skipped_not_pid1,
+            "expected reap_other_processes to skip when not PID 1, got {summary:?}",
+        );
+        assert_eq!(summary.sigterm_sent, 0, "no SIGTERMs should have been sent");
+        assert_eq!(summary.sigkill_sent, 0, "no SIGKILLs should have been sent");
+        assert!(
+            pid_exists(sentinel_pid),
+            "sentinel pid {sentinel_pid} must still be alive after reap-with-gate",
+        );
+
+        let _ = sentinel.kill().await;
+    }
 
     /// Spawn a `sleep 60` and drive [`reap_pids`] directly against just that
     /// PID. We deliberately bypass [`reap_other_processes`] here because that

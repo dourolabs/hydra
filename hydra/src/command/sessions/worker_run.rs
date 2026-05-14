@@ -290,17 +290,29 @@ pub async fn run(
     // an orphan we don't want — it would keep the worker pod alive past its
     // useful end. The kill-process-group path in `worker::commands` only
     // catches children that kept stdout open; this is the namespace-wide
-    // safety net for everything else. See `worker::reaper` for the safety
-    // boundary (PID-namespace isolation required, which the worker has in
-    // both K8s and local-Docker single-player setups).
+    // safety net for everything else.
+    //
+    // The reaper itself is gated on `std::process::id() == 1` — i.e. the
+    // worker owns its PID namespace, which holds in production (K8s and
+    // local-Docker both run `hydra sessions worker-run` as the container's
+    // PID 1) but does not hold under the integration test harness or the
+    // local process job engine. In those cases this call is a no-op and the
+    // status line below reports `skipped`. See `worker::reaper` for the full
+    // safety contract.
     log_status("Phase: reap orphans — starting");
     let reap_start = Instant::now();
     let reap_summary = reap_other_processes().await;
     let reap_elapsed = reap_start.elapsed().as_secs_f64();
-    log_status(format!(
-        "Phase: reap orphans — completed ({} victims, {} survived to SIGKILL) ({reap_elapsed:.2}s)",
-        reap_summary.sigterm_sent, reap_summary.sigkill_sent
-    ));
+    if reap_summary.skipped_not_pid1 {
+        log_status(format!(
+            "Phase: reap orphans — skipped (worker is not PID 1) ({reap_elapsed:.2}s)"
+        ));
+    } else {
+        log_status(format!(
+            "Phase: reap orphans — completed ({} victims, {} survived to SIGKILL) ({reap_elapsed:.2}s)",
+            reap_summary.sigterm_sent, reap_summary.sigkill_sent
+        ));
+    }
 
     if base_commit.is_some() {
         log_status("Phase: git finalize — starting");
