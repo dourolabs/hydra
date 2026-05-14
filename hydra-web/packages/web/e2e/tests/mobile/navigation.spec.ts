@@ -8,9 +8,9 @@ test.describe("Mobile Navigation @mobile:nav", () => {
     await page.getByTestId("sidebar-section-documents-more").click();
     await expect(page).toHaveURL(/\/documents/);
 
-    // Navigate to Settings via the Agents entry.
+    // Navigate to the Agents page via the Agents sidebar entry.
     await page.getByTestId("sidebar-agents").click();
-    await expect(page).toHaveURL(/\/settings/);
+    await expect(page).toHaveURL(/\/agents/);
 
     // Navigate to the dashboard via the Issues > All issues link.
     await page.getByTestId("sidebar-issues-all").click();
