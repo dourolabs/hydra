@@ -192,11 +192,7 @@ fn collect_victim_pids(self_pid: u32) -> Vec<VictimInfo> {
         }
 
         let ppid = read_ppid(pid).unwrap_or(0);
-        victims.push(VictimInfo {
-            pid,
-            ppid,
-            cmdline,
-        });
+        victims.push(VictimInfo { pid, ppid, cmdline });
     }
     victims
 }

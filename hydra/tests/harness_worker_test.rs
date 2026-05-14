@@ -121,7 +121,9 @@ async fn run_worker_does_not_reap_test_runner_processes() -> Result<()> {
     let repo = hydra_common::RepoName::from_str("acme/reaper-noop-test")?;
     let job_id = user.create_session(&repo, "reaper noop test").await?;
 
-    let _result = harness.run_worker(&job_id, vec!["echo reaper-noop"]).await?;
+    let _result = harness
+        .run_worker(&job_id, vec!["echo reaper-noop"])
+        .await?;
 
     // Real assertion: the sentinel must still be running. If the reaper had
     // run as if it owned the namespace, it would have SIGTERMed this PID.
