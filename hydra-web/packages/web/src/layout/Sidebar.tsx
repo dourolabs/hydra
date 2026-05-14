@@ -53,22 +53,14 @@ function readSectionExpanded(id: string, defaultValue: boolean): boolean {
 function writeSectionExpanded(id: string, expanded: boolean): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      `${SECTION_STORAGE_PREFIX}${id}`,
-      String(expanded),
-    );
+    window.localStorage.setItem(`${SECTION_STORAGE_PREFIX}${id}`, String(expanded));
   } catch {
     /* localStorage unavailable; ignore */
   }
 }
 
-function useSectionExpanded(
-  id: string,
-  defaultValue = true,
-): [boolean, () => void] {
-  const [expanded, setExpanded] = useState(() =>
-    readSectionExpanded(id, defaultValue),
-  );
+function useSectionExpanded(id: string, defaultValue = true): [boolean, () => void] {
+  const [expanded, setExpanded] = useState(() => readSectionExpanded(id, defaultValue));
   const toggle = useCallback(() => {
     setExpanded((prev) => {
       const next = !prev;
@@ -137,9 +129,7 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
 
 function topRecentLabels(labels: readonly LabelRecord[] | undefined): LabelRecord[] {
   if (!labels || labels.length === 0) return [];
-  return [...labels]
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-    .slice(0, 3);
+  return [...labels].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 3);
 }
 
 interface IssuesSectionContentProps {
@@ -164,8 +154,7 @@ function IssuesSectionContent({
   const recentLabels = useMemo(() => topRecentLabels(labels), [labels]);
 
   const assignedActive = isDashboard && selectedParam === "assigned";
-  const allActive =
-    isDashboard && selectedParam === "all" && !labelParam;
+  const allActive = isDashboard && selectedParam === "all" && !labelParam;
 
   return (
     <>
@@ -177,19 +166,13 @@ function IssuesSectionContent({
       >
         <span className={styles.navItemLabel}>Assigned to you</span>
         {assignedCount > 0 && (
-          <span
-            className={styles.badge}
-            data-testid="sidebar-issues-assigned-badge"
-          >
+          <span className={styles.badge} data-testid="sidebar-issues-assigned-badge">
             {assignedCount}
           </span>
         )}
       </Link>
       {recentLabels.map((label) => {
-        const labelActive =
-          isDashboard &&
-          selectedParam === "all" &&
-          labelParam === label.label_id;
+        const labelActive = isDashboard && selectedParam === "all" && labelParam === label.label_id;
         return (
           <Link
             key={label.label_id}
@@ -244,10 +227,7 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
   const recentChats = useMemo<ConversationSummary[]>(() => {
     if (!conversations) return [];
     return [...conversations]
-      .sort(
-        (a, b) =>
-          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-      )
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .slice(0, CHATS_SECTION_LIMIT);
   }, [conversations]);
 
@@ -278,152 +258,125 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
 
   return (
     <>
-    {isMobile && !hidden && (
-      <div
-        className={styles.backdrop}
-        onClick={onHide}
-        aria-hidden="true"
-        data-testid="sidebar-backdrop"
-      />
-    )}
-    <nav
-      className={`${styles.sidebar}${hidden ? ` ${styles.sidebarHidden}` : ""}`}
-      aria-label="Primary"
-      aria-hidden={hidden || undefined}
-      inert={hidden || undefined}
-      data-testid="sidebar"
-      onClick={handleNavClick}
-    >
-      <div className={styles.sections}>
-        <SidebarSection id="chats" label="Chats">
-          {recentChats.map((c) => {
-            const title = conversationTitle(c);
-            return (
-              <NavLink
-                key={c.conversation_id}
-                to={`/chat/${c.conversation_id}`}
-                className={navItemClass}
-                data-testid={`sidebar-chat-row-${c.conversation_id}`}
-                title={title}
-              >
-                <span className={styles.navItemLabel}>{title}</span>
-              </NavLink>
-            );
-          })}
-          <NavLink
-            to="/chat"
-            className={moreLinkClass}
-            data-testid="sidebar-section-chats-more"
-          >
-            More
-          </NavLink>
-        </SidebarSection>
-
-        <SidebarSection id="issues" label="Issues">
-          <IssuesSectionContent
-            username={displayName}
-            isDashboard={isDashboard}
-            selectedParam={selectedParam}
-            labelParam={labelParam}
-          />
-        </SidebarSection>
-
-        <SidebarSection id="documents" label="Documents">
-          <SidebarDocumentTree />
-          <NavLink
-            to="/documents"
-            className={moreLinkClass}
-            data-testid="sidebar-section-documents-more"
-          >
-            More
-          </NavLink>
-        </SidebarSection>
-
-        <Link
-          to="/?selected=patches"
-          className={`${styles.navItem}${patchesActive ? ` ${styles.navItemActive}` : ""}`}
-          aria-current={patchesActive ? "page" : undefined}
-          data-testid="sidebar-patches"
-        >
-          Patches
-        </Link>
-
-        <NavLink
-          to="/agents"
-          className={navItemClass}
-          data-testid="sidebar-agents"
-        >
-          Agents
-        </NavLink>
-
-        <SidebarSection id="context" label="Context">
-          <NavLink
-            to="/repositories"
-            className={moreLinkClass}
-            data-testid="sidebar-context-repositories"
-          >
-            Repositories
-          </NavLink>
-          <NavLink
-            to="/secrets"
-            className={moreLinkClass}
-            data-testid="sidebar-context-secrets"
-          >
-            Secrets
-          </NavLink>
-        </SidebarSection>
-      </div>
-
-      <div className={styles.bottom}>
-        <Tooltip
-          content={`SSE: ${CONNECTION_LABELS[connectionState]}`}
-          position="top"
-        >
-          <div className={styles.connectionIndicator}>
-            <span
-              className={`${styles.connectionDot} ${styles[connectionState]}`}
-            />
-            <span className={styles.connectionLabel}>
-              {CONNECTION_LABELS[connectionState]}
-            </span>
-          </div>
-        </Tooltip>
-
-        {user && displayName && (
-          <div className={styles.userSection}>
-            <Avatar name={displayName} size="sm" />
-            <span className={styles.userName} title={displayName}>
-              {displayName}
-            </span>
-            <Tooltip content="Logout" position="top">
-              <button
-                className={styles.logoutButton}
-                onClick={logout}
-                aria-label="Logout"
-              >
-                <svg
-                  className={styles.logoutIcon}
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
+      {isMobile && !hidden && (
+        <div
+          className={styles.backdrop}
+          onClick={onHide}
+          aria-hidden="true"
+          data-testid="sidebar-backdrop"
+        />
+      )}
+      <nav
+        className={`${styles.sidebar}${hidden ? ` ${styles.sidebarHidden}` : ""}`}
+        aria-label="Primary"
+        aria-hidden={hidden || undefined}
+        inert={hidden || undefined}
+        data-testid="sidebar"
+        onClick={handleNavClick}
+      >
+        <div className={styles.sections}>
+          <SidebarSection id="chats" label="Chats">
+            {recentChats.map((c) => {
+              const title = conversationTitle(c);
+              return (
+                <NavLink
+                  key={c.conversation_id}
+                  to={`/chat/${c.conversation_id}`}
+                  className={navItemClass}
+                  data-testid={`sidebar-chat-row-${c.conversation_id}`}
+                  title={title}
                 >
-                  <path
-                    fillRule="evenodd"
-                    d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h5a1 1 0 100-2H4V5h4a1 1 0 100-2H3zm11.293 3.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L15.586 11H8a1 1 0 110-2h7.586l-1.293-1.293a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </button>
-            </Tooltip>
-          </div>
-        )}
+                  <span className={styles.navItemLabel}>{title}</span>
+                </NavLink>
+              );
+            })}
+            <NavLink to="/chat" className={moreLinkClass} data-testid="sidebar-section-chats-more">
+              More
+            </NavLink>
+          </SidebarSection>
 
-        {version && (
-          <div className={styles.version} data-testid="sidebar-version">
-            {version}
-          </div>
-        )}
-      </div>
-    </nav>
+          <SidebarSection id="issues" label="Issues">
+            <IssuesSectionContent
+              username={displayName}
+              isDashboard={isDashboard}
+              selectedParam={selectedParam}
+              labelParam={labelParam}
+            />
+          </SidebarSection>
+
+          <SidebarSection id="documents" label="Documents">
+            <SidebarDocumentTree />
+            <NavLink
+              to="/documents"
+              className={moreLinkClass}
+              data-testid="sidebar-section-documents-more"
+            >
+              More
+            </NavLink>
+          </SidebarSection>
+
+          <Link
+            to="/?selected=patches"
+            className={`${styles.navItem}${patchesActive ? ` ${styles.navItemActive}` : ""}`}
+            aria-current={patchesActive ? "page" : undefined}
+            data-testid="sidebar-patches"
+          >
+            Patches
+          </Link>
+
+          <NavLink to="/agents" className={navItemClass} data-testid="sidebar-agents">
+            Agents
+          </NavLink>
+
+          <SidebarSection id="context" label="Context">
+            <NavLink
+              to="/repositories"
+              className={moreLinkClass}
+              data-testid="sidebar-context-repositories"
+            >
+              Repositories
+            </NavLink>
+            <NavLink to="/secrets" className={moreLinkClass} data-testid="sidebar-context-secrets">
+              Secrets
+            </NavLink>
+          </SidebarSection>
+        </div>
+
+        <div className={styles.bottom}>
+          <Tooltip content={`SSE: ${CONNECTION_LABELS[connectionState]}`} position="top">
+            <div className={styles.connectionIndicator}>
+              <span className={`${styles.connectionDot} ${styles[connectionState]}`} />
+              <span className={styles.connectionLabel}>{CONNECTION_LABELS[connectionState]}</span>
+            </div>
+          </Tooltip>
+
+          {user && displayName && (
+            <div className={styles.userSection}>
+              <Avatar name={displayName} size="sm" />
+              <span className={styles.userName} title={displayName}>
+                {displayName}
+              </span>
+              <Tooltip content="Logout" position="top">
+                <button className={styles.logoutButton} onClick={logout} aria-label="Logout">
+                  <svg className={styles.logoutIcon} viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                      fillRule="evenodd"
+                      d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h5a1 1 0 100-2H4V5h4a1 1 0 100-2H3zm11.293 3.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L15.586 11H8a1 1 0 110-2h7.586l-1.293-1.293a1 1 0 010-1.414z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+              </Tooltip>
+            </div>
+          )}
+
+          {version && (
+            <div className={styles.version} data-testid="sidebar-version">
+              {version}
+            </div>
+          )}
+        </div>
+      </nav>
     </>
   );
 }
