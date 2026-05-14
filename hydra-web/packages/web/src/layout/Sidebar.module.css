@@ -80,6 +80,7 @@
   flex-direction: column;
 }
 
+/* Style (A) — Top-level heading. Used by .sectionHeader and .topLevelLink. */
 .sectionHeader {
   display: inline-flex;
   align-items: center;
@@ -90,9 +91,9 @@
   background: none;
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
   border-radius: var(--radius-md);
   text-align: left;
   transition:
@@ -101,6 +102,27 @@
 }
 
 .sectionHeader:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.topLevelLink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  min-width: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.topLevelLink:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
 }
@@ -143,6 +165,8 @@
   gap: 2px;
 }
 
+/* Style (B) — Nested item. Reference shape for navItem, actionButton, and
+   the doc-tree row classes below. */
 .navItem {
   display: flex;
   align-items: center;
@@ -208,6 +232,7 @@
   text-align: left;
   font-family: inherit;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   cursor: pointer;
   min-width: 0;
   transition:
@@ -215,12 +240,14 @@
     color var(--transition-fast);
 }
 
+/* Style (C) — See All. Matches (B) on font-family/size/weight, dimmer color. */
 .seeAllLink {
   display: block;
   padding: 2px var(--space-2);
   border-radius: var(--radius-md);
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -262,6 +289,7 @@
   padding: 2px var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+  font-weight: 500;
   border-radius: var(--radius-md);
   text-align: left;
   transition:
@@ -299,6 +327,7 @@
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   border-radius: var(--radius-md);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -317,6 +346,7 @@
   padding: 2px var(--space-2);
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -357,6 +387,7 @@
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   border-radius: var(--radius-md);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -377,6 +408,7 @@
   padding: 2px var(--space-2);
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

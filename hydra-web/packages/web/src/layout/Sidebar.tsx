@@ -137,6 +137,10 @@ function navItemClass({ isActive }: { isActive: boolean }) {
   return `${styles.navItem}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
 
+function topLevelLinkClass({ isActive }: { isActive: boolean }) {
+  return `${styles.topLevelLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
+}
+
 function seeAllLinkClass({ isActive }: { isActive: boolean }) {
   return `${styles.seeAllLink}${isActive ? ` ${styles.navItemActive}` : ""}`;
 }
@@ -391,7 +395,7 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
 
           <Link
             to="/?selected=patches"
-            className={`${styles.navItem}${patchesActive ? ` ${styles.navItemActive}` : ""}`}
+            className={`${styles.topLevelLink}${patchesActive ? ` ${styles.navItemActive}` : ""}`}
             aria-current={patchesActive ? "page" : undefined}
             data-testid="sidebar-patches"
           >
@@ -399,7 +403,7 @@ export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
             <span className={styles.navItemLabel}>Patches</span>
           </Link>
 
-          <NavLink to="/agents" className={navItemClass} data-testid="sidebar-agents">
+          <NavLink to="/agents" className={topLevelLinkClass} data-testid="sidebar-agents">
             <AgentsIcon />
             <span className={styles.navItemLabel}>Agents</span>
           </NavLink>
