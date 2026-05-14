@@ -6,7 +6,7 @@ test.describe("Mobile Issue Detail @mobile:issue-detail", () => {
   }) => {
     await page.goto("/issues/i-seed00002");
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00002")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("Migrate authentication to OAuth2")
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Migrate authentication to OAuth2" })

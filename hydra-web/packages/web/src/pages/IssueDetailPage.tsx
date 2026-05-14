@@ -28,7 +28,7 @@ export function IssueDetailPage() {
     ? [{ label: "Dashboard", to: dashboardReturnUrl }]
     : [{ label: "Dashboard", to: "/" }];
 
-  useBreadcrumbs(breadcrumbItems, `Issue ${issueId}`);
+  useBreadcrumbs(breadcrumbItems, record?.issue.title || `Issue ${issueId}`);
 
   return (
     <div className={styles.page}>
