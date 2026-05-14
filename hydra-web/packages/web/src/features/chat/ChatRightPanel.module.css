@@ -1,0 +1,17 @@
+.wrapper {
+  flex: 0 0 380px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  height: 100%;
+}
+
+@media (max-width: 768px) {
+  .wrapper {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+}
