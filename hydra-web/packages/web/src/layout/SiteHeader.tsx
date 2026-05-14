@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
 import { Tooltip } from "@hydra/ui";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
 import styles from "./SiteHeader.module.css";
+
+const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 interface SiteHeaderProps {
   hidden: boolean;
@@ -44,6 +47,8 @@ export function SiteHeader({
 }: SiteHeaderProps) {
   const { items, current } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const showHamburger = isMobile || hidden;
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
   const sessionsLabel =
@@ -56,17 +61,27 @@ export function SiteHeader({
 
   return (
     <header className={styles.siteHeader} data-testid="site-header">
-      <Tooltip content={toggleLabel} position="right" className={styles.hamburgerSlot}>
-        <button
-          type="button"
-          className={styles.iconSlot}
-          onClick={onToggleSidebar}
-          aria-label={toggleLabel}
-          data-testid="site-header-toggle-sidebar"
+      {showHamburger && (
+        <Tooltip
+          content={toggleLabel}
+          // On mobile the hamburger reorders to the right edge (`order: 999`),
+          // so a right-anchored tooltip would overflow the viewport. Anchor
+          // left in that case; on desktop (hidden=true), the hamburger sits at
+          // the left edge and a right-anchored tooltip remains in-bounds.
+          position={isMobile ? "left" : "right"}
+          className={styles.hamburgerSlot}
         >
-          <HamburgerIcon />
-        </button>
-      </Tooltip>
+          <button
+            type="button"
+            className={styles.iconSlot}
+            onClick={onToggleSidebar}
+            aria-label={toggleLabel}
+            data-testid="site-header-toggle-sidebar"
+          >
+            <HamburgerIcon />
+          </button>
+        </Tooltip>
+      )}
 
       <div className={styles.breadcrumbsSlot} data-testid="site-header-breadcrumbs">
         {current !== null && <Breadcrumbs items={items} current={current} />}

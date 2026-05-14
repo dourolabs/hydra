@@ -1,13 +1,26 @@
 import { test, expect } from "../fixtures/auth";
 
-const VIEWPORTS = [
-  { name: "desktop 1440x900", width: 1440, height: 900 },
-  { name: "mobile 375x812", width: 375, height: 812 },
-];
-
 // site-header-sessions was dropped: the active-sessions slot is now a labelled
 // pill ("no sessions" / "N sessions") with no wrapping Tooltip.
-const TRIGGERS = ["site-header-toggle-sidebar", "site-header-search"];
+//
+// The sidebar-hide control split (per-viewport rather than a single shared
+// hamburger): on desktop the in-sidebar << button hosts the left-anchored
+// tooltip; on mobile the header hamburger still does. Each viewport iterates
+// its own trigger list.
+const VIEWPORTS = [
+  {
+    name: "desktop 1440x900",
+    width: 1440,
+    height: 900,
+    triggers: ["sidebar-hide", "site-header-search"],
+  },
+  {
+    name: "mobile 375x812",
+    width: 375,
+    height: 812,
+    triggers: ["site-header-toggle-sidebar", "site-header-search"],
+  },
+];
 
 test.describe("Header tooltips @nav:tooltip-viewport", () => {
   for (const vp of VIEWPORTS) {
@@ -17,7 +30,7 @@ test.describe("Header tooltips @nav:tooltip-viewport", () => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto("/");
 
-      for (const testid of TRIGGERS) {
+      for (const testid of vp.triggers) {
         const trigger = page.getByTestId(testid);
         await trigger.hover();
         const tooltip = page.getByRole("tooltip").first();
