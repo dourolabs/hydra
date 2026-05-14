@@ -1,5 +1,16 @@
 #!/bin/bash
 # hydra-web/scripts/dev-test.sh
+#
+# INTERACTIVE USE ONLY — DO NOT INVOKE FROM AGENTS.
+#
+# This script ends with `wait` and relies on a SIGINT/SIGTERM (Ctrl-C) to fire
+# its cleanup trap and kill its child dev servers. When backgrounded from a
+# non-interactive context (e.g. an agent's `./scripts/dev-test.sh &`), neither
+# the wait nor the trap will fire, leaving orphaned mock-server / vite
+# processes that outlive the caller. For agent workflows use `pnpm e2e` or
+# `pnpm visual-audit` instead — both Playwright configs declare a `webServer`
+# block that manages the dev-server lifecycle automatically.
+#
 # Start mock server + Vite dev server, then optionally run E2E tests.
 #
 # Usage:

@@ -15,4 +15,20 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
+  webServer: [
+    {
+      command: "pnpm --filter @hydra/mock-server dev",
+      port: 8080,
+      reuseExistingServer: true,
+      cwd: "../..",
+    },
+    {
+      command:
+        "pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web dev",
+      port: 3000,
+      reuseExistingServer: true,
+      cwd: "../..",
+      timeout: 120000,
+    },
+  ],
 });

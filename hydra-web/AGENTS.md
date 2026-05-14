@@ -144,10 +144,10 @@ The visual audit script captures screenshots of every major page at both desktop
 
 #### Running the visual audit
 
-1. Start the dev stack for interactive use: `./scripts/dev-test.sh`
-2. Run the visual audit: `cd packages/web && pnpm visual-audit`
-3. Screenshots are saved to `packages/web/test-results/visual-audit/`
-4. Stop the dev stack when done (Ctrl-C the `dev-test.sh` process)
+1. Run the visual audit: `cd packages/web && pnpm visual-audit`
+2. Screenshots are saved to `packages/web/test-results/visual-audit/`
+
+Playwright manages the dev-server lifecycle (mock server on port 8080, Vite on port 3000) via the `webServer` config in `packages/web/playwright-visual-audit.config.ts` — servers are started before the audit and torn down when it exits, mirroring the `pnpm e2e` UX. Do not start dev servers manually beforehand.
 
 Each screenshot is named `{viewport}-{page}.png`, for example:
 - `desktop-dashboard.png`, `mobile-dashboard.png`
