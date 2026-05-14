@@ -134,17 +134,6 @@ export const router = createBrowserRouter([
           })),
       },
       {
-        path: "settings",
-        lazy: () =>
-          import("./pages/SettingsPage").then((m) => ({
-            element: (
-              <ErrorBoundary>
-                <m.SettingsPage />
-              </ErrorBoundary>
-            ),
-          })),
-      },
-      {
         path: "repositories",
         lazy: () =>
           import("./pages/RepositoriesPage").then((m) => ({
