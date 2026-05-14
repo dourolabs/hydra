@@ -39,6 +39,27 @@ vi.mock("@tanstack/react-query", () => ({
   }),
 }));
 
+// Stub the chat Related-tab data hooks so this test stays focused on layout.
+vi.mock("../../features/chat/useChatActiveSessionIssues", () => ({
+  useChatActiveSessionIssues: () => ({
+    issues: [],
+    sessionsByIssue: new Map(),
+    isLoading: false,
+  }),
+}));
+vi.mock("../../features/chat/useChatAttentionIssues", () => ({
+  useChatAttentionIssues: () => ({ issues: [], isLoading: false }),
+}));
+vi.mock("../../features/chat/useChatTopLevelIssues", () => ({
+  useChatTopLevelIssues: () => ({ issues: [], isLoading: false }),
+}));
+vi.mock("../../features/chat/useChatRelatedDocuments", () => ({
+  useChatRelatedDocuments: () => ({ documents: [], isLoading: false }),
+}));
+vi.mock("../../features/chat/useChatRelatedPatches", () => ({
+  useChatRelatedPatches: () => ({ patches: [], isLoading: false }),
+}));
+
 vi.mock("../../api/client", () => ({
   apiClient: {
     sendMessage: vi.fn(),
