@@ -141,7 +141,6 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
 
   const goTo = useCallback(
     (item: SearchItem) => {
-      if (!item.href) return;
       onClose();
       navigate(item.href);
     },
@@ -278,10 +277,9 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
                           type="button"
                           role="option"
                           aria-selected={selected}
-                          className={`${styles.row}${selected ? ` ${styles.rowSelected}` : ""}${item.href ? "" : ` ${styles.rowDisabled}`}`}
+                          className={`${styles.row}${selected ? ` ${styles.rowSelected}` : ""}`}
                           onClick={() => goTo(item)}
                           onMouseEnter={() => setSelectedIndex(index)}
-                          disabled={!item.href}
                           data-testid={`global-search-row-${item.kind}-${item.id}`}
                           title={item.label}
                         >

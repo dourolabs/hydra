@@ -39,9 +39,7 @@ export function SessionsListPage() {
         <ul className={styles.list} data-testid="sessions-list">
           {sorted.map((record) => {
             const spawnedFrom = record.session.spawned_from;
-            const sessionLink = spawnedFrom
-              ? `/issues/${spawnedFrom}/sessions/${record.session_id}/logs`
-              : null;
+            const sessionLink = `/sessions/${record.session_id}`;
             const time =
               record.session.end_time ??
               record.session.start_time ??
@@ -54,15 +52,9 @@ export function SessionsListPage() {
                 data-testid={`sessions-list-row-${record.session_id}`}
               >
                 <div className={styles.rowMain}>
-                  {sessionLink ? (
-                    <Link to={sessionLink} className={styles.sessionId}>
-                      {record.session_id}
-                    </Link>
-                  ) : (
-                    <span className={styles.sessionId}>
-                      {record.session_id}
-                    </span>
-                  )}
+                  <Link to={sessionLink} className={styles.sessionId}>
+                    {record.session_id}
+                  </Link>
                   <Badge
                     status={normalizeSessionStatus(record.session.status)}
                   />

@@ -98,17 +98,12 @@
   transition: background-color var(--transition-fast);
 }
 
-.row:hover:not(:disabled) {
+.row:hover {
   background-color: var(--color-bg-tertiary);
 }
 
 .rowSelected {
   background-color: var(--color-bg-tertiary);
-}
-
-.rowDisabled {
-  cursor: default;
-  color: var(--color-text-tertiary);
 }
 
 .rowLabel {

@@ -16,6 +16,7 @@ const AUTHENTICATED_PAGES = [
   { name: "documents-list", path: "/documents" },
   { name: "document-detail", path: "/documents/d-seed00001" },
   { name: "session-log", path: "/issues/i-seed00005/sessions/t-seed00001/logs" },
+  { name: "session-detail", path: "/sessions/t-seed00001" },
   { name: "sessions-list", path: "/sessions" },
   { name: "repositories", path: "/repositories" },
   { name: "agents", path: "/agents" },

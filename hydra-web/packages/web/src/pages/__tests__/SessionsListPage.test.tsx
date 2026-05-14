@@ -140,7 +140,7 @@ describe("SessionsListPage", () => {
     expect(screen.getByTestId("error-state").textContent).toContain("boom");
   });
 
-  it("renders one row per session and links sessions with spawned_from", () => {
+  it("renders one row per session and links every row to /sessions/<id>", () => {
     allSessionsState.data = [
       rec("t-1", "running", "i-1", "first task"),
       rec("t-2", "complete", undefined, "orphan task"),
@@ -151,18 +151,19 @@ describe("SessionsListPage", () => {
     expect(screen.getByTestId("sessions-list-row-t-1")).toBeDefined();
     expect(screen.getByTestId("sessions-list-row-t-2")).toBeDefined();
 
-    // Linked session id for t-1 (spawned_from i-1)
-    const linkedSessionId = screen.getByText("t-1");
-    expect(linkedSessionId.closest("a")?.getAttribute("href")).toBe(
-      "/issues/i-1/sessions/t-1/logs",
+    // Spawned-from session links to the universal /sessions/<id> route.
+    const spawnedSessionId = screen.getByText("t-1");
+    expect(spawnedSessionId.closest("a")?.getAttribute("href")).toBe(
+      "/sessions/t-1",
     );
 
-    // Unlinked session id for t-2 — rendered as text, not an anchor.
+    // Orphan session is also a clickable link to /sessions/<id>.
     const orphanSessionId = screen.getByText("t-2");
-    expect(orphanSessionId.tagName.toLowerCase()).not.toBe("a");
-    expect(orphanSessionId.closest("a")).toBeNull();
+    expect(orphanSessionId.closest("a")?.getAttribute("href")).toBe(
+      "/sessions/t-2",
+    );
 
-    // Issue link is present for spawned-from sessions.
+    // Issue link is still present for spawned-from sessions (in the meta row).
     const issueLink = screen.getByText("i-1");
     expect(issueLink.closest("a")?.getAttribute("href")).toBe("/issues/i-1");
   });
