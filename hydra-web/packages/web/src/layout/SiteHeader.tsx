@@ -89,7 +89,7 @@ export function SiteHeader({
         </button>
       </Tooltip>
 
-      <Tooltip content="Active sessions" position="bottom">
+      <Tooltip content="Active sessions" position="left">
         <Link
           to="/sessions"
           className={styles.iconSlot}
