@@ -171,6 +171,26 @@
     color var(--transition-fast);
 }
 
+.seeAllLink {
+  display: block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.seeAllLink:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
 .actionButton:hover:not(:disabled) {
   background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
