@@ -5,7 +5,11 @@ export const SIDEBAR_HIDDEN_STORAGE_KEY = "hydra-sidebar-hidden";
 function readHidden(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY) === "1";
+    const stored = window.localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY);
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+    // No stored preference: default to hidden on mobile, visible on desktop.
+    return window.matchMedia?.("(max-width: 768px)").matches ?? false;
   } catch {
     return false;
   }

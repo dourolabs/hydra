@@ -4,8 +4,15 @@ import { render, screen, fireEvent, cleanup, act } from "@testing-library/react"
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 
+// Mirror production behaviour: the real Tooltip wraps its children in a
+// <span class="wrapper className"> element. The mock must propagate
+// `className` to the wrapper so layout/order assertions reflect reality.
 vi.mock("@hydra/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <span className={className} data-testid="tooltip-wrapper">
+      {children}
+    </span>
+  ),
 }));
 
 const activeSessionCountMock = vi.fn();
@@ -55,10 +62,7 @@ function renderHeader(opts: RenderOpts = {}) {
     <MemoryRouter initialEntries={[opts.initialEntry ?? "/"]}>
       <BreadcrumbsProvider>
         {opts.breadcrumbs && (
-          <BreadcrumbsSetter
-            items={opts.breadcrumbs.items}
-            current={opts.breadcrumbs.current}
-          />
+          <BreadcrumbsSetter items={opts.breadcrumbs.items} current={opts.breadcrumbs.current} />
         )}
         <SiteHeader
           hidden={opts.hidden ?? false}
@@ -79,6 +83,23 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   activeSessionCountMock.mockReset();
+});
+
+describe("SiteHeader hamburger placement", () => {
+  it("tags the hamburger's flex child (Tooltip wrapper) with hamburgerSlot for mobile reordering", () => {
+    renderHeader();
+    const toggle = screen.getByTestId("site-header-toggle-sidebar");
+    // The flex child of <header> is the Tooltip wrapper around the button,
+    // not the button itself. The reordering class must live on that wrapper
+    // for the `order: 999` rule to apply on mobile.
+    const header = screen.getByTestId("site-header");
+    const flexChild = toggle.parentElement;
+    expect(flexChild?.parentElement).toBe(header);
+    expect(flexChild?.className).toContain("hamburgerSlot");
+    // The button itself must NOT carry the reordering class — it isn't the
+    // flex child, so `order` on it would have no effect (regression guard).
+    expect(toggle.className).not.toContain("hamburgerSlot");
+  });
 });
 
 describe("SiteHeader sidebar toggle", () => {
@@ -102,14 +123,14 @@ describe("SiteHeader sidebar toggle", () => {
 
   it("uses the right aria-label depending on hidden state", () => {
     const { unmount } = renderHeader({ hidden: false });
-    expect(
-      screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label"),
-    ).toBe("Hide sidebar");
+    expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
+      "Hide sidebar",
+    );
     unmount();
     renderHeader({ hidden: true });
-    expect(
-      screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label"),
-    ).toBe("Show sidebar");
+    expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
+      "Show sidebar",
+    );
   });
 });
 

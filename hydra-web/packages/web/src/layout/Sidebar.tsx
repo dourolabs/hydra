@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Conversation, LabelRecord, VersionResponse } from "@hydra/api";
@@ -11,6 +18,7 @@ import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useLabels } from "../features/labels/useLabels";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
 import {
@@ -24,10 +32,12 @@ import {
 import styles from "./Sidebar.module.css";
 
 const CHATS_SECTION_LIMIT = 3;
+const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 interface SidebarProps {
   connectionState: SSEConnectionState;
   hidden: boolean;
+  onHide: () => void;
 }
 
 const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
@@ -226,7 +236,7 @@ function IssuesSectionContent({
   );
 }
 
-export function Sidebar({ connectionState, hidden }: SidebarProps) {
+export function Sidebar({ connectionState, hidden, onHide }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
@@ -237,6 +247,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
   const labelParam = searchParams.get("label");
   const isDashboard = pathname === "/";
   const patchesActive = isDashboard && selectedParam === "patches";
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
 
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
@@ -271,13 +282,48 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
     navigate("/?create-issue=1");
   }, [navigate]);
 
+  // On mobile, auto-close the drawer when the user taps a navigation link
+  // (anchor). Section toggle buttons live inside the same <nav> but are
+  // `<button>` elements, so the positive selector below leaves them alone.
+  const handleNavClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (!isMobile) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("a")) {
+        onHide();
+      }
+    },
+    [isMobile, onHide],
+  );
+
+  // On mobile, Escape closes the drawer. Listen on `window` so it works even
+  // when focus is outside the sidebar (e.g. just after a touch tap).
+  useEffect(() => {
+    if (!isMobile || hidden) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onHide();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isMobile, hidden, onHide]);
+
   return (
+    <>
+    {isMobile && !hidden && (
+      <div
+        className={styles.backdrop}
+        onClick={onHide}
+        aria-hidden="true"
+        data-testid="sidebar-backdrop"
+      />
+    )}
     <nav
       className={`${styles.sidebar}${hidden ? ` ${styles.sidebarHidden}` : ""}`}
       aria-label="Primary"
       aria-hidden={hidden || undefined}
       inert={hidden || undefined}
       data-testid="sidebar"
+      onClick={handleNavClick}
     >
       <div className={styles.sections}>
         <SidebarSection id="chats" label="Chats" icon={<ChatIcon />}>
@@ -425,5 +471,6 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
         )}
       </div>
     </nav>
+    </>
   );
 }

@@ -79,6 +79,7 @@ function renderSidebar(
   overrides: {
     hidden?: boolean;
     initialEntry?: string;
+    onHide?: () => void;
   } = {},
 ) {
   const client = new QueryClient({
@@ -90,11 +91,39 @@ function renderSidebar(
         <Sidebar
           connectionState="connected"
           hidden={overrides.hidden ?? false}
+          onHide={overrides.onHide ?? (() => {})}
         />
         <LocationDisplay />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+type ChangeListener = (e: MediaQueryListEvent) => void;
+function mockMatchMedia(matches: boolean) {
+  const listeners: ChangeListener[] = [];
+  const mql = {
+    matches,
+    media: "",
+    onchange: null,
+    addEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") listeners.push(handler);
+    },
+    removeEventListener: (event: string, handler: ChangeListener) => {
+      if (event === "change") {
+        const idx = listeners.indexOf(handler);
+        if (idx !== -1) listeners.splice(idx, 1);
+      }
+    },
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => true,
+  };
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: () => mql as unknown as MediaQueryList,
+  });
 }
 
 function makeLabel(overrides: Partial<LabelRecord>): LabelRecord {
@@ -138,6 +167,9 @@ beforeEach(() => {
   labelsMock.mockReturnValue({ data: [] });
   getVersionMock.mockResolvedValue({ version: "1.2.3" });
   createConversationMock.mockReset();
+  // Default matchMedia stub: desktop (no media query matches). Individual
+  // tests can override via mockMatchMedia(true) to simulate mobile.
+  mockMatchMedia(false);
 });
 
 afterEach(() => {
@@ -148,6 +180,7 @@ afterEach(() => {
   labelsMock.mockReset();
   getVersionMock.mockReset();
   createConversationMock.mockReset();
+  vi.restoreAllMocks();
 });
 
 describe("Sidebar section icons", () => {
@@ -692,6 +725,82 @@ describe("Sidebar See All active highlight", () => {
     renderSidebar({ initialEntry: "/documents/d-abc" });
     const seeAll = screen.getByTestId("sidebar-section-documents-more");
     expect(seeAll.className).not.toContain("navItemActive");
+  });
+});
+
+describe("Sidebar mobile drawer behaviour", () => {
+  it("renders the backdrop only when on mobile and the sidebar is visible", () => {
+    mockMatchMedia(true);
+    renderSidebar({ hidden: false });
+    expect(screen.getByTestId("sidebar-backdrop")).toBeTruthy();
+  });
+
+  it("does not render the backdrop on desktop", () => {
+    mockMatchMedia(false);
+    renderSidebar({ hidden: false });
+    expect(screen.queryByTestId("sidebar-backdrop")).toBeNull();
+  });
+
+  it("does not render the backdrop on mobile when the sidebar is hidden", () => {
+    mockMatchMedia(true);
+    renderSidebar({ hidden: true });
+    expect(screen.queryByTestId("sidebar-backdrop")).toBeNull();
+  });
+
+  it("calls onHide when the backdrop is clicked", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.click(screen.getByTestId("sidebar-backdrop"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-closes the sidebar when a nav link is clicked on mobile", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.click(screen.getByTestId("sidebar-issues-all"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT auto-close when a section-toggle button is clicked on mobile", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.click(screen.getByTestId("sidebar-section-issues"));
+    expect(onHide).not.toHaveBeenCalled();
+  });
+
+  it("does NOT auto-close when a nav link is clicked on desktop", () => {
+    mockMatchMedia(false);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.click(screen.getByTestId("sidebar-issues-all"));
+    expect(onHide).not.toHaveBeenCalled();
+  });
+
+  it("closes on Escape key when on mobile and visible", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not respond to Escape on mobile when already hidden", () => {
+    mockMatchMedia(true);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: true, onHide });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onHide).not.toHaveBeenCalled();
+  });
+
+  it("does not respond to Escape on desktop", () => {
+    mockMatchMedia(false);
+    const onHide = vi.fn();
+    renderSidebar({ hidden: false, onHide });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onHide).not.toHaveBeenCalled();
   });
 });
 
