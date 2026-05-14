@@ -3,7 +3,8 @@ import { Spinner } from "@hydra/ui";
 import { useIssue } from "../features/issues/useIssue";
 import { IssueDetail } from "../features/issues/IssueDetail";
 import { ApiError } from "../api/client";
-import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
+import type { BreadcrumbItem } from "../layout/Breadcrumbs";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./IssueDetailPage.module.css";
 
 export function IssueDetailPage() {
@@ -27,13 +28,10 @@ export function IssueDetailPage() {
     ? [{ label: "Dashboard", to: dashboardReturnUrl }]
     : [{ label: "Dashboard", to: "/" }];
 
+  useBreadcrumbs(breadcrumbItems, `Issue ${issueId}`);
+
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={breadcrumbItems}
-        current={`Issue ${issueId}`}
-      />
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />

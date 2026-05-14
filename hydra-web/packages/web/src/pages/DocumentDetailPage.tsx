@@ -7,7 +7,8 @@ import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
-import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
+import type { BreadcrumbItem } from "../layout/Breadcrumbs";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentDetailPage.module.css";
 
 export function DocumentDetailPage() {
@@ -27,10 +28,10 @@ export function DocumentDetailPage() {
     ? [{ label: "Dashboard", to: dashboardReturnUrl }]
     : [{ label: "Documents", to: "/documents" }];
 
+  useBreadcrumbs(breadcrumbItems, displayTitle);
+
   return (
     <div className={styles.page}>
-      <Breadcrumbs items={breadcrumbItems} current={displayTitle} />
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />

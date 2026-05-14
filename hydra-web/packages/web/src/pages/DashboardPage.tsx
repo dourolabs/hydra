@@ -18,6 +18,7 @@ import { readFilterState, writeFilterState } from "../features/dashboard/filterS
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import { useAgents } from "../hooks/useAgents";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DashboardPage.module.css";
 
 const VALID_FILTERS = ["your-issues", "assigned", "all", "patches", "documents"];
@@ -61,6 +62,7 @@ function buildServerFilters(
 }
 
 export function DashboardPage() {
+  useBreadcrumbs([], "Dashboard");
   const { user } = useAuth();
   const savedFilters = useMemo(() => readFilterState(), []);
   const [searchValue, setSearchValue] = useState(savedFilters?.searchValue ?? "");

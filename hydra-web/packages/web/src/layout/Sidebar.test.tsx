@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ConversationSummary, LabelRecord } from "@hydra/api";
 
@@ -36,7 +36,6 @@ vi.mock("../features/chat/useConversations", () => ({
 
 const issueCountMock = vi.fn();
 const labelsMock = vi.fn();
-const activeSessionCountMock = vi.fn();
 
 vi.mock("../features/issues/usePaginatedIssues", () => ({
   useIssueCount: (...args: unknown[]) => issueCountMock(...args),
@@ -44,10 +43,6 @@ vi.mock("../features/issues/usePaginatedIssues", () => ({
 
 vi.mock("../features/labels/useLabels", () => ({
   useLabels: () => labelsMock(),
-}));
-
-vi.mock("../features/sessions/useActiveSessionCount", () => ({
-  useActiveSessionCount: () => activeSessionCountMock(),
 }));
 
 const getVersionMock = vi.fn();
@@ -68,16 +63,9 @@ vi.mock("./SidebarDocumentTree", () => ({
 // --- Import after mocks ---
 const { Sidebar } = await import("./Sidebar");
 
-function LocationDisplay() {
-  const location = useLocation();
-  return <div data-testid="location-pathname">{location.pathname}</div>;
-}
-
 function renderSidebar(
   overrides: {
     hidden?: boolean;
-    onHide?: () => void;
-    onOpenSearch?: () => void;
     initialEntry?: string;
   } = {},
 ) {
@@ -90,10 +78,7 @@ function renderSidebar(
         <Sidebar
           connectionState="connected"
           hidden={overrides.hidden ?? false}
-          onHide={overrides.onHide ?? (() => {})}
-          onOpenSearch={overrides.onOpenSearch ?? (() => {})}
         />
-        <LocationDisplay />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -138,7 +123,6 @@ beforeEach(() => {
   mockConversations = [];
   issueCountMock.mockReturnValue({ data: 0 });
   labelsMock.mockReturnValue({ data: [] });
-  activeSessionCountMock.mockReturnValue({ data: 0 });
   getVersionMock.mockResolvedValue({ version: "1.2.3" });
 });
 
@@ -148,8 +132,16 @@ afterEach(() => {
   mockConversations = [];
   issueCountMock.mockReset();
   labelsMock.mockReset();
-  activeSessionCountMock.mockReset();
   getVersionMock.mockReset();
+});
+
+describe("Sidebar header block removed", () => {
+  it("does not render the in-sidebar active-sessions / search / hide buttons", () => {
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-header-sessions")).toBeNull();
+    expect(screen.queryByTestId("sidebar-header-search")).toBeNull();
+    expect(screen.queryByTestId("sidebar-header-hide")).toBeNull();
+  });
 });
 
 describe("Sidebar section collapse", () => {
@@ -223,21 +215,6 @@ describe("Sidebar section collapse", () => {
 });
 
 describe("Sidebar static structure", () => {
-  it("invokes onOpenSearch when the search button is clicked", () => {
-    const onOpenSearch = vi.fn();
-    renderSidebar({ onOpenSearch });
-    expect(screen.getByTestId("sidebar-header-search").tagName).toBe("BUTTON");
-    fireEvent.click(screen.getByTestId("sidebar-header-search"));
-    expect(onOpenSearch).toHaveBeenCalledTimes(1);
-  });
-
-  it("invokes onHide when the hide button is clicked", () => {
-    const onHide = vi.fn();
-    renderSidebar({ onHide });
-    fireEvent.click(screen.getByTestId("sidebar-header-hide"));
-    expect(onHide).toHaveBeenCalledTimes(1);
-  });
-
   it("marks the sidebar as inert/aria-hidden when hidden is true", () => {
     renderSidebar({ hidden: true });
     const nav = screen.getByTestId("sidebar");
@@ -272,42 +249,6 @@ describe("Sidebar static structure", () => {
     expect(
       screen.getByTestId("sidebar-context-secrets").getAttribute("href"),
     ).toBe("/secrets");
-  });
-});
-
-describe("Sidebar active-sessions header", () => {
-  it("renders the sessions header slot as a link to /sessions", () => {
-    renderSidebar();
-    const slot = screen.getByTestId("sidebar-header-sessions");
-    expect(slot.tagName).toBe("A");
-    expect(slot.getAttribute("href")).toBe("/sessions");
-  });
-
-  it("hides the badge when active session count is zero", () => {
-    activeSessionCountMock.mockReturnValue({ data: 0 });
-    renderSidebar();
-    expect(screen.queryByTestId("sidebar-header-sessions-badge")).toBeNull();
-  });
-
-  it("shows the badge with the current count when greater than zero", () => {
-    activeSessionCountMock.mockReturnValue({ data: 4 });
-    renderSidebar();
-    const badge = screen.getByTestId("sidebar-header-sessions-badge");
-    expect(badge.textContent).toBe("4");
-  });
-
-  it("treats an undefined count as zero (loading state)", () => {
-    activeSessionCountMock.mockReturnValue({ data: undefined });
-    renderSidebar();
-    expect(screen.queryByTestId("sidebar-header-sessions-badge")).toBeNull();
-  });
-
-  it("navigates to /sessions when the header slot is clicked", () => {
-    activeSessionCountMock.mockReturnValue({ data: 2 });
-    renderSidebar({ initialEntry: "/" });
-    expect(screen.getByTestId("location-pathname").textContent).toBe("/");
-    fireEvent.click(screen.getByTestId("sidebar-header-sessions"));
-    expect(screen.getByTestId("location-pathname").textContent).toBe("/sessions");
   });
 });
 

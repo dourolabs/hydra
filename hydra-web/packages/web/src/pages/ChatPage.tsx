@@ -9,12 +9,18 @@ import { ChatMessageList } from "../features/chat/ChatMessageList";
 import { ChatInput } from "../features/chat/ChatInput";
 import { ChatRightPanel } from "../features/chat/ChatRightPanel";
 import { ApiError, apiClient } from "../api/client";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatPage.module.css";
 
 function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const queryClient = useQueryClient();
   const { data: conversation, isLoading, error } = useConversation(conversationId);
   const { data: events } = useConversationEvents(conversationId);
+
+  useBreadcrumbs(
+    [{ label: "Chats", to: "/chat" }],
+    conversation?.title || conversationId,
+  );
 
   const sendMutation = useMutation({
     mutationFn: (content: string) =>

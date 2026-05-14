@@ -3,7 +3,8 @@ import { Spinner } from "@hydra/ui";
 import { usePatch } from "../features/patches/usePatch";
 import { PatchDetail } from "../features/patches/PatchDetail";
 import { ApiError } from "../api/client";
-import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
+import type { BreadcrumbItem } from "../layout/Breadcrumbs";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./PatchDetailPage.module.css";
 
 export function PatchDetailPage() {
@@ -33,10 +34,10 @@ export function PatchDetailPage() {
     breadcrumbItems = [{ label: "Dashboard", to: "/" }];
   }
 
+  useBreadcrumbs(breadcrumbItems, `Patch ${patchId}`);
+
   return (
     <div className={styles.page}>
-      <Breadcrumbs items={breadcrumbItems} current={`Patch ${patchId}`} />
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />

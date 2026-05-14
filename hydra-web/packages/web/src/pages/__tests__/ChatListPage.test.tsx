@@ -118,6 +118,11 @@ vi.mock("../ChatListPage.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+const useBreadcrumbsMock = vi.fn();
+vi.mock("../../layout/useBreadcrumbs", () => ({
+  useBreadcrumbs: (...args: unknown[]) => useBreadcrumbsMock(...args),
+}));
+
 // --- Import after mocks ---
 const { ChatListPage } = await import("../ChatListPage");
 
@@ -136,6 +141,13 @@ describe("ChatListPage New Chat button", () => {
     mockConversations = [];
     resetMutationState();
     mockCreateConversation.mockReset();
+    useBreadcrumbsMock.mockReset();
+  });
+
+  it("publishes a single-segment Chats breadcrumb on mount", () => {
+    render(<ChatListPage />);
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Chats");
+    cleanup();
   });
 
   it("creates a conversation and navigates on click", async () => {

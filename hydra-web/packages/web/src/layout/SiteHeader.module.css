@@ -1,0 +1,65 @@
+.siteHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  height: 44px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.breadcrumbsSlot {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.iconSlot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.iconSlot:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.iconSlot svg {
+  width: 18px;
+  height: 18px;
+}
+
+.badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
+  border-radius: 999px;
+  padding: 1px 5px;
+  min-width: 16px;
+  pointer-events: none;
+}

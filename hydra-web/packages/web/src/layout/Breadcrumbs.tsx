@@ -22,7 +22,11 @@ export function Breadcrumbs({ items, current }: BreadcrumbsProps) {
           </Link>{" "}
         </span>
       ))}
-      <span className={styles.separator}>/</span>{" "}
+      {items.length > 0 && (
+        <>
+          <span className={styles.separator}>/</span>{" "}
+        </>
+      )}
       <span className={styles.current}>{current}</span>
     </nav>
   );
