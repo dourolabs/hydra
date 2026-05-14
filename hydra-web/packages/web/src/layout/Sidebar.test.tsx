@@ -253,7 +253,7 @@ describe("Sidebar static structure", () => {
     );
   });
 
-  it("renders Context children pointing at their respective routes", () => {
+  it("renders Context children pointing at their dedicated pages", () => {
     renderSidebar();
     expect(
       screen
@@ -262,7 +262,7 @@ describe("Sidebar static structure", () => {
     ).toBe("/repositories");
     expect(
       screen.getByTestId("sidebar-context-secrets").getAttribute("href"),
-    ).toBe("/settings");
+    ).toBe("/secrets");
   });
 });
 
