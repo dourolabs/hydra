@@ -10,9 +10,11 @@ import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
 import { formatRelativeTime } from "../utils/time";
 import { apiClient } from "../api/client";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
 
 export function ChatListPage() {
+  useBreadcrumbs([], "Chats");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data, isLoading, error, refetch } = useConversations();

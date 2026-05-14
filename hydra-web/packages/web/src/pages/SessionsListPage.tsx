@@ -9,9 +9,11 @@ import { EmptyState } from "../components/EmptyState/EmptyState";
 import { normalizeSessionStatus } from "../utils/statusMapping";
 import { formatTimestamp } from "../utils/time";
 import { descriptionSnippet } from "../utils/text";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./SessionsListPage.module.css";
 
 export function SessionsListPage() {
+  useBreadcrumbs([], "Sessions");
   const { data, isLoading, error, refetch } = useAllSessions();
 
   const sorted = useMemo(() => (data ? sortSessions(data) : []), [data]);

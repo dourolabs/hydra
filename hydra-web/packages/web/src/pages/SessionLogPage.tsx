@@ -11,7 +11,7 @@ import { SessionSettings } from "../features/sessions/SessionSettings";
 import { DeleteConfirmModal } from "../components/DeleteConfirmModal/DeleteConfirmModal";
 import { apiClient, ApiError } from "../api/client";
 import { useToast } from "../features/toast/useToast";
-import { Breadcrumbs } from "../layout/Breadcrumbs";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./SessionLogPage.module.css";
 
 const TABS = [
@@ -68,16 +68,16 @@ export function SessionLogPage() {
     killMutation.mutate();
   }, [killMutation]);
 
+  useBreadcrumbs(
+    [
+      { label: "Dashboard", to: "/" },
+      { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+    ],
+    `Session ${sessionId}`,
+  );
+
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: "Dashboard", to: "/" },
-          { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
-        ]}
-        current={`Session ${sessionId}`}
-      />
-
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />

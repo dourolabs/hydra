@@ -10,6 +10,7 @@ import { FolderIcon } from "../components/icons/FolderIcon";
 import { DocumentRow } from "../features/documents/DocumentRow";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentsPage.module.css";
 
 function useDocumentPaths(prefix: string | null, enabled: boolean) {
@@ -163,6 +164,7 @@ function ExpandableFolderNode({
 }
 
 export function DocumentsPage() {
+  useBreadcrumbs([], "Documents");
   const [createOpen, setCreateOpen] = useState(false);
 
   const { data: topLevel, isLoading, error, refetch } = useDocumentPaths(null, true);

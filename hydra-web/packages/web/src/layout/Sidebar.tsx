@@ -10,7 +10,6 @@ import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useLabels } from "../features/labels/useLabels";
-import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
 import styles from "./Sidebar.module.css";
@@ -20,8 +19,6 @@ const CHATS_SECTION_LIMIT = 3;
 interface SidebarProps {
   connectionState: SSEConnectionState;
   hidden: boolean;
-  onHide: () => void;
-  onOpenSearch: () => void;
 }
 
 const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
@@ -212,12 +209,7 @@ function IssuesSectionContent({
   );
 }
 
-export function Sidebar({
-  connectionState,
-  hidden,
-  onHide,
-  onOpenSearch,
-}: SidebarProps) {
+export function Sidebar({ connectionState, hidden }: SidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { pathname } = useLocation();
@@ -226,8 +218,6 @@ export function Sidebar({
   const labelParam = searchParams.get("label");
   const isDashboard = pathname === "/";
   const patchesActive = isDashboard && selectedParam === "patches";
-
-  const { data: activeSessionCount = 0 } = useActiveSessionCount();
 
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
@@ -258,71 +248,6 @@ export function Sidebar({
       inert={hidden || undefined}
       data-testid="sidebar"
     >
-      <div className={styles.header}>
-        <Tooltip content="Active sessions" position="bottom">
-          <Link
-            to="/sessions"
-            className={styles.headerSlot}
-            data-testid="sidebar-header-sessions"
-            aria-label="Active sessions"
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 101.06-1.06L10.75 9.69V5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            {activeSessionCount > 0 && (
-              <span
-                className={styles.headerBadge}
-                data-testid="sidebar-header-sessions-badge"
-              >
-                {activeSessionCount}
-              </span>
-            )}
-          </Link>
-        </Tooltip>
-
-        <div className={styles.headerSpacer} />
-
-        <Tooltip content="Search" position="bottom">
-          <button
-            type="button"
-            className={styles.headerSlot}
-            data-testid="sidebar-header-search"
-            aria-label="Search"
-            onClick={onOpenSearch}
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path
-                fillRule="evenodd"
-                d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-        </Tooltip>
-
-        <Tooltip content="Hide sidebar" position="bottom">
-          <button
-            type="button"
-            className={styles.headerSlot}
-            data-testid="sidebar-header-hide"
-            aria-label="Hide sidebar"
-            onClick={onHide}
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path
-                fillRule="evenodd"
-                d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-        </Tooltip>
-      </div>
-
       <div className={styles.sections}>
         <SidebarSection id="chats" label="Chats">
           {recentChats.map((c) => {

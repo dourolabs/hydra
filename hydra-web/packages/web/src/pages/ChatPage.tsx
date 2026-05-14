@@ -10,6 +10,7 @@ import { ChatInput } from "../features/chat/ChatInput";
 import { IssueSettings } from "../features/issues/IssueSettings";
 import { formatTimestamp } from "../utils/time";
 import { ApiError, apiClient } from "../api/client";
+import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatPage.module.css";
 
 const TABS = [
@@ -60,6 +61,11 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const [activeTab, setActiveTab] = useState("chat");
   const { data: conversation, isLoading, error } = useConversation(conversationId);
   const { data: events } = useConversationEvents(conversationId);
+
+  useBreadcrumbs(
+    [{ label: "Chats", to: "/chat" }],
+    conversation?.title || conversationId,
+  );
 
   const sendMutation = useMutation({
     mutationFn: (content: string) =>
