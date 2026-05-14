@@ -10,6 +10,7 @@ import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useLabels } from "../features/labels/useLabels";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
@@ -267,9 +268,10 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
     },
   });
 
+  const { open: openIssueCreate } = useIssueCreateModal();
   const handleNewIssue = useCallback(() => {
-    navigate("/?create-issue=1");
-  }, [navigate]);
+    openIssueCreate();
+  }, [openIssueCreate]);
 
   return (
     <nav
