@@ -360,6 +360,7 @@ fn cmd_init_interactive(server_dir: &Path, config_path: &Path) -> Result<String>
 const SWE_PROMPT: &str = include_str!("../../prompts/agents/swe.md");
 const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
+const CHAT_PROMPT: &str = include_str!("../../prompts/agents/chat.md");
 
 // Embedded playbook content (compiled into the binary).
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
@@ -369,7 +370,7 @@ const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/desig
 const FORM_REVIEW_ESCALATION: &str = include_str!("../../prompts/forms/review_escalation.yaml");
 const FORM_DESIGN_REVIEW: &str = include_str!("../../prompts/forms/design_review.yaml");
 
-/// Create the default agents (swe, pm, reviewer) and upload their prompts
+/// Create the default agents (swe, pm, reviewer, chat) and upload their prompts
 /// to the running server via the HydraClient.
 fn create_default_agents(auth_token: &str) -> Result<()> {
     let client = HydraClient::new(
@@ -379,12 +380,13 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
     )?;
 
     // Tuple slots: (name, prompt, is_assignment_agent, is_default_conversation_agent).
-    // All defaults leave is_default_conversation_agent = false — picking a default
-    // conversation agent is a user choice.
+    // `pm` is the assignment agent; `chat` is the default conversation agent
+    // (used by the Chat page and `hydra chat` when no --agent is specified).
     let agents: &[(&str, &str, bool, bool)] = &[
         ("swe", SWE_PROMPT, false, false),
         ("pm", PM_PROMPT, true, false),
         ("reviewer", REVIEWER_PROMPT, false, false),
+        ("chat", CHAT_PROMPT, false, true),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
