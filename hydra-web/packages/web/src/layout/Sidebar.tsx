@@ -117,9 +117,9 @@ function SidebarSection({ id, label, icon, children }: SidebarSectionProps) {
         aria-controls={bodyId}
         data-testid={`sidebar-section-${id}`}
       >
-        <ChevronIcon expanded={expanded} />
         {icon}
         <span className={styles.sectionLabel}>{label}</span>
+        <ChevronIcon expanded={expanded} />
       </button>
       {expanded && (
         <div id={bodyId} className={styles.sectionBody}>

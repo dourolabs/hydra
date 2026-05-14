@@ -48,6 +48,7 @@
 .sectionHeader {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-1);
   width: 100%;
   border: none;
@@ -70,7 +71,7 @@
 }
 
 .sectionLabel {
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .sectionIcon {
@@ -84,7 +85,15 @@
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-  transition: transform var(--transition-fast);
+  opacity: 0;
+  transition:
+    transform var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.sectionHeader:hover .chevron,
+.sectionHeader:focus-visible .chevron {
+  opacity: 1;
 }
 
 .chevronOpen {
