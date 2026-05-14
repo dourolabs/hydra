@@ -143,34 +143,59 @@ describe("SiteHeader search button", () => {
   });
 });
 
-describe("SiteHeader active sessions badge", () => {
-  it("renders the sessions slot as a link to /sessions", () => {
+describe("SiteHeader active sessions pill", () => {
+  it("renders the sessions pill as a link to /sessions", () => {
     renderHeader();
     const slot = screen.getByTestId("site-header-sessions");
     expect(slot.tagName).toBe("A");
     expect(slot.getAttribute("href")).toBe("/sessions");
   });
 
-  it("hides the badge when active session count is zero", () => {
+  it("renders 'no sessions' with an inactive dot when count is zero", () => {
     activeSessionCountMock.mockReturnValue({ data: 0 });
     renderHeader();
-    expect(screen.queryByTestId("site-header-sessions-badge")).toBeNull();
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
+      "no sessions",
+    );
+    expect(
+      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
+    ).toBe("false");
   });
 
-  it("shows the badge with the current count when greater than zero", () => {
+  it("renders '1 session' with a pulsing dot when count is one", () => {
+    activeSessionCountMock.mockReturnValue({ data: 1 });
+    renderHeader();
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
+      "1 session",
+    );
+    expect(
+      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
+    ).toBe("true");
+  });
+
+  it("renders 'N sessions' with a pulsing dot when count is greater than one", () => {
     activeSessionCountMock.mockReturnValue({ data: 4 });
     renderHeader();
-    const badge = screen.getByTestId("site-header-sessions-badge");
-    expect(badge.textContent).toBe("4");
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
+      "4 sessions",
+    );
+    expect(
+      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
+    ).toBe("true");
   });
 
   it("treats an undefined count as zero (loading state)", () => {
     activeSessionCountMock.mockReturnValue({ data: undefined });
     renderHeader();
-    expect(screen.queryByTestId("site-header-sessions-badge")).toBeNull();
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
+      "no sessions",
+    );
+    expect(
+      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
+    ).toBe("false");
   });
 
-  it("navigates to /sessions when the sessions slot is clicked", () => {
+  it("navigates to /sessions when the sessions pill is clicked", () => {
     activeSessionCountMock.mockReturnValue({ data: 2 });
     renderHeader({ initialEntry: "/" });
     expect(screen.getByTestId("location-pathname").textContent).toBe("/");
