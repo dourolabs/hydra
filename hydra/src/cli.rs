@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    client::{HydraClient, HydraClientInterface, HydraClientUnauthenticated},
+    client::{HydraClient, HydraClientInterface, HydraClientTimeouts, HydraClientUnauthenticated},
     command::{
         self,
         output::{resolve_output_format, CommandContext, OutputFormat},
@@ -15,7 +15,11 @@ use crate::{
     config::{self, empty_app_config, AppConfig},
     constants, github_device_flow,
 };
-use hydra_common::constants::{ENV_BROWSER, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN};
+use hydra_common::constants::{
+    ENV_BROWSER, ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS, ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS,
+    ENV_HYDRA_HTTP_TIMEOUT_SECS, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN,
+};
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "hydra", version)]
@@ -45,6 +49,36 @@ pub struct Cli {
     /// Browser command for opening links (defaults to $BROWSER).
     #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
     pub browser: Option<String>,
+
+    /// Overall HTTP request timeout for HydraClient calls, in seconds.
+    #[arg(
+        long = "http-timeout-secs",
+        value_name = "SECONDS",
+        env = ENV_HYDRA_HTTP_TIMEOUT_SECS,
+        default_value_t = HydraClientTimeouts::DEFAULT_REQUEST_TIMEOUT.as_secs(),
+        global = true
+    )]
+    pub http_timeout_secs: u64,
+
+    /// Connect timeout for HydraClient HTTP calls, in seconds.
+    #[arg(
+        long = "http-connect-timeout-secs",
+        value_name = "SECONDS",
+        env = ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS,
+        default_value_t = HydraClientTimeouts::DEFAULT_CONNECT_TIMEOUT.as_secs(),
+        global = true
+    )]
+    pub http_connect_timeout_secs: u64,
+
+    /// Idle connection pool timeout for HydraClient HTTP calls, in seconds.
+    #[arg(
+        long = "http-pool-idle-timeout-secs",
+        value_name = "SECONDS",
+        env = ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS,
+        default_value_t = HydraClientTimeouts::DEFAULT_POOL_IDLE_TIMEOUT.as_secs(),
+        global = true
+    )]
+    pub http_pool_idle_timeout_secs: u64,
 
     /// Output format (auto, jsonl, or pretty).
     #[arg(
@@ -155,13 +189,30 @@ pub fn resolve_app_config(cli: &Cli) -> Result<(AppConfig, PathBuf)> {
     }
 }
 
+/// Build the HTTP timeouts from the parsed CLI args.
+pub fn resolve_http_timeouts(cli: &Cli) -> HydraClientTimeouts {
+    HydraClientTimeouts {
+        request_timeout: Duration::from_secs(cli.http_timeout_secs),
+        connect_timeout: Duration::from_secs(cli.http_connect_timeout_secs),
+        pool_idle_timeout: Duration::from_secs(cli.http_pool_idle_timeout_secs),
+    }
+}
+
 /// Run the CLI with the given parsed arguments.
 pub async fn run(cli: Cli) -> Result<()> {
     let (app_config, config_path) = resolve_app_config(&cli)?;
     let server_url = resolve_server_url(&cli, &app_config)?;
-    let unauth_client = HydraClientUnauthenticated::new(&server_url)?;
-    let client =
-        resolve_client(&cli, &app_config, &unauth_client, &config_path, &server_url).await?;
+    let timeouts = resolve_http_timeouts(&cli);
+    let unauth_client = HydraClientUnauthenticated::new(&server_url, &timeouts)?;
+    let client = resolve_client(
+        &cli,
+        &app_config,
+        &unauth_client,
+        &config_path,
+        &server_url,
+        &timeouts,
+    )
+    .await?;
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
@@ -194,6 +245,7 @@ pub async fn resolve_client(
     unauth_client: &HydraClientUnauthenticated,
     config_path: &Path,
     server_url: &str,
+    timeouts: &HydraClientTimeouts,
 ) -> Result<HydraClient> {
     if let Some(token) = cli
         .token
@@ -201,14 +253,20 @@ pub async fn resolve_client(
         .map(str::trim)
         .filter(|token| !token.is_empty())
     {
-        return HydraClient::new(server_url, token.to_string());
+        return HydraClient::new(server_url, token.to_string(), timeouts);
     }
 
     if let Some(token) = app_config.auth_token_for_url(server_url)? {
-        return HydraClient::new(server_url, token.to_string());
+        return HydraClient::new(server_url, token.to_string(), timeouts);
     }
 
-    github_device_flow::login_with_github_device_flow(unauth_client, config_path, server_url).await
+    github_device_flow::login_with_github_device_flow(
+        unauth_client,
+        config_path,
+        server_url,
+        timeouts,
+    )
+    .await
 }
 
 pub async fn dispatch(
@@ -295,6 +353,9 @@ mod tests {
             server_url: None,
             token: None,
             browser: None,
+            http_timeout_secs: HydraClientTimeouts::DEFAULT_REQUEST_TIMEOUT.as_secs(),
+            http_connect_timeout_secs: HydraClientTimeouts::DEFAULT_CONNECT_TIMEOUT.as_secs(),
+            http_pool_idle_timeout_secs: HydraClientTimeouts::DEFAULT_POOL_IDLE_TIMEOUT.as_secs(),
             output_format: OutputFormat::Auto,
             command: Some(Commands::Agents {
                 command: AgentsCommand::List,

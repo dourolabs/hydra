@@ -50,7 +50,7 @@ pub(crate) fn truncate_sessions(
 mod tests {
     use super::*;
     use crate::{
-        client::HydraClient,
+        client::{HydraClient, HydraClientTimeouts},
         command::output::{CommandContext, ResolvedOutputFormat},
         test_utils::ids::{issue_id, task_id},
     };
@@ -134,8 +134,12 @@ mod tests {
     async fn run_passes_spawned_from_query() {
         let spawned_from = issue_id("from-filter");
         let server = MockServer::start();
-        let client =
-            HydraClient::new(server.base_url(), TEST_HYDRA_TOKEN).expect("should construct client");
+        let client = HydraClient::new(
+            server.base_url(),
+            TEST_HYDRA_TOKEN,
+            &HydraClientTimeouts::default(),
+        )
+        .expect("should construct client");
 
         let list_response = ListSessionsResponse::new(vec![sample_session("t-job-1")]);
 

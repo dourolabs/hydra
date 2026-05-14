@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
-use hydra::client::HydraClient;
+use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
     issues::{
@@ -57,7 +57,7 @@ impl UserHandle {
                 default: true,
             }],
         };
-        let client = HydraClient::from_config(&config, &token)
+        let client = HydraClient::from_config(&config, &token, &HydraClientTimeouts::default())
             .context("failed to create HydraClient for UserHandle")?;
         Ok(Self {
             name,

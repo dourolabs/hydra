@@ -4,10 +4,6 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
-use hydra_common::constants::{
-    ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS, ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS,
-    ENV_HYDRA_HTTP_TIMEOUT_SECS,
-};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
@@ -92,25 +88,6 @@ impl HydraClientTimeouts {
     pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     /// Default pool idle timeout (60s).
     pub const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-
-    /// Load timeouts from the environment, falling back to defaults for any
-    /// unset variable.
-    pub fn from_env() -> Result<Self> {
-        Ok(Self {
-            request_timeout: read_duration_secs_env(
-                ENV_HYDRA_HTTP_TIMEOUT_SECS,
-                Self::DEFAULT_REQUEST_TIMEOUT,
-            )?,
-            connect_timeout: read_duration_secs_env(
-                ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS,
-                Self::DEFAULT_CONNECT_TIMEOUT,
-            )?,
-            pool_idle_timeout: read_duration_secs_env(
-                ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS,
-                Self::DEFAULT_POOL_IDLE_TIMEOUT,
-            )?,
-        })
-    }
 }
 
 impl Default for HydraClientTimeouts {
@@ -120,24 +97,6 @@ impl Default for HydraClientTimeouts {
             connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
             pool_idle_timeout: Self::DEFAULT_POOL_IDLE_TIMEOUT,
         }
-    }
-}
-
-fn read_duration_secs_env(name: &str, default: Duration) -> Result<Duration> {
-    match std::env::var(name) {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                Ok(default)
-            } else {
-                let secs: u64 = trimmed
-                    .parse()
-                    .with_context(|| format!("invalid {name}: expected a non-negative integer"))?;
-                Ok(Duration::from_secs(secs))
-            }
-        }
-        Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow!("{name} contained non-UTF-8 data")),
     }
 }
 
@@ -461,23 +420,13 @@ pub trait HydraClientInterface: Send + Sync {
 
 impl HydraClientUnauthenticated {
     /// Construct a new client using the server URL from the CLI configuration.
-    pub fn from_config(config: &AppConfig) -> Result<Self> {
+    pub fn from_config(config: &AppConfig, timeouts: &HydraClientTimeouts) -> Result<Self> {
         let server = config.default_server()?;
-        Self::new(&server.url)
+        Self::new(&server.url, timeouts)
     }
 
-    /// Construct a new client with default request timeouts (configurable via
-    /// `HYDRA_HTTP_*` environment variables).
-    pub fn new(base_url: impl AsRef<str>) -> Result<Self> {
-        let timeouts = HydraClientTimeouts::from_env()?;
-        Self::with_timeouts(base_url, &timeouts)
-    }
-
-    /// Construct a new client with the supplied timeouts.
-    pub fn with_timeouts(
-        base_url: impl AsRef<str>,
-        timeouts: &HydraClientTimeouts,
-    ) -> Result<Self> {
+    /// Construct a new client with the supplied request timeouts.
+    pub fn new(base_url: impl AsRef<str>, timeouts: &HydraClientTimeouts) -> Result<Self> {
         Self::with_http_client(base_url, build_http_client(timeouts)?)
     }
 
@@ -600,55 +549,45 @@ impl HydraClientUnauthenticated {
 
 impl HydraClient {
     /// Construct a new client using the server URL from the CLI configuration.
-    pub fn from_config(config: &AppConfig, auth_token: impl Into<String>) -> Result<Self> {
+    pub fn from_config(
+        config: &AppConfig,
+        auth_token: impl Into<String>,
+        timeouts: &HydraClientTimeouts,
+    ) -> Result<Self> {
         let server = config.default_server()?;
-        Self::new(&server.url, auth_token)
+        Self::new(&server.url, auth_token, timeouts)
     }
 
-    /// Construct a new client with default request timeouts (configurable via
-    /// `HYDRA_HTTP_*` environment variables).
-    pub fn new(base_url: impl AsRef<str>, auth_token: impl Into<String>) -> Result<Self> {
-        let timeouts = HydraClientTimeouts::from_env()?;
-        Self::with_timeouts(base_url, auth_token, &timeouts)
-    }
-
-    /// Construct a new client with the supplied timeouts. Builds separate
-    /// request and streaming HTTP clients so SSE endpoints are not subject to
-    /// the per-request timeout.
-    pub fn with_timeouts(
+    /// Construct a new client with the supplied request timeouts. Builds
+    /// separate request and streaming HTTP clients so SSE endpoints are not
+    /// subject to the per-request timeout.
+    pub fn new(
         base_url: impl AsRef<str>,
         auth_token: impl Into<String>,
         timeouts: &HydraClientTimeouts,
     ) -> Result<Self> {
         let http = build_http_client(timeouts)?;
         let streaming_http = build_streaming_http_client(timeouts)?;
-        Self::with_http_clients(base_url, auth_token, http, streaming_http)
+        let url = Url::parse(base_url.as_ref())
+            .with_context(|| format!("invalid Hydra server URL '{}'", base_url.as_ref()))?;
+
+        Ok(Self {
+            base_url: url,
+            http,
+            streaming_http,
+            auth_token: auth_token.into(),
+        })
     }
 
     /// Construct a new client with a custom `reqwest::Client`. The same client
     /// is used for both regular requests and SSE/streaming endpoints; callers
-    /// are responsible for any timeout configuration. Prefer
-    /// [`HydraClient::with_http_clients`] when the streaming behaviour must
-    /// differ from one-shot requests.
+    /// are responsible for any timeout configuration.
     pub fn with_http_client(
         base_url: impl AsRef<str>,
         auth_token: impl Into<String>,
         http: HttpClient,
     ) -> Result<Self> {
         let streaming_http = http.clone();
-        Self::with_http_clients(base_url, auth_token, http, streaming_http)
-    }
-
-    /// Construct a new client with separate request and streaming HTTP
-    /// clients. The streaming client should typically be built without an
-    /// overall request timeout so long-lived SSE/log streams are not torn
-    /// down mid-flight.
-    pub fn with_http_clients(
-        base_url: impl AsRef<str>,
-        auth_token: impl Into<String>,
-        http: HttpClient,
-        streaming_http: HttpClient,
-    ) -> Result<Self> {
         let url = Url::parse(base_url.as_ref())
             .with_context(|| format!("invalid Hydra server URL '{}'", base_url.as_ref()))?;
 
@@ -3107,7 +3046,7 @@ mod tests {
             connect_timeout: Duration::from_secs(2),
             pool_idle_timeout: Duration::from_secs(60),
         };
-        let client = HydraClient::with_timeouts(server.base_url(), TEST_HYDRA_TOKEN, &timeouts)?;
+        let client = HydraClient::new(server.base_url(), TEST_HYDRA_TOKEN, &timeouts)?;
 
         let error = client.get_user_info(username).await.unwrap_err();
 
@@ -3124,45 +3063,5 @@ mod tests {
 
         mock.assert();
         Ok(())
-    }
-
-    #[test]
-    fn hydra_client_timeouts_from_env_uses_defaults_and_overrides() {
-        // EnvGuard is RAII so a single test serialises both cases against the
-        // process-wide environment without leaking values to other tests.
-        {
-            let _cleared = hydra_common::util::EnvGuard::set(&[
-                (ENV_HYDRA_HTTP_TIMEOUT_SECS, None),
-                (ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS, None),
-                (ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS, None),
-            ]);
-
-            let timeouts = HydraClientTimeouts::from_env().expect("defaults parse");
-            assert_eq!(
-                timeouts.request_timeout,
-                HydraClientTimeouts::DEFAULT_REQUEST_TIMEOUT
-            );
-            assert_eq!(
-                timeouts.connect_timeout,
-                HydraClientTimeouts::DEFAULT_CONNECT_TIMEOUT
-            );
-            assert_eq!(
-                timeouts.pool_idle_timeout,
-                HydraClientTimeouts::DEFAULT_POOL_IDLE_TIMEOUT
-            );
-        }
-
-        {
-            let _overrides = hydra_common::util::EnvGuard::set(&[
-                (ENV_HYDRA_HTTP_TIMEOUT_SECS, Some("1")),
-                (ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS, Some("2")),
-                (ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS, Some("3")),
-            ]);
-
-            let timeouts = HydraClientTimeouts::from_env().expect("overrides parse");
-            assert_eq!(timeouts.request_timeout, Duration::from_secs(1));
-            assert_eq!(timeouts.connect_timeout, Duration::from_secs(2));
-            assert_eq!(timeouts.pool_idle_timeout, Duration::from_secs(3));
-        }
     }
 }
