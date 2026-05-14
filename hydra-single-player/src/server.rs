@@ -407,9 +407,13 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
             secrets,
         );
 
-        rt.block_on(client.create_agent(&request))
-            .with_context(|| format!("failed to create agent '{name}'"))?;
-        println!("Created agent: {name}");
+        match rt.block_on(client.create_agent(&request)) {
+            Ok(_) => println!("Created agent: {name}"),
+            Err(_) => match rt.block_on(client.update_agent(name, &request)) {
+                Ok(_) => println!("Updated agent: {name}"),
+                Err(err) => eprintln!("Failed to refresh agent '{name}': {err}"),
+            },
+        }
     }
 
     Ok(())
