@@ -12,6 +12,14 @@ import { useIssueCount, type IssueFilters } from "../features/issues/usePaginate
 import { useLabels } from "../features/labels/useLabels";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import { SidebarDocumentTree } from "./SidebarDocumentTree";
+import {
+  AgentsIcon,
+  ChatIcon,
+  ContextIcon,
+  DocumentsIcon,
+  IssuesIcon,
+  PatchesIcon,
+} from "./SidebarIcons";
 import styles from "./Sidebar.module.css";
 
 const CHATS_SECTION_LIMIT = 3;
@@ -89,10 +97,11 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
 interface SidebarSectionProps {
   id: string;
   label: string;
+  icon: ReactNode;
   children: ReactNode;
 }
 
-function SidebarSection({ id, label, children }: SidebarSectionProps) {
+function SidebarSection({ id, label, icon, children }: SidebarSectionProps) {
   const [expanded, toggle] = useSectionExpanded(id);
   const bodyId = `sidebar-section-${id}-body`;
   return (
@@ -106,6 +115,7 @@ function SidebarSection({ id, label, children }: SidebarSectionProps) {
         data-testid={`sidebar-section-${id}`}
       >
         <ChevronIcon expanded={expanded} />
+        {icon}
         <span className={styles.sectionLabel}>{label}</span>
       </button>
       {expanded && (
@@ -249,7 +259,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
       data-testid="sidebar"
     >
       <div className={styles.sections}>
-        <SidebarSection id="chats" label="Chats">
+        <SidebarSection id="chats" label="Chats" icon={<ChatIcon />}>
           {recentChats.map((c) => {
             const title = conversationTitle(c);
             return (
@@ -273,7 +283,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           </NavLink>
         </SidebarSection>
 
-        <SidebarSection id="issues" label="Issues">
+        <SidebarSection id="issues" label="Issues" icon={<IssuesIcon />}>
           <IssuesSectionContent
             username={displayName}
             isDashboard={isDashboard}
@@ -282,7 +292,7 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           />
         </SidebarSection>
 
-        <SidebarSection id="documents" label="Documents">
+        <SidebarSection id="documents" label="Documents" icon={<DocumentsIcon />}>
           <SidebarDocumentTree />
           <NavLink
             to="/documents"
@@ -299,7 +309,8 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           aria-current={patchesActive ? "page" : undefined}
           data-testid="sidebar-patches"
         >
-          Patches
+          <PatchesIcon />
+          <span className={styles.navItemLabel}>Patches</span>
         </Link>
 
         <NavLink
@@ -307,10 +318,11 @@ export function Sidebar({ connectionState, hidden }: SidebarProps) {
           className={navItemClass}
           data-testid="sidebar-agents"
         >
-          Agents
+          <AgentsIcon />
+          <span className={styles.navItemLabel}>Agents</span>
         </NavLink>
 
-        <SidebarSection id="context" label="Context">
+        <SidebarSection id="context" label="Context" icon={<ContextIcon />}>
           <NavLink
             to="/repositories"
             className={moreLinkClass}

@@ -135,6 +135,37 @@ afterEach(() => {
   getVersionMock.mockReset();
 });
 
+describe("Sidebar section icons", () => {
+  // Each section header renders a chevron SVG plus a section icon SVG, so
+  // we expect at least two <svg> children inside the header button.
+  const sectionIds = ["chats", "issues", "documents", "context"] as const;
+
+  it.each(sectionIds)(
+    "renders an icon SVG inside the %s section header",
+    (id) => {
+      renderSidebar();
+      const header = screen.getByTestId(`sidebar-section-${id}`);
+      const svgs = header.querySelectorAll("svg");
+      // chevron + icon
+      expect(svgs.length).toBeGreaterThanOrEqual(2);
+    },
+  );
+
+  it("renders an icon SVG inside the Patches standalone link", () => {
+    renderSidebar();
+    const link = screen.getByTestId("sidebar-patches");
+    expect(link.querySelector("svg")).not.toBeNull();
+    expect(link.textContent).toContain("Patches");
+  });
+
+  it("renders an icon SVG inside the Agents standalone link", () => {
+    renderSidebar();
+    const link = screen.getByTestId("sidebar-agents");
+    expect(link.querySelector("svg")).not.toBeNull();
+    expect(link.textContent).toContain("Agents");
+  });
+});
+
 describe("Sidebar header block removed", () => {
   it("does not render the in-sidebar active-sessions / search / hide buttons", () => {
     renderSidebar();
