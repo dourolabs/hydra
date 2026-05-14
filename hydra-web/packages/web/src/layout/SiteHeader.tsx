@@ -36,23 +36,23 @@ function SearchIcon() {
   );
 }
 
-function SessionsIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-      <path
-        fillRule="evenodd"
-        d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 101.06-1.06L10.75 9.69V5z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderProps) {
+export function SiteHeader({
+  hidden,
+  onHide,
+  onShow,
+  onOpenSearch,
+}: SiteHeaderProps) {
   const { items, current } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
+  const sessionsLabel =
+    activeSessionCount === 0
+      ? "no sessions"
+      : activeSessionCount === 1
+        ? "1 session"
+        : `${activeSessionCount} sessions`;
+  const sessionsActive = activeSessionCount > 0;
 
   return (
     <header className={styles.siteHeader} data-testid="site-header">
@@ -84,21 +84,20 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
         </button>
       </Tooltip>
 
-      <Tooltip content="Active sessions" position="left">
-        <Link
-          to="/sessions"
-          className={styles.iconSlot}
-          aria-label="Active sessions"
-          data-testid="site-header-sessions"
-        >
-          <SessionsIcon />
-          {activeSessionCount > 0 && (
-            <span className={styles.badge} data-testid="site-header-sessions-badge">
-              {activeSessionCount}
-            </span>
-          )}
-        </Link>
-      </Tooltip>
+      <Link
+        to="/sessions"
+        className={styles.sessionsPill}
+        aria-label="Active sessions"
+        data-testid="site-header-sessions"
+      >
+        <span
+          className={`${styles.sessionsDot} ${sessionsActive ? styles.sessionsDotActive : ""}`}
+          data-testid="site-header-sessions-dot"
+          data-active={sessionsActive ? "true" : "false"}
+          aria-hidden="true"
+        />
+        <span data-testid="site-header-sessions-label">{sessionsLabel}</span>
+      </Link>
     </header>
   );
 }

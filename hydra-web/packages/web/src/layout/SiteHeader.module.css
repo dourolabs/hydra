@@ -46,22 +46,50 @@
   height: 18px;
 }
 
-.badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
+.sessionsPill {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: var(--font-size-xxs);
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-status-blocked);
-  background: var(--color-status-blocked-bg);
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border-radius: 999px;
-  padding: 1px 5px;
-  min-width: 16px;
-  pointer-events: none;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  line-height: 1;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sessionsPill:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.sessionsDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.sessionsDotActive {
+  background: var(--color-status-in-progress);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 @media (max-width: 768px) {
