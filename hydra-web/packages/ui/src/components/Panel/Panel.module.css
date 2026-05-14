@@ -24,6 +24,18 @@
   max-height: min(400px, 60vh);
 }
 
+.fillHeight {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.bodyFill {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .interactive {
   cursor: pointer;
   transition:
