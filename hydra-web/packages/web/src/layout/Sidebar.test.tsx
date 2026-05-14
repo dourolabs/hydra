@@ -254,6 +254,36 @@ describe("Sidebar header block removed", () => {
   });
 });
 
+describe("Sidebar hide button", () => {
+  it("renders the sidebar-hide button on desktop", () => {
+    mockMatchMedia(false);
+    renderSidebar();
+    expect(screen.getByTestId("sidebar-hide")).toBeTruthy();
+  });
+
+  it("calls onHide when the sidebar-hide button is clicked on desktop", () => {
+    mockMatchMedia(false);
+    const onHide = vi.fn();
+    renderSidebar({ onHide });
+    fireEvent.click(screen.getByTestId("sidebar-hide"));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses 'Hide sidebar' as the aria-label", () => {
+    mockMatchMedia(false);
+    renderSidebar();
+    expect(screen.getByTestId("sidebar-hide").getAttribute("aria-label")).toBe(
+      "Hide sidebar",
+    );
+  });
+
+  it("does NOT render the sidebar-hide button on mobile", () => {
+    mockMatchMedia(true);
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-hide")).toBeNull();
+  });
+});
+
 describe("Sidebar section collapse", () => {
   it("renders all four collapsable sections expanded by default", () => {
     renderSidebar();

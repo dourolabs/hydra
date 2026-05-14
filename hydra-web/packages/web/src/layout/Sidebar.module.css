@@ -31,6 +31,40 @@
   }
 }
 
+.sidebarTopBar {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.hideButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.hideButton:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.hideButton svg {
+  width: 18px;
+  height: 18px;
+}
+
 .sections {
   display: flex;
   flex-direction: column;
