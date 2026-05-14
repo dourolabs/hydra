@@ -5,11 +5,9 @@ const VIEWPORTS = [
   { name: "mobile 375x812", width: 375, height: 812 },
 ];
 
-const TRIGGERS = [
-  "site-header-toggle-sidebar",
-  "site-header-search",
-  "site-header-sessions",
-];
+// site-header-sessions was dropped: the active-sessions slot is now a labelled
+// pill ("no sessions" / "N sessions") with no wrapping Tooltip.
+const TRIGGERS = ["site-header-toggle-sidebar", "site-header-search"];
 
 test.describe("Header tooltips @nav:tooltip-viewport", () => {
   for (const vp of VIEWPORTS) {
