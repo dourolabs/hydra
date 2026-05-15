@@ -445,11 +445,21 @@ impl MemoryStore {
     fn sync_issue_relationships(&self, issue_id: &IssueId, issue: &Issue) {
         let source_id = HydraId::from(issue_id.clone());
 
-        // Remove all existing relationships where this issue is the source
+        // Remove only the rel_types managed by this function. Other
+        // rel_types (e.g. has-document) are owned by other code paths and
+        // must not be stomped by issue updates.
+        let managed = |rel: super::RelationshipType| {
+            matches!(
+                rel,
+                super::RelationshipType::ChildOf
+                    | super::RelationshipType::BlockedOn
+                    | super::RelationshipType::HasPatch
+            )
+        };
         let keys_to_remove: Vec<_> = self
             .object_relationships
             .iter()
-            .filter(|entry| entry.key().0 == source_id)
+            .filter(|entry| entry.key().0 == source_id && managed(entry.key().1))
             .map(|entry| entry.key().clone())
             .collect();
         for key in keys_to_remove {
@@ -7075,6 +7085,47 @@ mod tests {
             RelationshipType::from_str("hasDocument").unwrap(),
             RelationshipType::HasDocument
         );
+    }
+
+    #[tokio::test]
+    async fn update_issue_preserves_has_document_relationships() {
+        use crate::store::RelationshipType;
+
+        let store = MemoryStore::new();
+        let actor_ref = ActorRef::test();
+
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (doc_id, _) = store
+            .add_document(sample_document(None, None), &actor_ref)
+            .await
+            .unwrap();
+
+        let source = HydraId::from(issue_id.clone());
+        let target = HydraId::from(doc_id.clone());
+
+        // Seed an externally-owned (issue, document, has-document) row.
+        store
+            .add_relationship(&source, &target, RelationshipType::HasDocument)
+            .await
+            .unwrap();
+
+        // Update the issue with no document changes; the unmanaged row must survive.
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "halfway".to_string();
+        store
+            .update_issue(&issue_id, updated, &actor_ref)
+            .await
+            .unwrap();
+
+        let rels = store
+            .get_relationships(Some(&source), None, Some(RelationshipType::HasDocument))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1, "has-document row must survive issue update");
+        assert_eq!(rels[0].target_id, target);
     }
 
     #[tokio::test]
