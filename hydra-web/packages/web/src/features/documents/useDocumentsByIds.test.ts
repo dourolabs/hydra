@@ -2,15 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
-import type { DocumentVersionRecord } from "@hydra/api";
+import type { DocumentSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
 
-const mockGetDocument = vi.fn();
+const mockListDocuments = vi.fn();
 
 vi.mock("../../api/client", () => ({
   apiClient: {
-    getDocument: (...args: unknown[]) => mockGetDocument(...args),
+    listDocuments: (...args: unknown[]) => mockListDocuments(...args),
   },
 }));
 
@@ -24,7 +24,7 @@ function makeWrapper() {
     React.createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-function makeDocument(id: string): DocumentVersionRecord {
+function makeDocument(id: string): DocumentSummaryRecord {
   return {
     document_id: id,
     version: 1n,
@@ -32,9 +32,9 @@ function makeDocument(id: string): DocumentVersionRecord {
     creation_time: "2026-01-01T00:00:00Z",
     document: {
       title: `Document ${id}`,
-      body_markdown: "",
+      path: `docs/${id}.md`,
     },
-  } as DocumentVersionRecord;
+  } as DocumentSummaryRecord;
 }
 
 // --- Import after mocks ---
@@ -57,18 +57,14 @@ describe("useDocumentsByIds", () => {
 
     expect(result.current.data).toEqual([]);
     expect(result.current.isLoading).toBe(false);
-    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockListDocuments).not.toHaveBeenCalled();
   });
 
-  it("fetches and returns all documents", async () => {
+  it("fetches and returns all documents in input order", async () => {
     const doc1 = makeDocument("d-1");
     const doc2 = makeDocument("d-2");
 
-    mockGetDocument.mockImplementation((id: string) => {
-      if (id === "d-1") return Promise.resolve(doc1);
-      if (id === "d-2") return Promise.resolve(doc2);
-      return Promise.reject(new Error("Unknown document"));
-    });
+    mockListDocuments.mockResolvedValue({ documents: [doc2, doc1] });
 
     const { result } = renderHook(() => useDocumentsByIds(["d-1", "d-2"]), {
       wrapper: makeWrapper(),
@@ -78,24 +74,40 @@ describe("useDocumentsByIds", () => {
       expect(result.current.data).toHaveLength(2);
     });
 
-    expect(mockGetDocument).toHaveBeenCalledWith("d-1");
-    expect(mockGetDocument).toHaveBeenCalledWith("d-2");
+    expect(mockListDocuments).toHaveBeenCalledTimes(1);
+    expect(mockListDocuments).toHaveBeenCalledWith({ ids: "d-1,d-2", limit: 2 });
 
-    const ids = result.current.data.map((d) => d.document_id);
-    expect(ids).toContain("d-1");
-    expect(ids).toContain("d-2");
+    // Order matches the sorted-input order (the stable key) regardless of
+    // server response order.
+    expect(result.current.data.map((d) => d.document_id)).toEqual([
+      "d-1",
+      "d-2",
+    ]);
     expect(result.current.error).toBeNull();
   });
 
-  it("sets error when a getDocument call fails", async () => {
+  it("skips ids that are absent from the response", async () => {
     const doc1 = makeDocument("d-ok");
+    // Server only returns d-ok; the requested d-missing was deleted.
+    mockListDocuments.mockResolvedValue({ documents: [doc1] });
 
-    mockGetDocument.mockImplementation((id: string) => {
-      if (id === "d-ok") return Promise.resolve(doc1);
-      return Promise.reject(new Error("Not found"));
+    const { result } = renderHook(
+      () => useDocumentsByIds(["d-ok", "d-missing"]),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(1);
     });
 
-    const { result } = renderHook(() => useDocumentsByIds(["d-fail", "d-ok"]), {
+    expect(result.current.data.map((d) => d.document_id)).toEqual(["d-ok"]);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("sets error when the listDocuments call fails", async () => {
+    mockListDocuments.mockRejectedValue(new Error("Boom"));
+
+    const { result } = renderHook(() => useDocumentsByIds(["d-1", "d-2"]), {
       wrapper: makeWrapper(),
     });
 
@@ -104,20 +116,14 @@ describe("useDocumentsByIds", () => {
     });
 
     expect(result.current.error).toBeInstanceOf(Error);
-    // The successful document should still be in data
-    const ids = result.current.data.map((d) => d.document_id);
-    expect(ids).toContain("d-ok");
+    expect(result.current.data).toEqual([]);
   });
 
-  it("stabilizes query keys via sorting (same queries for different order)", async () => {
+  it("stabilizes query keys via sorting (same query for different order)", async () => {
     const doc1 = makeDocument("d-a");
     const doc2 = makeDocument("d-b");
 
-    mockGetDocument.mockImplementation((id: string) => {
-      if (id === "d-a") return Promise.resolve(doc1);
-      if (id === "d-b") return Promise.resolve(doc2);
-      return Promise.reject(new Error("Unknown"));
-    });
+    mockListDocuments.mockResolvedValue({ documents: [doc1, doc2] });
 
     const wrapper = makeWrapper();
 
@@ -131,15 +137,49 @@ describe("useDocumentsByIds", () => {
       expect(result.current.data).toHaveLength(2);
     });
 
-    const callCount = mockGetDocument.mock.calls.length;
+    const callCount = mockListDocuments.mock.calls.length;
 
-    // Re-render with ["d-a", "d-b"] — same sorted key, no new queries
+    // Re-render with ["d-a", "d-b"] — same sorted key, no new query.
     rerender({ ids: ["d-a", "d-b"] });
 
     // Wait a tick for any potential refetches
     await new Promise((r) => setTimeout(r, 50));
 
-    // No additional getDocument calls should have been made
-    expect(mockGetDocument.mock.calls.length).toBe(callCount);
+    expect(mockListDocuments.mock.calls.length).toBe(callCount);
+  });
+
+  it("refetches when the id set changes", async () => {
+    mockListDocuments.mockImplementation(
+      ({ ids }: { ids: string }) => {
+        const idList = ids.split(",");
+        return Promise.resolve({
+          documents: idList.map((id) => makeDocument(id)),
+        });
+      },
+    );
+
+    const wrapper = makeWrapper();
+
+    const { result, rerender } = renderHook(
+      ({ ids }: { ids: string[] }) => useDocumentsByIds(ids),
+      { wrapper, initialProps: { ids: ["d-1"] } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(1);
+    });
+
+    expect(mockListDocuments).toHaveBeenCalledWith({ ids: "d-1", limit: 1 });
+
+    rerender({ ids: ["d-1", "d-2"] });
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(2);
+    });
+
+    expect(mockListDocuments).toHaveBeenCalledWith({
+      ids: "d-1,d-2",
+      limit: 2,
+    });
   });
 });

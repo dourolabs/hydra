@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type {
-  DocumentVersionRecord,
+  DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
 } from "@hydra/api";
@@ -13,14 +13,14 @@ import type {
 const mockListRelations = vi.fn();
 const mockListIssues = vi.fn();
 const mockListPatches = vi.fn();
-const mockGetDocument = vi.fn();
+const mockListDocuments = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   apiClient: {
     listRelations: (...args: unknown[]) => mockListRelations(...args),
     listIssues: (...args: unknown[]) => mockListIssues(...args),
     listPatches: (...args: unknown[]) => mockListPatches(...args),
-    getDocument: (...args: unknown[]) => mockGetDocument(...args),
+    listDocuments: (...args: unknown[]) => mockListDocuments(...args),
   },
 }));
 
@@ -75,7 +75,7 @@ function makePatch(id: string, title = `Patch ${id}`): PatchSummaryRecord {
   } as PatchSummaryRecord;
 }
 
-function makeDocument(id: string, title = `Doc ${id}`): DocumentVersionRecord {
+function makeDocument(id: string, title = `Doc ${id}`): DocumentSummaryRecord {
   return {
     document_id: id,
     version: 1n,
@@ -83,11 +83,10 @@ function makeDocument(id: string, title = `Doc ${id}`): DocumentVersionRecord {
     creation_time: "2026-01-01T00:00:00Z",
     document: {
       title,
-      body_markdown: "",
       path: `docs/${id}.md`,
       deleted: false,
     },
-  } as DocumentVersionRecord;
+  } as DocumentSummaryRecord;
 }
 
 // --- Import after mocks ---
@@ -118,9 +117,9 @@ describe("useChatReferencedArtifacts", () => {
     mockListPatches.mockResolvedValue({
       patches: [makePatch("p-1")],
     });
-    mockGetDocument.mockImplementation((id: string) =>
-      Promise.resolve(makeDocument(id)),
-    );
+    mockListDocuments.mockResolvedValue({
+      documents: [makeDocument("d-1")],
+    });
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -144,9 +143,8 @@ describe("useChatReferencedArtifacts", () => {
     expect(mockListIssues).toHaveBeenCalledTimes(1);
     expect(mockListIssues).toHaveBeenCalledWith({ ids: "i-1,i-2", limit: 2 });
     expect(mockListPatches).toHaveBeenCalledWith({ ids: "p-1", limit: 1 });
-    expect(mockGetDocument).toHaveBeenCalledWith("d-1");
-    // The junk-prefixed id should not be passed to any per-kind fetcher.
-    expect(mockGetDocument).toHaveBeenCalledTimes(1);
+    expect(mockListDocuments).toHaveBeenCalledTimes(1);
+    expect(mockListDocuments).toHaveBeenCalledWith({ ids: "d-1", limit: 1 });
     expect(result.current.error).toBeNull();
   });
 
@@ -159,6 +157,8 @@ describe("useChatReferencedArtifacts", () => {
         makeRelation("i-1"),
         makeRelation("p-b"),
         makeRelation("p-a"),
+        makeRelation("d-y"),
+        makeRelation("d-x"),
       ],
     });
     // Underlying batch fetches return rows in a different order than the
@@ -168,6 +168,9 @@ describe("useChatReferencedArtifacts", () => {
     });
     mockListPatches.mockResolvedValue({
       patches: [makePatch("p-a"), makePatch("p-b")],
+    });
+    mockListDocuments.mockResolvedValue({
+      documents: [makeDocument("d-x"), makeDocument("d-y")],
     });
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
@@ -184,6 +187,10 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.patches.map((p) => p.patch_id)).toEqual([
       "p-b",
       "p-a",
+    ]);
+    expect(result.current.documents.map((d) => d.document_id)).toEqual([
+      "d-y",
+      "d-x",
     ]);
   });
 
@@ -223,7 +230,7 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.error).toBeInstanceOf(Error);
     expect(mockListIssues).not.toHaveBeenCalled();
     expect(mockListPatches).not.toHaveBeenCalled();
-    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockListDocuments).not.toHaveBeenCalled();
   });
 
   it("aggregates error from listIssues", async () => {
@@ -254,14 +261,11 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.error).toBeInstanceOf(Error);
   });
 
-  it("aggregates error from a document query", async () => {
+  it("aggregates error from listDocuments", async () => {
     mockListRelations.mockResolvedValue({
-      relations: [makeRelation("d-ok"), makeRelation("d-fail")],
+      relations: [makeRelation("d-1"), makeRelation("d-2")],
     });
-    mockGetDocument.mockImplementation((id: string) => {
-      if (id === "d-fail") return Promise.reject(new Error("doc failed"));
-      return Promise.resolve(makeDocument(id));
-    });
+    mockListDocuments.mockRejectedValue(new Error("docs failed"));
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -304,7 +308,9 @@ describe("useChatReferencedArtifacts", () => {
       () => {};
     let resolvePatches: (val: { patches: PatchSummaryRecord[] }) => void =
       () => {};
-    let resolveDocument: (val: DocumentVersionRecord) => void = () => {};
+    let resolveDocuments: (val: {
+      documents: DocumentSummaryRecord[];
+    }) => void = () => {};
 
     mockListIssues.mockImplementation(
       () =>
@@ -318,10 +324,10 @@ describe("useChatReferencedArtifacts", () => {
           resolvePatches = resolve;
         }),
     );
-    mockGetDocument.mockImplementation(
+    mockListDocuments.mockImplementation(
       () =>
         new Promise((resolve) => {
-          resolveDocument = resolve;
+          resolveDocuments = resolve;
         }),
     );
 
@@ -334,13 +340,13 @@ describe("useChatReferencedArtifacts", () => {
     await waitFor(() => {
       expect(mockListIssues).toHaveBeenCalled();
       expect(mockListPatches).toHaveBeenCalled();
-      expect(mockGetDocument).toHaveBeenCalled();
+      expect(mockListDocuments).toHaveBeenCalled();
     });
     expect(result.current.isLoading).toBe(true);
 
     resolveIssues({ issues: [makeIssue("i-1")] });
     resolvePatches({ patches: [makePatch("p-1")] });
-    resolveDocument(makeDocument("d-1"));
+    resolveDocuments({ documents: [makeDocument("d-1")] });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.error).toBeNull();
@@ -361,6 +367,6 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.error).toBeNull();
     expect(mockListIssues).not.toHaveBeenCalled();
     expect(mockListPatches).not.toHaveBeenCalled();
-    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockListDocuments).not.toHaveBeenCalled();
   });
 });
