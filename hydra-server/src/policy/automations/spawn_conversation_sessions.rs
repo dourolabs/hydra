@@ -6,7 +6,6 @@ use crate::domain::actors::ActorRef;
 use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
-use crate::store::Status;
 use hydra_common::ConversationId;
 use hydra_common::api::v1::sessions::{BundleSpec, CreateSessionRequest};
 
@@ -108,7 +107,7 @@ impl Automation for SpawnConversationSessionsAutomation {
                 let Some(old) = old else {
                     return Ok(());
                 };
-                if !is_terminal(new.status) || is_terminal(old.status) {
+                if !new.status.is_terminal() || old.status.is_terminal() {
                     return Ok(());
                 }
                 let Some(conversation_id) = new.conversation_id().cloned() else {
@@ -352,11 +351,6 @@ async fn flip_conversation_to_idle(ctx: &AutomationContext<'_>, conversation_id:
         conversation_id = %conversation_id,
         "flipped conversation to Idle on companion session terminal"
     );
-}
-
-/// Returns `true` if a session status represents a terminal lifecycle state.
-fn is_terminal(status: Status) -> bool {
-    matches!(status, Status::Complete | Status::Failed)
 }
 
 #[cfg(test)]
