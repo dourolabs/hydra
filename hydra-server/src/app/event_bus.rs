@@ -669,41 +669,16 @@ impl Default for EventBus {
 pub struct StoreWithEvents {
     inner: Arc<dyn Store>,
     event_bus: Arc<EventBus>,
-    /// Test-only synchronization hook fired between
-    /// `inner.add_conversation` and `inner.append_conversation_event` inside
-    /// [`Self::add_conversation_with_first_event_and_actor`]. Tests install a
-    /// `Notify` to widen the (otherwise effectively instantaneous on
-    /// `MemoryStore`) gap between the two inner store ops so a bus subscriber
-    /// has a chance to observe whatever ordering the production code emits.
-    /// When unset (the production case) the gate is a no-op.
-    #[cfg(test)]
-    pre_append_event_hook: tokio::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
 impl StoreWithEvents {
     pub fn new(inner: Arc<dyn Store>, event_bus: Arc<EventBus>) -> Self {
-        Self {
-            inner,
-            event_bus,
-            #[cfg(test)]
-            pre_append_event_hook: tokio::sync::Mutex::new(None),
-        }
+        Self { inner, event_bus }
     }
 
     /// Returns a reference to the underlying event bus.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
-    }
-
-    /// Install a `Notify` that
-    /// [`Self::add_conversation_with_first_event_and_actor`] will await on
-    /// AFTER `inner.add_conversation` and BEFORE
-    /// `inner.append_conversation_event`. Used by race-window regression
-    /// tests in `hydra-server/src/test/chat_lifecycle.rs` to make the gap
-    /// observable to bus subscribers.
-    #[cfg(test)]
-    pub async fn set_pre_append_event_hook(&self, notify: Arc<tokio::sync::Notify>) {
-        *self.pre_append_event_hook.lock().await = Some(notify);
     }
 
     // ---- Actor-aware mutation methods ----
@@ -1041,70 +1016,17 @@ impl StoreWithEvents {
         conversation: Conversation,
         actor: ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        self.add_conversation_with_first_event_and_actor(conversation, None, actor)
-            .await
-    }
-
-    /// Atomically add a conversation along with an optional first event.
-    ///
-    /// Both store mutations are performed before either bus event is emitted,
-    /// so any subscriber that reacts to `ConversationCreated` (notably
-    /// `SpawnConversationSessionsAutomation`) sees the first user message
-    /// already present in the conversation's event log. Without this
-    /// guarantee the spawn automation can race ahead of the post-add append
-    /// in `AppState::create_conversation` and build a `WorkerCatchUp` with an
-    /// empty event list — leaving the worker idle with no message for the
-    /// agent-prompt prepend rule to attach to.
-    ///
-    /// When emitted in order, bus subscribers still observe
-    /// `ConversationCreated` before `ConversationEventCreated`, matching the
-    /// pre-existing ordering used by the SSE layer.
-    pub async fn add_conversation_with_first_event_and_actor(
-        &self,
-        conversation: Conversation,
-        first_event: Option<ConversationEvent>,
-        actor: ActorRef,
-    ) -> Result<(ConversationId, VersionNumber), StoreError> {
         let (id, version) = self
             .inner
             .add_conversation(conversation.clone(), &actor)
             .await?;
-        #[cfg(test)]
-        {
-            let hook = self.pre_append_event_hook.lock().await.clone();
-            if let Some(notify) = hook {
-                notify.notified().await;
-            }
-        }
-        let appended_event = if let Some(event) = first_event {
-            let event_clone = event.clone();
-            let result = self
-                .inner
-                .append_conversation_event(&id, event, &actor)
-                .await?;
-            Some((result, event_clone))
-        } else {
-            None
-        };
         let payload = Arc::new(MutationPayload::Conversation {
             old: None,
             new: conversation,
-            actor: actor.clone(),
+            actor,
         });
         self.event_bus
             .emit_conversation_created(id.clone(), version, payload);
-        if let Some((result, event)) = appended_event {
-            let event_payload = Arc::new(MutationPayload::ConversationEvent {
-                conversation_id: id.clone(),
-                event,
-                actor,
-            });
-            self.event_bus.emit_conversation_event_created(
-                id.clone(),
-                result.event_index as u64,
-                event_payload,
-            );
-        }
         Ok((id, version))
     }
 
