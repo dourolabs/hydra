@@ -43,17 +43,17 @@ function bucketByPrefix(ids: string[]): {
 }
 
 /**
- * Fetch artifacts the given conversation `References` via a single backend
+ * Fetch artifacts the given conversation `RefersTo` via a single backend
  * pre-filter on the relations table. Buckets relation rows by target_id prefix
  * (i-/p-/d-) and batch-fetches details for each kind.
  */
 export function useChatReferencedArtifacts(conversationId: string): ReferencedArtifactsResult {
   const relationsQuery = useQuery({
-    queryKey: ["chatRelated", "references", conversationId],
+    queryKey: ["chatRelated", "refers_to", conversationId],
     queryFn: () =>
       apiClient.listRelations({
         source_id: conversationId,
-        rel_type: "references",
+        rel_type: "refers_to",
       }),
     enabled: !!conversationId,
     staleTime: 30_000,
