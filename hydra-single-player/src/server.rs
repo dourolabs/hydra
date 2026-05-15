@@ -464,10 +464,18 @@ fn upload_default_documents(auth_token: &str) -> Result<()> {
         .with_context(|| format!("invalid document path {path}"))?;
         let request = UpsertDocumentRequest::new(document);
 
-        rt.block_on(client.create_document(&request))
-            .with_context(|| format!("failed to upload document {path}"))?;
-
-        println!("Uploaded document: {path}");
+        match rt.block_on(client.create_document(&request)) {
+            Ok(_) => println!("Uploaded document: {path}"),
+            Err(_) => match rt.block_on(async {
+                let existing = client.get_document_by_path(path, false).await?;
+                client
+                    .update_document(&existing.document_id, &request)
+                    .await
+            }) {
+                Ok(_) => println!("Updated document: {path}"),
+                Err(err) => eprintln!("Failed to refresh document '{path}': {err}"),
+            },
+        }
     }
 
     Ok(())
