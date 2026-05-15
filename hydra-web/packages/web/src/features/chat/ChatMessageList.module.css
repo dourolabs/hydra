@@ -31,7 +31,7 @@
 }
 
 .userBubble {
-  background: var(--color-accent-dim);
+  background: color-mix(in srgb, var(--color-text-primary) 12%, var(--color-bg-primary));
   color: var(--color-text-primary);
   border-radius: 12px 12px 2px 12px;
   padding: var(--space-2) var(--space-3);
