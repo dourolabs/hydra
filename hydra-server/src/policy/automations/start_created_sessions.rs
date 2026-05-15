@@ -203,6 +203,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_op_on_created_to_created_update() {
+        // An unrelated mutation on a session that is already in `Created`
+        // (e.g. setting `conversation_resume_from` on a freshly-spawned
+        // session before it has started) must NOT re-trigger
+        // `start_pending_task`, because doing so would race the original
+        // start and surface as a Failed session via the job-engine's
+        // idempotency check.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let session = make_session(Status::Created);
+        let (session_id, _) = store
+            .add_session(session.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_session = make_session(Status::Created);
+        let new_session = make_session(Status::Created);
+        let payload = Arc::new(MutationPayload::Session {
+            old: Some(old_session),
+            new: new_session,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::SessionUpdated {
+            seq: 1,
+            session_id: session_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = StartCreatedSessionsAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        // Status should remain Created (start_pending_task was not called).
+        let updated = store.get_session(&session_id, false).await.unwrap();
+        assert_eq!(updated.item.status, Status::Created);
+    }
+
+    #[tokio::test]
     async fn session_updated_to_created_triggers_start() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
