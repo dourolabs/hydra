@@ -45,6 +45,7 @@ pub enum ObjectKind {
     Issue,
     Patch,
     Document,
+    Conversation,
 }
 
 impl ObjectKind {
@@ -53,6 +54,7 @@ impl ObjectKind {
             ObjectKind::Issue => "issue",
             ObjectKind::Patch => "patch",
             ObjectKind::Document => "document",
+            ObjectKind::Conversation => "conversation",
         }
     }
 }
@@ -72,6 +74,7 @@ impl FromStr for ObjectKind {
             "issue" => Ok(ObjectKind::Issue),
             "patch" => Ok(ObjectKind::Patch),
             "document" => Ok(ObjectKind::Document),
+            "conversation" => Ok(ObjectKind::Conversation),
             other => Err(format!("unsupported object kind '{other}'")),
         }
     }
@@ -93,6 +96,7 @@ pub enum RelationshipType {
     BlockedOn,
     HasPatch,
     HasDocument,
+    References,
 }
 
 impl RelationshipType {
@@ -102,6 +106,7 @@ impl RelationshipType {
             RelationshipType::BlockedOn => "blocked-on",
             RelationshipType::HasPatch => "has-patch",
             RelationshipType::HasDocument => "has-document",
+            RelationshipType::References => "references",
         }
     }
 }
@@ -122,6 +127,7 @@ impl FromStr for RelationshipType {
             "blocked-on" | "blockedon" | "blocked_on" => Ok(RelationshipType::BlockedOn),
             "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
             "has-document" | "hasdocument" | "has_document" => Ok(RelationshipType::HasDocument),
+            "references" => Ok(RelationshipType::References),
             other => Err(format!("unsupported relationship type '{other}'")),
         }
     }
@@ -1049,6 +1055,8 @@ pub(crate) fn object_kind_from_id(id: &HydraId) -> Result<ObjectKind, StoreError
         Ok(ObjectKind::Patch)
     } else if s.starts_with(DocumentId::prefix()) {
         Ok(ObjectKind::Document)
+    } else if s.starts_with(ConversationId::prefix()) {
+        Ok(ObjectKind::Conversation)
     } else {
         Err(StoreError::Internal(format!(
             "unrecognized object id prefix: {s}"
@@ -1064,3 +1072,49 @@ pub struct ConversationEventSummary {
 }
 
 pub use memory_store::MemoryStore;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn references_relationship_type_round_trips() {
+        let rt = RelationshipType::References;
+        assert_eq!(rt.as_str(), "references");
+        assert_eq!(rt.to_string(), "references");
+        assert_eq!(
+            RelationshipType::from_str("references").unwrap(),
+            RelationshipType::References
+        );
+        assert_eq!(
+            RelationshipType::from_str("References").unwrap(),
+            RelationshipType::References
+        );
+        assert_eq!(
+            RelationshipType::from_str("REFERENCES").unwrap(),
+            RelationshipType::References
+        );
+    }
+
+    #[test]
+    fn conversation_object_kind_round_trips() {
+        let kind = ObjectKind::Conversation;
+        assert_eq!(kind.as_str(), "conversation");
+        assert_eq!(kind.to_string(), "conversation");
+        assert_eq!(
+            ObjectKind::from_str("conversation").unwrap(),
+            ObjectKind::Conversation
+        );
+        assert_eq!(
+            ObjectKind::from_str("Conversation").unwrap(),
+            ObjectKind::Conversation
+        );
+    }
+
+    #[test]
+    fn object_kind_from_id_recognizes_conversation_prefix() {
+        let conv_id = ConversationId::new();
+        let hid = HydraId::from(conv_id);
+        assert_eq!(object_kind_from_id(&hid).unwrap(), ObjectKind::Conversation);
+    }
+}

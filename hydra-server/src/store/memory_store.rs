@@ -7088,6 +7088,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn references_relationship_round_trip_conversation_to_issue() {
+        use crate::store::{ObjectKind, RelationshipType};
+
+        let store = MemoryStore::new();
+        let actor_ref = ActorRef::test();
+
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let conversation_id = hydra_common::ConversationId::new();
+
+        let source = HydraId::from(conversation_id.clone());
+        let target = HydraId::from(issue_id.clone());
+
+        store
+            .add_relationship(&source, &target, RelationshipType::References)
+            .await
+            .unwrap();
+
+        let rels = store
+            .get_relationships(Some(&source), None, Some(RelationshipType::References))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].source_id, source);
+        assert_eq!(rels[0].source_kind, ObjectKind::Conversation);
+        assert_eq!(rels[0].target_id, target);
+        assert_eq!(rels[0].target_kind, ObjectKind::Issue);
+        assert_eq!(rels[0].rel_type, RelationshipType::References);
+    }
+
+    #[tokio::test]
     async fn update_issue_preserves_has_document_relationships() {
         use crate::store::RelationshipType;
 
