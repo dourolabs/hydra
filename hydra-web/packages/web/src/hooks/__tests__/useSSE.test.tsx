@@ -159,13 +159,18 @@ interface InvalidateSpy {
   mockClear: () => void;
 }
 
-/** Returns true if any invalidateQueries call matched the given key prefix. */
+/**
+ * Returns true if any invalidateQueries call would, under React Query
+ * semantics, invalidate a query with the given key. React Query invalidates
+ * queries whose key starts with the invalidation queryKey, so a stored
+ * invalidation call with key K matches any search key that has K as a prefix.
+ */
 function wasInvalidated(spy: InvalidateSpy, key: readonly unknown[]): boolean {
   return spy.mock.calls.some((call) => {
     const arg = call[0] as { queryKey?: readonly unknown[] } | undefined;
     if (!arg?.queryKey) return false;
-    if (arg.queryKey.length < key.length) return false;
-    return key.every((k, i) => arg.queryKey![i] === k);
+    if (arg.queryKey.length > key.length) return false;
+    return arg.queryKey.every((k, i) => k === key[i]);
   });
 }
 
@@ -196,11 +201,7 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "attention"])).toBe(true);
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "topLevel"])).toBe(true);
-    expect(
-      wasInvalidated(invalidateSpy, ["chatRelated", "activeSessionIssues"]),
-    ).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
   });
 
   it("invalidates chatRelated keys on issue_deleted", () => {
@@ -217,14 +218,10 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "attention"])).toBe(true);
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "topLevel"])).toBe(true);
-    expect(
-      wasInvalidated(invalidateSpy, ["chatRelated", "activeSessionIssues"]),
-    ).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
   });
 
-  it("invalidates chatRelated keys on session_updated", () => {
+  it("does not invalidate chatRelated on session_updated", () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
@@ -238,15 +235,10 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    expect(
-      wasInvalidated(invalidateSpy, ["chatRelated", "activeSessions"]),
-    ).toBe(true);
-    expect(
-      wasInvalidated(invalidateSpy, ["chatRelated", "activeSessionIssues"]),
-    ).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(false);
   });
 
-  it("invalidates chatRelated.patches on patch_created", () => {
+  it("invalidates chatRelated on patch_created", () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
@@ -260,10 +252,10 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "patches"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
   });
 
-  it("invalidates chatRelated.documents on document_created", () => {
+  it("invalidates chatRelated on document_created", () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
@@ -277,7 +269,30 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "documents"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
+  });
+
+  it("invalidates current Related tab sub-keys on issue_created", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("issue_created", {
+        entity_type: "issue",
+        entity_id: "i-1",
+        version: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeIssueRecord("i-1"),
+      });
+    });
+
+    // The broad ["chatRelated"] invalidation must cover every sub-key the
+    // current useChatReferencedArtifacts hook reads from. wasInvalidated does
+    // prefix-matching, so these all match the broad invalidation.
+    expect(wasInvalidated(invalidateSpy, ["chatRelated", "refers_to"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedIssues"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedPatches"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedDocuments"])).toBe(true);
   });
 
   it("invalidates chatRelated root on resync (after first event)", async () => {

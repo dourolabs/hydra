@@ -216,10 +216,10 @@ export function useSSE(): SSEConnectionState {
         // live-updates when issues are created, updated, or deleted.
         queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
         queryClient.invalidateQueries({ queryKey: ["issueCount"] });
-        // Chat Related tab: attention / top-level / active-session-issues caches
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "attention"] });
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "topLevel"] });
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "activeSessionIssues"] });
+        // Chat Related tab: prefix-match invalidates refers_to, referencedIssues,
+        // referencedPatches, referencedDocuments (new issues may add relations
+        // via link_conversation_to_artifacts; updates flow status/title through).
+        queryClient.invalidateQueries({ queryKey: ["chatRelated"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
@@ -240,9 +240,6 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["sessions", "activeCount"] });
         // Directly update batch session caches so hasActiveTask recomputes
         upsertBatchSession(queryClient, entity_id, record);
-        // Chat Related tab: active-sessions list and active-session-issues batch
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "activeSessions"] });
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "activeSessionIssues"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
@@ -251,8 +248,8 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["patches"] });
         // Invalidate has-patch relation caches so dashboard artifact lists refresh
         queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
-        // Chat Related tab: patches list
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "patches"] });
+        // Chat Related tab: prefix-match invalidates all referenced-artifact caches
+        queryClient.invalidateQueries({ queryKey: ["chatRelated"] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
@@ -261,8 +258,8 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
         // Invalidate has-document relation caches so dashboard artifact lists refresh
         queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
-        // Chat Related tab: documents list
-        queryClient.invalidateQueries({ queryKey: ["chatRelated", "documents"] });
+        // Chat Related tab: prefix-match invalidates all referenced-artifact caches
+        queryClient.invalidateQueries({ queryKey: ["chatRelated"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       } else if (entity_type === "conversation" || eventType.startsWith("conversation_")) {
