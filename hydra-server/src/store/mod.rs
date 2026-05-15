@@ -816,6 +816,22 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError>;
 
+    /// Atomically creates a new conversation and (optionally) appends a
+    /// first event. Persistent stores must perform both writes in a single
+    /// SQL transaction so a failure or crash cannot leave a conversation
+    /// row without its corresponding first event. When `first_event` is
+    /// `None` the behaviour matches `add_conversation` exactly and the
+    /// returned `ConversationEventId` is `None`.
+    ///
+    /// This method must NOT emit bus events; bus-level ordering is the
+    /// responsibility of `StoreWithEvents`.
+    async fn add_conversation_with_first_event(
+        &self,
+        conversation: Conversation,
+        first_event: Option<ConversationEvent>,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber, Option<ConversationEventId>), StoreError>;
+
     /// Updates an existing conversation. Takes the full conversation object.
     async fn update_conversation(
         &self,

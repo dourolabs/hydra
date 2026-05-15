@@ -2300,6 +2300,31 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
+    async fn add_conversation_with_first_event(
+        &self,
+        conversation: Conversation,
+        first_event: Option<ConversationEvent>,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber, Option<ConversationEventId>), StoreError> {
+        let (id, version) = self.add_conversation(conversation, actor).await?;
+        let event_id = if let Some(event) = first_event {
+            match self.append_conversation_event(&id, event, actor).await {
+                Ok(event_id) => Some(event_id),
+                Err(err) => {
+                    // Roll back the conversation insert so the in-memory store
+                    // mirrors the all-or-nothing contract of the persistent
+                    // stores.
+                    self.conversations.remove(&id);
+                    self.conversation_events.remove(&id);
+                    return Err(err);
+                }
+            }
+        } else {
+            None
+        };
+        Ok((id, version, event_id))
+    }
+
     async fn append_conversation_event(
         &self,
         id: &ConversationId,

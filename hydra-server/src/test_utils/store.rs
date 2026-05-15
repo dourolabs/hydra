@@ -653,6 +653,15 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn add_conversation_with_first_event(
+        &self,
+        _conversation: Conversation,
+        _first_event: Option<ConversationEvent>,
+        _actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber, Option<ConversationEventId>), StoreError> {
+        fail()
+    }
+
     async fn store_conversation_session_state(
         &self,
         _id: &ConversationId,

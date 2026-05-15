@@ -1040,20 +1040,11 @@ impl StoreWithEvents {
         first_event: Option<ConversationEvent>,
         actor: ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        let (id, version) = self
+        let event_for_payload = first_event.clone();
+        let (id, version, event_id) = self
             .inner
-            .add_conversation(conversation.clone(), &actor)
+            .add_conversation_with_first_event(conversation.clone(), first_event, &actor)
             .await?;
-        let appended_event = if let Some(event) = first_event {
-            let event_clone = event.clone();
-            let result = self
-                .inner
-                .append_conversation_event(&id, event, &actor)
-                .await?;
-            Some((result, event_clone))
-        } else {
-            None
-        };
         let payload = Arc::new(MutationPayload::Conversation {
             old: None,
             new: conversation,
@@ -1061,7 +1052,7 @@ impl StoreWithEvents {
         });
         self.event_bus
             .emit_conversation_created(id.clone(), version, payload);
-        if let Some((result, event)) = appended_event {
+        if let (Some(event_id), Some(event)) = (event_id, event_for_payload) {
             let event_payload = Arc::new(MutationPayload::ConversationEvent {
                 conversation_id: id.clone(),
                 event,
@@ -1069,7 +1060,7 @@ impl StoreWithEvents {
             });
             self.event_bus.emit_conversation_event_created(
                 id.clone(),
-                result.event_index as u64,
+                event_id.event_index as u64,
                 event_payload,
             );
         }

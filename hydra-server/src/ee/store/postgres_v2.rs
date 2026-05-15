@@ -1207,6 +1207,57 @@ impl PostgresStoreV2 {
     // Conversation helpers
     // -------------------------------------------------------------------------
 
+    /// Inserts a conversation event row inside the given executor (typically a
+    /// transaction). Caller supplies the next version number and is
+    /// responsible for any locking/existence checks. Returns the 0-based
+    /// event index for the inserted row.
+    async fn insert_conversation_event_in_tx<'e, E>(
+        executor: E,
+        id: &ConversationId,
+        version_number: VersionNumber,
+        event: &ConversationEvent,
+        actor: &Value,
+    ) -> Result<usize, StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let version_i64 = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "event version number overflow for conversation '{id}'"
+            ))
+        })?;
+        let event_index = usize::try_from(version_number.saturating_sub(1)).map_err(|_| {
+            StoreError::Internal(format!("event index overflow for conversation '{id}'"))
+        })?;
+        let event_data = serde_json::to_value(event).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
+        })?;
+        let event_type = match event {
+            ConversationEvent::UserMessage { .. } => "user_message",
+            ConversationEvent::AssistantMessage { .. } => "assistant_message",
+            ConversationEvent::Suspending { .. } => "suspending",
+            ConversationEvent::Resumed { .. } => "resumed",
+            ConversationEvent::Closed { .. } => "closed",
+        };
+
+        let query = format!(
+            "INSERT INTO {TABLE_CONVERSATION_EVENTS_V2} \
+             (conversation_id, version_number, event_type, event_data, actor) \
+             VALUES ($1, $2, $3, $4, $5)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_i64)
+            .bind(event_type)
+            .bind(&event_data)
+            .bind(actor)
+            .execute(executor)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(event_index)
+    }
+
     async fn insert_conversation_in_tx<'e, E>(
         executor: E,
         id: &ConversationId,
@@ -4921,37 +4972,11 @@ impl Store for PostgresStoreV2 {
                 "version number overflow for conversation event '{id}'"
             ))
         })?;
-        let event_index = latest_event_version as usize;
 
-        let event_data = serde_json::to_value(&event).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
-        })?;
-        let event_type = match &event {
-            ConversationEvent::UserMessage { .. } => "user_message",
-            ConversationEvent::AssistantMessage { .. } => "assistant_message",
-            ConversationEvent::Suspending { .. } => "suspending",
-            ConversationEvent::Resumed { .. } => "resumed",
-            ConversationEvent::Closed { .. } => "closed",
-        };
         let actor_json = actor_to_json(actor);
-
-        let query = format!(
-            "INSERT INTO {TABLE_CONVERSATION_EVENTS_V2} \
-             (conversation_id, version_number, event_type, event_data, actor) \
-             VALUES ($1, $2, $3, $4, $5)"
-        );
-        sqlx::query(&query)
-            .bind(id.as_ref())
-            .bind(
-                i64::try_from(next_version)
-                    .map_err(|_| StoreError::Internal("version number overflow".to_string()))?,
-            )
-            .bind(event_type)
-            .bind(&event_data)
-            .bind(&actor_json)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_error)?;
+        let event_index =
+            Self::insert_conversation_event_in_tx(&mut *tx, id, next_version, &event, &actor_json)
+                .await?;
 
         tx.commit().await.map_err(map_sqlx_error)?;
 
@@ -4959,6 +4984,35 @@ impl Store for PostgresStoreV2 {
             conversation_id: id.clone(),
             event_index,
         })
+    }
+
+    async fn add_conversation_with_first_event(
+        &self,
+        conversation: Conversation,
+        first_event: Option<ConversationEvent>,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber, Option<ConversationEventId>), StoreError> {
+        let id = ConversationId::new();
+        let actor_json = actor_to_json(actor);
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json)).await?;
+
+        let event_id = if let Some(event) = first_event {
+            let event_index =
+                Self::insert_conversation_event_in_tx(&mut *tx, &id, 1, &event, &actor_json)
+                    .await?;
+            Some(ConversationEventId {
+                conversation_id: id.clone(),
+                event_index,
+            })
+        } else {
+            None
+        };
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok((id, 1, event_id))
     }
 
     async fn store_conversation_session_state(
@@ -8430,5 +8484,138 @@ mod tests {
             .unwrap();
         let ids_after: Vec<_> = list_after.iter().map(|(id, _)| id.clone()).collect();
         assert!(!ids_after.contains(&conv_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_conversation_with_first_event_persists_both_atomically_v2(pool: PgStorePool) {
+        use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+
+        let store = PostgresStoreV2::new(pool);
+        let conversation = Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            status: ConversationStatus::Active,
+            creator: Username::from("alice"),
+            session_settings: Default::default(),
+            deleted: false,
+        };
+        let event = ConversationEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        let (id, version, event_id) = store
+            .add_conversation_with_first_event(
+                conversation.clone(),
+                Some(event.clone()),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+        let event_id = event_id.expect("event id");
+        assert_eq!(event_id.conversation_id, id);
+        assert_eq!(event_id.event_index, 0);
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.title, conversation.title);
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item, event);
+        assert_eq!(events[0].version, 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_conversation_with_first_event_none_skips_event_v2(pool: PgStorePool) {
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+
+        let store = PostgresStoreV2::new(pool);
+        let conversation = Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            status: ConversationStatus::Active,
+            creator: Username::from("alice"),
+            session_settings: Default::default(),
+            deleted: false,
+        };
+
+        let (id, version, event_id) = store
+            .add_conversation_with_first_event(conversation.clone(), None, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+        assert!(event_id.is_none());
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    /// Regression test for the SQL-transaction contract on
+    /// `add_conversation_with_first_event` in PostgresStoreV2 — see the
+    /// SQLite test of the same name for the rationale. We drop the
+    /// `conversation_events_v2` table to force the event-insert step to
+    /// fail and assert the conversation row was rolled back.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_conversation_with_first_event_rolls_back_on_event_failure_v2(pool: PgStorePool) {
+        use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+
+        let store = PostgresStoreV2::new(pool);
+
+        sqlx::query("DROP TABLE metis.conversation_events_v2 CASCADE")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        let conversation = Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: Some("test-agent".to_string()),
+            status: ConversationStatus::Active,
+            creator: Username::from("alice"),
+            session_settings: Default::default(),
+            deleted: false,
+        };
+        let event = ConversationEvent::UserMessage {
+            content: "should not persist".to_string(),
+            timestamp: Utc::now(),
+        };
+        let result = store
+            .add_conversation_with_first_event(conversation, Some(event), &ActorRef::test())
+            .await;
+        assert!(result.is_err(), "expected event-insert failure");
+
+        // Recreate the events table so the listing query can run.
+        sqlx::query(
+            "CREATE TABLE metis.conversation_events_v2 (
+                id BIGSERIAL NOT NULL,
+                conversation_id TEXT NOT NULL,
+                version_number BIGINT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_data JSONB NOT NULL,
+                actor JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (id)
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let list = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert!(
+            list.is_empty(),
+            "conversation row must be rolled back when event insert fails, got: {list:?}",
+        );
     }
 }
