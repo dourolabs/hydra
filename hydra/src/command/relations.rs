@@ -24,7 +24,7 @@ pub enum RelationsCommand {
         #[arg(long, value_name = "ID")]
         object: Option<HydraId>,
 
-        /// Filter by relation type (e.g. child-of, blocked-on, has-patch, references).
+        /// Filter by relation type (e.g. child-of, blocked-on, has-patch, refers_to).
         #[arg(long, value_name = "TYPE")]
         rel_type: Option<String>,
 

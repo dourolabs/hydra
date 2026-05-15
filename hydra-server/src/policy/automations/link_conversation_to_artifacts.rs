@@ -20,10 +20,10 @@ const AUTOMATION_NAME: &str = "link_conversation_to_artifacts";
 ///   conversation is included.
 /// - Transitive: if the actor is a session spawned from an issue, or the actor
 ///   is an issue itself, any conversation that already has a
-///   `(conversation, issue, References)` row is included.
+///   `(conversation, issue, RefersTo)` row is included.
 ///
 /// For each conversation in the resulting set, inserts a
-/// `(conversation, artifact, References)` row into `object_relationships`.
+/// `(conversation, artifact, RefersTo)` row into `object_relationships`.
 /// Idempotent — the underlying insert is `INSERT OR IGNORE`.
 pub struct LinkConversationToArtifactsAutomation;
 
@@ -32,7 +32,7 @@ impl LinkConversationToArtifactsAutomation {
         Ok(Self)
     }
 
-    /// Look up conversations that already `References` the given issue.
+    /// Look up conversations that already `RefersTo` the given issue.
     async fn conversations_referencing_issue(
         ctx: &AutomationContext<'_>,
         issue_id: &IssueId,
@@ -40,7 +40,7 @@ impl LinkConversationToArtifactsAutomation {
         let issue_hid: HydraId = issue_id.clone().into();
         let rows = match ctx
             .store
-            .get_relationships(None, Some(&issue_hid), Some(RelationshipType::References))
+            .get_relationships(None, Some(&issue_hid), Some(RelationshipType::RefersTo))
             .await
         {
             Ok(rows) => rows,
@@ -49,7 +49,7 @@ impl LinkConversationToArtifactsAutomation {
                     automation = AUTOMATION_NAME,
                     issue_id = %issue_id,
                     error = %e,
-                    "failed to load References relationships; skipping transitive link"
+                    "failed to load RefersTo relationships; skipping transitive link"
                 );
                 return None;
             }
@@ -145,14 +145,14 @@ impl Automation for LinkConversationToArtifactsAutomation {
                 .add_relationship_with_actor(
                     &cid_hid,
                     &artifact_hid,
-                    RelationshipType::References,
+                    RelationshipType::RefersTo,
                     actor.clone(),
                 )
                 .await
                 .map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
                         "failed to add ({cid_hid}, {artifact_hid}, {}) relationship: {e}",
-                        RelationshipType::References
+                        RelationshipType::RefersTo
                     ))
                 })?;
 
@@ -395,7 +395,7 @@ mod tests {
         let target: HydraId = issue_id.clone().into();
         handles
             .store
-            .add_relationship(&source, &target, RelationshipType::References)
+            .add_relationship(&source, &target, RelationshipType::RefersTo)
             .await
             .unwrap();
     }
@@ -429,7 +429,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -469,7 +469,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -505,7 +505,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -543,7 +543,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -580,7 +580,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -621,7 +621,7 @@ mod tests {
             .get_relationships(
                 Some(&c1_hid),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -631,7 +631,7 @@ mod tests {
             .get_relationships(
                 Some(&c2_hid),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -661,7 +661,7 @@ mod tests {
         let target: HydraId = patch_id.into();
         let relations = handles
             .store
-            .get_relationships(None, Some(&target), Some(RelationshipType::References))
+            .get_relationships(None, Some(&target), Some(RelationshipType::RefersTo))
             .await
             .unwrap();
         assert!(relations.is_empty());
@@ -691,7 +691,7 @@ mod tests {
         let target: HydraId = patch_id.into();
         let relations = handles
             .store
-            .get_relationships(None, Some(&target), Some(RelationshipType::References))
+            .get_relationships(None, Some(&target), Some(RelationshipType::RefersTo))
             .await
             .unwrap();
         assert!(relations.is_empty());
@@ -722,7 +722,7 @@ mod tests {
         let target: HydraId = patch_id.into();
         let relations = handles
             .store
-            .get_relationships(None, Some(&target), Some(RelationshipType::References))
+            .get_relationships(None, Some(&target), Some(RelationshipType::RefersTo))
             .await
             .unwrap();
         assert!(relations.is_empty());
@@ -758,7 +758,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -794,7 +794,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
@@ -830,7 +830,7 @@ mod tests {
             .get_relationships(
                 Some(&source),
                 Some(&target),
-                Some(RelationshipType::References),
+                Some(RelationshipType::RefersTo),
             )
             .await
             .unwrap();
