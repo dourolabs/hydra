@@ -1,11 +1,21 @@
-use crate::test_utils::{spawn_test_server, test_client};
+use crate::{
+    app::{AppState, ServiceState},
+    domain::{actors::ActorRef, task_status::Status as TaskStatus},
+    store::{MemoryStore, Store},
+    test_utils::{
+        MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_app_config,
+        test_client, test_secret_manager,
+    },
+};
 use hydra_common::agents::UpsertAgentRequest;
 use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationSummary, CreateConversationRequest,
-    SendMessageRequest, UpdateConversationRequest,
+    Conversation, ConversationEvent, ConversationStatus, ConversationSummary,
+    CreateConversationRequest, SendMessageRequest, UpdateConversationRequest,
 };
-use hydra_common::api::v1::sessions::ListSessionsResponse;
+use hydra_common::api::v1::sessions::{ListSessionsResponse, SearchSessionsQuery};
+use hydra_common::{ConversationId, SessionId};
 use reqwest::StatusCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Poll `f` until it returns `Some` or the timeout elapses. Used in
@@ -29,6 +39,92 @@ where
 }
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Construct a fresh `AppState` + `Store` pair for an integration test that
+/// needs to drive the in-process automation runner (e.g. by marking a session
+/// terminal so `SpawnConversationSessionsAutomation` flips the conversation to
+/// Idle). The test passes a clone of `state` to `spawn_test_server_with_state`
+/// and retains the original to call `state.store.update_session_with_actor`
+/// later.
+fn integration_state() -> (AppState, Arc<dyn Store>) {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(test_app_config()),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+    (state, store)
+}
+
+/// Drive a session to a terminal status via the event-emitting store path so
+/// that `SpawnConversationSessionsAutomation`'s SessionUpdated branch picks up
+/// the transition and flips the conversation `Active → Idle`.
+async fn mark_session_terminal(state: &AppState, session_id: &SessionId, status: TaskStatus) {
+    let mut session = state
+        .store()
+        .get_session(session_id, false)
+        .await
+        .expect("session must exist")
+        .item;
+    session.status = status;
+    state
+        .store
+        .update_session_with_actor(session_id, session, ActorRef::test())
+        .await
+        .expect("update_session_with_actor must succeed");
+}
+
+/// Count the sessions linked to `conversation_id` via the store. The HTTP
+/// `ListSessionsResponse.sessions` carries `SessionSummary` records which omit
+/// `interactive`, so we can't filter on conversation_id over the wire.
+async fn session_count_for_conversation(
+    store: &Arc<dyn Store>,
+    conversation_id: &ConversationId,
+) -> usize {
+    let sessions = store
+        .list_sessions(&SearchSessionsQuery::default())
+        .await
+        .expect("list sessions");
+    sessions
+        .into_iter()
+        .filter(|(_, s)| {
+            s.item
+                .interactive
+                .as_ref()
+                .and_then(|i| i.conversation_id.as_ref())
+                == Some(conversation_id)
+        })
+        .count()
+}
+
+/// Find the single session attached to a conversation via the store, polling
+/// briefly for the asynchronous spawn automation to settle.
+async fn find_session_for_conversation(
+    store: &Arc<dyn Store>,
+    conversation_id: &ConversationId,
+) -> SessionId {
+    poll_until(POLL_TIMEOUT, || async {
+        let sessions = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .expect("list sessions");
+        sessions
+            .into_iter()
+            .find(|(_, s)| {
+                s.item
+                    .interactive
+                    .as_ref()
+                    .and_then(|i| i.conversation_id.as_ref())
+                    == Some(conversation_id)
+            })
+            .map(|(id, _)| id)
+    })
+    .await
+    .expect("expected a session for the conversation to appear")
+}
 
 #[tokio::test]
 async fn create_conversation_returns_conversation_with_session() -> anyhow::Result<()> {
@@ -926,6 +1022,315 @@ async fn delete_conversation_not_found_returns_404() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+// ---- Regression tests for the duplicate-spawn bug ----
+//
+// These tests are the primary verification that the trigger-on-transition
+// design in `SpawnConversationSessionsAutomation` eliminates duplicate spawns
+// by construction. They reproduce jayantk's two scenarios verbatim:
+//   - `POST /v1/conversations` with a non-empty `message` field
+//   - `POST /v1/conversations/:id/messages` to a previously-Idle conversation
+// plus a no-op check for `POST /messages` on an already-Active conversation.
+
+#[tokio::test]
+async fn create_conversation_with_message_spawns_exactly_one_session() -> anyhow::Result<()> {
+    // Repro for: "POST /v1/conversations with a non-empty message field
+    // currently spawns 2 sessions". Under the trigger-on-transition design
+    // only the ConversationCreated event spawns; `ConversationEventCreated`
+    // (the UserMessage append) is not a trigger anymore. This test must FAIL
+    // against the parent commit and pass with the redesign.
+    let (state, store) = integration_state();
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    // Wait for at least one session to spawn so the automation has had a
+    // chance to settle.
+    poll_until(POLL_TIMEOUT, || async {
+        (session_count_for_conversation(&store, &conversation_id).await > 0).then_some(())
+    })
+    .await
+    .expect("expected at least one session to spawn for the conversation");
+
+    // Give a generous post-settle window so a stray racing spawn would
+    // surface here rather than slip past the count check.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let count = session_count_for_conversation(&store, &conversation_id).await;
+    assert_eq!(
+        count, 1,
+        "exactly one session must be spawned per conversation create-with-message; got {count}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_message_to_active_conversation_does_not_spawn_new_session() -> anyhow::Result<()> {
+    // Sending a follow-up `UserMessage` to an already-Active conversation
+    // must NOT trigger a spawn: `ConversationEventCreated` is no longer in
+    // the automation's trigger set, and `send_message` does not flip the
+    // status when it's already Active.
+    let (state, store) = integration_state();
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    // Settle on the initial spawn.
+    poll_until(POLL_TIMEOUT, || async {
+        (session_count_for_conversation(&store, &conversation_id).await >= 1).then_some(())
+    })
+    .await
+    .expect("expected the initial session to spawn");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let initial_count = session_count_for_conversation(&store, &conversation_id).await;
+    assert_eq!(
+        initial_count, 1,
+        "initial spawn must produce exactly one session"
+    );
+
+    // Send two more messages to the already-Active conversation.
+    for content in ["follow-up 1", "follow-up 2"] {
+        client
+            .post(format!(
+                "{}/v1/conversations/{conversation_id}/messages",
+                server.base_url()
+            ))
+            .json(&SendMessageRequest {
+                content: content.to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // Give the automation a chance to mis-fire if it would.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let after_count = session_count_for_conversation(&store, &conversation_id).await;
+    assert_eq!(
+        after_count, 1,
+        "send_message on an Active conversation must not spawn another session; got {after_count}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_message_to_closed_conversation_spawns_exactly_one_resume_session()
+-> anyhow::Result<()> {
+    // Direct exposure of the OLD trigger model's race: when a `Closed`
+    // conversation is re-opened via `POST /messages`, the OLD
+    // automation fires for BOTH `ConversationUpdated` (Closed→Active) AND
+    // `ConversationEventCreated` (UserMessage). Both invocations call
+    // `detect_resume_state`, find the prior `Closed` marker, skip the
+    // idempotency check, and call `create_session`. Result on OLD main:
+    // two spawn attempts plus the initial → 3 sessions (and 2 `Resumed`
+    // events). Under the trigger-on-transition design, only
+    // `ConversationUpdated` triggers and the transition fires exactly once
+    // per Closed→Active flip → 2 sessions (and 1 `Resumed`).
+    //
+    // This test should FAIL on `7f74f1e1` (today's main) and PASS with the
+    // redesign.
+    let (state, store) = integration_state();
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    // Settle on the initial spawn.
+    let _initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        session_count_for_conversation(&store, &conversation_id).await,
+        1,
+        "initial spawn must produce exactly one session"
+    );
+
+    // /close → status Closed, Closed event appended.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/close",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Re-open via send_message: flips Closed→Active (ConversationUpdated)
+    // AND appends UserMessage (ConversationEventCreated). On OLD main, both
+    // events trigger a resume spawn; on this PR only ConversationUpdated
+    // does.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "back from the dead".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Wait for the resume spawn to settle, then ensure no second spawn
+    // happens.
+    poll_until(POLL_TIMEOUT, || async {
+        (session_count_for_conversation(&store, &conversation_id).await >= 2).then_some(())
+    })
+    .await
+    .expect("expected a resume session to spawn after send_message to Closed conversation");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let count = session_count_for_conversation(&store, &conversation_id).await;
+    assert_eq!(
+        count, 2,
+        "exactly one NEW session must be spawned by the Closed→Active flip; got {count}"
+    );
+
+    // Exactly one Resumed event in the log; OLD main would have appended
+    // two.
+    let events: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let resumed_count = events
+        .iter()
+        .filter(|e| matches!(e, ConversationEvent::Resumed { .. }))
+        .count();
+    assert_eq!(
+        resumed_count, 1,
+        "exactly one Resumed event must be appended by the Closed→Active flip; got {resumed_count}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_message_to_idle_conversation_spawns_exactly_one_session() -> anyhow::Result<()> {
+    // Direct repro for: "if i have no conversations active, and then i send
+    // a message, 2 sessions seem to spawn". Drive the initial session to
+    // terminal so the automation flips the conversation to Idle; then
+    // `POST /messages` flips Idle → Active and a SINGLE resume spawn must
+    // result.
+    let (state, store) = integration_state();
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        session_count_for_conversation(&store, &conversation_id).await,
+        1,
+        "initial spawn must produce exactly one session"
+    );
+
+    // Drive the initial session terminal so the automation flips the
+    // conversation Active → Idle.
+    mark_session_terminal(&state, &initial_session_id, TaskStatus::Complete).await;
+    poll_until(POLL_TIMEOUT, || async {
+        let fetched: Conversation = client
+            .get(format!(
+                "{}/v1/conversations/{conversation_id}",
+                server.base_url()
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        (fetched.status == ConversationStatus::Idle).then_some(())
+    })
+    .await
+    .expect("expected conversation to flip to Idle after session terminal");
+
+    // Send a message to the Idle conversation. The HTTP `send_message`
+    // handler flips Idle → Active, which fires exactly one
+    // ConversationUpdated event; the automation spawns exactly one new
+    // session.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "back from the dead".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Wait for the resume spawn to settle.
+    poll_until(POLL_TIMEOUT, || async {
+        (session_count_for_conversation(&store, &conversation_id).await >= 2).then_some(())
+    })
+    .await
+    .expect("expected a resume session to spawn after send_message to Idle conversation");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let count = session_count_for_conversation(&store, &conversation_id).await;
+    assert_eq!(
+        count, 2,
+        "send_message to an Idle conversation must spawn exactly one NEW session \
+         (2 total — the original and the resume); got {count}"
+    );
 
     Ok(())
 }

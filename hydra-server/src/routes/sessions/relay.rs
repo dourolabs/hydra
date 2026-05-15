@@ -1,7 +1,6 @@
 use crate::app::AppState;
 use crate::app::chat_relay;
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::conversations::ConversationStatus;
 use crate::store::StoreError;
 use axum::{
     Extension,
@@ -157,7 +156,6 @@ async fn handle_relay_socket(
                                 if let Err(err) = handle_worker_event(
                                     &state,
                                     &conversation_id,
-                                    &session_id,
                                     &actor_ref,
                                     event,
                                 ).await {
@@ -221,35 +219,10 @@ async fn handle_relay_socket(
         }
     }
 
-    // Step 5: Cleanup on disconnect.
-    // Update conversation status to Idle if it's still Active, so the frontend
-    // reflects that the session is no longer running.
-    match state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-    {
-        Ok(versioned) => {
-            let mut conversation = versioned.item;
-            if conversation.status == ConversationStatus::Active {
-                conversation.status = ConversationStatus::Idle;
-                let actor_ref = ActorRef::from(&actor);
-                if let Err(err) = state
-                    .store
-                    .update_conversation_with_actor(&conversation_id, conversation, actor_ref)
-                    .await
-                {
-                    error!(%session_id, %conversation_id, error = %err, "failed to update conversation status on disconnect");
-                } else {
-                    info!(%session_id, %conversation_id, "conversation status set to Idle (WebSocket closed)");
-                }
-            }
-        }
-        Err(err) => {
-            error!(%session_id, %conversation_id, error = %err, "failed to load conversation for status cleanup");
-        }
-    }
-
+    // Step 5: Cleanup on disconnect. The conversation status (Active → Idle)
+    // is owned by `SpawnConversationSessionsAutomation`, which flips it when
+    // the companion session reaches a terminal status (Complete / Failed).
+    // The relay only unregisters its in-memory entry here.
     chat_relay::unregister_relay(&state.chat_relay_map, &conversation_id);
     info!(%session_id, %conversation_id, "relay unregistered");
 }
@@ -308,41 +281,22 @@ async fn build_catch_up(
 }
 
 /// Handle a conversation event sent by the worker.
+///
+/// The `Suspending` event is recorded in the conversation log (worker's
+/// record of why it suspended) but does NOT mutate the conversation's status
+/// here. The worker exiting after a Suspending event lets the job engine drive
+/// the session to `Complete` / `Failed`; `SpawnConversationSessionsAutomation`
+/// then flips the conversation `Active → Idle` from that terminal transition.
 async fn handle_worker_event(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
-    session_id: &SessionId,
     actor_ref: &ActorRef,
     event: ConversationEvent,
 ) -> Result<(), StoreError> {
-    let is_suspending = matches!(event, ConversationEvent::Suspending { .. });
-
-    // Append to store via StoreWithEvents (triggers SSE event via event bus).
     let domain_event: crate::domain::conversations::ConversationEvent = event.into();
     state
         .store
         .append_conversation_event_with_actor(conversation_id, domain_event, actor_ref.clone())
         .await?;
-
-    // If the worker is suspending, update conversation status to Idle.
-    if is_suspending {
-        let mut conversation = state
-            .store()
-            .get_conversation(conversation_id, false)
-            .await?
-            .item;
-        conversation.status = ConversationStatus::Idle;
-        state
-            .store
-            .update_conversation_with_actor(conversation_id, conversation, actor_ref.clone())
-            .await?;
-
-        info!(
-            %session_id,
-            %conversation_id,
-            "conversation status set to Idle (worker suspending)"
-        );
-    }
-
     Ok(())
 }
