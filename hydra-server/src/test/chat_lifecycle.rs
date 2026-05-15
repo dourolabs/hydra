@@ -6,11 +6,12 @@
 //! would, allowing the server-side suspension/resume logic to be exercised
 //! without spawning a real Claude CLI process.
 
+use super::common::mark_session_terminal;
 use crate::{
     app::{AppState, ServiceState},
     domain::{
-        actors::ActorRef, conversations::ConversationStatus as DomainConversationStatus,
-        sessions::Session, task_status::Status as TaskStatus,
+        conversations::ConversationStatus as DomainConversationStatus, sessions::Session,
+        task_status::Status as TaskStatus,
     },
     store::{MemoryStore, Store},
     test_utils::{
@@ -250,30 +251,6 @@ async fn drain_server_messages(
         }
     }
     Ok(out)
-}
-
-/// Drive a session to a terminal status (`Complete` / `Failed`) via the
-/// event-emitting store path so that
-/// `SpawnConversationSessionsAutomation` picks up the `SessionUpdated`
-/// transition and flips the conversation to `Idle`.
-///
-/// Tests previously relied on the relay's WS-close / `Suspending` branch to
-/// synchronously flip the conversation status; under the trigger-on-transition
-/// design that flip is owned by the automation, driven off the session's
-/// terminal transition.
-async fn mark_session_terminal(state: &AppState, session_id: &SessionId, status: TaskStatus) {
-    let mut session = state
-        .store()
-        .get_session(session_id, false)
-        .await
-        .expect("session must exist")
-        .item;
-    session.status = status;
-    state
-        .store
-        .update_session_with_actor(session_id, session, ActorRef::test())
-        .await
-        .expect("update_session_with_actor must succeed");
 }
 
 /// Poll the conversation endpoint until its status matches `expected` or the
