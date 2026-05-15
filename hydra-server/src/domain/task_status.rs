@@ -13,6 +13,14 @@ pub enum Status {
     Failed,
 }
 
+impl Status {
+    /// Returns true if this status represents a terminal lifecycle state
+    /// (Complete or Failed).
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Status::Complete | Status::Failed)
+    }
+}
+
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {

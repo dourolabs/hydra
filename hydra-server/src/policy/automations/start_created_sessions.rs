@@ -34,25 +34,40 @@ impl Automation for StartCreatedSessionsAutomation {
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
-        let (session_id, payload) = match ctx.event {
+        // Fire only on a fresh `Created` session: either a `SessionCreated`
+        // event, or a `SessionUpdated` event whose status TRANSITIONS into
+        // `Created`. Without the transition check, any unrelated mutation on a
+        // session that happens to still be in `Created` status (e.g. setting
+        // `conversation_resume_from` on a freshly-spawned session) would
+        // re-trigger `start_pending_task`, racing with the original start and
+        // causing the job-engine's idempotency check to surface as a Failed
+        // session.
+        let (session_id, new, transitioned_into_created) = match ctx.event {
             ServerEvent::SessionCreated {
                 session_id,
                 payload,
                 ..
-            } => (session_id, payload),
+            } => {
+                let MutationPayload::Session { new, .. } = payload.as_ref() else {
+                    return Ok(());
+                };
+                (session_id, new, true)
+            }
             ServerEvent::SessionUpdated {
                 session_id,
                 payload,
                 ..
-            } => (session_id, payload),
+            } => {
+                let MutationPayload::Session { old, new, .. } = payload.as_ref() else {
+                    return Ok(());
+                };
+                let transitioned = old.as_ref().is_some_and(|o| o.status != Status::Created);
+                (session_id, new, transitioned)
+            }
             _ => return Ok(()),
         };
 
-        let MutationPayload::Session { new, .. } = payload.as_ref() else {
-            return Ok(());
-        };
-
-        if new.status != Status::Created {
+        if new.status != Status::Created || !transitioned_into_created {
             return Ok(());
         }
 

@@ -1031,7 +1031,7 @@ impl AppState {
         }
 
         // Already in the target terminal state — return existing version unchanged
-        if matches!(latest.item.status, Status::Complete | Status::Failed) {
+        if latest.item.status.is_terminal() {
             return Ok(latest);
         }
 

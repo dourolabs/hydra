@@ -8,7 +8,10 @@
 
 use crate::{
     app::{AppState, ServiceState},
-    domain::{conversations::ConversationStatus as DomainConversationStatus, sessions::Session},
+    domain::{
+        actors::ActorRef, conversations::ConversationStatus as DomainConversationStatus,
+        sessions::Session, task_status::Status as TaskStatus,
+    },
     store::{MemoryStore, Store},
     test_utils::{
         MockJobEngine, spawn_test_server_with_state, test_app_config, test_auth_token, test_client,
@@ -249,6 +252,30 @@ async fn drain_server_messages(
     Ok(out)
 }
 
+/// Drive a session to a terminal status (`Complete` / `Failed`) via the
+/// event-emitting store path so that
+/// `SpawnConversationSessionsAutomation` picks up the `SessionUpdated`
+/// transition and flips the conversation to `Idle`.
+///
+/// Tests previously relied on the relay's WS-close / `Suspending` branch to
+/// synchronously flip the conversation status; under the trigger-on-transition
+/// design that flip is owned by the automation, driven off the session's
+/// terminal transition.
+async fn mark_session_terminal(state: &AppState, session_id: &SessionId, status: TaskStatus) {
+    let mut session = state
+        .store()
+        .get_session(session_id, false)
+        .await
+        .expect("session must exist")
+        .item;
+    session.status = status;
+    state
+        .store
+        .update_session_with_actor(session_id, session, ActorRef::test())
+        .await
+        .expect("update_session_with_actor must succeed");
+}
+
 /// Poll the conversation endpoint until its status matches `expected` or the
 /// timeout elapses. Workers transition the conversation to Idle asynchronously
 /// (via the relay's event handler), so tests cannot assume status updates are
@@ -327,7 +354,7 @@ async fn worker_context_includes_configured_idle_timeout() -> anyhow::Result<()>
 async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_state()
 -> anyhow::Result<()> {
     let (state, store) = state_with_idle_timeout_secs(2);
-    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
     // Create a conversation; this also creates the initial interactive session.
@@ -385,6 +412,12 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
     ws.send(tungstenite::Message::Close(None)).await?;
     drop(ws);
 
+    // Under the trigger-on-transition design, the conversation flip Active →
+    // Idle is owned by `SpawnConversationSessionsAutomation` and fires off
+    // the session's terminal transition. Simulate the job engine marking the
+    // session `Complete` after the worker exited on Suspending.
+    mark_session_terminal(&state, &session_id, TaskStatus::Complete).await;
+
     let idle = wait_for_status(
         &client,
         &server.base_url(),
@@ -433,7 +466,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     // full event log (UserMessage + AssistantMessage + Suspending) regardless,
     // so the new worker can rebuild context from it.
     let (state, store) = state_with_idle_timeout_secs(2);
-    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
     // Phase 1: create, exchange messages, then simulate idle-suspend.
@@ -484,6 +517,10 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     .await?;
     ws.send(tungstenite::Message::Close(None)).await?;
     drop(ws);
+
+    // Drive the session to a terminal status so the automation flips Active
+    // → Idle (the WS-close / Suspending sync flip is gone).
+    mark_session_terminal(&state, &initial_session_id, TaskStatus::Complete).await;
 
     wait_for_status(
         &client,
@@ -745,7 +782,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     //      the next new user message — not replay msg1/msg2/msg3 — so the
     //      assistant does not generate redundant replies for earlier turns.
     let (state, store) = state_with_idle_timeout_secs(2);
-    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
     let msg1 = "My name is Alice. What's 2+2?";
@@ -888,6 +925,10 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     .await?;
     ws1.send(tungstenite::Message::Close(None)).await?;
     drop(ws1);
+
+    // Drive the session terminal so the automation flips the conversation
+    // Active → Idle.
+    mark_session_terminal(&state, &initial_session_id, TaskStatus::Complete).await;
 
     wait_for_status(
         &client,
@@ -1266,7 +1307,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     // `claude --resume`. Verifies the wire envelope is preserved and the
     // payload survives the store round-trip.
     let (state, store) = state_with_idle_timeout_secs(2);
-    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
     let created: Conversation = client
@@ -1331,6 +1372,9 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     ws.send(tungstenite::Message::Close(None)).await?;
     drop(ws);
 
+    // Drive the session terminal so the automation flips Active → Idle.
+    mark_session_terminal(&state, &initial_session_id, TaskStatus::Complete).await;
+
     wait_for_status(
         &client,
         &server.base_url(),
@@ -1361,9 +1405,8 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
         .await?;
     assert_eq!(resumed.status, ConversationStatus::Active);
 
-    // After /resume the previous session is still in the store with
-    // status Running (it hasn't been transitioned to a terminal state by
-    // any worker lifecycle path in this test). `find_new_session_for_conversation`
+    // After /resume the previous session is in the store with status
+    // Complete (the test drove it terminal above). `find_new_session_for_conversation`
     // polls for the new session that the automation spawns.
     let new_session_id =
         find_new_session_for_conversation(&store, &conversation_id, &initial_session_id).await;
@@ -1455,13 +1498,19 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
 }
 
 #[tokio::test]
-async fn worker_disconnect_without_suspending_still_marks_conversation_idle() -> anyhow::Result<()>
-{
-    // The relay handler defensively marks an Active conversation Idle if the
-    // worker disconnects without sending Suspending (e.g. a crash). This
-    // covers the unhappy path of the idle/resume flow.
+async fn conversation_marked_idle_when_companion_session_reaches_terminal_status()
+-> anyhow::Result<()> {
+    // Covers the unhappy path of the idle/resume flow: a worker drops the
+    // WebSocket without sending Suspending (e.g. a crash). Under the
+    // trigger-on-transition design, the WS-close itself no longer flips the
+    // conversation Idle — that's owned by
+    // `SpawnConversationSessionsAutomation`, which fires when the companion
+    // session reaches a terminal status (Complete / Failed). In production the
+    // session is driven terminal by the job engine (worker exit) and the
+    // background `monitor_running_sessions` worker; here we simulate that step
+    // directly.
     let (state, store) = state_with_idle_timeout_secs(2);
-    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
     let created: Conversation = client
@@ -1486,9 +1535,13 @@ async fn worker_disconnect_without_suspending_still_marks_conversation_idle() ->
         },
     )
     .await?;
-    // Drop the WS without sending Suspending. The cleanup branch in the relay
-    // handler should still flip status to Idle.
+    // Drop the WS without sending Suspending — bare crash.
     drop(ws);
+
+    // Simulate the job engine marking the session Failed once the worker is
+    // gone. The automation listens on SessionUpdated and flips the
+    // conversation to Idle.
+    mark_session_terminal(&state, &session_id, TaskStatus::Failed).await;
 
     let idle = wait_for_status(
         &client,
@@ -1499,8 +1552,7 @@ async fn worker_disconnect_without_suspending_still_marks_conversation_idle() ->
     .await?;
     assert_eq!(idle.status, ConversationStatus::Idle);
 
-    // The domain status mirror should match too (sanity-check the store path
-    // used by the cleanup branch).
+    // Sanity-check the store mirror too.
     let domain = store.get_conversation(&conversation_id, false).await?.item;
     assert_eq!(domain.status, DomainConversationStatus::Idle);
 
