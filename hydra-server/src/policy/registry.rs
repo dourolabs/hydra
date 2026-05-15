@@ -177,6 +177,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("inbox_label", |params| {
         Ok(Box::new(InboxLabelAutomation::new(params)?))
     });
+    registry.register_automation("link_artifacts_to_issue", |params| {
+        Ok(Box::new(LinkArtifactsToIssueAutomation::new(params)?))
+    });
     registry.register_automation("spawn_sessions", |params| {
         Ok(Box::new(SpawnSessionsAutomation::new(params)?))
     });
