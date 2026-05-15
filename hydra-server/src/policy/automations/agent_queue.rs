@@ -246,6 +246,7 @@ impl AgentQueue {
             issue.status,
             IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
         );
+        let is_dropped = matches!(issue.status, IssueStatus::Dropped);
         let is_ready = state
             .is_issue_ready(issue_id)
             .await
@@ -257,10 +258,13 @@ impl AgentQueue {
         let parent_running = parent_has_running_task(state, issue).await?;
 
         // Determine whether to skip this issue.
-        // Feedback bypasses terminal status, dependency readiness, and parent running checks.
+        // Feedback bypasses terminal status (Closed/Failed), dependency readiness, and
+        // parent running checks. Dropped is a hard skip — feedback never re-spawns a
+        // dropped issue, since "dropped" means the work was explicitly abandoned.
         // Active session and capacity checks are always enforced.
         if at_capacity
             || has_active_session
+            || is_dropped
             || (!has_feedback && (is_terminal || !is_ready || parent_running))
         {
             return Ok(SpawnResult::Skipped);
@@ -2821,6 +2825,56 @@ mod tests {
         assert!(
             !result.is_spawned(),
             "feedback should NOT bypass active session guard"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feedback_does_not_bypass_dropped_status() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Dropped with feedback".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Dropped,
+                    assignee: Some("agent-a".to_string()),
+                    session_settings: session_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                    form: None,
+                    form_response: None,
+                    feedback: Some("please reconsider".to_string()),
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id,
+                &issue_item,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        assert!(
+            !result.is_spawned(),
+            "feedback should NOT bypass Dropped status"
         );
 
         Ok(())
