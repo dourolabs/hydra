@@ -39,25 +39,15 @@ vi.mock("@tanstack/react-query", () => ({
   }),
 }));
 
-// Stub the chat Related-tab data hooks so this test stays focused on layout.
-vi.mock("../../features/chat/useChatActiveSessionIssues", () => ({
-  useChatActiveSessionIssues: () => ({
+// Stub the chat Related-tab data hook so this test stays focused on layout.
+vi.mock("../../features/chat/useChatReferencedArtifacts", () => ({
+  useChatReferencedArtifacts: () => ({
     issues: [],
-    sessionsByIssue: new Map(),
+    patches: [],
+    documents: [],
     isLoading: false,
+    error: null,
   }),
-}));
-vi.mock("../../features/chat/useChatAttentionIssues", () => ({
-  useChatAttentionIssues: () => ({ issues: [], isLoading: false }),
-}));
-vi.mock("../../features/chat/useChatTopLevelIssues", () => ({
-  useChatTopLevelIssues: () => ({ issues: [], isLoading: false }),
-}));
-vi.mock("../../features/chat/useChatRelatedDocuments", () => ({
-  useChatRelatedDocuments: () => ({ documents: [], isLoading: false }),
-}));
-vi.mock("../../features/chat/useChatRelatedPatches", () => ({
-  useChatRelatedPatches: () => ({ patches: [], isLoading: false }),
 }));
 
 vi.mock("../../api/client", () => ({
@@ -215,22 +205,17 @@ describe("ChatPage 2-pane layout", () => {
     cleanup();
   });
 
-  it("renders all 5 Related section headings with empty placeholders", () => {
+  it("renders the three Related section headings with empty placeholders", () => {
     render(<ChatPage />);
 
-    const headings = [
-      "Issues with active sessions",
-      "Needs my attention",
-      "Top-level issues",
-      "Documents",
-      "Patches",
-    ];
+    const headings = ["Issues", "Patches", "Documents"];
     for (const heading of headings) {
       expect(screen.getByText(heading)).toBeDefined();
     }
 
-    // Each section has an "(empty)" placeholder.
-    expect(screen.getAllByText("(empty)").length).toBe(headings.length);
+    expect(screen.getByText("No issues referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No patches referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No documents referenced by this chat yet.")).toBeDefined();
 
     cleanup();
   });

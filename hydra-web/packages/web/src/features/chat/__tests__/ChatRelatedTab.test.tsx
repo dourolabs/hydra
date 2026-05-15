@@ -2,94 +2,41 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import type {
-  DocumentSummaryRecord,
+  DocumentVersionRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
-  SessionSummaryRecord,
 } from "@hydra/api";
 
 // --- Mocks ---
 
-// Track exclude IDs that the component passes into each issue hook,
-// so we can assert the dedup behavior.
-let lastAttentionExclude: Set<string> | null = null;
-let lastTopLevelExclude: Set<string> | null = null;
-
 const mockState: {
-  active: {
-    issues: IssueSummaryRecord[];
-    sessionsByIssue: Map<string, SessionSummaryRecord[]>;
-    isLoading: boolean;
-  };
-  attentionFixture: IssueSummaryRecord[];
-  attentionLoading: boolean;
-  topLevelFixture: IssueSummaryRecord[];
-  topLevelLoading: boolean;
-  documents: DocumentSummaryRecord[];
-  documentsLoading: boolean;
+  issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
-  patchesLoading: boolean;
+  documents: DocumentVersionRecord[];
+  isLoading: boolean;
+  error: unknown;
 } = {
-  active: { issues: [], sessionsByIssue: new Map(), isLoading: false },
-  attentionFixture: [],
-  attentionLoading: false,
-  topLevelFixture: [],
-  topLevelLoading: false,
-  documents: [],
-  documentsLoading: false,
+  issues: [],
   patches: [],
-  patchesLoading: false,
+  documents: [],
+  isLoading: false,
+  error: null,
 };
 
-vi.mock("../useChatActiveSessionIssues", () => ({
-  useChatActiveSessionIssues: () => mockState.active,
-}));
+let lastConversationIdArg: string | null = null;
 
-// Mirror the real hook's dedup behavior so the test exercises it:
-// it accepts an excludeIds set and filters its fixture.
-vi.mock("../useChatAttentionIssues", () => ({
-  useChatAttentionIssues: (excludeIds: Set<string>) => {
-    lastAttentionExclude = excludeIds;
-    return {
-      issues: mockState.attentionFixture.filter((i) => !excludeIds.has(i.issue_id)),
-      isLoading: mockState.attentionLoading,
-    };
+vi.mock("../useChatReferencedArtifacts", () => ({
+  useChatReferencedArtifacts: (conversationId: string) => {
+    lastConversationIdArg = conversationId;
+    return mockState;
   },
-}));
-
-vi.mock("../useChatTopLevelIssues", () => ({
-  useChatTopLevelIssues: (excludeIds: Set<string>) => {
-    lastTopLevelExclude = excludeIds;
-    // Top-level fixture is pre-filtered to no-child-of in the real hook,
-    // so we just filter exclude.
-    return {
-      issues: mockState.topLevelFixture.filter((i) => !excludeIds.has(i.issue_id)),
-      isLoading: mockState.topLevelLoading,
-    };
-  },
-}));
-
-vi.mock("../useChatRelatedDocuments", () => ({
-  useChatRelatedDocuments: () => ({
-    documents: mockState.documents,
-    isLoading: mockState.documentsLoading,
-  }),
-}));
-
-vi.mock("../useChatRelatedPatches", () => ({
-  useChatRelatedPatches: () => ({
-    patches: mockState.patches,
-    isLoading: mockState.patchesLoading,
-  }),
 }));
 
 vi.mock("../../dashboard/ItemRow", () => ({
   ItemRow: ({
     item,
-    isActive,
   }: {
     item: { kind: string; id: string; data: unknown };
-    isActive?: boolean;
   }) => {
     let title = "";
     if (item.kind === "issue") {
@@ -98,12 +45,7 @@ vi.mock("../../dashboard/ItemRow", () => ({
       title = (item.data as PatchSummaryRecord).patch.title;
     }
     return (
-      <li
-        data-testid={`item-row-${item.kind}-${item.id}`}
-        data-active={isActive ? "true" : "false"}
-      >
-        {title}
-      </li>
+      <li data-testid={`item-row-${item.kind}-${item.id}`}>{title}</li>
     );
   },
 }));
@@ -132,7 +74,7 @@ vi.mock("../ChatRelatedTab.module.css", () => ({
 
 function makeIssue(
   issueId: string,
-  overrides: { title?: string; assignee?: string; dependencies?: IssueSummaryRecord["issue"]["dependencies"]; status?: IssueSummaryRecord["issue"]["status"] } = {},
+  title = `Issue ${issueId}`,
 ): IssueSummaryRecord {
   return {
     issue_id: issueId,
@@ -141,29 +83,14 @@ function makeIssue(
     creation_time: "2026-01-01T00:00:00Z",
     issue: {
       type: "task",
-      title: overrides.title ?? `Issue ${issueId}`,
+      title,
       description: "desc",
       creator: "alice",
-      status: overrides.status ?? "open",
-      assignee: overrides.assignee,
+      status: "open",
       progress: "",
-      dependencies: overrides.dependencies ?? [],
+      dependencies: [],
       patches: [],
       labels: [],
-    },
-  };
-}
-
-function makeSession(issueId: string): SessionSummaryRecord {
-  return {
-    session_id: `s-${issueId}`,
-    version: 1n,
-    timestamp: "2026-01-01T00:00:00Z",
-    session: {
-      prompt: "do work",
-      spawned_from: issueId,
-      creator: "alice",
-      status: "running",
     },
   };
 }
@@ -185,7 +112,7 @@ function makePatch(patchId: string, title = "Test Patch"): PatchSummaryRecord {
   };
 }
 
-function makeDocument(docId: string, title = "Design Doc"): DocumentSummaryRecord {
+function makeDocument(docId: string, title = "Design Doc"): DocumentVersionRecord {
   return {
     document_id: docId,
     version: 1n,
@@ -193,25 +120,20 @@ function makeDocument(docId: string, title = "Design Doc"): DocumentSummaryRecor
     creation_time: "2026-01-01T00:00:00Z",
     document: {
       title,
+      body_markdown: "",
       path: `docs/${docId}.md`,
       deleted: false,
-      labels: [],
     },
   };
 }
 
 function resetState() {
-  mockState.active = { issues: [], sessionsByIssue: new Map(), isLoading: false };
-  mockState.attentionFixture = [];
-  mockState.attentionLoading = false;
-  mockState.topLevelFixture = [];
-  mockState.topLevelLoading = false;
-  mockState.documents = [];
-  mockState.documentsLoading = false;
+  mockState.issues = [];
   mockState.patches = [];
-  mockState.patchesLoading = false;
-  lastAttentionExclude = null;
-  lastTopLevelExclude = null;
+  mockState.documents = [];
+  mockState.isLoading = false;
+  mockState.error = null;
+  lastConversationIdArg = null;
 }
 
 // --- Import after mocks ---
@@ -225,99 +147,85 @@ describe("ChatRelatedTab", () => {
     vi.clearAllMocks();
   });
 
-  it("renders all 5 section titles in order", () => {
-    const { container } = render(<ChatRelatedTab />);
+  it("passes the conversationId prop through to the hook", () => {
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(lastConversationIdArg).toBe("c-abc");
+  });
+
+  it("renders the three section titles in order: Issues, Patches, Documents", () => {
+    const { container } = render(<ChatRelatedTab conversationId="c-abc" />);
     const headings = Array.from(container.querySelectorAll("h3")).map(
       (h) => h.textContent?.replace(/\(\d+\)$/, "").trim(),
     );
-    expect(headings).toEqual([
-      "Issues with active sessions",
-      "Needs my attention",
-      "Top-level issues",
-      "Documents",
-      "Patches",
-    ]);
+    expect(headings).toEqual(["Issues", "Patches", "Documents"]);
   });
 
-  it("shows '(empty)' placeholders when all fixtures are empty", () => {
-    render(<ChatRelatedTab />);
-    expect(screen.getAllByText("(empty)")).toHaveLength(5);
+  it("shows empty-state copy in each section when there are no referenced artifacts", () => {
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.getByText("No issues referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No patches referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No documents referenced by this chat yet.")).toBeDefined();
   });
 
-  it("renders active-session issues with isActive=true", () => {
-    mockState.active = {
-      issues: [makeIssue("i-active", { title: "Active 1" })],
-      sessionsByIssue: new Map([["i-active", [makeSession("i-active")]]]),
-      isLoading: false,
-    };
-    render(<ChatRelatedTab />);
-    const row = screen.getByTestId("item-row-issue-i-active");
-    expect(row.getAttribute("data-active")).toBe("true");
-    expect(row.textContent).toBe("Active 1");
+  it("renders only-issues correctly", () => {
+    mockState.issues = [makeIssue("i-1", "Alpha"), makeIssue("i-2", "Beta")];
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.getByTestId("item-row-issue-i-1")).toBeDefined();
+    expect(screen.getByTestId("item-row-issue-i-2")).toBeDefined();
+    expect(screen.getByText("No patches referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No documents referenced by this chat yet.")).toBeDefined();
   });
 
-  it("excludes active-session issue ids from attention and top-level hooks", () => {
-    mockState.active = {
-      issues: [makeIssue("i-active", { title: "Active 1" })],
-      sessionsByIssue: new Map([["i-active", [makeSession("i-active")]]]),
-      isLoading: false,
-    };
-    // Same issue id is also in attention/top-level fixtures
-    mockState.attentionFixture = [makeIssue("i-active", { title: "Active 1" })];
-    mockState.topLevelFixture = [makeIssue("i-active", { title: "Active 1" })];
-
-    render(<ChatRelatedTab />);
-    expect(lastAttentionExclude?.has("i-active")).toBe(true);
-    expect(lastTopLevelExclude?.has("i-active")).toBe(true);
-
-    // Issue should appear only once in the DOM (under active sessions)
-    const matches = screen.getAllByText("Active 1");
-    expect(matches.length).toBe(1);
+  it("renders only-patches correctly", () => {
+    mockState.patches = [makePatch("p-1", "Fix bug")];
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.getByTestId("item-row-patch-p-1")).toBeDefined();
+    expect(screen.getByText("Fix bug")).toBeDefined();
+    expect(screen.getByText("No issues referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No documents referenced by this chat yet.")).toBeDefined();
   });
 
-  it("attention issue is excluded from top-level via excludeIds", () => {
-    mockState.attentionFixture = [makeIssue("i-needs-me", { title: "Needs me" })];
-    mockState.topLevelFixture = [makeIssue("i-needs-me", { title: "Needs me" })];
-
-    render(<ChatRelatedTab />);
-    // Attention hook receives only the active ids; top-level receives active + attention
-    expect(lastAttentionExclude?.has("i-needs-me")).toBe(false);
-    expect(lastTopLevelExclude?.has("i-needs-me")).toBe(true);
-
-    // Should appear only once (in attention) in the rendered output
-    const matches = screen.getAllByText("Needs me");
-    expect(matches.length).toBe(1);
-  });
-
-  it("renders documents with title, path, and a link", () => {
+  it("renders only-documents correctly", () => {
     mockState.documents = [makeDocument("d-1", "Design Doc")];
-    const { container } = render(<ChatRelatedTab />);
+    const { container } = render(<ChatRelatedTab conversationId="c-abc" />);
     expect(screen.getByText("Design Doc")).toBeDefined();
     expect(screen.getByText("docs/d-1.md")).toBeDefined();
     const link = container.querySelector('a[href="/documents/d-1"]');
     expect(link).not.toBeNull();
+    expect(screen.getByText("No issues referenced by this chat yet.")).toBeDefined();
+    expect(screen.getByText("No patches referenced by this chat yet.")).toBeDefined();
   });
 
-  it("renders patches via ItemRow", () => {
-    mockState.patches = [makePatch("p-1", "First Patch"), makePatch("p-2", "Second Patch")];
-    render(<ChatRelatedTab />);
+  it("renders mixed buckets in all three sections", () => {
+    mockState.issues = [makeIssue("i-1")];
+    mockState.patches = [makePatch("p-1")];
+    mockState.documents = [makeDocument("d-1")];
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.getByTestId("item-row-issue-i-1")).toBeDefined();
     expect(screen.getByTestId("item-row-patch-p-1")).toBeDefined();
-    expect(screen.getByTestId("item-row-patch-p-2")).toBeDefined();
-    expect(screen.getByText("First Patch")).toBeDefined();
+    expect(screen.getByText("Design Doc")).toBeDefined();
   });
 
   it("renders section counts when sections have content", () => {
-    mockState.documents = [makeDocument("d-1"), makeDocument("d-2"), makeDocument("d-3")];
-    const { container } = render(<ChatRelatedTab />);
-    const docHeading = Array.from(container.querySelectorAll("h3")).find((h) =>
-      h.textContent?.startsWith("Documents"),
+    mockState.issues = [makeIssue("i-1"), makeIssue("i-2"), makeIssue("i-3")];
+    const { container } = render(<ChatRelatedTab conversationId="c-abc" />);
+    const issueHeading = Array.from(container.querySelectorAll("h3")).find((h) =>
+      h.textContent?.startsWith("Issues"),
     );
-    expect(docHeading?.textContent).toContain("(3)");
+    expect(issueHeading?.textContent).toContain("(3)");
   });
 
-  it("shows spinner while a section is loading", () => {
-    mockState.documentsLoading = true;
-    render(<ChatRelatedTab />);
+  it("shows a single spinner while loading and no sections", () => {
+    mockState.isLoading = true;
+    render(<ChatRelatedTab conversationId="c-abc" />);
     expect(screen.getByTestId("spinner-sm")).toBeDefined();
+    // Sections aren't rendered during loading
+    expect(screen.queryByText("Issues")).toBeNull();
+  });
+
+  it("shows an error message when the hook reports an error", () => {
+    mockState.error = new Error("boom");
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.getByText("Failed to load referenced items.")).toBeDefined();
   });
 });
