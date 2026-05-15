@@ -669,16 +669,41 @@ impl Default for EventBus {
 pub struct StoreWithEvents {
     inner: Arc<dyn Store>,
     event_bus: Arc<EventBus>,
+    /// Test-only synchronization hook fired between
+    /// `inner.add_conversation` and `inner.append_conversation_event` inside
+    /// [`Self::add_conversation_with_first_event_and_actor`]. Tests install a
+    /// `Notify` to widen the (otherwise effectively instantaneous on
+    /// `MemoryStore`) gap between the two inner store ops so a bus subscriber
+    /// has a chance to observe whatever ordering the production code emits.
+    /// When unset (the production case) the gate is a no-op.
+    #[cfg(test)]
+    pre_append_event_hook: tokio::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
 impl StoreWithEvents {
     pub fn new(inner: Arc<dyn Store>, event_bus: Arc<EventBus>) -> Self {
-        Self { inner, event_bus }
+        Self {
+            inner,
+            event_bus,
+            #[cfg(test)]
+            pre_append_event_hook: tokio::sync::Mutex::new(None),
+        }
     }
 
     /// Returns a reference to the underlying event bus.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
+    }
+
+    /// Install a `Notify` that
+    /// [`Self::add_conversation_with_first_event_and_actor`] will await on
+    /// AFTER `inner.add_conversation` and BEFORE
+    /// `inner.append_conversation_event`. Used by race-window regression
+    /// tests in `hydra-server/src/test/chat_lifecycle.rs` to make the gap
+    /// observable to bus subscribers.
+    #[cfg(test)]
+    pub async fn set_pre_append_event_hook(&self, notify: Arc<tokio::sync::Notify>) {
+        *self.pre_append_event_hook.lock().await = Some(notify);
     }
 
     // ---- Actor-aware mutation methods ----
@@ -1044,6 +1069,13 @@ impl StoreWithEvents {
             .inner
             .add_conversation(conversation.clone(), &actor)
             .await?;
+        #[cfg(test)]
+        {
+            let hook = self.pre_append_event_hook.lock().await.clone();
+            if let Some(notify) = hook {
+                notify.notified().await;
+            }
+        }
         let appended_event = if let Some(event) = first_event {
             let event_clone = event.clone();
             let result = self
