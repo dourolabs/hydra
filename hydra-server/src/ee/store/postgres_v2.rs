@@ -297,8 +297,14 @@ impl PostgresStoreV2 {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> Result<(), StoreError> {
-        // Delete all existing relationships for this issue
-        let delete_sql = format!("DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} WHERE source_id = $1");
+        // Delete only the relationships managed by this function. Other
+        // rel_types (e.g. has-document) are owned by other code paths and
+        // must not be stomped by issue updates.
+        let delete_sql = format!(
+            "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE source_id = $1 \
+               AND rel_type IN ('child-of', 'blocked-on', 'has-patch')"
+        );
         sqlx::query(&delete_sql)
             .bind(issue_id.as_ref())
             .execute(&mut **tx)
@@ -7910,6 +7916,45 @@ mod tests {
         assert_eq!(rels[0].source_id, sid);
         assert_eq!(rels[0].target_id, did);
         assert_eq!(rels[0].rel_type, RelationshipType::HasDocument);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_issue_preserves_has_document_relationships(pool: PgStorePool) {
+        use crate::store::RelationshipType;
+
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (doc_id, _) = store
+            .add_document(sample_document("test/doc.md", None), &actor)
+            .await
+            .unwrap();
+
+        let source = HydraId::from(issue_id.clone());
+        let target = HydraId::from(doc_id.clone());
+
+        // Seed an externally-owned (issue, document, has-document) row.
+        store
+            .add_relationship(&source, &target, RelationshipType::HasDocument)
+            .await
+            .unwrap();
+
+        // Update the issue with no document changes; the unmanaged row must survive.
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "halfway".to_string();
+        store
+            .update_issue(&issue_id, updated, &actor)
+            .await
+            .unwrap();
+
+        let rels = store
+            .get_relationships(Some(&source), None, Some(RelationshipType::HasDocument))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1, "has-document row must survive issue update");
+        assert_eq!(rels[0].target_id, target);
     }
 
     #[sqlx::test(migrations = "./migrations")]
