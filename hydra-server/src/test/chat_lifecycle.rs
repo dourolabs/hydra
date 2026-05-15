@@ -10,8 +10,9 @@ use super::common::mark_session_terminal;
 use crate::{
     app::{AppState, ServiceState},
     domain::{
-        conversations::ConversationStatus as DomainConversationStatus, sessions::Session,
-        task_status::Status as TaskStatus,
+        actors::ActorRef, agents::Agent,
+        conversations::ConversationStatus as DomainConversationStatus, documents::Document,
+        sessions::Session, task_status::Status as TaskStatus,
     },
     store::{MemoryStore, Store},
     test_utils::{
@@ -1532,6 +1533,141 @@ async fn conversation_marked_idle_when_companion_session_reaches_terminal_status
     // Sanity-check the store mirror too.
     let domain = store.get_conversation(&conversation_id, false).await?.item;
     assert_eq!(domain.status, DomainConversationStatus::Idle);
+
+    Ok(())
+}
+
+/// Register an agent under `name` with a prompt document whose body is
+/// `prompt_body`. The companion document is stored at
+/// `/agents/<name>/prompt.md`, matching the convention used by the
+/// per-conversation tests in `app::conversations`.
+async fn register_agent_with_prompt_body(
+    store: &Arc<dyn Store>,
+    name: &str,
+    prompt_body: &str,
+) -> anyhow::Result<()> {
+    let prompt_path = format!("/agents/{name}/prompt.md");
+    let agent = Agent::new(
+        name.to_string(),
+        prompt_path.clone(),
+        None,
+        1,
+        1,
+        false,
+        false,
+        vec![],
+    );
+    store.add_agent(agent).await?;
+
+    let doc = Document {
+        title: format!("{name} prompt"),
+        body_markdown: prompt_body.to_string(),
+        path: Some(
+            prompt_path
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
+        ),
+        created_by: None,
+        deleted: false,
+    };
+    store.add_document(doc, &ActorRef::test()).await?;
+    Ok(())
+}
+
+/// Regression test for the chat-agent-prompt-prepend race fixed by routing
+/// the first user message through `AppState::send_message` (which appends
+/// the event AND forwards it through the relay) instead of inlining the
+/// `append_conversation_event_with_actor` call inside `create_conversation`.
+///
+/// Pre-fix, `POST /v1/conversations { message, agent_name }` only appended
+/// the `UserMessage` to the event log; the worker observed it via
+/// `feed_catch_up` once it connected. But `SpawnConversationSessionsAutomation`
+/// fires on `ConversationCreated`, so the worker could race ahead of the
+/// append and catch up with zero events — `PromptPrepend` then never saw a
+/// first `UserMessage` and the agent prompt was silently dropped on the
+/// first turn.
+///
+/// With the fix, `create_conversation` calls `self.send_message(...)` for
+/// the first message. `send_message` both appends to the log AND attempts
+/// the relay path, so the first message reaches the worker via *whichever*
+/// branch (catch-up or relay) wins. Either path is sufficient for the
+/// `PromptPrepend` middleware to fire.
+///
+/// The test passes if the worker observes the first user message via
+/// EITHER `WorkerCatchUp.events` OR a `ServerMessage::Event` on the relay,
+/// which mirrors how the bug actually manifests in production.
+#[tokio::test]
+async fn create_conversation_with_first_message_reaches_worker_via_relay() -> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    register_agent_with_prompt_body(&store, "chat", "you are a chat agent").await?;
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: Some("chat".to_string()),
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Verify that the chat agent's prompt actually flowed through to the
+    // spawned session — the SpawnConversationSessionsAutomation should have
+    // resolved the prompt document body into the session's `prompt` field.
+    let session = store.get_session(&session_id, false).await?.item;
+    assert_eq!(
+        session.prompt, "you are a chat agent",
+        "session prompt should be the resolved agent prompt body"
+    );
+
+    // Connect as a fake worker, handshake, and observe the first user
+    // message. It may arrive via catch-up (worker connected after the
+    // message was appended) or via the relay (worker connected before the
+    // message landed). Either is sufficient for PromptPrepend to fire.
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let catch_up = worker_handshake(
+        &mut ws,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+
+    let saw_in_catch_up = catch_up.events.iter().any(|e| {
+        matches!(
+            e,
+            ConversationEvent::UserMessage { content, .. } if content == "hello"
+        )
+    });
+
+    let saw_via_relay = if saw_in_catch_up {
+        false
+    } else {
+        let drained = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
+        drained.iter().any(|m| {
+            matches!(
+                m,
+                ServerMessage::Event {
+                    event: ConversationEvent::UserMessage { content, .. },
+                } if content == "hello"
+            )
+        })
+    };
+
+    assert!(
+        saw_in_catch_up || saw_via_relay,
+        "worker must observe the first user message via either catch-up or relay; \
+         catch-up events were: {:?}",
+        catch_up.events
+    );
 
     Ok(())
 }
