@@ -1,8 +1,8 @@
 use crate::domain::actors::{Actor, ActorRef};
 use crate::{
     app::{
-        AppState, CloseConversationError, CreateConversationError, CreateSessionError,
-        ResumeConversationError, SendMessageError,
+        AppState, CloseConversationError, CreateConversationError, ResumeConversationError,
+        SendMessageError,
     },
     store::StoreError,
 };
@@ -171,10 +171,9 @@ pub async fn send_message(
 ) -> Result<Json<api_conversations::ConversationEvent>, ApiError> {
     info!(conversation_id = %conversation_id, "send_message invoked");
 
-    let creator = actor.creator.clone();
     let actor_ref = ActorRef::from(&actor);
     let api_event = state
-        .send_message(&conversation_id, payload.content, actor_ref, creator)
+        .send_message(&conversation_id, payload.content, actor_ref)
         .await
         .map_err(map_send_message_error)?;
 
@@ -259,10 +258,9 @@ pub async fn resume_conversation(
 ) -> Result<Json<api_conversations::Conversation>, ApiError> {
     info!(conversation_id = %conversation_id, "resume_conversation invoked");
 
-    let creator = actor.creator.clone();
     let actor_ref = ActorRef::from(&actor);
     let versioned = state
-        .resume_conversation(&conversation_id, actor_ref, creator)
+        .resume_conversation(&conversation_id, actor_ref)
         .await
         .map_err(map_resume_conversation_error)?;
 
@@ -279,7 +277,13 @@ pub async fn resume_conversation(
 fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     match err {
         CreateConversationError::Store { source } => map_conversation_error(source),
-        CreateConversationError::Session { source } => map_create_session_error(source),
+        CreateConversationError::AgentNotFound { name } => {
+            ApiError::bad_request(format!("agent '{name}' not found"))
+        }
+        CreateConversationError::Agent { source } => {
+            error!(error = %source, "failed to resolve agent for create_conversation");
+            ApiError::internal(format!("agent resolution error: {source}"))
+        }
     }
 }
 
@@ -299,7 +303,6 @@ fn map_conversation_error(err: StoreError) -> ApiError {
 fn map_send_message_error(err: SendMessageError) -> ApiError {
     match err {
         SendMessageError::Store { source } => map_conversation_error(source),
-        SendMessageError::Session { source } => map_create_session_error(source),
     }
 }
 
@@ -315,68 +318,6 @@ fn map_resume_conversation_error(err: ResumeConversationError) -> ApiError {
         ResumeConversationError::AlreadyActive => {
             ApiError::conflict("conversation is already active".to_string())
         }
-        ResumeConversationError::Session { source } => map_create_session_error(source),
-    }
-}
-
-fn map_create_session_error(err: CreateSessionError) -> ApiError {
-    match err {
-        CreateSessionError::TaskResolution(err) => ApiError::from(err),
-        CreateSessionError::IssueLookup { source, issue_id } => match source {
-            StoreError::IssueNotFound(_) => {
-                ApiError::not_found(format!("issue '{issue_id}' not found"))
-            }
-            other => {
-                error!(
-                    error = %other,
-                    issue_id = %issue_id,
-                    "failed to load issue for session creation"
-                );
-                ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
-            }
-        },
-        CreateSessionError::ConversationLookup {
-            source,
-            conversation_id,
-        } => match source {
-            StoreError::ConversationNotFound(_) => {
-                ApiError::not_found(format!("conversation '{conversation_id}' not found"))
-            }
-            other => {
-                error!(
-                    error = %other,
-                    conversation_id = %conversation_id,
-                    "failed to load conversation for session creation"
-                );
-                ApiError::internal(format!(
-                    "Failed to load conversation '{conversation_id}': {other}"
-                ))
-            }
-        },
-        err @ CreateSessionError::IssueAndConversationConflict => {
-            ApiError::bad_request(err.to_string())
-        }
-        err @ CreateSessionError::AgentNotFound { .. } => ApiError::bad_request(err.to_string()),
-        CreateSessionError::AgentLookup { source } => {
-            error!(error = %source, "failed to resolve agent for conversation");
-            ApiError::internal(format!("Failed to resolve agent: {source}"))
-        }
-        CreateSessionError::AgentPromptResolution { path, source } => {
-            error!(error = %source, path = %path, "failed to resolve agent prompt");
-            ApiError::internal(format!(
-                "Failed to resolve agent prompt at '{path}': {source}"
-            ))
-        }
-        CreateSessionError::AgentMcpConfigResolution { path, source } => {
-            error!(error = %source, path = %path, "failed to resolve agent MCP config");
-            ApiError::internal(format!(
-                "Failed to resolve agent MCP config at '{path}': {source}"
-            ))
-        }
-        CreateSessionError::Store { source } => {
-            error!(error = %source, "failed to store session");
-            ApiError::internal(format!("Failed to store session: {source}"))
-        }
     }
 }
 
@@ -384,7 +325,7 @@ fn map_create_session_error(err: CreateSessionError) -> ApiError {
 mod tests {
     use super::*;
     use crate::domain::conversations::ConversationEvent as DomainEvent;
-    use hydra_common::{ConversationId, IssueId};
+    use hydra_common::ConversationId;
 
     #[test]
     fn map_conversation_error_not_found_returns_404() {
@@ -401,39 +342,6 @@ mod tests {
         let api_err = map_conversation_error(err);
         assert_eq!(api_err.status().as_u16(), 500);
         assert!(api_err.message().contains("db broke"));
-    }
-
-    #[test]
-    fn map_create_session_error_issue_not_found_returns_404() {
-        let issue_id = IssueId::new();
-        let err = CreateSessionError::IssueLookup {
-            source: StoreError::IssueNotFound(issue_id.clone()),
-            issue_id: issue_id.clone(),
-        };
-        let api_err = map_create_session_error(err);
-        assert_eq!(api_err.status().as_u16(), 404);
-        assert!(api_err.message().contains(&issue_id.to_string()));
-    }
-
-    #[test]
-    fn map_create_session_error_store_returns_500() {
-        let err = CreateSessionError::Store {
-            source: StoreError::Internal("connection lost".to_string()),
-        };
-        let api_err = map_create_session_error(err);
-        assert_eq!(api_err.status().as_u16(), 500);
-        assert!(api_err.message().contains("connection lost"));
-    }
-
-    #[test]
-    fn map_create_session_error_issue_lookup_internal_returns_500() {
-        let issue_id = IssueId::new();
-        let err = CreateSessionError::IssueLookup {
-            source: StoreError::Internal("timeout".to_string()),
-            issue_id: issue_id.clone(),
-        };
-        let api_err = map_create_session_error(err);
-        assert_eq!(api_err.status().as_u16(), 500);
     }
 
     #[test]

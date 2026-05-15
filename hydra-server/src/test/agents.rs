@@ -78,14 +78,18 @@ async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: ListAgentsResponse = response.json().await?;
-    let names: Vec<String> = body.agents.iter().map(|agent| agent.name.clone()).collect();
+    // Filter out the default test conversation agent that
+    // `spawn_test_server_with_state` seeds for integration tests.
+    let agents: Vec<_> = body
+        .agents
+        .iter()
+        .filter(|a| a.name != "default-test-agent")
+        .collect();
+    let names: Vec<String> = agents.iter().map(|agent| agent.name.clone()).collect();
 
     assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
-    assert_eq!(body.agents[0].prompt, "prompt for alpha");
-    assert_eq!(
-        body.agents[1].max_simultaneous,
-        DEFAULT_AGENT_MAX_SIMULTANEOUS
-    );
+    assert_eq!(agents[0].prompt, "prompt for alpha");
+    assert_eq!(agents[1].max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
     Ok(())
 }
 
@@ -126,6 +130,10 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     assert_eq!(body.agent.name, "gamma");
 
     let agents = state.state.list_agents().await.unwrap();
+    let agents: Vec<_> = agents
+        .into_iter()
+        .filter(|a| a.name != "default-test-agent")
+        .collect();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "gamma");
     Ok(())
@@ -182,6 +190,10 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
     assert_eq!(body.agent.name, "alpha");
 
     let agents = state.state.list_agents().await.unwrap();
+    let agents: Vec<_> = agents
+        .into_iter()
+        .filter(|a| a.name != "default-test-agent")
+        .collect();
     assert!(agents.is_empty());
     Ok(())
 }
