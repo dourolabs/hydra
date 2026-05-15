@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
+import { apiClient } from "../../api/client";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
@@ -13,7 +15,6 @@ import { SessionList } from "../sessions/SessionList";
 import { PatchList } from "../patches/PatchList";
 import { PatchPreview } from "./PatchPreview";
 import { DocumentPreview } from "./DocumentPreview";
-import { extractDocumentPaths } from "../../utils/documentPaths";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import { FormPanel } from "./FormPanel";
@@ -67,16 +68,21 @@ export function IssueDetail({ record }: IssueDetailProps) {
     [issue.dependencies],
   );
 
-  const documentPaths = useMemo(() => {
-    const texts = [issue.description, issue.progress].filter(Boolean) as string[];
-    const allPaths = new Set<string>();
-    for (const text of texts) {
-      for (const path of extractDocumentPaths(text)) {
-        allPaths.add(path);
-      }
-    }
-    return Array.from(allPaths);
-  }, [issue.description, issue.progress]);
+  const { data: documentRelations } = useQuery({
+    queryKey: ["relations", "has-document", record.issue_id],
+    queryFn: () =>
+      apiClient.listRelations({
+        source_id: record.issue_id,
+        rel_type: "has-document",
+      }),
+    staleTime: 30_000,
+    select: (data) => data.relations,
+  });
+
+  const documentIds = useMemo(
+    () => documentRelations?.map((rel) => rel.target_id) ?? [],
+    [documentRelations],
+  );
 
   return (
     <div className={styles.detail}>
@@ -186,8 +192,8 @@ export function IssueDetail({ record }: IssueDetailProps) {
       )}
 
       {/* Document Preview */}
-      {documentPaths.length > 0 && (
-        <DocumentPreview paths={documentPaths} />
+      {documentIds.length > 0 && (
+        <DocumentPreview documentIds={documentIds} />
       )}
 
       {/* Form */}
