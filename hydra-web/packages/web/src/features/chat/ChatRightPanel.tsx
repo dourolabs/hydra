@@ -26,7 +26,9 @@ export function ChatRightPanel({ conversation }: ChatRightPanelProps) {
           <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
         }
       >
-        {activeTab === "related" && <ChatRelatedTab />}
+        {activeTab === "related" && (
+          <ChatRelatedTab conversationId={conversation.conversation_id} />
+        )}
         {activeTab === "metadata" && <ChatMetadataTab conversation={conversation} />}
       </Panel>
     </div>
