@@ -1,6 +1,7 @@
+use super::common::mark_session_terminal;
 use crate::{
     app::{AppState, ServiceState},
-    domain::{actors::ActorRef, task_status::Status as TaskStatus},
+    domain::task_status::Status as TaskStatus,
     store::{MemoryStore, Store},
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_app_config,
@@ -57,24 +58,6 @@ fn integration_state() -> (AppState, Arc<dyn Store>) {
         test_secret_manager(),
     );
     (state, store)
-}
-
-/// Drive a session to a terminal status via the event-emitting store path so
-/// that `SpawnConversationSessionsAutomation`'s SessionUpdated branch picks up
-/// the transition and flips the conversation `Active → Idle`.
-async fn mark_session_terminal(state: &AppState, session_id: &SessionId, status: TaskStatus) {
-    let mut session = state
-        .store()
-        .get_session(session_id, false)
-        .await
-        .expect("session must exist")
-        .item;
-    session.status = status;
-    state
-        .store
-        .update_session_with_actor(session_id, session, ActorRef::test())
-        .await
-        .expect("update_session_with_actor must succeed");
 }
 
 /// Count the sessions linked to `conversation_id` via the store. The HTTP
