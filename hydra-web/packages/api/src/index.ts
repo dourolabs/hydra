@@ -1,17 +1,23 @@
 export { HydraApiClient } from "./client";
 export type { HydraApiClientOptions } from "./client";
-export type {
-  RelationResponse,
-  ListRelationsRequest,
-  ListRelationsResponse,
-} from "./client";
+export type { RelationResponse, ListRelationsRequest, ListRelationsResponse } from "./client";
 
 export { ApiError } from "./errors";
 
 export {
-  HydraEventSource,
-  buildEventsUrl,
-} from "./sse";
+  HYDRA_ID_PREFIXES,
+  hydraIdKind,
+  isIssueId,
+  isPatchId,
+  isDocumentId,
+  isSessionId,
+  isLabelId,
+  isConversationId,
+  isNotificationId,
+} from "./hydra-id";
+export type { HydraIdKind } from "./hydra-id";
+
+export { HydraEventSource, buildEventsUrl } from "./sse";
 export type {
   HydraEvent,
   HydraEventHandler,
