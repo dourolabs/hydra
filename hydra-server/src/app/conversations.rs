@@ -103,22 +103,22 @@ impl AppState {
             deleted: false,
         };
 
-        // The conversation row and the first user message (if any) must be
-        // persisted before `ConversationCreated` reaches the bus. Otherwise
-        // `SpawnConversationSessionsAutomation` races the append: the spawn
-        // automation builds the session, the worker boots and connects to
-        // the relay, and `build_catch_up` reads an empty event log — the
-        // first user message is then never delivered to the worker
-        // (`create_conversation` does not push it through `chat_relay`).
-        let first_event = message.map(|content| ConversationEvent::UserMessage {
-            content,
-            timestamp: chrono::Utc::now(),
-        });
         let (conversation_id, _version) = self
             .store
-            .add_conversation_with_first_event_and_actor(conversation, first_event, actor_ref)
+            .add_conversation_with_actor(conversation, actor_ref.clone())
             .await
             .map_err(|source| CreateConversationError::Store { source })?;
+
+        if let Some(content) = message {
+            let event = ConversationEvent::UserMessage {
+                content,
+                timestamp: chrono::Utc::now(),
+            };
+            self.store
+                .append_conversation_event_with_actor(&conversation_id, event, actor_ref)
+                .await
+                .map_err(|source| CreateConversationError::Store { source })?;
+        }
 
         let versioned = self
             .store()
