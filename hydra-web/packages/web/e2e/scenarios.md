@@ -9,7 +9,6 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@auth:login` — User can log in with a valid API token
 - `@auth:redirect` — Unauthenticated user is redirected to login
 - `@auth:logout` — User can log out and is redirected to login
-- `@auth:invalid-token` — User sees error when logging in with invalid token
 
 ## Dashboard
 
