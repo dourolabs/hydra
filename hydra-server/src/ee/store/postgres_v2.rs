@@ -7959,6 +7959,35 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn drop_deps_patches_columns_preserves_relationships(pool: PgStorePool) {
+        // Regression: after dropping issues_v2.dependencies / issues_v2.patches, the
+        // store must still round-trip Issue.dependencies / Issue.patches via
+        // object_relationships.
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let (parent_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (patch_id, _) = store.add_patch(sample_patch(), &actor).await.unwrap();
+
+        let mut issue = sample_issue(vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )]);
+        issue.patches = vec![patch_id.clone()];
+        let (issue_id, _) = store.add_issue(issue, &actor).await.unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.dependencies.len(), 1);
+        assert_eq!(fetched.item.dependencies[0].issue_id, parent_id);
+        assert_eq!(
+            fetched.item.dependencies[0].dependency_type,
+            IssueDependencyType::ChildOf
+        );
+        assert_eq!(fetched.item.patches, vec![patch_id]);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn get_relationships_batch_filters_by_multiple_sources(pool: PgStorePool) {
         use crate::store::RelationshipType;
 

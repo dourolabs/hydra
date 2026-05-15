@@ -35,6 +35,10 @@ const V2_TABLE_ACTORS: &str = "metis.actors_v2";
 const V2_TABLE_REPOSITORIES: &str = "metis.repositories_v2";
 const V2_TABLE_DOCUMENTS: &str = "metis.documents_v2";
 
+/// Object relationships table; replaces the dropped issues_v2.dependencies/patches
+/// columns as the destination for v1 deps/patches data during v1->v2 migration.
+const OBJECT_RELATIONSHIPS_TABLE: &str = "metis.object_relationships";
+
 /// Migration status table.
 const MIGRATION_STATUS_TABLE: &str = "metis.migration_status";
 
@@ -219,6 +223,64 @@ async fn migrate_issues(pool: &PgStorePool) -> Result<u64> {
     result
 }
 
+/// Insert v1 deps/patches into object_relationships (idempotent via ON CONFLICT).
+async fn backfill_issue_relationships(
+    pool: &PgStorePool,
+    issue_id: &str,
+    dependencies: &Value,
+    patches: &Value,
+) -> Result<()> {
+    let insert_sql = format!(
+        "INSERT INTO {OBJECT_RELATIONSHIPS_TABLE} \
+         (source_id, source_kind, target_id, target_kind, rel_type) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (source_id, rel_type, target_id) DO NOTHING"
+    );
+
+    if let Some(deps) = dependencies.as_array() {
+        for dep in deps {
+            let Some(target_id) = dep.get("issue_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(rel_type) = dep.get("type").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            sqlx::query(&insert_sql)
+                .bind(issue_id)
+                .bind("issue")
+                .bind(target_id)
+                .bind("issue")
+                .bind(rel_type)
+                .execute(pool)
+                .await
+                .with_context(|| {
+                    format!("failed to backfill dependency relationship for issue {issue_id}")
+                })?;
+        }
+    }
+
+    if let Some(patch_ids) = patches.as_array() {
+        for patch_id in patch_ids {
+            let Some(patch_id_str) = patch_id.as_str() else {
+                continue;
+            };
+            sqlx::query(&insert_sql)
+                .bind(issue_id)
+                .bind("issue")
+                .bind(patch_id_str)
+                .bind("patch")
+                .bind("has-patch")
+                .execute(pool)
+                .await
+                .with_context(|| {
+                    format!("failed to backfill has-patch relationship for issue {issue_id}")
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
 async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
     let mut offset = 0i64;
     let mut total_migrated = 0u64;
@@ -296,12 +358,14 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            // Insert into v2 table, using ON CONFLICT to skip existing records
+            // Insert into v2 table, using ON CONFLICT to skip existing records.
+            // The dependencies/patches columns were dropped; their data is backfilled
+            // into object_relationships below instead.
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_ISSUES}
                  (id, version_number, issue_type, description, creator, progress, status, assignee,
-                  job_settings, todo_list, dependencies, patches, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                  job_settings, todo_list, deleted, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -314,8 +378,6 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(assignee)
             .bind(&job_settings)
             .bind(&todo_list)
-            .bind(&dependencies)
-            .bind(&patches)
             .bind(deleted)
             .bind(row.created_at)
             .execute(pool)
@@ -323,6 +385,14 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             .with_context(|| {
                 format!("failed to insert issue {} v{}", row.id, row.version_number)
             })?;
+
+            // Backfill v1 deps/patches into object_relationships. We write rows for every
+            // version of the issue and rely on ON CONFLICT DO NOTHING to dedupe — the PK
+            // is (source_id, rel_type, target_id) with no version coordinate, so the
+            // latest-version row's deps/patches naturally subsume earlier-version writes.
+            if !deleted {
+                backfill_issue_relationships(pool, &row.id, &dependencies, &patches).await?;
+            }
 
             total_migrated += 1;
         }
