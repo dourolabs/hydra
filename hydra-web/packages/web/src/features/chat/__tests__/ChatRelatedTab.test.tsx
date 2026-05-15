@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 import type {
-  DocumentVersionRecord,
+  DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
 } from "@hydra/api";
@@ -12,7 +12,7 @@ import type {
 const mockState: {
   issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
-  documents: DocumentVersionRecord[];
+  documents: DocumentSummaryRecord[];
   isLoading: boolean;
   error: unknown;
 } = {
@@ -112,7 +112,7 @@ function makePatch(patchId: string, title = "Test Patch"): PatchSummaryRecord {
   };
 }
 
-function makeDocument(docId: string, title = "Design Doc"): DocumentVersionRecord {
+function makeDocument(docId: string, title = "Design Doc"): DocumentSummaryRecord {
   return {
     document_id: docId,
     version: 1n,
@@ -120,7 +120,6 @@ function makeDocument(docId: string, title = "Design Doc"): DocumentVersionRecor
     creation_time: "2026-01-01T00:00:00Z",
     document: {
       title,
-      body_markdown: "",
       path: `docs/${docId}.md`,
       deleted: false,
     },

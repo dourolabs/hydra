@@ -1,13 +1,17 @@
 import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
-import type { DocumentVersionRecord, IssueSummaryRecord, PatchSummaryRecord } from "@hydra/api";
+import { useQuery } from "@tanstack/react-query";
+import type {
+  DocumentSummaryRecord,
+  IssueSummaryRecord,
+  PatchSummaryRecord,
+} from "@hydra/api";
 import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 export interface ReferencedArtifactsResult {
   issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
-  documents: DocumentVersionRecord[];
+  documents: DocumentSummaryRecord[];
   isLoading: boolean;
   error: unknown;
 }
@@ -85,27 +89,15 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     select: (data) => data.patches,
   });
 
-  const documentQueries = useQueries({
-    queries: documentIds.map((id) => ({
-      queryKey: ["document", id],
-      queryFn: () => apiClient.getDocument(id),
-      staleTime: 30_000,
-      enabled: !!id,
-    })),
+  const documentIdsParam = documentIds.join(",");
+  const documentsQuery = useQuery({
+    queryKey: ["chatRelated", "referencedDocuments", documentIdsParam],
+    queryFn: () =>
+      apiClient.listDocuments({ ids: documentIdsParam, limit: documentIds.length }),
+    enabled: documentIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.documents,
   });
-
-  const documents = useMemo(() => {
-    const docMap = new Map<string, DocumentVersionRecord>();
-    for (const q of documentQueries) {
-      if (q.data) docMap.set(q.data.document_id, q.data);
-    }
-    const ordered: DocumentVersionRecord[] = [];
-    for (const id of documentIds) {
-      const doc = docMap.get(id);
-      if (doc) ordered.push(doc);
-    }
-    return ordered;
-  }, [documentQueries, documentIds]);
 
   const issuesMap = useMemo(() => {
     const map = new Map<string, IssueSummaryRecord>();
@@ -141,23 +133,40 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     return out;
   }, [patchIds, patchesMap]);
 
+  const documentsMap = useMemo(() => {
+    const map = new Map<string, DocumentSummaryRecord>();
+    for (const doc of documentsQuery.data ?? []) {
+      map.set(doc.document_id, doc);
+    }
+    return map;
+  }, [documentsQuery.data]);
+
+  const orderedDocuments = useMemo(() => {
+    const out: DocumentSummaryRecord[] = [];
+    for (const id of documentIds) {
+      const doc = documentsMap.get(id);
+      if (doc) out.push(doc);
+    }
+    return out;
+  }, [documentIds, documentsMap]);
+
   const isLoading =
     relationsQuery.isLoading ||
     (issueIds.length > 0 && issuesQuery.isLoading) ||
     (patchIds.length > 0 && patchesQuery.isLoading) ||
-    documentQueries.some((q) => q.isLoading);
+    (documentIds.length > 0 && documentsQuery.isLoading);
 
   const error =
     relationsQuery.error ??
     issuesQuery.error ??
     patchesQuery.error ??
-    documentQueries.find((q) => q.error)?.error ??
+    documentsQuery.error ??
     null;
 
   return {
     issues: orderedIssues,
     patches: orderedPatches,
-    documents,
+    documents: orderedDocuments,
     isLoading,
     error,
   };

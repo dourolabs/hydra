@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
 import type {
-  DocumentVersionRecord,
+  DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
 } from "@hydra/api";
@@ -34,7 +34,7 @@ function patchToWorkItem(record: PatchSummaryRecord): WorkItem {
   };
 }
 
-function getDocumentTitle(doc: DocumentVersionRecord): string {
+function getDocumentTitle(doc: DocumentSummaryRecord): string {
   if (doc.document.title) return doc.document.title;
   if (doc.document.path) return doc.document.path;
   return doc.document_id;

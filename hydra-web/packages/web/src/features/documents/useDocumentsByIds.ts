@@ -1,37 +1,42 @@
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
-import type { DocumentVersionRecord } from "@hydra/api";
+import { useQuery } from "@tanstack/react-query";
+import type { DocumentSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 /**
- * Fetch documents by their IDs using individual queries.
- * Each document is fetched and cached independently via its ["document", id] query key,
- * which SSE events already invalidate for real-time updates.
+ * Fetch document summaries by their IDs in a single bulk request.
+ * Returns rows ordered to match the input id sequence; ids missing from the
+ * response (e.g. deleted documents) are skipped.
  */
 export function useDocumentsByIds(documentIds: string[]) {
   const stableIds = useMemo(() => [...documentIds].sort(), [documentIds]);
+  const idsCsv = stableIds.join(",");
 
-  const queries = useQueries({
-    queries: stableIds.map((id) => ({
-      queryKey: ["document", id],
-      queryFn: () => apiClient.getDocument(id),
-      staleTime: 30_000,
-      enabled: !!id,
-    })),
+  const query = useQuery({
+    queryKey: ["documentsByIds", idsCsv],
+    queryFn: () =>
+      apiClient.listDocuments({ ids: idsCsv, limit: stableIds.length }),
+    staleTime: 30_000,
+    enabled: stableIds.length > 0,
+    select: (data) => data.documents,
   });
 
-  const data: DocumentVersionRecord[] = useMemo(() => {
-    const results: DocumentVersionRecord[] = [];
-    for (const q of queries) {
-      if (q.data) {
-        results.push(q.data);
-      }
+  const data: DocumentSummaryRecord[] = useMemo(() => {
+    const docMap = new Map<string, DocumentSummaryRecord>();
+    for (const doc of query.data ?? []) {
+      docMap.set(doc.document_id, doc);
     }
-    return results;
-  }, [queries]);
+    const ordered: DocumentSummaryRecord[] = [];
+    for (const id of stableIds) {
+      const doc = docMap.get(id);
+      if (doc) ordered.push(doc);
+    }
+    return ordered;
+  }, [query.data, stableIds]);
 
-  const isLoading = queries.some((q) => q.isLoading);
-  const error = queries.find((q) => q.error)?.error ?? null;
-
-  return { data, isLoading, error };
+  return {
+    data,
+    isLoading: stableIds.length > 0 && query.isLoading,
+    error: query.error ?? null,
+  };
 }
