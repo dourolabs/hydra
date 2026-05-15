@@ -1655,15 +1655,30 @@ async fn create_conversation_emits_conversation_created_after_first_message_is_p
     // the conversation's event log when `ConversationCreated` arrives, and
     // assert the first message is already there. This pins the atomicity
     // contract of `StoreWithEvents::add_conversation_with_first_event_and_actor`.
+    //
+    // On `MemoryStore` + `current_thread` runtime the two inner store ops
+    // complete synchronously enough that a pre-fix
+    // `emit-conversation-created-immediately-after-add` ordering is not
+    // observable to a bus subscriber: the append wins. To make the race
+    // window observable we install a test-only `Notify` hook between
+    // `inner.add_conversation` and `inner.append_conversation_event` inside
+    // `StoreWithEvents::add_conversation_with_first_event_and_actor`. The
+    // hook is held until the test thread releases it, deterministically
+    // exposing the pre-fix ordering to the subscriber.
     use crate::app::event_bus::ServerEvent;
     use crate::domain::{
         actors::ActorRef, conversations::ConversationEvent as DomainConversationEvent,
         issues::SessionSettings, users::Username,
     };
+    use tokio::sync::Notify;
 
     let (state, store) = state_with_idle_timeout_secs(60);
     register_agent_with_prompt_body(&store, "chat", "you are a chat agent").await?;
 
+    let hook = Arc::new(Notify::new());
+    state.store.set_pre_append_event_hook(hook.clone()).await;
+
+    // Subscribe BEFORE spawning the producer so we never miss the event.
     let mut rx = state.subscribe();
     let observer_store = store.clone();
     let observer = tokio::spawn(async move {
@@ -1683,20 +1698,46 @@ async fn create_conversation_emits_conversation_created_after_first_message_is_p
         }
     });
 
-    state
-        .create_conversation(
-            Some("first user message".to_string()),
-            Some("chat".to_string()),
-            SessionSettings::default(),
-            ActorRef::test(),
-            Username::from("creator"),
-        )
-        .await?;
+    // Run `create_conversation` in its own task; it will block at the hook
+    // between `inner.add_conversation` and `inner.append_conversation_event`.
+    let state_for_task = state.clone();
+    let producer = tokio::spawn(async move {
+        state_for_task
+            .create_conversation(
+                Some("first user message".to_string()),
+                Some("chat".to_string()),
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+    });
 
-    let snapshot = tokio::time::timeout(Duration::from_secs(2), observer)
+    // Widen the race window. With the pre-fix ordering (`emit_conversation_created`
+    // immediately after `inner.add_conversation`, BEFORE the hook) this gives
+    // the observer time to receive `ConversationCreated` and take its
+    // empty-log snapshot before we release the hook. With the post-fix
+    // ordering (both inner ops first, THEN both emits) the observer remains
+    // blocked on `rx.recv()` because `emit_conversation_created` only runs
+    // after the hook releases.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Release the hook BEFORE awaiting anything that could panic, so the
+    // producer can always make progress and the join below does not hang
+    // when the assertion fails.
+    hook.notify_one();
+
+    let snapshot = tokio::time::timeout(Duration::from_secs(5), observer)
         .await
         .map_err(|_| anyhow::anyhow!("observer timed out"))?
         .map_err(|e| anyhow::anyhow!("observer panicked: {e}"))?;
+
+    let producer_result = tokio::time::timeout(Duration::from_secs(5), producer)
+        .await
+        .map_err(|_| anyhow::anyhow!("create_conversation timed out"))?
+        .map_err(|e| anyhow::anyhow!("create_conversation panicked: {e}"))?;
+    producer_result?;
+
     let user_messages: Vec<&str> = snapshot
         .iter()
         .filter_map(|v| match &v.item {
