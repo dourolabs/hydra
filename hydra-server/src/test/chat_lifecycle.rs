@@ -1656,12 +1656,13 @@ async fn create_conversation_emits_conversation_created_after_first_message_is_p
     // assert the first message is already there. This pins the atomicity
     // contract of `StoreWithEvents::add_conversation_with_first_event_and_actor`.
     //
-    // On `MemoryStore` + `current_thread` runtime the two inner store ops
-    // complete synchronously enough that a pre-fix
-    // `emit-conversation-created-immediately-after-add` ordering is not
+    // On `MemoryStore` + `current_thread` runtime the inner persistence and
+    // the bus emit complete synchronously enough that a pre-fix
+    // `emit-conversation-created-before-event-is-persisted` ordering is not
     // observable to a bus subscriber: the append wins. To make the race
-    // window observable we install a test-only `Notify` hook between
-    // `inner.add_conversation` and `inner.append_conversation_event` inside
+    // window observable we install a test-only `Notify` hook between the
+    // atomic `inner.add_conversation_with_first_event` call and the
+    // `emit_conversation_created` bus emit inside
     // `StoreWithEvents::add_conversation_with_first_event_and_actor`. The
     // hook is held until the test thread releases it, deterministically
     // exposing the pre-fix ordering to the subscriber.
@@ -1699,7 +1700,8 @@ async fn create_conversation_emits_conversation_created_after_first_message_is_p
     });
 
     // Run `create_conversation` in its own task; it will block at the hook
-    // between `inner.add_conversation` and `inner.append_conversation_event`.
+    // between `inner.add_conversation_with_first_event` and the
+    // `emit_conversation_created` bus emit.
     let state_for_task = state.clone();
     let producer = tokio::spawn(async move {
         state_for_task
@@ -1714,12 +1716,12 @@ async fn create_conversation_emits_conversation_created_after_first_message_is_p
     });
 
     // Widen the race window. With the pre-fix ordering (`emit_conversation_created`
-    // immediately after `inner.add_conversation`, BEFORE the hook) this gives
-    // the observer time to receive `ConversationCreated` and take its
-    // empty-log snapshot before we release the hook. With the post-fix
-    // ordering (both inner ops first, THEN both emits) the observer remains
-    // blocked on `rx.recv()` because `emit_conversation_created` only runs
-    // after the hook releases.
+    // immediately after `inner.add_conversation`, before the event is appended)
+    // this gives the observer time to receive `ConversationCreated` and take its
+    // empty-log snapshot before we release the hook. With the post-fix ordering
+    // (atomic persist first, THEN both emits) the observer remains blocked on
+    // `rx.recv()` because `emit_conversation_created` only runs after the hook
+    // releases.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Release the hook BEFORE awaiting anything that could panic, so the

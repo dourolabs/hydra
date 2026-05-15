@@ -657,6 +657,56 @@ impl SqliteStore {
         }
     }
 
+    /// Inserts a conversation event row inside the given executor (typically a
+    /// transaction). The caller is responsible for computing `version_number`
+    /// (1 for a brand-new conversation; `latest_version + 1` otherwise) and
+    /// for verifying that the conversation exists if needed. Returns the
+    /// 0-based event index for the inserted row.
+    async fn insert_conversation_event_in_tx<'e, E>(
+        executor: E,
+        id: &ConversationId,
+        version_number: VersionNumber,
+        event: &ConversationEvent,
+        actor_json: &str,
+    ) -> Result<usize, StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
+        let event_index = usize::try_from(version_number.saturating_sub(1)).map_err(|_| {
+            StoreError::Internal(format!("event index overflow for conversation '{id}'"))
+        })?;
+        let event_data = serde_json::to_string(event).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
+        })?;
+        let event_type = match event {
+            ConversationEvent::UserMessage { .. } => "user_message",
+            ConversationEvent::AssistantMessage { .. } => "assistant_message",
+            ConversationEvent::Suspending { .. } => "suspending",
+            ConversationEvent::Resumed { .. } => "resumed",
+            ConversationEvent::Closed { .. } => "closed",
+        };
+        let version_i64 = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "event version number overflow for conversation '{id}'"
+            ))
+        })?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_CONVERSATION_EVENTS} (id, version_number, event_type, event_data, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5)"
+        ))
+        .bind(id.as_ref())
+        .bind(version_i64)
+        .bind(event_type)
+        .bind(&event_data)
+        .bind(actor_json)
+        .execute(executor)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(event_index)
+    }
+
     async fn insert_conversation_in_tx<'e, E>(
         executor: E,
         id: &ConversationId,
@@ -4947,45 +4997,59 @@ impl Store for SqliteStore {
             ))
         })?;
 
-        // Event index is version - 1 (0-based)
-        let event_index = usize::try_from(next_version.saturating_sub(1)).map_err(|_| {
-            StoreError::Internal(format!("event index overflow for conversation '{id}'"))
-        })?;
-
-        let event_data = serde_json::to_string(&event).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
-        })?;
-        let event_type = match &event {
-            ConversationEvent::UserMessage { .. } => "user_message",
-            ConversationEvent::AssistantMessage { .. } => "assistant_message",
-            ConversationEvent::Suspending { .. } => "suspending",
-            ConversationEvent::Resumed { .. } => "resumed",
-            ConversationEvent::Closed { .. } => "closed",
-        };
         let actor_json = actor_to_json_string(actor);
-        let version_i64 = i64::try_from(next_version).map_err(|_| {
-            StoreError::Internal(format!(
-                "event version number overflow for conversation '{id}'"
-            ))
-        })?;
-
-        sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATION_EVENTS} (id, version_number, event_type, event_data, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5)"
-        ))
-        .bind(id.as_ref())
-        .bind(version_i64)
-        .bind(event_type)
-        .bind(&event_data)
-        .bind(&actor_json)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
+        let event_index = Self::insert_conversation_event_in_tx(
+            &self.pool,
+            id,
+            next_version,
+            &event,
+            &actor_json,
+        )
+        .await?;
 
         Ok(ConversationEventId {
             conversation_id: id.clone(),
             event_index,
         })
+    }
+
+    async fn add_conversation_with_first_event(
+        &self,
+        conversation: Conversation,
+        first_event: Option<ConversationEvent>,
+        actor: &ActorRef,
+    ) -> Result<(ConversationId, VersionNumber, Option<ConversationEventId>), StoreError> {
+        let id = ConversationId::new();
+        let actor_json = actor_to_json_string(actor);
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Clear is_latest on any previous version (no-op for new entities)
+        sqlx::query(&format!(
+            "UPDATE {TABLE_CONVERSATIONS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json)).await?;
+
+        let event_id = if let Some(event) = first_event {
+            let event_index =
+                Self::insert_conversation_event_in_tx(&mut *tx, &id, 1, &event, &actor_json)
+                    .await?;
+            Some(ConversationEventId {
+                conversation_id: id.clone(),
+                event_index,
+            })
+        } else {
+            None
+        };
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok((id, 1, event_id))
     }
 
     async fn store_conversation_session_state(
@@ -9291,6 +9355,113 @@ mod tests {
         assert_eq!(events[0].version, 1);
         assert_eq!(events[1].item, event2);
         assert_eq!(events[1].version, 2);
+    }
+
+    #[tokio::test]
+    async fn add_conversation_with_first_event_persists_both_atomically() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+        let event = ConversationEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        let (id, version, event_id) = store
+            .add_conversation_with_first_event(
+                conversation.clone(),
+                Some(event.clone()),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+        let event_id = event_id.expect("event id");
+        assert_eq!(event_id.conversation_id, id);
+        assert_eq!(event_id.event_index, 0);
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_versioned(&fetched, &conversation, 1);
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item, event);
+        assert_eq!(events[0].version, 1);
+    }
+
+    #[tokio::test]
+    async fn add_conversation_with_first_event_none_skips_event() {
+        let store = create_test_store().await;
+        let conversation = sample_conversation();
+
+        let (id, version, event_id) = store
+            .add_conversation_with_first_event(conversation.clone(), None, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+        assert!(event_id.is_none());
+
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_versioned(&fetched, &conversation, 1);
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    /// Regression test for the SQL-transaction contract on
+    /// `add_conversation_with_first_event`. If the event-insert step fails
+    /// we must roll back the conversation insert as well — otherwise a
+    /// crash between the two writes could leave a conversation row with no
+    /// first event, which is the durable-storage variant of the race fixed
+    /// in p-abxuhl (commit 7611b6ab). We force the event insert to fail by
+    /// dropping the `conversation_events` table before the call and then
+    /// assert that no conversation row was persisted. A baseline that
+    /// performs the two writes in separate transactions would leave the
+    /// conversation row visible to `list_conversations` and fail this test.
+    #[tokio::test]
+    async fn add_conversation_with_first_event_rolls_back_on_event_failure() {
+        let store = create_test_store().await;
+
+        // Force the event insert to fail by removing the events table.
+        sqlx::query("DROP TABLE conversation_events")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        let conversation = sample_conversation();
+        let event = ConversationEvent::UserMessage {
+            content: "should not persist".to_string(),
+            timestamp: Utc::now(),
+        };
+        let result = store
+            .add_conversation_with_first_event(conversation, Some(event), &ActorRef::test())
+            .await;
+        assert!(result.is_err(), "expected event-insert failure");
+
+        // Recreate the events table so the listing query can run.
+        sqlx::query(
+            "CREATE TABLE conversation_events (
+                id TEXT NOT NULL,
+                version_number INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_data TEXT NOT NULL,
+                actor TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (id, version_number)
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let list = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert!(
+            list.is_empty(),
+            "conversation row must be rolled back when event insert fails, got: {list:?}",
+        );
     }
 
     #[tokio::test]
