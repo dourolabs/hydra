@@ -8637,6 +8637,45 @@ mod tests {
         assert_eq!(rels[0].target_id, target);
     }
 
+    /// Regression test for the migration that dropped the `dependencies` and
+    /// `patches` JSON columns from `issues_v2`. After the drop, the read path
+    /// must still reconstitute these Vec fields from `object_relationships`.
+    #[tokio::test]
+    async fn drop_deps_patches_columns_preserves_relationships() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        let (parent_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (blocker_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (patch_id, _) = store.add_patch(sample_patch(), &actor).await.unwrap();
+
+        let dependencies = vec![
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
+            IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
+        ];
+        let mut issue = sample_issue(dependencies.clone());
+        issue.patches = vec![patch_id.clone()];
+
+        let (issue_id, _) = store.add_issue(issue, &actor).await.unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+
+        // Order from object_relationships isn't guaranteed; compare as sets.
+        let mut fetched_deps = fetched.item.dependencies.clone();
+        let mut expected_deps = dependencies.clone();
+        fetched_deps.sort_by(|a, b| a.issue_id.as_ref().cmp(b.issue_id.as_ref()));
+        expected_deps.sort_by(|a, b| a.issue_id.as_ref().cmp(b.issue_id.as_ref()));
+        assert_eq!(
+            fetched_deps, expected_deps,
+            "dependencies must round-trip via object_relationships after column drop"
+        );
+        assert_eq!(
+            fetched.item.patches,
+            vec![patch_id],
+            "patches must round-trip via object_relationships after column drop"
+        );
+    }
+
     #[tokio::test]
     async fn get_relationships_batch_filters_by_multiple_sources() {
         use crate::store::RelationshipType;
