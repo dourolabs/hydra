@@ -1,4 +1,5 @@
 use super::labels::LabelSummary;
+use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
 use crate::{DocumentId, DocumentPath, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,6 +82,16 @@ impl DocumentVersionRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchDocumentsQuery {
+    /// Batch-fetch specific documents by ID (comma-separated, max 100).
+    /// Intersected with other filters when provided.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub ids: Vec<DocumentId>,
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
@@ -114,6 +125,7 @@ impl SearchDocumentsQuery {
         include_deleted: Option<bool>,
     ) -> Self {
         Self {
+            ids: Vec::new(),
             q,
             path_prefix,
             path_is_exact,
@@ -359,6 +371,7 @@ mod tests {
     #[test]
     fn search_documents_query_serializes() {
         let query = SearchDocumentsQuery {
+            ids: Vec::new(),
             q: Some("api".to_string()),
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
@@ -421,6 +434,43 @@ mod tests {
         let query: SearchDocumentsQuery = serde_json::from_str(json).unwrap();
         assert_eq!(query.path_prefix.as_deref(), Some("docs/"));
         assert_eq!(query.path_is_exact, None);
+    }
+
+    #[test]
+    fn search_documents_query_serializes_ids() {
+        let query = SearchDocumentsQuery {
+            ids: vec![
+                "d-abcd".parse::<DocumentId>().unwrap(),
+                "d-efgh".parse::<DocumentId>().unwrap(),
+            ],
+            ..SearchDocumentsQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("ids").map(String::as_str), Some("d-abcd,d-efgh"));
+    }
+
+    #[test]
+    fn search_documents_query_deserializes_ids() {
+        let query: SearchDocumentsQuery =
+            serde_urlencoded::from_str("ids=d-abcd%2Cd-efgh").unwrap();
+        assert_eq!(query.ids.len(), 2);
+        assert_eq!(query.ids[0].as_ref(), "d-abcd");
+        assert_eq!(query.ids[1].as_ref(), "d-efgh");
+    }
+
+    #[test]
+    fn search_documents_query_omits_empty_ids() {
+        let query = SearchDocumentsQuery::default();
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(
+            !params.contains_key("ids"),
+            "empty ids vec should be omitted from serialization"
+        );
     }
 
     #[test]

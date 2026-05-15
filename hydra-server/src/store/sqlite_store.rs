@@ -1885,6 +1885,20 @@ fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<Strin
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
+    // When `ids` is provided, filter by ID (intersected with other filters).
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if let Some(path) = query.path_prefix.as_ref() {
         if query.path_is_exact.unwrap_or(false) {
             bindings.push(path.clone());
@@ -6521,6 +6535,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(created_by_filtered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_documents_filters_by_ids() {
+        let store = create_test_store().await;
+        let task_id = SessionId::new();
+
+        let (a, _) = store
+            .add_document(
+                sample_document(Some("docs/a.md"), Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (b, _) = store
+            .add_document(
+                sample_document(Some("docs/b.md"), Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (_c, _) = store
+            .add_document(
+                sample_document(Some("notes/c.md"), Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // (a) exact id match.
+        let mut query = SearchDocumentsQuery::default();
+        query.ids = vec![a.clone(), b.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        let mut found_ids: Vec<DocumentId> = filtered.iter().map(|d| d.0.clone()).collect();
+        found_ids.sort();
+        let mut expected = vec![a.clone(), b.clone()];
+        expected.sort();
+        assert_eq!(found_ids, expected);
+
+        // (b) ids intersected with path_prefix.
+        let mut query =
+            SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None, None);
+        query.ids = vec![a.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, a);
+
+        // ids that don't intersect with the path filter return no rows.
+        let mut query =
+            SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None, None);
+        query.ids = vec![a.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert!(filtered.is_empty());
+
+        // (c) empty ids vec behaves like the field is absent.
+        let all = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
     }
 
     #[tokio::test]
