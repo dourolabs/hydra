@@ -834,7 +834,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 5 restrictions and 12 automations are active.
+/// behavior exactly — all 5 restrictions and 13 automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -843,7 +843,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 5);
-    assert_eq!(engine.automation_count(), 12);
+    assert_eq!(engine.automation_count(), 13);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -865,6 +865,7 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("notification_generation".to_string()),
                 PolicyEntry::Name("inbox_label".to_string()),
                 PolicyEntry::Name("link_artifacts_to_issue".to_string()),
+                PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
                 PolicyEntry::Name("spawn_conversation_sessions".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
@@ -873,7 +874,7 @@ fn default_config_enables_all_builtin_policies() {
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
-    assert_eq!(explicit_engine.automation_count(), 12);
+    assert_eq!(explicit_engine.automation_count(), 13);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
