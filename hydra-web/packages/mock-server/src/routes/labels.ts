@@ -8,6 +8,7 @@ import type {
   LabelSummary,
   Issue,
 } from "@hydra/api";
+import { isIssueId } from "@hydra/api";
 
 const COLLECTION = "labels";
 
@@ -33,8 +34,14 @@ function generateLabelId(): string {
 
 function defaultColor(name: string): string {
   const palette = [
-    "#e74c3c", "#3498db", "#2ecc71", "#f39c12",
-    "#9b59b6", "#1abc9c", "#e67e22", "#34495e",
+    "#e74c3c",
+    "#3498db",
+    "#2ecc71",
+    "#f39c12",
+    "#9b59b6",
+    "#1abc9c",
+    "#e67e22",
+    "#34495e",
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -44,9 +51,7 @@ function defaultColor(name: string): string {
 }
 
 export function getLabelsForObject(objectId: string): LabelSummary[] {
-  const labelIds = associations
-    .filter((a) => a.object_id === objectId)
-    .map((a) => a.label_id);
+  const labelIds = associations.filter((a) => a.object_id === objectId).map((a) => a.label_id);
   // We need access to the store but this function is called from outside
   // So we store a reference
   if (!_store) return [];
@@ -169,9 +174,12 @@ export function createLabelRoutes(store: Store): Hono {
     addAssociation(labelId, objectId);
 
     // If cascade=true and object is an issue, add to all children
-    if (cascade && objectId.startsWith("i-")) {
+    if (cascade && isIssueId(objectId)) {
       const allIssues = store.list<Issue>("issues");
-      const childIds = findChildren(objectId, allIssues.map(({ id, entry }) => ({ id, issue: entry.data })));
+      const childIds = findChildren(
+        objectId,
+        allIssues.map(({ id, entry }) => ({ id, issue: entry.data })),
+      );
       for (const childId of childIds) {
         addAssociation(labelId, childId);
       }
@@ -184,9 +192,7 @@ export function createLabelRoutes(store: Store): Hono {
   app.delete("/v1/labels/:labelId/objects/:objectId", (c) => {
     const labelId = c.req.param("labelId");
     const objectId = c.req.param("objectId");
-    const idx = associations.findIndex(
-      (a) => a.label_id === labelId && a.object_id === objectId,
-    );
+    const idx = associations.findIndex((a) => a.label_id === labelId && a.object_id === objectId);
     if (idx >= 0) {
       associations.splice(idx, 1);
     }
@@ -196,13 +202,14 @@ export function createLabelRoutes(store: Store): Hono {
   return app;
 }
 
-function findChildren(
-  parentId: string,
-  issues: { id: string; issue: Issue }[],
-): string[] {
+function findChildren(parentId: string, issues: { id: string; issue: Issue }[]): string[] {
   const children: string[] = [];
   for (const { id, issue } of issues) {
-    if (issue.dependencies?.some((d: { type: string; issue_id: string }) => d.type === "child-of" && d.issue_id === parentId)) {
+    if (
+      issue.dependencies?.some(
+        (d: { type: string; issue_id: string }) => d.type === "child-of" && d.issue_id === parentId,
+      )
+    ) {
       children.push(id);
       children.push(...findChildren(id, issues));
     }

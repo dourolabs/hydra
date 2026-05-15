@@ -1,10 +1,7 @@
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type {
-  DocumentVersionRecord,
-  IssueSummaryRecord,
-  PatchSummaryRecord,
-} from "@hydra/api";
+import type { DocumentVersionRecord, IssueSummaryRecord, PatchSummaryRecord } from "@hydra/api";
+import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 export interface ReferencedArtifactsResult {
@@ -26,9 +23,17 @@ function bucketByPrefix(ids: string[]): {
   const patchIds: string[] = [];
   const documentIds: string[] = [];
   for (const id of ids) {
-    if (id.startsWith("i-")) issueIds.push(id);
-    else if (id.startsWith("p-")) patchIds.push(id);
-    else if (id.startsWith("d-")) documentIds.push(id);
+    switch (hydraIdKind(id)) {
+      case "issue":
+        issueIds.push(id);
+        break;
+      case "patch":
+        patchIds.push(id);
+        break;
+      case "document":
+        documentIds.push(id);
+        break;
+    }
   }
   return {
     issueIds: issueIds.slice(0, MAX_PER_BUCKET),
@@ -42,9 +47,7 @@ function bucketByPrefix(ids: string[]): {
  * pre-filter on the relations table. Buckets relation rows by target_id prefix
  * (i-/p-/d-) and batch-fetches details for each kind.
  */
-export function useChatReferencedArtifacts(
-  conversationId: string,
-): ReferencedArtifactsResult {
+export function useChatReferencedArtifacts(conversationId: string): ReferencedArtifactsResult {
   const relationsQuery = useQuery({
     queryKey: ["chatRelated", "references", conversationId],
     queryFn: () =>
@@ -62,16 +65,12 @@ export function useChatReferencedArtifacts(
     [relationsQuery.data],
   );
 
-  const { issueIds, patchIds, documentIds } = useMemo(
-    () => bucketByPrefix(targetIds),
-    [targetIds],
-  );
+  const { issueIds, patchIds, documentIds } = useMemo(() => bucketByPrefix(targetIds), [targetIds]);
 
   const issueIdsParam = issueIds.join(",");
   const issuesQuery = useQuery({
     queryKey: ["chatRelated", "referencedIssues", issueIdsParam],
-    queryFn: () =>
-      apiClient.listIssues({ ids: issueIdsParam, limit: issueIds.length }),
+    queryFn: () => apiClient.listIssues({ ids: issueIdsParam, limit: issueIds.length }),
     enabled: issueIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.issues,
@@ -80,8 +79,7 @@ export function useChatReferencedArtifacts(
   const patchIdsParam = patchIds.join(",");
   const patchesQuery = useQuery({
     queryKey: ["chatRelated", "referencedPatches", patchIdsParam],
-    queryFn: () =>
-      apiClient.listPatches({ ids: patchIdsParam, limit: patchIds.length }),
+    queryFn: () => apiClient.listPatches({ ids: patchIdsParam, limit: patchIds.length }),
     enabled: patchIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.patches,
