@@ -77,6 +77,10 @@ pub enum DocumentsCommand {
 
 #[derive(Debug, Clone, Args)]
 pub struct DocumentsListArgs {
+    /// Batch-fetch specific documents by ID (comma-separated).
+    #[arg(long = "ids", value_name = "DOCUMENT_ID", value_delimiter = ',')]
+    pub ids: Vec<DocumentId>,
+
     /// Query string used to match document titles or bodies.
     #[arg(long = "query", value_name = "QUERY")]
     pub query: Option<String>,
@@ -401,13 +405,14 @@ async fn list_documents(
     } else {
         None
     };
-    let query = SearchDocumentsQuery::new(
+    let mut query = SearchDocumentsQuery::new(
         args.query,
         args.path_prefix,
         None,
         args.created_by,
         include_deleted,
     );
+    query.ids = args.ids;
     let response = client
         .list_documents(&query)
         .await
@@ -1174,6 +1179,7 @@ mod tests {
         let records = list_documents(
             &client,
             DocumentsListArgs {
+                ids: Vec::new(),
                 query: Some("runbook".to_string()),
                 path_prefix: Some("docs/".to_string()),
                 created_by: Some(created_by),
@@ -1185,6 +1191,43 @@ mod tests {
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].document_id, document_id);
+        list_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn list_documents_filters_by_ids() {
+        let document_id_a = DocumentId::new();
+        let document_id_b = DocumentId::new();
+        let response = ListDocumentsResponse::new(vec![
+            sample_document_summary_record(&document_id_a),
+            sample_document_summary_record(&document_id_b),
+        ]);
+        let server = MockServer::start();
+        let expected_ids = format!("{document_id_a},{document_id_b}");
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/documents")
+                .query_param("ids", expected_ids.as_str());
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        let records = list_documents(
+            &client,
+            DocumentsListArgs {
+                ids: vec![document_id_a.clone(), document_id_b.clone()],
+                query: None,
+                path_prefix: None,
+                created_by: None,
+                include_deleted: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].document_id, document_id_a);
+        assert_eq!(records[1].document_id, document_id_b);
         list_mock.assert();
     }
 

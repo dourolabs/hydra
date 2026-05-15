@@ -1755,6 +1755,19 @@ fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, 
     let mut predicates = Vec::new();
     let mut bindings = Vec::new();
 
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if let Some(path) = query.path_prefix.as_ref() {
         if query.path_is_exact.unwrap_or(false) {
             predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
@@ -5906,6 +5919,67 @@ mod tests {
         let by_path = store.get_documents_by_path("/docs/").await.unwrap();
         assert_eq!(by_path.len(), 1);
         assert_eq!(by_path[0].0, doc_id);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_documents_filters_by_ids_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let task_id = SessionId::new();
+
+        let (a, _) = store
+            .add_document(
+                sample_document("docs/a.md", Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (b, _) = store
+            .add_document(
+                sample_document("docs/b.md", Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (_c, _) = store
+            .add_document(
+                sample_document("notes/c.md", Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // (a) exact id match.
+        let mut query = SearchDocumentsQuery::default();
+        query.ids = vec![a.clone(), b.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        let mut found_ids: Vec<DocumentId> = filtered.iter().map(|d| d.0.clone()).collect();
+        found_ids.sort();
+        let mut expected = vec![a.clone(), b.clone()];
+        expected.sort();
+        assert_eq!(found_ids, expected);
+
+        // (b) ids intersected with path_prefix.
+        let mut query =
+            SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None, None);
+        query.ids = vec![a.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, a);
+
+        // ids that don't intersect with the path filter return no rows.
+        let mut query =
+            SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None, None);
+        query.ids = vec![a.clone()];
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert!(filtered.is_empty());
+
+        // (c) empty ids vec behaves like the field is absent.
+        let all = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
     }
 
     #[sqlx::test(migrations = "./migrations")]
