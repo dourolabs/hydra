@@ -54,6 +54,12 @@ pub enum CreateSessionError {
         #[source]
         source: AgentError,
     },
+    #[error("failed to resolve agent prompt at '{path}'")]
+    AgentPromptResolution {
+        path: String,
+        #[source]
+        source: anyhow::Error,
+    },
     #[error("failed to resolve agent MCP config at '{path}'")]
     AgentMcpConfigResolution {
         path: String,
@@ -171,15 +177,20 @@ impl AppState {
             .as_ref()
             .and_then(|settings| settings.secrets.clone());
 
-        // The prompt is provided by the caller via `request.prompt`. For the
-        // conversation-spawn path, `spawn_session` resolves the agent prompt
-        // and passes it in here, so we trust the value as-is. The agent lookup
-        // is still used for MCP config, secrets merging, and the AGENT_NAME
-        // env var, which are not pre-passed via `CreateSessionRequest`.
-        let prompt = request.prompt;
+        // If a conversation agent was resolved, apply its prompt, MCP config,
+        // secrets, and AGENT_NAME env var. Mirrors `agent_queue.rs::build_task`.
+        let mut prompt = request.prompt;
         let mut mcp_config = None;
         let mut secrets = secrets;
         if let Some(agent) = resolved_agent.as_ref() {
+            prompt = self
+                .resolve_agent_prompt(&agent.prompt_path)
+                .await
+                .map_err(|source| CreateSessionError::AgentPromptResolution {
+                    path: agent.prompt_path.clone(),
+                    source,
+                })?;
+
             if let Some(path) = agent.mcp_config_path.as_deref() {
                 mcp_config = self
                     .resolve_agent_mcp_config(path)
@@ -1501,91 +1512,6 @@ mod tests {
             session.model.as_deref(),
             Some("conversation-model"),
             "session should inherit model from the linked conversation"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_session_preserves_caller_prompt_for_conversation_session() {
-        // create_session must trust the prompt passed in via CreateSessionRequest
-        // and must NOT re-resolve the agent's prompt. The conversation-spawn
-        // path (spawn_conversation_sessions::spawn_session) resolves the agent
-        // prompt locally and passes it through; create_session should not
-        // overwrite that value.
-        use crate::domain::{
-            agents::Agent,
-            conversations::{Conversation, ConversationStatus},
-            documents::Document,
-        };
-        use hydra_common::api::v1::sessions::CreateSessionRequest;
-
-        let state = state_with_default_model("default-model");
-
-        let prompt_path = "/agents/swe/prompt.md".to_string();
-        let agent = Agent::new(
-            "swe".to_string(),
-            prompt_path.clone(),
-            None,
-            1,
-            1,
-            false,
-            false,
-            vec![],
-        );
-        state.store.add_agent(agent).await.unwrap();
-        state
-            .store
-            .add_document_with_actor(
-                Document {
-                    title: "swe prompt".to_string(),
-                    body_markdown: "agent-prompt-body".to_string(),
-                    path: Some(prompt_path.parse().unwrap()),
-                    created_by: None,
-                    deleted: false,
-                },
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let (conv_id, _) = state
-            .store
-            .add_conversation_with_actor(
-                Conversation {
-                    title: None,
-                    agent_name: Some("swe".to_string()),
-                    status: ConversationStatus::Active,
-                    creator: Username::from("creator"),
-                    session_settings: SessionSettings::default(),
-                    deleted: false,
-                },
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        const SENTINEL: &str = "sentinel-prompt-not-from-agent";
-        let request = CreateSessionRequest::new(
-            SENTINEL.to_string(),
-            None,
-            hydra_common::api::v1::sessions::BundleSpec::None,
-            std::collections::HashMap::new(),
-            None,
-            Some(conv_id),
-            true,
-        );
-        let session_id = state
-            .create_session(request, ActorRef::test(), Username::from("creator"))
-            .await
-            .unwrap();
-
-        let session = state.get_session(&session_id).await.unwrap();
-        assert_eq!(
-            session.prompt, SENTINEL,
-            "create_session must use request.prompt verbatim, not re-resolve the agent prompt"
-        );
-        assert_ne!(
-            session.prompt, "agent-prompt-body",
-            "create_session must not overwrite request.prompt with the agent prompt"
         );
     }
 
