@@ -7920,7 +7920,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn references_relationship_round_trip_conversation_to_issue(pool: PgStorePool) {
+    async fn refers_to_relationship_round_trip_conversation_to_issue(pool: PgStorePool) {
         use crate::store::{ObjectKind, RelationshipType};
 
         let store = PostgresStoreV2::new(pool);
@@ -7933,13 +7933,13 @@ mod tests {
         let target = HydraId::from(issue_id.clone());
 
         let created = store
-            .add_relationship(&source, &target, RelationshipType::References)
+            .add_relationship(&source, &target, RelationshipType::RefersTo)
             .await
             .unwrap();
         assert!(created);
 
         let rels = store
-            .get_relationships(Some(&source), None, Some(RelationshipType::References))
+            .get_relationships(Some(&source), None, Some(RelationshipType::RefersTo))
             .await
             .unwrap();
         assert_eq!(rels.len(), 1);
@@ -7947,7 +7947,7 @@ mod tests {
         assert_eq!(rels[0].source_kind, ObjectKind::Conversation);
         assert_eq!(rels[0].target_id, target);
         assert_eq!(rels[0].target_kind, ObjectKind::Issue);
-        assert_eq!(rels[0].rel_type, RelationshipType::References);
+        assert_eq!(rels[0].rel_type, RelationshipType::RefersTo);
     }
 
     #[sqlx::test(migrations = "./migrations")]

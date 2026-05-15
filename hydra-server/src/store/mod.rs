@@ -96,7 +96,7 @@ pub enum RelationshipType {
     BlockedOn,
     HasPatch,
     HasDocument,
-    References,
+    RefersTo,
 }
 
 impl RelationshipType {
@@ -106,7 +106,7 @@ impl RelationshipType {
             RelationshipType::BlockedOn => "blocked-on",
             RelationshipType::HasPatch => "has-patch",
             RelationshipType::HasDocument => "has-document",
-            RelationshipType::References => "references",
+            RelationshipType::RefersTo => "refers_to",
         }
     }
 }
@@ -127,7 +127,7 @@ impl FromStr for RelationshipType {
             "blocked-on" | "blockedon" | "blocked_on" => Ok(RelationshipType::BlockedOn),
             "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
             "has-document" | "hasdocument" | "has_document" => Ok(RelationshipType::HasDocument),
-            "references" => Ok(RelationshipType::References),
+            "refers-to" | "refersto" | "refers_to" => Ok(RelationshipType::RefersTo),
             other => Err(format!("unsupported relationship type '{other}'")),
         }
     }
@@ -1078,21 +1078,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn references_relationship_type_round_trips() {
-        let rt = RelationshipType::References;
-        assert_eq!(rt.as_str(), "references");
-        assert_eq!(rt.to_string(), "references");
+    fn refers_to_relationship_type_round_trips() {
+        let rt = RelationshipType::RefersTo;
+        assert_eq!(rt.as_str(), "refers_to");
+        assert_eq!(rt.to_string(), "refers_to");
         assert_eq!(
-            RelationshipType::from_str("references").unwrap(),
-            RelationshipType::References
+            RelationshipType::from_str("refers_to").unwrap(),
+            RelationshipType::RefersTo
         );
         assert_eq!(
-            RelationshipType::from_str("References").unwrap(),
-            RelationshipType::References
+            RelationshipType::from_str("refers-to").unwrap(),
+            RelationshipType::RefersTo
         );
         assert_eq!(
-            RelationshipType::from_str("REFERENCES").unwrap(),
-            RelationshipType::References
+            RelationshipType::from_str("RefersTo").unwrap(),
+            RelationshipType::RefersTo
+        );
+        assert_eq!(
+            RelationshipType::from_str("REFERS_TO").unwrap(),
+            RelationshipType::RefersTo
         );
     }
 

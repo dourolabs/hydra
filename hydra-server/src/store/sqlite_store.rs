@@ -8600,7 +8600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn references_relationship_round_trip_conversation_to_issue() {
+    async fn refers_to_relationship_round_trip_conversation_to_issue() {
         use crate::store::{ObjectKind, RelationshipType};
 
         let store = create_test_store().await;
@@ -8613,12 +8613,12 @@ mod tests {
         let target = HydraId::from(issue_id.clone());
 
         store
-            .add_relationship(&source, &target, RelationshipType::References)
+            .add_relationship(&source, &target, RelationshipType::RefersTo)
             .await
             .unwrap();
 
         let rels = store
-            .get_relationships(Some(&source), None, Some(RelationshipType::References))
+            .get_relationships(Some(&source), None, Some(RelationshipType::RefersTo))
             .await
             .unwrap();
         assert_eq!(rels.len(), 1);
@@ -8626,7 +8626,7 @@ mod tests {
         assert_eq!(rels[0].source_kind, ObjectKind::Conversation);
         assert_eq!(rels[0].target_id, target);
         assert_eq!(rels[0].target_kind, ObjectKind::Issue);
-        assert_eq!(rels[0].rel_type, RelationshipType::References);
+        assert_eq!(rels[0].rel_type, RelationshipType::RefersTo);
     }
 
     #[tokio::test]
