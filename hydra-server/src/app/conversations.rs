@@ -109,15 +109,22 @@ impl AppState {
             .await
             .map_err(|source| CreateConversationError::Store { source })?;
 
+        // Deliver the optional first user message through `send_message` so
+        // it both lands in the event log AND attempts the relay path. The
+        // worker is still being spawned by
+        // `SpawnConversationSessionsAutomation` at this point, so the relay
+        // call will normally log "no relay connected, worker will catch up"
+        // and the message will be picked up via catch-up. But if the worker
+        // wins the race and connects before this call, the relay path
+        // delivers the message directly — and `PromptPrepend`'s
+        // first-`UserMessage` branch in the relay loop consumes the agent
+        // prompt prepend from there.
         if let Some(content) = message {
-            let event = ConversationEvent::UserMessage {
-                content,
-                timestamp: chrono::Utc::now(),
-            };
-            self.store
-                .append_conversation_event_with_actor(&conversation_id, event, actor_ref)
+            self.send_message(&conversation_id, content, actor_ref)
                 .await
-                .map_err(|source| CreateConversationError::Store { source })?;
+                .map_err(|err| match err {
+                    SendMessageError::Store { source } => CreateConversationError::Store { source },
+                })?;
         }
 
         let versioned = self
