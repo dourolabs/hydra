@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Session } from "@hydra/api";
-import { Badge } from "@hydra/ui";
+import { Badge, MarkdownViewer } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./SessionSettings.module.css";
@@ -36,12 +36,18 @@ function formatEnvVars(envVars: Session["env_vars"]): string | null {
 }
 
 export function SessionSettings({ task }: SessionSettingsProps) {
-  const entries: { label: string; value: React.ReactNode }[] = [];
+  const entries: { label: string; value: React.ReactNode; stacked?: boolean }[] =
+    [];
 
   if (task.prompt) {
     entries.push({
       label: "Prompt",
-      value: <pre className={styles.prompt}>{task.prompt}</pre>,
+      value: (
+        <div className={styles.promptContent}>
+          <MarkdownViewer content={task.prompt} />
+        </div>
+      ),
+      stacked: true,
     });
   }
 
@@ -129,7 +135,10 @@ export function SessionSettings({ task }: SessionSettingsProps) {
   return (
     <dl className={styles.list}>
       {entries.map((entry) => (
-        <div key={entry.label} className={styles.row}>
+        <div
+          key={entry.label}
+          className={entry.stacked ? styles.rowStacked : styles.row}
+        >
           <dt className={styles.label}>{entry.label}</dt>
           <dd className={styles.value}>{entry.value}</dd>
         </div>

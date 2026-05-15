@@ -15,6 +15,15 @@
   line-height: var(--line-height-normal);
 }
 
+.rowStacked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
 .label {
   color: var(--color-text-tertiary);
   font-weight: 600;
@@ -28,13 +37,10 @@
   margin: 0;
 }
 
-.prompt {
-  color: var(--color-text-primary);
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
+.promptContent {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
 }
 
 .link {
