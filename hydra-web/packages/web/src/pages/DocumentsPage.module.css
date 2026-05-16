@@ -176,6 +176,15 @@
   padding: 6px 8px;
 }
 
+.docLeafLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.docLeafLink:hover {
+  color: var(--fg-0);
+}
+
 /* ─── Right pane ─── */
 .pane {
   display: flex;
