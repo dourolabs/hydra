@@ -15,10 +15,10 @@ export const router = createBrowserRouter([
       {
         index: true,
         lazy: () =>
-          import("./pages/DashboardPage").then((m) => ({
+          import("./pages/IssuesListPage").then((m) => ({
             element: (
               <ErrorBoundary>
-                <m.DashboardPage />
+                <m.IssuesListPage />
               </ErrorBoundary>
             ),
           })),
