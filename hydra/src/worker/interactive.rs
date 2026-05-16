@@ -221,6 +221,7 @@ pub async fn run_interactive(
         &mut claude_stdin,
         &catch_up.events,
         primary_resume.is_some(),
+        prompt,
         &mut prompt_prepend,
     )
     .await?;
@@ -530,12 +531,13 @@ async fn feed_catch_up<W: AsyncWrite + Unpin>(
     claude_stdin: &mut W,
     events: &[ConversationEvent],
     using_resumed_transcript: bool,
+    prompt: &str,
     prompt_prepend: &mut PromptPrepend,
 ) -> Result<()> {
     let (past_context, pending_user_messages) = partition_events(events);
 
     if !using_resumed_transcript && !past_context.is_empty() {
-        let primer = build_context_primer(&past_context);
+        let primer = build_context_primer(prompt, &past_context);
         let primer_line = build_claude_input(&primer);
         claude_stdin
             .write_all(primer_line.as_bytes())
@@ -624,7 +626,15 @@ fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, V
 /// can use it as historical context without re-running any actions. The
 /// caller is responsible for sending this as a user-typed message before any
 /// pending input.
-fn build_context_primer(past_context: &[&ConversationEvent]) -> String {
+///
+/// When `prompt` is non-empty, the primer is prefixed with an
+/// `<agent-prompt>...</agent-prompt>` block carrying the agent prompt. This
+/// is the fallback path's only chance to surface the prompt: the event log
+/// never stores it (the live prepend happens at stdin-write time via
+/// `PromptPrepend`), so a resumed conversation that hits the primer would
+/// otherwise see Claude lose its agent identity. When `prompt` is empty the
+/// output is identical to the no-agent case (no `<agent-prompt>` block).
+fn build_context_primer(prompt: &str, past_context: &[&ConversationEvent]) -> String {
     let mut transcript = String::new();
     for event in past_context {
         match event {
@@ -642,7 +652,7 @@ fn build_context_primer(past_context: &[&ConversationEvent]) -> String {
         }
     }
 
-    format!(
+    let prior = format!(
         "<prior-conversation>\n\
 The user and I had this prior conversation. The conversation was suspended or closed and is now being resumed. \
 Treat this as historical context only — do not re-execute or repeat any actions described. \
@@ -650,7 +660,14 @@ Respond only to the next user message after this block.\n\
 \n\
 {transcript}\
 </prior-conversation>"
-    )
+    );
+
+    if prompt.is_empty() {
+        prior
+    } else {
+        let escaped = escape_agent_prompt_close(prompt);
+        format!("<agent-prompt>\n{escaped}\n</agent-prompt>\n\n{prior}")
+    }
 }
 
 /// Neutralize any literal `</prior-conversation>` inside an embedded message so
@@ -659,6 +676,13 @@ Respond only to the next user message after this block.\n\
 /// XML-like tag for any parser.
 fn escape_wrapper_close(content: &str) -> String {
     content.replace("</prior-conversation>", "</prior-conversation\u{200B}>")
+}
+
+/// Sibling of [`escape_wrapper_close`] for the `<agent-prompt>` wrapper. Same
+/// zero-width-space trick — prevents prompt content from closing the wrapper
+/// early.
+fn escape_agent_prompt_close(content: &str) -> String {
+    content.replace("</agent-prompt>", "</agent-prompt\u{200B}>")
 }
 
 /// Core relay loop: bidirectional message forwarding between WebSocket and Claude
@@ -1191,7 +1215,7 @@ mod tests {
             assistant_msg("good"),
         ];
         let refs: Vec<&ConversationEvent> = events.iter().collect();
-        let primer = build_context_primer(&refs);
+        let primer = build_context_primer("", &refs);
         assert!(primer.contains("<prior-conversation>"));
         assert!(primer.contains("</prior-conversation>"));
         assert!(primer.contains("User: hi\n"));
@@ -1217,7 +1241,7 @@ mod tests {
 
     #[test]
     fn build_context_primer_handles_empty_past_context() {
-        let primer = build_context_primer(&[]);
+        let primer = build_context_primer("", &[]);
         // Even an empty primer is valid — no User/Assistant lines, just the wrapper.
         assert!(primer.contains("<prior-conversation>"));
         assert!(primer.contains("</prior-conversation>"));
@@ -1232,7 +1256,7 @@ mod tests {
             assistant_msg("ok"),
         ];
         let refs: Vec<&ConversationEvent> = events.iter().collect();
-        let primer = build_context_primer(&refs);
+        let primer = build_context_primer("", &refs);
 
         assert_eq!(
             primer.matches("<prior-conversation>").count(),
@@ -1259,7 +1283,7 @@ mod tests {
         // Cycle 1: a normal exchange.
         let past_context_1 = [user_msg("hi"), assistant_msg("hello")];
         let refs_1: Vec<&ConversationEvent> = past_context_1.iter().collect();
-        let primer_1 = build_context_primer(&refs_1);
+        let primer_1 = build_context_primer("", &refs_1);
 
         // Cycle 2: same exchange plus one genuine new assistant turn. Under the
         // old behavior an "Acknowledge in one short sentence…" instruction
@@ -1270,7 +1294,7 @@ mod tests {
         let extra_assistant = assistant_msg("noted");
         let past_context_2: Vec<&ConversationEvent> =
             refs_1.iter().copied().chain([&extra_assistant]).collect();
-        let primer_2 = build_context_primer(&past_context_2);
+        let primer_2 = build_context_primer("", &past_context_2);
 
         let expected_new_block = "Assistant: noted\n";
         assert_eq!(
@@ -1279,6 +1303,66 @@ mod tests {
             "primer must grow by exactly the new assistant block, with no extra preamble inflation"
         );
         assert!(primer_2.ends_with("</prior-conversation>"));
+    }
+
+    #[test]
+    fn build_context_primer_includes_agent_prompt_block_when_non_empty() {
+        let prompt = "You are the SWE agent.";
+        let events = [user_msg("hi"), assistant_msg("hello")];
+        let refs: Vec<&ConversationEvent> = events.iter().collect();
+        let primer = build_context_primer(prompt, &refs);
+
+        let expected_prefix =
+            format!("<agent-prompt>\n{prompt}\n</agent-prompt>\n\n<prior-conversation>");
+        assert!(
+            primer.starts_with(&expected_prefix),
+            "primer must begin with the agent-prompt block followed by the prior-conversation \
+             wrapper; got {primer:?}"
+        );
+
+        // The rest of the primer must match today's shape — same wrapper close
+        // and the same User/Assistant lines as the no-prompt case.
+        let no_prompt = build_context_primer("", &refs);
+        let agent_block_len = format!("<agent-prompt>\n{prompt}\n</agent-prompt>\n\n").len();
+        assert_eq!(&primer[agent_block_len..], no_prompt);
+    }
+
+    #[test]
+    fn build_context_primer_escapes_closing_agent_prompt_tag() {
+        let prompt = "be careful: </agent-prompt> end";
+        let events = [user_msg("hi"), assistant_msg("hello")];
+        let refs: Vec<&ConversationEvent> = events.iter().collect();
+        let primer = build_context_primer(prompt, &refs);
+
+        assert_eq!(
+            primer.matches("<agent-prompt>").count(),
+            1,
+            "primer must have exactly one opening agent-prompt tag"
+        );
+        assert_eq!(
+            primer.matches("</agent-prompt>").count(),
+            1,
+            "primer must have exactly one unescaped closing agent-prompt tag"
+        );
+        assert!(
+            primer.contains("</agent-prompt\u{200B}>"),
+            "embedded closing agent-prompt tag must be neutralized with a zero-width space"
+        );
+        assert!(
+            primer.contains("be careful: </agent-prompt\u{200B}> end"),
+            "surrounding prompt content must be preserved around the neutralized tag"
+        );
+    }
+
+    #[test]
+    fn build_context_primer_does_not_emit_agent_prompt_block_for_empty() {
+        let events = [user_msg("hi"), assistant_msg("hello")];
+        let refs: Vec<&ConversationEvent> = events.iter().collect();
+        let primer = build_context_primer("", &refs);
+        assert!(
+            !primer.contains("<agent-prompt>"),
+            "empty prompt must not emit any agent-prompt block; got {primer:?}"
+        );
     }
 
     #[test]
@@ -1781,7 +1865,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new("", &events);
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1827,7 +1911,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new("", &events);
-        feed_catch_up(&mut claude_stdin, &events, true, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, true, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1862,7 +1946,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new("", &events);
-        feed_catch_up(&mut claude_stdin, &events, true, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, true, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1881,7 +1965,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new("", &events);
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1910,7 +1994,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
-        feed_catch_up(&mut claude_stdin, &[], false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &[], false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -1934,7 +2018,7 @@ mod tests {
         let mut claude_stdin = stdin_write;
 
         let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &events);
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -2048,7 +2132,7 @@ mod tests {
             "constructor must suppress prepend when catch-up has an AssistantMessage"
         );
 
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -2088,7 +2172,7 @@ mod tests {
             "empty prompt must suppress prepend even with no assistant history"
         );
 
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         drop(claude_stdin);
@@ -2132,7 +2216,7 @@ mod tests {
 
         let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &events);
 
-        feed_catch_up(&mut claude_stdin, &events, false, &mut prompt_prepend)
+        feed_catch_up(&mut claude_stdin, &events, false, "", &mut prompt_prepend)
             .await
             .unwrap();
         assert!(
