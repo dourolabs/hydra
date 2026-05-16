@@ -295,6 +295,68 @@ describe("useSSE chatRelated cache invalidation", () => {
     expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedDocuments"])).toBe(true);
   });
 
+  it("invalidates ['sessions', 'active'] on session_created with spawned_from set", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_created", {
+        entity_type: "session",
+        entity_id: "s-1",
+        version: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-1", "i-1"),
+      });
+    });
+
+    // The sidebar's useActiveSessions hook uses key ["sessions", "active", limit].
+    // The bug was that the spawnedFrom branch never invalidated this key — only
+    // ["sessions", "all"] — so the sidebar never refetched. Verify the explicit
+    // active-sessions invalidate at the common level now covers it.
+    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
+    // The pre-existing activeCount invalidate must still fire alongside it.
+    expect(wasInvalidated(invalidateSpy, ["sessions", "activeCount"])).toBe(true);
+  });
+
+  it("invalidates ['sessions', 'active'] on session_updated with spawned_from set", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_updated", {
+        entity_type: "session",
+        entity_id: "s-1",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-1", "i-1"),
+      });
+    });
+
+    // Status transitions (e.g., running → complete) should also refresh the
+    // sidebar so terminated sessions disappear via the server's status filter.
+    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
+  });
+
+  it("invalidates ['sessions', 'active'] on session_updated without spawned_from (else branch)", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_updated", {
+        entity_type: "session",
+        entity_id: "s-2",
+        version: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-2"),
+      });
+    });
+
+    // The else branch broadly invalidates ["sessions"] (prefix match covers
+    // ["sessions", "active"]); the explicit invalidate also runs. Either way,
+    // the active-sessions cache must be invalidated.
+    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
+  });
+
   it("invalidates chatRelated root on resync (after first event)", async () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
