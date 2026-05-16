@@ -32,10 +32,10 @@ function relativeTime(iso: string): string {
 function progressFraction(children: ChildStatus[] | undefined): number {
   if (!children || children.length === 0) return 0;
   const total = children.length;
-  const done = children.filter(
-    (c) => c.status === "closed" || c.status === "issue-closed",
+  const projected = children.filter(
+    (c) => c.status === "closed" || c.status === "issue-closed" || c.status === "in-progress",
   ).length;
-  return Math.round((done / total) * 100);
+  return Math.round((projected / total) * 100);
 }
 
 function isActiveSession(s: SessionSummaryRecord): boolean {
@@ -89,21 +89,14 @@ function useElapsed(startIso: string | null | undefined, active: boolean): strin
   return text;
 }
 
-function RuntimeCell({
-  sessions,
-}: {
-  sessions: SessionSummaryRecord[] | undefined;
-}) {
+function RuntimeCell({ sessions }: { sessions: SessionSummaryRecord[] | undefined }) {
   const active = pickActiveSession(sessions);
   const startIso = active?.session.start_time ?? active?.session.creation_time ?? null;
   const elapsed = useElapsed(startIso, !!active);
 
   if (active) {
     return (
-      <span
-        className={styles.runtimeActive}
-        data-testid="runtime-active"
-      >
+      <span className={styles.runtimeActive} data-testid="runtime-active">
         {elapsed}
       </span>
     );
@@ -112,14 +105,9 @@ function RuntimeCell({
   const completed = pickLatestCompletedSession(sessions);
   if (completed && completed.session.start_time) {
     const start = new Date(completed.session.start_time).getTime();
-    const end = completed.session.end_time
-      ? new Date(completed.session.end_time).getTime()
-      : start;
+    const end = completed.session.end_time ? new Date(completed.session.end_time).getTime() : start;
     return (
-      <span
-        className={styles.runtimeIdle}
-        data-testid="runtime-idle"
-      >
+      <span className={styles.runtimeIdle} data-testid="runtime-idle">
         {formatDuration(end - start)}
       </span>
     );
@@ -169,6 +157,9 @@ export function IssuesTable({
             const progressClass = hasActiveChild
               ? `${styles.progress} ${styles.progressActive}`
               : styles.progress;
+            const fillClass = hasActiveChild
+              ? `${styles.progressFill} ${styles.progressFillActive}`
+              : styles.progressFill;
 
             return (
               <tr key={id} onClick={() => handleRowClick(id)}>
@@ -200,7 +191,7 @@ export function IssuesTable({
                 <td className={styles.colProgress}>
                   {children && children.length > 0 ? (
                     <div className={progressClass} title={`${pct}%`}>
-                      <span style={{ width: `${pct}%` }} />
+                      <span className={fillClass} style={{ width: `${pct}%` }} />
                     </div>
                   ) : (
                     <span className={styles.dash}>—</span>

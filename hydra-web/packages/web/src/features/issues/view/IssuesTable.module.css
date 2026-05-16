@@ -3,10 +3,7 @@
   min-height: 0;
   overflow: auto;
   /* Right-edge breathing room so the rightmost column (Progress) doesn't
-     bump against the viewport edge. Patches's rightmost column holds short
-     content with most of its 80px width as whitespace; the Progress column
-     is narrower (76px) and its 64px progress bar fills the cell's content
-     area, so without this padding the bar visibly clips at the viewport. */
+     bump against the viewport edge — matches Patches's intentional inset. */
   padding-right: var(--pad-x);
 }
 
@@ -92,7 +89,7 @@
 }
 
 .colProgress {
-  width: 76px;
+  width: 96px;
 }
 
 .colRuntime {
@@ -152,24 +149,23 @@
   overflow: hidden;
 }
 
-.progress > span {
+.progressFill {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  background: var(--acc);
+  background: var(--s-progress);
   border-radius: 4px;
   transition: width var(--tx-norm);
 }
 
 .progressActive {
   overflow: visible;
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
-  animation: progressGlow 1.6s ease-in-out infinite;
 }
 
-.progressActive > span {
-  background: var(--s-progress);
+.progressFillActive {
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
+  animation: progressGlow 1.6s ease-in-out infinite;
 }
 
 @keyframes progressGlow {
