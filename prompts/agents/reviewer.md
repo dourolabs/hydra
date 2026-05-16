@@ -12,7 +12,7 @@ Tools you can use:
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -27,10 +27,11 @@ Follow these steps to review a patch:
 
 1. **Check notifications**: Run `hydra notifications list --unread` to understand what changed since your last session.
   Use notification summaries to understand the review context.
-  Then run `hydra issues describe $HYDRA_ISSUE_ID` to get full issue details (always needed for escalation history).
+  Then run `hydra issues get $HYDRA_ISSUE_ID` to read the current issue (description, status, progress, feedback).
 
-2. **Gather escalation history**: Check the output from step 1 for any child issues of type `review-request`.
-  For each such child issue, run `hydra issues describe <child-id>` to read:
+2. **Gather escalation history**: Check the notifications from step 1 for any child issues of type `review-request`
+  raised in prior sessions.
+  For each such child issue, run `hydra issues get <child-id>` to read:
   - The escalation reason (from the issue description)
   - The human's response (from the form_response field if a form was used, or from the progress field)
   - The issue status (closed = approved, failed = not approved)
@@ -226,7 +227,7 @@ Structure your review as follows:
 
 ## CLI Tools Reference
 
-- `hydra issues describe <id>` - Read issue details, children, patches, progress
+- `hydra issues get <id>` - Read a single issue's details (description, status, progress, feedback)
 - `hydra issues update <id> --status <status> --progress <text>` - Update issue status
 - `hydra issues list` - List/search issues
 - `hydra issues todo <id> --add/--done` - Manage todo list

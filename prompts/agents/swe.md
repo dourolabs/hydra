@@ -59,7 +59,7 @@ When you create child issues and need to wait for them to complete:
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -72,15 +72,14 @@ As a starting point, please perform the following steps to gather context about 
 1. Check for notifications: `hydra notifications list --unread`. This shows what has changed since your last session.
    - If there are unread notifications, use them to understand the current state: what changed, which objects were updated, etc.
    - For specific objects referenced in notifications, use targeted commands (`hydra issues get <id>`, `hydra patches list --id <id>`) to get details.
-   - If there are no unread notifications (e.g., first invocation), fall back to: `hydra issues describe $HYDRA_ISSUE_ID`
-2. If you need full context beyond what notifications provide, run `hydra issues describe $HYDRA_ISSUE_ID` to get the complete issue tree.
-3. Determine the current state of the issue -- there are several possibilities.
+   - If there are no unread notifications (e.g., first invocation), fall back to: `hydra issues get $HYDRA_ISSUE_ID`
+2. Determine the current state of the issue -- there are several possibilities.
 
 If the issue is new / no patches have been created yet:
 4. Update the issue tracker to mark the task as in-progress (if not already in-progress): "hydra issues update $HYDRA_ISSUE_ID --status in-progress
 5. Implement a patch to address the issue.
 6. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-7. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues describe") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
+7. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues get") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
 
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks

@@ -182,15 +182,15 @@ background:
         create an issue requesting a review.
 
         As a starting point, please perform the following steps to gather context about the issue:
-        1. Fetch information about the current issue: "hydra issues describe \$HYDRA_ISSUE_ID". This command prints out the issue itself along with
-           related issues and artifacts (such as patches), and includes the progress information mentioned above.
+        1. Fetch information about the current issue: "hydra issues get \$HYDRA_ISSUE_ID". This command prints the
+           issue itself, including the progress information mentioned above.
         2. Determine the current state of the issue -- there are several possibilities.
 
         If the issue is new / no patches have been created yet:
         3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "hydra issues update \$HYDRA_ISSUE_ID --status in-progress
         4. Implement a patch to address the issue.
         5. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-        6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues describe") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
+        6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "hydra issues get") by running "hydra patches create --title <title> --description <description> --assignee <creator>"
 
         If one or more patches have been created:
         - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
@@ -247,7 +247,7 @@ background:
         - Use outside research when needed (APIs, standards, competitors), and cite the source link in progress notes.
 
         Required workflow:
-        1) Read the issue: "hydra issues describe \$HYDRA_ISSUE_ID".
+        1) Read the issue: "hydra issues get \$HYDRA_ISSUE_ID".
         2) Read planning notes from \$HYDRA_DOCUMENTS_DIR/plan.md (prefer filesystem over CLI) if they exist.
         3) Read your playbooks and identify any matches for this issue "hydra documents list --path-prefix /playbooks".
         If a playbook matches, follow the directions in the playbook.
@@ -287,7 +287,7 @@ background:
           * Any open questions or research links
 
         Handling Failed children:
-        - When a child issue has status 'failed', inspect it: "hydra issues describe <child-issue-id>".
+        - When a child issue has status 'failed', inspect it: "hydra issues get <child-issue-id>".
         - Read the child's progress field to understand why it failed.
         - Determine if the work still needs to be done. If so, create a replacement issue with updated requirements
           that address the reason for failure.
@@ -314,13 +314,13 @@ background:
 
         Follow these steps to review a patch:
 
-        1. **Read the issue**: Run \`hydra issues describe \$HYDRA_ISSUE_ID\` to understand which patch needs reviewing
+        1. **Read the issue**: Run \`hydra issues get \$HYDRA_ISSUE_ID\` to understand which patch needs reviewing
            and gather context about the review request.
 
         2. **Read the patch**: Run \`hydra patches list --id <patch_id>\` to see the title, description, full diff,
            current status, and any prior reviews.
 
-        3. **Read the parent issue**: The patch resolves a parent issue. Read it with \`hydra issues describe <parent_id>\`
+        3. **Read the parent issue**: The patch resolves a parent issue. Read it with \`hydra issues get <parent_id>\`
            to understand the original requirements, acceptance criteria, and scope.
 
         4. **Clone the repository**: Run \`hydra repos clone <repo-name>\` and examine relevant code context beyond
@@ -388,7 +388,7 @@ background:
 
         ## CLI Tools Reference
 
-        - \`hydra issues describe <id>\` - Read issue details, children, patches, progress
+        - \`hydra issues get <id>\` - Read a single issue's details (description, status, progress, feedback)
         - \`hydra issues update <id> --status <status> --progress <text>\` - Update issue status
         - \`hydra issues list\` - List/search issues
         - \`hydra issues todo <id> --add/--done\` - Manage todo list
