@@ -113,88 +113,98 @@ export function SessionLogPage() {
       {record && (
         <>
           <div className={styles.header}>
-            <div className={styles.headerTop}>
-              <span className={styles.agentName}>
-                <Avatar name={record.session.creator} kind="agent" size="md" />
-                <span className={styles.agentLabel}>Agent</span>
-                {record.session.creator}
-              </span>
-              <Badge status={normalizeSessionStatus(record.session.status)} />
-              <span className={styles.headerSpacer} />
-              {record.session.status === "running" &&
-                (killRequested ? (
-                  <span className={styles.terminating}>
-                    <Spinner size="sm" />
-                    Terminating…
+            <div className={styles.headerInner}>
+              <div className={styles.headerTop}>
+                <span className={styles.agentName}>
+                  <Avatar name={record.session.creator} kind="agent" size="md" />
+                  <span className={styles.agentLabel}>Agent</span>
+                  {record.session.creator}
+                </span>
+                <Badge status={normalizeSessionStatus(record.session.status)} />
+                <span className={styles.headerSpacer} />
+                {record.session.status === "running" &&
+                  (killRequested ? (
+                    <span className={styles.terminating}>
+                      <Spinner size="sm" />
+                      Terminating…
+                    </span>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => setKillModalOpen(true)}
+                    >
+                      Kill Session
+                    </Button>
+                  ))}
+              </div>
+              <div className={styles.meta}>
+                {issueId && (
+                  <span className={styles.metaItem}>
+                    <span className={styles.metaLabel}>Issue</span>
+                    <Link to={`/issues/${issueId}`} className={styles.metaLink}>
+                      {issueId}
+                    </Link>
                   </span>
-                ) : (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => setKillModalOpen(true)}
-                  >
-                    Kill Session
-                  </Button>
-                ))}
-            </div>
-            <div className={styles.meta}>
-              {issueId && (
+                )}
                 <span className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Issue</span>
-                  <Link to={`/issues/${issueId}`} className={styles.metaLink}>
-                    {issueId}
-                  </Link>
-                </span>
-              )}
-              <span className={styles.metaItem}>
-                <span className={styles.metaLabel}>Runtime</span>
-                <span className={styles.metaValue}>
-                  {getRuntime(record.session.start_time, record.session.end_time)}
-                </span>
-              </span>
-              {record.session.start_time && (
-                <span className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Started</span>
+                  <span className={styles.metaLabel}>Runtime</span>
                   <span className={styles.metaValue}>
-                    {new Date(record.session.start_time).toLocaleString()}
+                    {getRuntime(record.session.start_time, record.session.end_time)}
                   </span>
                 </span>
-              )}
-              {record.session.creation_time && (
-                <span className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Created</span>
-                  <span className={styles.metaValue}>
-                    {new Date(record.session.creation_time).toLocaleString()}
+                {record.session.start_time && (
+                  <span className={styles.metaItem}>
+                    <span className={styles.metaLabel}>Started</span>
+                    <span className={styles.metaValue}>
+                      {new Date(record.session.start_time).toLocaleString()}
+                    </span>
                   </span>
-                </span>
-              )}
+                )}
+                {record.session.creation_time && (
+                  <span className={styles.metaItem}>
+                    <span className={styles.metaLabel}>Created</span>
+                    <span className={styles.metaValue}>
+                      {new Date(record.session.creation_time).toLocaleString()}
+                    </span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className={styles.tabs} role="tablist">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
-                aria-selected={activeTab === t.key}
-                onClick={() => setActiveTab(t.key)}
-                data-testid={`session-tab-${t.key}`}
-              >
-                {t.label}
-              </button>
-            ))}
+          <div className={styles.tabs}>
+            <div className={styles.tabsInner} role="tablist">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
+                  aria-selected={activeTab === t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  data-testid={`session-tab-${t.key}`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className={styles.body}>
             {activeTab === "logs" && (
-              <SessionLogViewer
-                sessionId={record.session_id}
-                status={record.session.status}
-              />
+              <div className={styles.bodyFull}>
+                <SessionLogViewer
+                  sessionId={record.session_id}
+                  status={record.session.status}
+                />
+              </div>
             )}
-            {activeTab === "settings" && <SessionSettings task={record.session} />}
+            {activeTab === "settings" && (
+              <div className={styles.bodyInner}>
+                <SessionSettings task={record.session} />
+              </div>
+            )}
           </div>
 
           <DeleteConfirmModal
