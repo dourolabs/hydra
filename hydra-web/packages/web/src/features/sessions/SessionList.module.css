@@ -1,27 +1,28 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--font-size-sm);
 }
 
 .th {
   text-align: left;
-  padding: var(--space-2) var(--space-3);
-  color: var(--color-text-tertiary);
-  font-weight: 600;
-  font-size: var(--font-size-xs);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--color-border);
+  color: var(--fg-2);
+  padding: 9px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
 }
 
 .row {
-  border-bottom: 1px solid var(--color-border);
-  transition: background var(--transition-fast);
+  border-bottom: 1px solid var(--line);
+  transition: background var(--tx-fast);
 }
 
 .row:hover {
-  background: var(--color-bg-tertiary);
+  background: var(--bg-1);
 }
 
 .row:last-child {
@@ -29,14 +30,18 @@
 }
 
 .td {
-  padding: var(--space-2) var(--space-3);
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
   vertical-align: middle;
 }
 
 .sessionId {
-  color: var(--color-accent);
-  font-weight: 600;
-  font-family: var(--font-family-terminal);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--acc);
   text-decoration: none;
 }
 
@@ -45,15 +50,19 @@
 }
 
 .time {
-  color: var(--color-text-secondary);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
 }
 
 .logLink {
-  color: var(--color-accent-dim);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--acc-dim);
   text-decoration: underline;
   text-decoration-style: dotted;
 }
 
 .logLink:hover {
-  color: var(--color-accent);
+  color: var(--acc);
 }
