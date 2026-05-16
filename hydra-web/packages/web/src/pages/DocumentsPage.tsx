@@ -1,31 +1,23 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Icons, Spinner } from "@hydra/ui";
 import type {
   DocumentSummaryRecord,
-  ListDocumentPathsResponse,
   ListDocumentsResponse,
   PathChildEntry,
 } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
-import { useDocumentSummariesUnderPath } from "../features/documents/useDocumentSummariesUnderPath";
+import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumentPaths";
+import { useDocumentsByIds } from "../features/documents/useDocumentsByIds";
 import { getDocumentDisplayTitle } from "../features/documents/utils";
 import { formatRelativeTime } from "../utils/time";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentsPage.module.css";
 
 const ROOT_PATH = "/";
-
-function useDocumentPaths(prefix: string | null, enabled: boolean) {
-  return useQuery<ListDocumentPathsResponse, Error>({
-    queryKey: ["documentPaths", prefix],
-    queryFn: () => apiClient.listDocumentPaths({ prefix }),
-    enabled,
-  });
-}
 
 function useUncategorizedDocuments(enabled: boolean) {
   return useQuery<ListDocumentsResponse, Error>({
@@ -57,6 +49,8 @@ interface TreeBranchProps {
   onSelect: (path: string) => void;
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
+  getChildren: (prefix: string | null) => PathChildEntry[];
+  isFetching: boolean;
 }
 
 function TreeBranch({
@@ -66,33 +60,19 @@ function TreeBranch({
   onSelect,
   expandedPaths,
   onToggleExpand,
+  getChildren,
+  isFetching,
 }: TreeBranchProps) {
   const expanded = expandedPaths.has(entry.full_path);
   const isActive = activePath === entry.full_path;
 
-  const { data: childPaths, isLoading } = useDocumentPaths(entry.full_path, expanded);
-  const { data: docsUnder } = useDocumentSummariesUnderPath(entry.full_path, expanded);
-
-  const folderChildren = useMemo(
-    () => (childPaths?.children ?? []).filter(isFolderEntry),
-    [childPaths],
+  const children = useMemo(
+    () => (expanded ? getChildren(entry.full_path) : []),
+    [expanded, getChildren, entry.full_path],
   );
 
-  const leafDocChildren = useMemo(
-    () => (childPaths?.children ?? []).filter(isLeafDocumentEntry),
-    [childPaths],
-  );
-
-  const pathToDoc = useMemo(() => {
-    const map = new Map<string, DocumentSummaryRecord>();
-    for (const record of docsUnder?.documents ?? []) {
-      if (record.document.deleted) continue;
-      const p = record.document.path;
-      if (p == null) continue;
-      if (!map.has(p)) map.set(p, record);
-    }
-    return map;
-  }, [docsUnder]);
+  const folderChildren = useMemo(() => children.filter(isFolderEntry), [children]);
+  const leafDocChildren = useMemo(() => children.filter(isLeafDocumentEntry), [children]);
 
   const handleChevron = useCallback(
     (e: React.MouseEvent) => {
@@ -141,7 +121,7 @@ function TreeBranch({
       </div>
       {expanded && (
         <ul className={styles.treeRoot}>
-          {isLoading && (
+          {isFetching && children.length === 0 && (
             <li className={styles.loadingRow}>
               <Spinner size="sm" />
             </li>
@@ -155,15 +135,12 @@ function TreeBranch({
               onSelect={onSelect}
               expandedPaths={expandedPaths}
               onToggleExpand={onToggleExpand}
+              getChildren={getChildren}
+              isFetching={isFetching}
             />
           ))}
           {leafDocChildren.map((child) => (
-            <TreeDocLeaf
-              key={child.full_path}
-              entry={child}
-              depth={depth + 1}
-              doc={pathToDoc.get(child.full_path)}
-            />
+            <TreeDocLeaf key={child.full_path} entry={child} depth={depth + 1} />
           ))}
         </ul>
       )}
@@ -174,12 +151,12 @@ function TreeBranch({
 interface TreeDocLeafProps {
   entry: PathChildEntry;
   depth: number;
-  doc: DocumentSummaryRecord | undefined;
 }
 
-function TreeDocLeaf({ entry, depth, doc }: TreeDocLeafProps) {
+function TreeDocLeaf({ entry, depth }: TreeDocLeafProps) {
   const padding = { paddingLeft: `${8 + depth * 14}px` } as const;
-  if (!doc) {
+  const docId = entry.document?.document_id;
+  if (!docId) {
     return (
       <li>
         <div className={styles.folderRow} style={padding} title={entry.name} aria-disabled="true">
@@ -192,11 +169,11 @@ function TreeDocLeaf({ entry, depth, doc }: TreeDocLeafProps) {
       </li>
     );
   }
-  const title = getDocumentDisplayTitle(doc);
+  const title = entry.document?.title || entry.name;
   return (
     <li>
       <Link
-        to={`/documents/${doc.document_id}`}
+        to={`/documents/${docId}`}
         className={`${styles.folderRow} ${styles.docLeafLink}`}
         style={padding}
         role="treeitem"
@@ -232,54 +209,37 @@ function pathBreadcrumbs(activePath: string): BreadcrumbItem[] {
 interface ReaderPaneProps {
   activePath: string;
   onSelectFolder: (path: string) => void;
+  getChildren: (prefix: string | null) => PathChildEntry[];
+  pathsLoading: boolean;
 }
 
-function ReaderPane({ activePath, onSelectFolder }: ReaderPaneProps) {
+function ReaderPane({ activePath, onSelectFolder, getChildren, pathsLoading }: ReaderPaneProps) {
   const isRoot = activePath === ROOT_PATH;
   const prefix = isRoot ? null : activePath;
 
-  const { data: childPaths, isLoading: childPathsLoading } = useDocumentPaths(prefix, true);
-  const { data: docsUnder, isLoading: docsUnderLoading } = useDocumentSummariesUnderPath(
-    prefix,
-    !isRoot,
+  const children = useMemo(() => getChildren(prefix), [getChildren, prefix]);
+  const subfolders = useMemo(() => children.filter(isFolderEntry), [children]);
+  const leafDocChildren = useMemo(() => children.filter(isLeafDocumentEntry), [children]);
+
+  const leafDocIds = useMemo(
+    () =>
+      leafDocChildren
+        .map((c) => c.document?.document_id)
+        .filter((id): id is string => !!id),
+    [leafDocChildren],
   );
+  const { data: leafDocs, isLoading: leafDocsLoading } = useDocumentsByIds(leafDocIds);
   const { data: rootDocs, isLoading: rootDocsLoading } = useUncategorizedDocuments(isRoot);
-
-  const subfolders = useMemo(
-    () => (childPaths?.children ?? []).filter(isFolderEntry),
-    [childPaths],
-  );
-
-  const leafDocChildren = useMemo(
-    () => (childPaths?.children ?? []).filter(isLeafDocumentEntry),
-    [childPaths],
-  );
-
-  const pathToDoc = useMemo(() => {
-    const map = new Map<string, DocumentSummaryRecord>();
-    for (const record of docsUnder?.documents ?? []) {
-      if (record.document.deleted) continue;
-      const p = record.document.path;
-      if (p == null) continue;
-      if (!map.has(p)) map.set(p, record);
-    }
-    return map;
-  }, [docsUnder]);
 
   const docs: DocumentSummaryRecord[] = useMemo(() => {
     if (isRoot) {
       return (rootDocs?.documents ?? []).filter((d) => !d.document.deleted);
     }
-    const out: DocumentSummaryRecord[] = [];
-    for (const child of leafDocChildren) {
-      const doc = pathToDoc.get(child.full_path);
-      if (doc) out.push(doc);
-    }
-    return out;
-  }, [isRoot, rootDocs, leafDocChildren, pathToDoc]);
+    return leafDocs;
+  }, [isRoot, rootDocs, leafDocs]);
 
   const breadcrumbs = pathBreadcrumbs(activePath);
-  const isLoading = isRoot ? rootDocsLoading : childPathsLoading || docsUnderLoading;
+  const isLoading = isRoot ? rootDocsLoading : pathsLoading || leafDocsLoading;
   const totalFolders = subfolders.length;
   const totalFiles = docs.length;
 
@@ -365,19 +325,44 @@ export function DocumentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [activePath, setActivePath] = useState<string>(ROOT_PATH);
 
-  const { data: topLevel, isLoading, error } = useDocumentPaths(null, true);
+  const { expandedPaths, onToggle, autoExpand } = useDocumentTreeExpandState();
+
+  const prefixes = useMemo<(string | null)[]>(() => {
+    const set = new Set<string>();
+    set.add(ROOT_PATH);
+    for (const p of expandedPaths) set.add(p);
+    if (activePath !== ROOT_PATH) set.add(activePath);
+    return [...set];
+  }, [expandedPaths, activePath]);
+
+  const {
+    childrenMap,
+    getChildren,
+    isLoading,
+    isFetching,
+    error,
+  } = useBatchedDocumentPaths(prefixes);
+
   const { data: uncategorized } = useUncategorizedDocuments(true);
 
+  const topLevelEntries = useMemo(
+    () => childrenMap.get(ROOT_PATH) ?? [],
+    [childrenMap],
+  );
   const topLevelFolders = useMemo(
-    () => (topLevel?.children ?? []).filter(isFolderEntry),
-    [topLevel],
+    () => topLevelEntries.filter(isFolderEntry),
+    [topLevelEntries],
+  );
+  const topLevelPaths = useMemo(
+    () => topLevelFolders.map((c) => c.full_path),
+    [topLevelFolders],
   );
 
-  const topLevelPaths = useMemo(() => topLevelFolders.map((c) => c.full_path), [topLevelFolders]);
+  useEffect(() => {
+    autoExpand(topLevelPaths);
+  }, [topLevelPaths, autoExpand]);
 
-  const { expandedPaths, onToggle } = useDocumentTreeExpandState(topLevelPaths);
-
-  const totalDocs = (topLevel?.children.length ?? 0) + (uncategorized?.documents.length ?? 0);
+  const totalDocs = topLevelEntries.length + (uncategorized?.documents.length ?? 0);
   const totalLabel = totalDocs === 1 ? "1 DOC" : `${totalDocs} DOCS`;
 
   return (
@@ -396,13 +381,13 @@ export function DocumentsPage() {
 
       {error && <div className={styles.errorBanner}>Failed to load documents: {error.message}</div>}
 
-      {isLoading && !topLevel && (
+      {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
         </div>
       )}
 
-      {topLevel && (
+      {!isLoading && (
         <div className={styles.treeLayout}>
           <aside className={styles.tree} aria-label="Document tree">
             <ul className={styles.treeRoot} role="tree">
@@ -438,12 +423,19 @@ export function DocumentsPage() {
                   onSelect={setActivePath}
                   expandedPaths={expandedPaths}
                   onToggleExpand={onToggle}
+                  getChildren={getChildren}
+                  isFetching={isFetching}
                 />
               ))}
             </ul>
           </aside>
 
-          <ReaderPane activePath={activePath} onSelectFolder={setActivePath} />
+          <ReaderPane
+            activePath={activePath}
+            onSelectFolder={setActivePath}
+            getChildren={getChildren}
+            pathsLoading={isFetching}
+          />
         </div>
       )}
 

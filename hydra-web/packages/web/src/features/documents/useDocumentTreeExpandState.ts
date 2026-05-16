@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 
 const STORAGE_KEY = "hydra:document-tree-expanded";
 
@@ -25,32 +25,21 @@ function saveExpandedPaths(paths: Set<string>): void {
   }
 }
 
-export function useDocumentTreeExpandState(topLevelPaths: string[]): {
+export interface DocumentTreeExpandState {
   expandedPaths: Set<string>;
   onToggle: (path: string) => void;
-} {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
-    const stored = loadExpandedPaths();
-    if (stored !== null) {
-      return stored;
-    }
-    // Default: expand top-level paths on first visit
-    return new Set(topLevelPaths);
-  });
+  /**
+   * Auto-expand the given paths if and only if no expansion state has ever
+   * been persisted. Intended for first-visit defaults once top-level paths
+   * are known.
+   */
+  autoExpand: (paths: string[]) => void;
+}
 
-  // When topLevelPaths arrive after initial render and nothing is stored,
-  // expand them as defaults.
-  useEffect(() => {
-    if (topLevelPaths.length === 0) return;
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored !== null) return;
-    setExpandedPaths((prev) => {
-      if (prev.size > 0) return prev;
-      const next = new Set(topLevelPaths);
-      saveExpandedPaths(next);
-      return next;
-    });
-  }, [topLevelPaths]);
+export function useDocumentTreeExpandState(): DocumentTreeExpandState {
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => loadExpandedPaths() ?? new Set(),
+  );
 
   const onToggle = useCallback((path: string) => {
     setExpandedPaths((prev) => {
@@ -65,5 +54,16 @@ export function useDocumentTreeExpandState(topLevelPaths: string[]): {
     });
   }, []);
 
-  return { expandedPaths, onToggle };
+  const autoExpand = useCallback((paths: string[]) => {
+    if (paths.length === 0) return;
+    if (localStorage.getItem(STORAGE_KEY) !== null) return;
+    setExpandedPaths((prev) => {
+      if (prev.size > 0) return prev;
+      const next = new Set(paths);
+      saveExpandedPaths(next);
+      return next;
+    });
+  }, []);
+
+  return { expandedPaths, onToggle, autoExpand };
 }
