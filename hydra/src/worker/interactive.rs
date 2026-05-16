@@ -465,13 +465,13 @@ fn worker_home_dir() -> Result<PathBuf> {
 /// primer path instead of attempting to restore an empty file. The upload is
 /// best-effort and never returns an error: a missing file is not a worker
 /// failure.
-fn build_session_state_payload(
+async fn build_session_state_payload(
     home_dir: &Path,
     working_dir: &Path,
     session_id: &str,
 ) -> SessionStatePayload {
     let path = transcript_path(home_dir, working_dir, session_id);
-    let transcript = match std::fs::read(&path) {
+    let transcript = match tokio::fs::read(&path).await {
         Ok(bytes) => {
             info!(
                 claude_session_id = session_id,
@@ -957,7 +957,7 @@ async fn emit_suspend<Si>(
         return;
     };
 
-    let payload = build_session_state_payload(home_dir, working_dir, session_id);
+    let payload = build_session_state_payload(home_dir, working_dir, session_id).await;
     match send_session_state_upload(ws_sender, &payload).await {
         Ok(()) => info!(
             reason,
@@ -1570,8 +1570,8 @@ mod tests {
         assert_eq!(on_disk, bytes);
     }
 
-    #[test]
-    fn build_session_state_payload_with_transcript_on_disk() {
+    #[tokio::test]
+    async fn build_session_state_payload_with_transcript_on_disk() {
         init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let working_dir = Path::new("/tmp/.tmpOH7bq5/repo");
@@ -1581,7 +1581,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &bytes).unwrap();
 
-        let payload = build_session_state_payload(tmp.path(), working_dir, session_id);
+        let payload = build_session_state_payload(tmp.path(), working_dir, session_id).await;
         match payload {
             SessionStatePayload::V1 {
                 session_id: sid,
@@ -1593,12 +1593,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn build_session_state_payload_without_transcript_on_disk() {
+    #[tokio::test]
+    async fn build_session_state_payload_without_transcript_on_disk() {
         init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let payload =
-            build_session_state_payload(tmp.path(), Path::new("/no/such/cwd"), "unknown-sid");
+            build_session_state_payload(tmp.path(), Path::new("/no/such/cwd"), "unknown-sid").await;
         match payload {
             SessionStatePayload::V1 {
                 session_id,
@@ -1608,6 +1608,62 @@ mod tests {
                 assert!(transcript.is_none(), "missing file → transcript=None");
             }
         }
+    }
+
+    /// Regression test for R2: `build_session_state_payload` must drive to
+    /// completion on a single-threaded tokio runtime alongside a sibling
+    /// `tokio::time::sleep`. If the production code reverted to `std::fs::read`
+    /// on the executor thread, the sibling sleep could not be polled while the
+    /// read blocked. The `current_thread` flavor + `tokio::join!` makes the
+    /// async-FS path observable: the join completes successfully and both
+    /// halves produce their expected output.
+    #[tokio::test(flavor = "current_thread")]
+    async fn build_session_state_payload_does_not_block_runtime() {
+        init_test_tracing();
+        let tmp = TempDir::new().unwrap();
+        let working_dir = Path::new("/tmp/.tmpOH7bq5/repo");
+        let session_id = "sid-async";
+        let bytes = b"line1\nline2\n".to_vec();
+        let path = transcript_path(tmp.path(), working_dir, session_id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+
+        // Sibling task ticks every ~5ms. If the payload builder yielded to the
+        // executor, this task gets to run and the counter advances. Bound the
+        // ticker explicitly so the test cannot hang.
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let ticker = {
+            let counter = counter.clone();
+            tokio::spawn(async move {
+                for _ in 0..10 {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+        };
+
+        let (payload, ticker_result) = tokio::join!(
+            build_session_state_payload(tmp.path(), working_dir, session_id),
+            ticker,
+        );
+        ticker_result.expect("ticker task panicked");
+
+        match payload {
+            SessionStatePayload::V1 {
+                session_id: sid,
+                transcript,
+            } => {
+                assert_eq!(sid, session_id);
+                assert_eq!(transcript, Some(bytes));
+            }
+        }
+
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            10,
+            "sibling ticker must complete its full schedule; on a current_thread \
+             runtime that requires the payload builder to yield to the executor",
+        );
     }
 
     // Helper to collect all messages sent to the ws sink.
