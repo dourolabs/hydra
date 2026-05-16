@@ -11,6 +11,7 @@ import type {
 import { apiClient } from "../api/client";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
+import { useDocumentSummariesUnderPath } from "../features/documents/useDocumentSummariesUnderPath";
 import { getDocumentDisplayTitle } from "../features/documents/utils";
 import { formatRelativeTime } from "../utils/time";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -46,10 +47,15 @@ function useUncategorizedDocuments(enabled: boolean) {
   });
 }
 
-/** Whether an entry represents a folder (has children) — possibly also a doc. */
+/** Whether an entry renders as a folder branch (has children — possibly also a doc). */
 function isFolderEntry(entry: PathChildEntry): boolean {
   if (!entry.is_document) return true;
   return Number(entry.child_count) > 1;
+}
+
+/** Whether an entry is a leaf document (a document with no further descendants). */
+function isLeafDocumentEntry(entry: PathChildEntry): boolean {
+  return entry.is_document && Number(entry.child_count) <= 1;
 }
 
 interface TreeBranchProps {
@@ -73,11 +79,31 @@ function TreeBranch({
   const isActive = activePath === entry.full_path;
 
   const { data: childPaths, isLoading } = useDocumentPaths(entry.full_path, expanded);
+  const { data: docsUnder } = useDocumentSummariesUnderPath(
+    entry.full_path,
+    expanded,
+  );
 
   const folderChildren = useMemo(
     () => (childPaths?.children ?? []).filter(isFolderEntry),
     [childPaths],
   );
+
+  const leafDocChildren = useMemo(
+    () => (childPaths?.children ?? []).filter(isLeafDocumentEntry),
+    [childPaths],
+  );
+
+  const pathToDoc = useMemo(() => {
+    const map = new Map<string, DocumentSummaryRecord>();
+    for (const record of docsUnder?.documents ?? []) {
+      if (record.document.deleted) continue;
+      const p = record.document.path;
+      if (p == null) continue;
+      if (!map.has(p)) map.set(p, record);
+    }
+    return map;
+  }, [docsUnder]);
 
   const handleChevron = useCallback(
     (e: React.MouseEvent) => {
@@ -142,8 +168,62 @@ function TreeBranch({
               onToggleExpand={onToggleExpand}
             />
           ))}
+          {leafDocChildren.map((child) => (
+            <TreeDocLeaf
+              key={child.full_path}
+              entry={child}
+              depth={depth + 1}
+              doc={pathToDoc.get(child.full_path)}
+            />
+          ))}
         </ul>
       )}
+    </li>
+  );
+}
+
+interface TreeDocLeafProps {
+  entry: PathChildEntry;
+  depth: number;
+  doc: DocumentSummaryRecord | undefined;
+}
+
+function TreeDocLeaf({ entry, depth, doc }: TreeDocLeafProps) {
+  const padding = { paddingLeft: `${8 + depth * 14}px` } as const;
+  if (!doc) {
+    return (
+      <li>
+        <div
+          className={styles.folderRow}
+          style={padding}
+          title={entry.name}
+          aria-disabled="true"
+        >
+          <span className={styles.chevronPlaceholder} />
+          <span className={styles.folderIcon}>
+            <Icons.IconDoc size={14} />
+          </span>
+          <span className={styles.folderName}>{entry.name}</span>
+        </div>
+      </li>
+    );
+  }
+  const title = getDocumentDisplayTitle(doc);
+  return (
+    <li>
+      <Link
+        to={`/documents/${doc.document_id}`}
+        className={`${styles.folderRow} ${styles.docLeafLink}`}
+        style={padding}
+        role="treeitem"
+        title={title}
+      >
+        <span className={styles.chevronPlaceholder} />
+        <span className={styles.folderIcon}>
+          <Icons.IconDoc size={14} />
+        </span>
+        <span className={styles.folderName}>{title}</span>
+      </Link>
     </li>
   );
 }
@@ -154,9 +234,9 @@ interface BreadcrumbItem {
 }
 
 function pathBreadcrumbs(activePath: string): BreadcrumbItem[] {
-  const out: BreadcrumbItem[] = [{ name: "root", path: ROOT_PATH }];
-  if (activePath === ROOT_PATH) return out;
+  if (activePath === ROOT_PATH) return [];
   const segs = activePath.split("/").filter(Boolean);
+  const out: BreadcrumbItem[] = [];
   let cur = "";
   for (const s of segs) {
     cur += "/" + s;
@@ -348,7 +428,7 @@ export function DocumentsPage() {
                   <span className={styles.folderIcon}>
                     <Icons.IconFolder size={14} />
                   </span>
-                  <span className={styles.folderName}>root</span>
+                  <span className={styles.folderName}>/</span>
                   <span className={styles.fileCount}>{totalDocs}</span>
                 </div>
               </li>
