@@ -57,8 +57,12 @@ vi.mock("../../toast/useToast", () => ({
   useToast: () => ({ addToast: vi.fn() }),
 }));
 
+vi.mock("../../labels/useLabels", () => ({
+  useLabels: () => ({ data: [] }),
+}));
+
 vi.mock("../../labels/LabelPicker", () => ({
-  LabelPicker: () => <div data-testid="label-picker" />,
+  LABEL_COLOR_PALETTE: ["#e74c3c", "#3498db"],
 }));
 
 vi.mock("../IssueCreateModal.module.css", () => ({
