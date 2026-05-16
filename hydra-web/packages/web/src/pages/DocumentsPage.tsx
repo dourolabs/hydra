@@ -27,14 +27,6 @@ function useDocumentPaths(prefix: string | null, enabled: boolean) {
   });
 }
 
-function useDocumentsAtPath(path: string, enabled: boolean) {
-  return useQuery<ListDocumentsResponse, Error>({
-    queryKey: ["documentsAtPath", path],
-    queryFn: () => apiClient.listDocuments({ path_prefix: path, path_is_exact: true }),
-    enabled,
-  });
-}
-
 function useUncategorizedDocuments(enabled: boolean) {
   return useQuery<ListDocumentsResponse, Error>({
     queryKey: ["uncategorizedDocuments"],
@@ -79,10 +71,7 @@ function TreeBranch({
   const isActive = activePath === entry.full_path;
 
   const { data: childPaths, isLoading } = useDocumentPaths(entry.full_path, expanded);
-  const { data: docsUnder } = useDocumentSummariesUnderPath(
-    entry.full_path,
-    expanded,
-  );
+  const { data: docsUnder } = useDocumentSummariesUnderPath(entry.full_path, expanded);
 
   const folderChildren = useMemo(
     () => (childPaths?.children ?? []).filter(isFolderEntry),
@@ -193,12 +182,7 @@ function TreeDocLeaf({ entry, depth, doc }: TreeDocLeafProps) {
   if (!doc) {
     return (
       <li>
-        <div
-          className={styles.folderRow}
-          style={padding}
-          title={entry.name}
-          aria-disabled="true"
-        >
+        <div className={styles.folderRow} style={padding} title={entry.name} aria-disabled="true">
           <span className={styles.chevronPlaceholder} />
           <span className={styles.folderIcon}>
             <Icons.IconDoc size={14} />
@@ -254,9 +238,9 @@ function ReaderPane({ activePath, onSelectFolder }: ReaderPaneProps) {
   const isRoot = activePath === ROOT_PATH;
   const prefix = isRoot ? null : activePath;
 
-  const { data: childPaths } = useDocumentPaths(prefix, true);
-  const { data: docsAtPath, isLoading: docsLoading } = useDocumentsAtPath(
-    activePath,
+  const { data: childPaths, isLoading: childPathsLoading } = useDocumentPaths(prefix, true);
+  const { data: docsUnder, isLoading: docsUnderLoading } = useDocumentSummariesUnderPath(
+    prefix,
     !isRoot,
   );
   const { data: rootDocs, isLoading: rootDocsLoading } = useUncategorizedDocuments(isRoot);
@@ -266,20 +250,41 @@ function ReaderPane({ activePath, onSelectFolder }: ReaderPaneProps) {
     [childPaths],
   );
 
+  const leafDocChildren = useMemo(
+    () => (childPaths?.children ?? []).filter(isLeafDocumentEntry),
+    [childPaths],
+  );
+
+  const pathToDoc = useMemo(() => {
+    const map = new Map<string, DocumentSummaryRecord>();
+    for (const record of docsUnder?.documents ?? []) {
+      if (record.document.deleted) continue;
+      const p = record.document.path;
+      if (p == null) continue;
+      if (!map.has(p)) map.set(p, record);
+    }
+    return map;
+  }, [docsUnder]);
+
   const docs: DocumentSummaryRecord[] = useMemo(() => {
     if (isRoot) {
       return (rootDocs?.documents ?? []).filter((d) => !d.document.deleted);
     }
-    return (docsAtPath?.documents ?? []).filter((d) => !d.document.deleted);
-  }, [isRoot, docsAtPath, rootDocs]);
+    const out: DocumentSummaryRecord[] = [];
+    for (const child of leafDocChildren) {
+      const doc = pathToDoc.get(child.full_path);
+      if (doc) out.push(doc);
+    }
+    return out;
+  }, [isRoot, rootDocs, leafDocChildren, pathToDoc]);
 
   const breadcrumbs = pathBreadcrumbs(activePath);
-  const isLoading = isRoot ? rootDocsLoading : docsLoading;
+  const isLoading = isRoot ? rootDocsLoading : childPathsLoading || docsUnderLoading;
   const totalFolders = subfolders.length;
   const totalFiles = docs.length;
 
   return (
-    <div className={styles.pane}>
+    <div className={styles.pane} data-testid="documents-reader-pane">
       <div className={styles.breadcrumb}>
         {breadcrumbs.map((b, i) => {
           const isLast = i === breadcrumbs.length - 1;
@@ -368,15 +373,11 @@ export function DocumentsPage() {
     [topLevel],
   );
 
-  const topLevelPaths = useMemo(
-    () => topLevelFolders.map((c) => c.full_path),
-    [topLevelFolders],
-  );
+  const topLevelPaths = useMemo(() => topLevelFolders.map((c) => c.full_path), [topLevelFolders]);
 
   const { expandedPaths, onToggle } = useDocumentTreeExpandState(topLevelPaths);
 
-  const totalDocs =
-    (topLevel?.children.length ?? 0) + (uncategorized?.documents.length ?? 0);
+  const totalDocs = (topLevel?.children.length ?? 0) + (uncategorized?.documents.length ?? 0);
   const totalLabel = totalDocs === 1 ? "1 DOC" : `${totalDocs} DOCS`;
 
   return (
@@ -393,11 +394,7 @@ export function DocumentsPage() {
         </Button>
       </div>
 
-      {error && (
-        <div className={styles.errorBanner}>
-          Failed to load documents: {error.message}
-        </div>
-      )}
+      {error && <div className={styles.errorBanner}>Failed to load documents: {error.message}</div>}
 
       {isLoading && !topLevel && (
         <div className={styles.center}>
