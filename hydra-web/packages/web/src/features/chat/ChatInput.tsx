@@ -9,12 +9,7 @@ interface ChatInputProps {
   endChatDisabled?: boolean;
 }
 
-export function ChatInput({
-  onSend,
-  disabled,
-  onEndChat,
-  endChatDisabled,
-}: ChatInputProps) {
+export function ChatInput({ onSend, disabled, onEndChat, endChatDisabled }: ChatInputProps) {
   const [value, setValue] = useState("");
 
   const isDisabled = disabled;
@@ -28,17 +23,13 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Match the issue-create modal: ⌘/Ctrl+Enter submits, plain Enter is a
-      // newline (textarea default).
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         handleSend();
       }
     },
     [handleSend],
   );
-
-  const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 
   return (
     <div className={styles.composer}>
@@ -54,17 +45,12 @@ export function ChatInput({
         />
         <div className={styles.actions}>
           <span className={styles.hint}>
-            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
-            <Kbd>↵</Kbd> to send · <Kbd>↵</Kbd> for newline
+            <Kbd>↵</Kbd> to send · <Kbd>⇧</Kbd>
+            <Kbd>↵</Kbd> for newline
           </span>
           <span className={styles.actionsSpacer} />
           {onEndChat && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onEndChat}
-              disabled={endChatDisabled}
-            >
+            <Button variant="secondary" size="sm" onClick={onEndChat} disabled={endChatDisabled}>
               End chat
             </Button>
           )}
