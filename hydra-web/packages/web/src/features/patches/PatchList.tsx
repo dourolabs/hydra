@@ -1,20 +1,15 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@hydra/ui";
 import { normalizePatchStatus } from "../../utils/statusMapping";
-import { usePatchesByIssue } from "./usePatchesByIssue";
+import { useIssuePatches } from "./useIssuePatches";
 import styles from "./PatchList.module.css";
 
 interface PatchListProps {
-  patchIds: string[];
-  issueId?: string;
+  issueId: string;
 }
 
-export function PatchList({ patchIds, issueId }: PatchListProps) {
-  const { data: patches, isLoading, error } = usePatchesByIssue(patchIds);
-
-  if (patchIds.length === 0) {
-    return <p className={styles.empty}>No patches.</p>;
-  }
+export function PatchList({ issueId }: PatchListProps) {
+  const { data: patches, isLoading, error } = useIssuePatches(issueId);
 
   if (isLoading) {
     return <Spinner size="sm" />;
@@ -35,9 +30,7 @@ export function PatchList({ patchIds, issueId }: PatchListProps) {
   return (
     <ul className={styles.list}>
       {patches.map((record) => {
-        const patchUrl = issueId
-          ? `/patches/${record.patch_id}?issueId=${issueId}`
-          : `/patches/${record.patch_id}`;
+        const patchUrl = `/patches/${record.patch_id}?issueId=${issueId}`;
         return (
           <li key={record.patch_id} className={styles.item}>
             <Badge status={normalizePatchStatus(record.patch.status)} />
