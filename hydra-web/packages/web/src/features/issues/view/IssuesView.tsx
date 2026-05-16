@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   IssueStatus,
   IssueType,
@@ -8,11 +8,10 @@ import type {
 import { Avatar, Badge, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
+import type { IssueFilters } from "../usePaginatedIssues";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
-
-const LAYOUT_STORAGE_KEY = "hydra:issues:layout";
 
 export type IssuesLayout = "table" | "board";
 
@@ -50,14 +49,20 @@ function typeLabel(value: IssueType | null): string {
 }
 
 interface IssuesViewProps {
+  layout: IssuesLayout;
+  onLayoutChange: (layout: IssuesLayout) => void;
+  // Table-only data (board owns its own fetches via baseFilters/username).
   issues: IssueSummaryRecord[];
   childStatusMap: Map<string, ChildStatus[]>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
-  filterRootId: string | null;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
+  // Shared
+  baseFilters: IssueFilters;
+  username: string;
+  filterRootId: string | null;
   searchValue: string;
   onSearchChange: (value: string) => void;
   selectedStatus: IssueStatus | null;
@@ -75,35 +80,19 @@ interface IssuesViewProps {
   title: string;
 }
 
-function readLayout(): IssuesLayout {
-  if (typeof window === "undefined") return "table";
-  try {
-    const v = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (v === "board" || v === "table") return v;
-  } catch {
-    /* ignore */
-  }
-  return "table";
-}
-
-function writeLayout(layout: IssuesLayout): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LAYOUT_STORAGE_KEY, layout);
-  } catch {
-    /* ignore */
-  }
-}
-
 export function IssuesView({
+  layout,
+  onLayoutChange,
   issues,
   childStatusMap,
   sessionsByIssue,
   isLoading,
-  filterRootId,
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
+  baseFilters,
+  username,
+  filterRootId,
   searchValue,
   onSearchChange,
   selectedStatus,
@@ -118,12 +107,7 @@ export function IssuesView({
   eyebrow,
   title,
 }: IssuesViewProps) {
-  const [layout, setLayout] = useState<IssuesLayout>(readLayout);
   const [openPicker, setOpenPicker] = useState<FilterPickerKey>(null);
-
-  useEffect(() => {
-    writeLayout(layout);
-  }, [layout]);
 
   const toggle = (key: Exclude<FilterPickerKey, null>) =>
     setOpenPicker((prev) => (prev === key ? null : key));
@@ -143,7 +127,7 @@ export function IssuesView({
               role="tab"
               aria-selected={layout === "table"}
               className={layout === "table" ? styles.segmentedActive : undefined}
-              onClick={() => setLayout("table")}
+              onClick={() => onLayoutChange("table")}
               data-testid="issues-layout-table"
             >
               <Icons.IconMenu size={14} />
@@ -154,7 +138,7 @@ export function IssuesView({
               role="tab"
               aria-selected={layout === "board"}
               className={layout === "board" ? styles.segmentedActive : undefined}
-              onClick={() => setLayout("board")}
+              onClick={() => onLayoutChange("board")}
               data-testid="issues-layout-board"
             >
               <Icons.IconDot size={14} />
@@ -334,42 +318,46 @@ export function IssuesView({
       </div>
 
       <div className={styles.body}>
-        {isLoading && issues.length === 0 && (
-          <div className={styles.empty}>Loading issues…</div>
+        {layout === "table" && (
+          <>
+            {isLoading && issues.length === 0 && (
+              <div className={styles.empty}>Loading issues…</div>
+            )}
+
+            {!isLoading && issues.length === 0 && (
+              <div className={styles.empty}>No issues match the current filters.</div>
+            )}
+
+            {issues.length > 0 && (
+              <IssuesTable
+                issues={issues}
+                childStatusMap={childStatusMap}
+                sessionsByIssue={sessionsByIssue}
+                filterRootId={filterRootId}
+              />
+            )}
+
+            {hasNextPage && (
+              <div className={styles.loadMore}>
+                <button
+                  type="button"
+                  className={styles.loadMoreButton}
+                  onClick={onLoadMore}
+                  disabled={isFetchingNextPage}
+                >
+                  {isFetchingNextPage ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
+          </>
         )}
 
-        {!isLoading && issues.length === 0 && (
-          <div className={styles.empty}>No issues match the current filters.</div>
-        )}
-
-        {issues.length > 0 && layout === "table" && (
-          <IssuesTable
-            issues={issues}
-            childStatusMap={childStatusMap}
-            sessionsByIssue={sessionsByIssue}
-            filterRootId={filterRootId}
-          />
-        )}
-
-        {issues.length > 0 && layout === "board" && (
+        {layout === "board" && (
           <IssuesBoard
-            issues={issues}
-            childStatusMap={childStatusMap}
+            baseFilters={baseFilters}
+            username={username}
             filterRootId={filterRootId}
           />
-        )}
-
-        {hasNextPage && layout === "table" && (
-          <div className={styles.loadMore}>
-            <button
-              type="button"
-              className={styles.loadMoreButton}
-              onClick={onLoadMore}
-              disabled={isFetchingNextPage}
-            >
-              {isFetchingNextPage ? "Loading…" : "Load more"}
-            </button>
-          </div>
         )}
       </div>
     </div>
