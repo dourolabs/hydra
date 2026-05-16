@@ -81,7 +81,7 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     authenticatedPage: page,
   }) => {
     const sidebar = page.getByTestId("sidebar");
-    const chromeToggle = page.getByTestId("app-chrome-toggle-sidebar");
+    const chromeToggle = page.getByTestId("site-header-toggle-sidebar");
     const brand = page.getByTestId("hydra-brand");
 
     // Initially the sidebar is visible; the chrome hamburger toggles it and
@@ -122,7 +122,7 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
 
     // Restoring brings the sidebar back. The chrome toggle stays put and the
     // main content is still functional, shown by navigating via the
-    // Documents "More" link.
+    // Documents link in the sidebar.
     await chromeToggle.click();
     await expect
       .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
@@ -133,7 +133,7 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
       await page.evaluate(() => localStorage.getItem("hydra-sidebar-hidden")),
     ).toBe("0");
 
-    await page.getByTestId("sidebar-section-documents-more").click();
+    await page.getByTestId("sidebar-documents").click();
     await expect(page).toHaveURL(/\/documents/);
   });
 

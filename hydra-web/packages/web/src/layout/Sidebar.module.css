@@ -8,6 +8,13 @@
   width: var(--sidebar-w);
   overflow: hidden;
   min-width: 0;
+  transition: width var(--tx-norm), border-right-width var(--tx-norm);
+}
+
+/* Mobile uses .sidebarSlot transform; desktop collapses the sidebar's own width. */
+:global([data-sidebar="hidden"]) .sidebar {
+  width: 0;
+  border-right-width: 0;
 }
 
 /* ─── Head ─────────────────────────────────────────────────────── */
@@ -460,7 +467,15 @@
 
 /* ─── Mobile ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .sidebar {
+  .sidebar,
+  :global([data-sidebar="hidden"]) .sidebar {
     width: 100%;
+    border-right-width: 1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
   }
 }
