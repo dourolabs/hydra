@@ -192,9 +192,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
 
           <div className={styles.tabContent}>
             {activeTab === "sessions" && <SessionList issueId={issueId} />}
-            {activeTab === "patches" && (
-              <PatchList patchIds={issue.patches ?? []} issueId={issueId} />
-            )}
+            {activeTab === "patches" && <PatchList issueId={issueId} />}
             {activeTab === "activity" && <IssueActivity issueId={issueId} />}
             {activeTab === "sub-issues" && <IssueRelatedIssues issueId={issueId} />}
           </div>
