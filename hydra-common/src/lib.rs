@@ -119,6 +119,11 @@ mod ts_export {
         crate::documents::ListDocumentsResponse::export_all(&cfg).expect("ListDocumentsResponse");
         crate::documents::ListDocumentVersionsResponse::export_all(&cfg)
             .expect("ListDocumentVersionsResponse");
+        crate::documents::ListDocumentPathsQuery::export_all(&cfg).expect("ListDocumentPathsQuery");
+        crate::documents::ListDocumentPathsResponse::export_all(&cfg)
+            .expect("ListDocumentPathsResponse");
+        crate::documents::PathChildEntry::export_all(&cfg).expect("PathChildEntry");
+        crate::documents::PathChildDocumentRef::export_all(&cfg).expect("PathChildDocumentRef");
 
         // API v1: events
         crate::events::EventsQuery::export_all(&cfg).expect("EventsQuery");

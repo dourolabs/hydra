@@ -311,6 +311,34 @@ impl ListDocumentVersionsResponse {
 pub struct ListDocumentPathsQuery {
     #[serde(default)]
     pub prefix: Option<String>,
+    /// Multiple path prefixes (comma-separated). When supplied, the response is
+    /// the union of per-prefix listings. Mutually exclusive with `prefix`.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub prefixes: Vec<String>,
+}
+
+/// Inline document reference attached to a `PathChildEntry` when the entry's
+/// `full_path` matches a live (non-deleted) document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct PathChildDocumentRef {
+    pub document_id: DocumentId,
+    /// Document title at the time of the lookup. May be an empty string if the
+    /// document has no title set; the frontend has its own fallback.
+    pub title: String,
+}
+
+impl PathChildDocumentRef {
+    pub fn new(document_id: DocumentId, title: String) -> Self {
+        Self { document_id, title }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,15 +349,26 @@ pub struct PathChildEntry {
     pub full_path: String,
     pub child_count: u64,
     pub is_document: bool,
+    /// Populated when `is_document=true` and a live document exists at this
+    /// exact path. Always `None`/absent for pure folder entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<PathChildDocumentRef>,
 }
 
 impl PathChildEntry {
-    pub fn new(name: String, full_path: String, child_count: u64, is_document: bool) -> Self {
+    pub fn new(
+        name: String,
+        full_path: String,
+        child_count: u64,
+        is_document: bool,
+        document: Option<PathChildDocumentRef>,
+    ) -> Self {
         Self {
             name,
             full_path,
             child_count,
             is_document,
+            document,
         }
     }
 }
@@ -504,6 +543,87 @@ mod tests {
         assert_eq!(summary.path.as_deref(), Some("/docs/path.md"));
         assert_eq!(summary.created_by, Some(created_by));
         assert!(!summary.deleted);
+    }
+
+    #[test]
+    fn list_document_paths_query_serializes_single_prefix() {
+        let query = ListDocumentPathsQuery {
+            prefix: Some("/agents/".to_string()),
+            prefixes: Vec::new(),
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("prefix").map(String::as_str), Some("/agents/"));
+        assert!(!params.contains_key("prefixes"));
+    }
+
+    #[test]
+    fn list_document_paths_query_serializes_prefixes() {
+        let query = ListDocumentPathsQuery {
+            prefix: None,
+            prefixes: vec!["/agents/".to_string(), "/repos/".to_string()],
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(!params.contains_key("prefix"));
+        assert_eq!(
+            params.get("prefixes").map(String::as_str),
+            Some("/agents/,/repos/"),
+        );
+    }
+
+    #[test]
+    fn list_document_paths_query_deserializes_prefixes() {
+        let query: ListDocumentPathsQuery =
+            serde_urlencoded::from_str("prefixes=%2Fagents%2F%2C%2Frepos%2F").unwrap();
+        assert_eq!(query.prefix, None);
+        assert_eq!(
+            query.prefixes,
+            vec!["/agents/".to_string(), "/repos/".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_document_paths_query_defaults_are_empty() {
+        let query = ListDocumentPathsQuery::default();
+        let params = serialize_query_params(&query);
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn path_child_entry_omits_absent_document() {
+        let entry =
+            PathChildEntry::new("agents".to_string(), "/agents".to_string(), 3, false, None);
+        let value = serde_json::to_value(&entry).unwrap();
+        assert!(value.get("document").is_none());
+    }
+
+    #[test]
+    fn path_child_entry_includes_document_ref_when_present() {
+        let entry = PathChildEntry::new(
+            "notes.md".to_string(),
+            "/agents/pm/notes.md".to_string(),
+            1,
+            true,
+            Some(PathChildDocumentRef::new(
+                "d-abcd".parse::<DocumentId>().unwrap(),
+                "Notes".to_string(),
+            )),
+        );
+        let value = serde_json::to_value(&entry).unwrap();
+        let document = value
+            .get("document")
+            .expect("document ref should be serialized");
+        assert_eq!(
+            document.get("document_id").and_then(|v| v.as_str()),
+            Some("d-abcd")
+        );
+        assert_eq!(
+            document.get("title").and_then(|v| v.as_str()),
+            Some("Notes")
+        );
     }
 
     #[test]

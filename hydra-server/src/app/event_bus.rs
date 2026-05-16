@@ -1475,6 +1475,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_documents_by_path(path_prefix).await
     }
 
+    async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError> {
+        self.inner.get_documents_by_paths(paths).await
+    }
+
     async fn list_document_path_children(
         &self,
         prefix: &str,

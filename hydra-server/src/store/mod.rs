@@ -408,6 +408,17 @@ pub trait ReadOnlyStore: Send + Sync {
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
 
+    /// Returns the live (non-deleted) document at each of the provided exact paths.
+    ///
+    /// Looks up documents whose `path` matches one of `paths` exactly. The result
+    /// includes only paths that resolve to a live document — paths that do not
+    /// match any non-deleted document are omitted. Duplicate paths in the input
+    /// produce at most one result per path.
+    async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError>;
+
     /// Returns the unique next-level path segments under the given prefix,
     /// along with the count of (non-deleted) documents under each segment.
     async fn list_document_path_children(

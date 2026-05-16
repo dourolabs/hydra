@@ -93,6 +93,7 @@ export type { HydraId } from "./generated/HydraId";
 export type { Notification } from "./generated/Notification";
 export type { NotificationId } from "./generated/NotificationId";
 export type { NotificationResponse } from "./generated/NotificationResponse";
+export type { PathChildDocumentRef } from "./generated/PathChildDocumentRef";
 export type { PathChildEntry } from "./generated/PathChildEntry";
 export type { Patch } from "./generated/Patch";
 export type { PatchId } from "./generated/PatchId";
