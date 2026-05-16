@@ -2,12 +2,16 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { IssueStatus } from "@hydra/api";
 import {
+  useIssueCount,
   usePaginatedIssues,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { IssuesView } from "../features/issues/view/IssuesView";
+import {
+  IssuesView,
+  type IssuesLayout,
+} from "../features/issues/view/IssuesView";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -15,6 +19,27 @@ import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./IssuesListPage.module.css";
 
 const VALID_FILTERS = ["your-issues", "assigned", "all", "in_progress"];
+const LAYOUT_STORAGE_KEY = "hydra:issues:layout";
+
+function readLayout(): IssuesLayout {
+  if (typeof window === "undefined") return "table";
+  try {
+    const v = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (v === "board" || v === "table") return v;
+  } catch {
+    /* ignore */
+  }
+  return "table";
+}
+
+function writeLayout(layout: IssuesLayout): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, layout);
+  } catch {
+    /* ignore */
+  }
+}
 
 function buildServerFilters(
   filterRootId: string | null,
@@ -99,6 +124,12 @@ export function IssuesListPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
+  const [layout, setLayout] = useState<IssuesLayout>(readLayout);
+
+  useEffect(() => {
+    writeLayout(layout);
+  }, [layout]);
+
   const labelParam = searchParams.get("label");
 
   const [filterRootId, setFilterRootId] = useState<string | null>(() => {
@@ -148,13 +179,15 @@ export function IssuesListPage() {
     [filterRootId, username, inboxLabelId, searchQuery, selectedIssueStatus, selectedLabelId],
   );
 
+  const isTable = layout === "table";
+
   const {
     data: paginatedData,
     isLoading,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters, true);
+  } = usePaginatedIssues(serverFilters, isTable);
 
   const issues = useMemo(() => {
     const seen = new Set<string>();
@@ -165,7 +198,16 @@ export function IssuesListPage() {
     });
   }, [paginatedData]);
 
-  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(issues, username);
+  // Table layout uses the flat issue list for tree expansion. In board layout
+  // the board owns its own tree expansion over the per-column issue union.
+  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
+    isTable ? issues : [],
+    username,
+  );
+
+  // Board-layout eyebrow uses a count-only query so the total reflects every
+  // matching issue rather than the per-column rows currently loaded.
+  const { data: boardTotalCount } = useIssueCount(serverFilters, !isTable);
 
   // Normalise any legacy `?selected=…` URLs the sidebar no longer produces
   // (`patches`, `documents`) back to the default filter without forcing a
@@ -186,13 +228,19 @@ export function IssuesListPage() {
     if (hasNextPage && !isFetchingNextPage) fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  const eyebrowCount = isTable ? issues.length : Number(boardTotalCount ?? 0);
+
   return (
     <div className={styles.page}>
       <IssuesView
+        layout={layout}
+        onLayoutChange={setLayout}
         issues={issues}
         childStatusMap={childStatusMap}
         sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
+        baseFilters={serverFilters}
+        username={username}
         filterRootId={filterRootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}
@@ -201,7 +249,7 @@ export function IssuesListPage() {
         onSearchChange={handleSearchChange}
         selectedStatus={selectedIssueStatus}
         onStatusChange={setSelectedIssueStatus}
-        eyebrow={eyebrowFor(filterRootId, issues.length)}
+        eyebrow={eyebrowFor(filterRootId, eyebrowCount)}
         title={titleFor(filterRootId)}
       />
     </div>

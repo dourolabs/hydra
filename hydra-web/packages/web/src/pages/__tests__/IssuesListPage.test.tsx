@@ -31,6 +31,15 @@ vi.mock("../../features/issues/usePaginatedIssues", () => ({
     hasNextPage: false,
     isFetchingNextPage: false,
   }),
+  useIssueCount: () => ({ data: undefined }),
+  usePaginatedIssuesByStatus: () => ({
+    open: { issues: [], isLoading: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() },
+    "in-progress": { issues: [], isLoading: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() },
+    failed: { issues: [], isLoading: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() },
+    closed: { issues: [], isLoading: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() },
+    dropped: { issues: [], isLoading: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() },
+  }),
+  BOARD_STATUSES: ["open", "in-progress", "failed", "closed", "dropped"],
 }));
 
 vi.mock("../../features/dashboard/usePaginatedPatches", () => ({
