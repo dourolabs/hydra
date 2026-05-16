@@ -2,40 +2,27 @@ import styles from "./Avatar.module.css";
 
 export interface AvatarProps {
   name: string;
+  kind?: "human" | "agent";
   size?: "sm" | "md" | "lg";
   className?: string;
 }
 
 function getInitials(name: string): string {
-  return name
-    .split(/[\s_-]+/)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
-function hashCode(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const trimmed = (name || "?").trim();
+  // Take first letter of first two words, fall back to first two chars.
+  const parts = trimmed.split(/[\s_-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0]![0]! + parts[1]![0]!).toLowerCase();
   }
-  return Math.abs(hash);
+  return trimmed.slice(0, 2).toLowerCase();
 }
 
-const hues = [140, 200, 260, 320, 30, 60, 170, 290];
-
-export function Avatar({ name, size = "md", className }: AvatarProps) {
+export function Avatar({ name, kind = "human", size = "md", className }: AvatarProps) {
   const initials = getInitials(name);
-  const hue = hues[hashCode(name) % hues.length];
   const cls = [styles.avatar, styles[size], className].filter(Boolean).join(" ");
 
   return (
-    <span
-      className={cls}
-      style={{ backgroundColor: `hsl(${hue}, 40%, 25%)`, color: `hsl(${hue}, 60%, 75%)` }}
-      title={name}
-      aria-label={name}
-    >
+    <span className={cls} data-kind={kind} title={name} aria-label={name}>
       {initials}
     </span>
   );

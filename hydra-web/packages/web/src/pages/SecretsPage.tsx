@@ -3,7 +3,7 @@ import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./SecretsPage.module.css";
 
 export function SecretsPage() {
-  useBreadcrumbs([], "Secrets");
+  useBreadcrumbs([{ label: "Workspace", to: "/" }], "Secrets");
   return (
     <div className={styles.page}>
       <SecretsSection />

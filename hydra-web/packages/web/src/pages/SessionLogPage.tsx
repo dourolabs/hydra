@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, Spinner, Tabs } from "@hydra/ui";
+import { Avatar, Badge, Button, Spinner } from "@hydra/ui";
 import type { SessionVersionRecord } from "@hydra/api";
 import { normalizeSessionStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
@@ -14,9 +14,11 @@ import { useToast } from "../features/toast/useToast";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./SessionLogPage.module.css";
 
-const TABS = [
-  { id: "logs", label: "Logs" },
-  { id: "settings", label: "Settings" },
+type TabKey = "logs" | "settings";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "logs", label: "Logs" },
+  { key: "settings", label: "Settings" },
 ];
 
 export function SessionLogPage() {
@@ -27,7 +29,7 @@ export function SessionLogPage() {
   const { data: record, isLoading, error } = useSession(sessionId ?? "");
   const { addToast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("logs");
+  const [activeTab, setActiveTab] = useState<TabKey>("logs");
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [killRequested, setKillRequested] = useState(false);
 
@@ -35,7 +37,10 @@ export function SessionLogPage() {
     mutationFn: () => apiClient.killSession(record!.session_id),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ["session", record!.session_id] });
-      const previous = queryClient.getQueryData<SessionVersionRecord>(["session", record!.session_id]);
+      const previous = queryClient.getQueryData<SessionVersionRecord>([
+        "session",
+        record!.session_id,
+      ]);
       if (previous) {
         queryClient.setQueryData<SessionVersionRecord>(["session", record!.session_id], {
           ...previous,
@@ -71,11 +76,16 @@ export function SessionLogPage() {
   useBreadcrumbs(
     issueId
       ? [
-          { label: "Dashboard", to: "/" },
-          { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+          { label: "Workspace", to: "/" },
+          { label: "Issues", to: "/" },
+          { label: issueId, to: `/issues/${issueId}`, kind: "code" },
         ]
-      : [{ label: "Sessions", to: "/sessions" }],
-    `Session ${sessionId}`,
+      : [
+          { label: "Workspace", to: "/" },
+          { label: "Sessions", to: "/sessions" },
+        ],
+    sessionId ?? "",
+    "code",
   );
 
   return (
@@ -102,16 +112,20 @@ export function SessionLogPage() {
 
       {record && (
         <>
-          {/* Session metadata header */}
           <div className={styles.header}>
             <div className={styles.headerTop}>
-              <span className={styles.sessionId}>{record.session_id}</span>
+              <span className={styles.agentName}>
+                <Avatar name={record.session.creator} kind="agent" size="md" />
+                <span className={styles.agentLabel}>Agent</span>
+                {record.session.creator}
+              </span>
               <Badge status={normalizeSessionStatus(record.session.status)} />
-              {record.session.status === "running" && (
-                killRequested ? (
+              <span className={styles.headerSpacer} />
+              {record.session.status === "running" &&
+                (killRequested ? (
                   <span className={styles.terminating}>
                     <Spinner size="sm" />
-                    Terminating...
+                    Terminating…
                   </span>
                 ) : (
                   <Button
@@ -121,43 +135,67 @@ export function SessionLogPage() {
                   >
                     Kill Session
                   </Button>
-                )
-              )}
+                ))}
             </div>
             <div className={styles.meta}>
               {issueId && (
-                <div className={styles.metaItem}>
+                <span className={styles.metaItem}>
                   <span className={styles.metaLabel}>Issue</span>
                   <Link to={`/issues/${issueId}`} className={styles.metaLink}>
                     {issueId}
                   </Link>
-                </div>
+                </span>
               )}
-              <div className={styles.metaItem}>
+              <span className={styles.metaItem}>
                 <span className={styles.metaLabel}>Runtime</span>
                 <span className={styles.metaValue}>
                   {getRuntime(record.session.start_time, record.session.end_time)}
                 </span>
-              </div>
+              </span>
+              {record.session.start_time && (
+                <span className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Started</span>
+                  <span className={styles.metaValue}>
+                    {new Date(record.session.start_time).toLocaleString()}
+                  </span>
+                </span>
+              )}
               {record.session.creation_time && (
-                <div className={styles.metaItem}>
+                <span className={styles.metaItem}>
                   <span className={styles.metaLabel}>Created</span>
                   <span className={styles.metaValue}>
                     {new Date(record.session.creation_time).toLocaleString()}
                   </span>
-                </div>
+                </span>
               )}
             </div>
           </div>
 
-          {/* Tab bar */}
-          <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
+          <div className={styles.tabs} role="tablist">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
+                aria-selected={activeTab === t.key}
+                onClick={() => setActiveTab(t.key)}
+                data-testid={`session-tab-${t.key}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-          {/* Tab content */}
-          {activeTab === "logs" && (
-            <SessionLogViewer sessionId={record.session_id} status={record.session.status} />
-          )}
-          {activeTab === "settings" && <SessionSettings task={record.session} />}
+          <div className={styles.body}>
+            {activeTab === "logs" && (
+              <SessionLogViewer
+                sessionId={record.session_id}
+                status={record.session.status}
+              />
+            )}
+            {activeTab === "settings" && <SessionSettings task={record.session} />}
+          </div>
 
           <DeleteConfirmModal
             open={killModalOpen}

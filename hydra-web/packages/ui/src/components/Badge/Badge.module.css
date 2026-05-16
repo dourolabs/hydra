@@ -1,93 +1,40 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px var(--space-1);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  font-family: var(--font-family-terminal);
+  gap: 6px;
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--fg-0);
+  text-transform: capitalize;
   white-space: nowrap;
-  max-width: 100%;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--s-neutral);
+}
+
+.label {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.open {
-  background-color: var(--color-status-open-bg);
-  color: var(--color-status-open);
+.badge[data-tone="open"] .dot { background: var(--s-open); }
+
+.badge[data-tone="in_progress"] .dot {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
 }
 
-.in_progress {
-  background-color: var(--color-status-in-progress-bg);
-  color: var(--color-status-in-progress);
-}
-
-.closed {
-  background-color: var(--color-status-closed-bg);
-  color: var(--color-status-closed);
-}
-
-.issue_closed {
-  background-color: var(--color-status-issue-closed-bg);
-  color: var(--color-status-issue-closed);
-}
-
-.failed {
-  background-color: var(--color-status-failed-bg);
-  color: var(--color-status-failed);
-}
-
-.dropped {
-  background-color: var(--color-status-dropped-bg);
-  color: var(--color-status-dropped);
-}
-
-.blocked {
-  background-color: var(--color-status-blocked-bg);
-  color: var(--color-status-blocked);
-}
-
-.merged {
-  background-color: var(--color-status-approved-bg);
-  color: var(--color-status-approved);
-}
-
-.changes_requested {
-  background-color: var(--color-status-dropped-bg);
-  color: var(--color-status-dropped);
-}
-
-.approved {
-  background-color: var(--color-status-approved-bg);
-  color: var(--color-status-approved);
-}
-
-.created {
-  background-color: var(--color-status-open-bg);
-  color: var(--color-status-open);
-}
-
-.pending {
-  background-color: var(--color-status-open-bg);
-  color: var(--color-status-open);
-}
-
-.running {
-  background-color: var(--color-status-in-progress-bg);
-  color: var(--color-status-in-progress);
-}
-
-.complete {
-  background-color: var(--color-status-approved-bg);
-  color: var(--color-status-approved);
-}
-
-.success {
-  background-color: var(--color-status-approved-bg);
-  color: var(--color-status-approved);
-}
-
-.unknown {
-  background-color: var(--color-status-unknown-bg);
-  color: var(--color-status-unknown);
-}
+.badge[data-tone="closed"] .dot { background: var(--s-closed); }
+.badge[data-tone="failed"] .dot { background: var(--s-failed); }
+.badge[data-tone="dropped"] .dot { background: var(--s-dropped); }
+.badge[data-tone="blocked"] .dot { background: var(--s-blocked); }
+.badge[data-tone="rejected"] .dot { background: var(--s-rejected); }
+.badge[data-tone="neutral"] .dot { background: var(--s-neutral); }

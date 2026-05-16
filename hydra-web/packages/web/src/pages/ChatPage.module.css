@@ -1,52 +1,50 @@
 .chatLayout {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: var(--space-4);
+  display: grid;
+  grid-template-columns: 1fr 400px;
   height: 100%;
   min-height: 0;
   width: 100%;
+  background: var(--bg-0);
 }
 
 .chatPane {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .statusLayout {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  width: 100%;
-}
-
-@media (max-width: 768px) {
-  .chatLayout {
-    flex-direction: column;
-    height: auto;
-    min-height: 100%;
-  }
-
-  .chatPane {
-    flex: 0 0 auto;
-    height: 70vh;
-    min-height: 0;
-  }
+  flex: 1;
+  min-height: 0;
 }
 
 .center {
-  composes: center from "./page.module.css";
+  display: flex;
+  justify-content: center;
   align-items: center;
+  padding: 40px;
   flex: 1;
 }
 
 .errorContainer {
-  composes: errorContainer from "./page.module.css";
+  padding: 24px 32px;
 }
 
 .error {
-  composes: error from "./page.module.css";
+  color: var(--s-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  margin: 0;
+}
+
+@media (max-width: 1024px) {
+  .chatLayout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    overflow: auto;
+  }
 }

@@ -1,53 +1,60 @@
 .wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .label {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
 }
 
 .textarea {
-  padding: var(--space-2) var(--space-3);
-  background-color: var(--color-bg-input);
-  border: 1px solid var(--color-border);
+  padding: 9px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-md);
-  font-family: var(--font-family-terminal);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  line-height: 1.5;
   min-height: 80px;
   resize: vertical;
   transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    border-color var(--tx-fast),
+    box-shadow var(--tx-fast);
 }
 
 .textarea::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--fg-3);
+}
+
+.textarea:hover {
+  border-color: var(--line-strong);
 }
 
 .textarea:focus {
   outline: none;
-  border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px var(--color-focus-ring);
+  border-color: var(--acc);
 }
 
 .textarea.error {
-  border-color: var(--color-status-failed);
+  border-color: var(--s-failed);
 }
 
 .textarea.error:focus {
-  box-shadow: 0 0 0 2px var(--color-focus-ring-error);
+  border-color: var(--s-failed);
 }
 
 .errorText {
-  font-size: var(--font-size-xs);
-  color: var(--color-status-failed);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--s-failed);
 }
 
-/* Prevent iOS Safari auto-zoom on textarea focus */
 @media (max-width: 768px) {
   .textarea {
     font-size: 16px;

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Audiowide&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Audiowide&family=Big+Shoulders+Stencil+Display:wght@400;700&family=Iceland&family=JetBrains+Mono:wght@400;500;600;700&family=Major+Mono+Display&family=Orbitron:wght@400;700&display=swap");
 @import "./tokens.css";
 
 @font-face {
@@ -26,69 +26,94 @@
 }
 
 html {
-  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+html,
 body {
-  font-family: var(--font-family-terminal);
-  font-size: var(--font-size-md);
-  line-height: var(--line-height-normal);
-  color: var(--color-text-primary);
-  background-color: var(--color-bg-primary);
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+
+body {
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  line-height: 1.45;
+  font-feature-settings: "ss01", "ss02", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  height: 100%;
 }
 
 a {
-  color: var(--color-accent);
+  color: inherit;
   text-decoration: none;
 }
 
 a:hover {
-  color: var(--color-accent-bright);
+  color: var(--acc-bright);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-border-focus);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
 ::selection {
-  background-color: var(--color-accent-dim);
-  color: var(--color-text-primary);
+  background-color: var(--acc-soft);
+  color: var(--fg-0);
 }
 
 code,
-pre {
-  font-family: var(--font-family-mono);
+pre,
+kbd,
+samp {
+  font-family: var(--f-mono);
 }
 
 button {
-  font-family: inherit;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
   cursor: pointer;
 }
 
 input,
 textarea,
 select {
-  font-family: inherit;
+  font: inherit;
+  color: inherit;
 }
 
-/* Scrollbar styling */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-primary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border-radius: 6px;
+  border: 2px solid var(--bg-0);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
+  background: var(--line-strong);
+}
+
+/* Pulsing dot keyframe — shared by status and cluster-status */
+@keyframes hydra-pulse {
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
 }

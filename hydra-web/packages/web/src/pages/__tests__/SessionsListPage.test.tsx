@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
@@ -5,20 +6,24 @@ import type { SessionSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
 
+const navigateMock = vi.fn();
 vi.mock("react-router-dom", () => ({
   Link: ({
     to,
     children,
     className,
+    onClick,
   }: {
     to: string;
     children: React.ReactNode;
     className?: string;
+    onClick?: (e: React.MouseEvent) => void;
   }) => (
-    <a href={to} className={className}>
+    <a href={to} className={className} onClick={onClick}>
       {children}
     </a>
   ),
+  useNavigate: () => navigateMock,
 }));
 
 interface AllSessionsState {
@@ -32,36 +37,19 @@ const allSessionsState: AllSessionsState = {
   isLoading: false,
   error: null,
 };
-const mockRefetch = vi.fn();
 
 vi.mock("../../features/sessions/useAllSessions", () => ({
   useAllSessions: () => ({
     data: allSessionsState.data,
     isLoading: allSessionsState.isLoading,
     error: allSessionsState.error,
-    refetch: mockRefetch,
   }),
 }));
 
 vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   Badge: ({ status }: { status: string }) => (
     <span data-testid="badge">{status}</span>
-  ),
-}));
-
-vi.mock("../../components/LoadingState/LoadingState", () => ({
-  LoadingState: () => <div data-testid="loading" />,
-}));
-
-vi.mock("../../components/ErrorState/ErrorState", () => ({
-  ErrorState: ({ message }: { message: string }) => (
-    <div data-testid="error-state">{message}</div>
-  ),
-}));
-
-vi.mock("../../components/EmptyState/EmptyState", () => ({
-  EmptyState: ({ message }: { message: string }) => (
-    <div data-testid="empty-state">{message}</div>
   ),
 }));
 
@@ -70,14 +58,14 @@ vi.mock("../../utils/statusMapping", () => ({
 }));
 
 vi.mock("../../utils/time", () => ({
-  formatTimestamp: (s: string) => s,
+  getRuntime: () => "—",
 }));
 
 vi.mock("../../utils/text", () => ({
   descriptionSnippet: (s: string) => s,
 }));
 
-vi.mock("../SessionsListPage.module.css", () => ({
+vi.mock("../../features/sessions/view/SessionsView.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
@@ -116,7 +104,7 @@ function reset() {
   allSessionsState.data = undefined;
   allSessionsState.isLoading = false;
   allSessionsState.error = null;
-  mockRefetch.mockReset();
+  navigateMock.mockReset();
 }
 
 describe("SessionsListPage", () => {
@@ -126,33 +114,34 @@ describe("SessionsListPage", () => {
     cleanup();
   });
 
-  it("publishes a single-segment Sessions breadcrumb on mount", () => {
+  it("publishes a Workspace / Sessions breadcrumb on mount", () => {
     allSessionsState.data = [];
     render(<SessionsListPage />);
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Sessions");
-  });
-
-  it("renders the loading state while data is loading", () => {
-    allSessionsState.isLoading = true;
-    render(<SessionsListPage />);
-    expect(screen.getByTestId("loading")).toBeDefined();
-  });
-
-  it("renders the empty state when no sessions exist", () => {
-    allSessionsState.data = [];
-    render(<SessionsListPage />);
-    expect(screen.getByTestId("empty-state").textContent).toContain(
-      "No sessions yet.",
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Workspace", to: "/" }],
+      "Sessions",
     );
   });
 
-  it("renders an error state with the message and a retry handler", () => {
-    allSessionsState.error = new Error("boom");
+  it("shows a loading message before data arrives", () => {
+    allSessionsState.isLoading = true;
     render(<SessionsListPage />);
-    expect(screen.getByTestId("error-state").textContent).toContain("boom");
+    expect(screen.getByText(/loading sessions/i)).toBeDefined();
   });
 
-  it("renders one row per session and links every row to /sessions/<id>", () => {
+  it("shows an empty message when no sessions exist", () => {
+    allSessionsState.data = [];
+    render(<SessionsListPage />);
+    expect(screen.getByText(/no sessions match the current filters/i)).toBeDefined();
+  });
+
+  it("shows an error message when the query fails", () => {
+    allSessionsState.error = new Error("boom");
+    render(<SessionsListPage />);
+    expect(screen.getByText(/failed to load sessions/i)).toBeDefined();
+  });
+
+  it("renders one row per session, links spawned-from issue, no ID column", () => {
     allSessionsState.data = [
       rec("t-1", "running", "i-1", "first task"),
       rec("t-2", "complete", undefined, "orphan task"),
@@ -163,19 +152,11 @@ describe("SessionsListPage", () => {
     expect(screen.getByTestId("sessions-list-row-t-1")).toBeDefined();
     expect(screen.getByTestId("sessions-list-row-t-2")).toBeDefined();
 
-    // Spawned-from session links to the universal /sessions/<id> route.
-    const spawnedSessionId = screen.getByText("t-1");
-    expect(spawnedSessionId.closest("a")?.getAttribute("href")).toBe(
-      "/sessions/t-1",
-    );
+    // Per "no IDs on list views" rule: session_id text is NOT shown directly.
+    expect(screen.queryByText("t-1")).toBeNull();
+    expect(screen.queryByText("t-2")).toBeNull();
 
-    // Orphan session is also a clickable link to /sessions/<id>.
-    const orphanSessionId = screen.getByText("t-2");
-    expect(orphanSessionId.closest("a")?.getAttribute("href")).toBe(
-      "/sessions/t-2",
-    );
-
-    // Issue link is still present for spawned-from sessions (in the meta row).
+    // The spawned_from issue ID is still rendered as a link.
     const issueLink = screen.getByText("i-1");
     expect(issueLink.closest("a")?.getAttribute("href")).toBe("/issues/i-1");
   });
@@ -187,8 +168,10 @@ describe("SessionsListPage", () => {
     ];
 
     render(<SessionsListPage />);
-    const items = screen.getAllByText(/^(active|term)$/);
-    expect(items[0].textContent).toBe("active");
-    expect(items[1].textContent).toBe("term");
+
+    const rows = screen.getAllByTestId(/^sessions-list-row-/);
+    // useAllSessions hook + sortSessions util order active before terminal.
+    expect(rows[0].getAttribute("data-testid")).toBe("sessions-list-row-active");
+    expect(rows[1].getAttribute("data-testid")).toBe("sessions-list-row-term");
   });
 });

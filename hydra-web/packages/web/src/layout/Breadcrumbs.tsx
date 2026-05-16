@@ -1,33 +1,48 @@
+import { Fragment } from "react";
 import { Link } from "react-router-dom";
+import { Icons } from "@hydra/ui";
 import styles from "./Breadcrumbs.module.css";
 
 export interface BreadcrumbItem {
   label: string;
   to: string;
+  /** When set, render the label as a mono code-chip (used for IDs). */
+  kind?: "code";
 }
 
 export interface BreadcrumbsProps {
   items: BreadcrumbItem[];
   current: string;
+  /** When true, render the current crumb as a mono code-chip. */
+  currentKind?: "code";
 }
 
-export function Breadcrumbs({ items, current }: BreadcrumbsProps) {
+function Separator() {
+  return (
+    <span className={styles.separator} aria-hidden="true">
+      <Icons.IconChevronRight />
+    </span>
+  );
+}
+
+export function Breadcrumbs({ items, current, currentKind }: BreadcrumbsProps) {
   return (
     <nav aria-label="Breadcrumb" className={styles.breadcrumbs}>
       {items.map((item, i) => (
-        <span key={item.to}>
-          {i > 0 && <span className={styles.separator}>/</span>}{" "}
-          <Link to={item.to} className={styles.link}>
+        <Fragment key={`${item.to}-${i}`}>
+          {i > 0 && <Separator />}
+          <Link
+            to={item.to}
+            className={item.kind === "code" ? styles.code : styles.link}
+          >
             {item.label}
-          </Link>{" "}
-        </span>
+          </Link>
+        </Fragment>
       ))}
-      {items.length > 0 && (
-        <>
-          <span className={styles.separator}>/</span>{" "}
-        </>
-      )}
-      <span className={styles.current}>{current}</span>
+      {items.length > 0 && <Separator />}
+      <span className={currentKind === "code" ? styles.currentCode : styles.current}>
+        {current}
+      </span>
     </nav>
   );
 }

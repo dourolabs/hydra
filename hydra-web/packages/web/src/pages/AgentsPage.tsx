@@ -3,7 +3,7 @@ import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./AgentsPage.module.css";
 
 export function AgentsPage() {
-  useBreadcrumbs([], "Agents");
+  useBreadcrumbs([{ label: "Workspace", to: "/" }], "Agents");
   return (
     <div className={styles.page}>
       <AgentsSection />

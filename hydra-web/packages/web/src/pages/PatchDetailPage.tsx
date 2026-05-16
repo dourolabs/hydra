@@ -15,26 +15,25 @@ export function PatchDetailPage() {
   const filterParam = searchParams.get("filter");
   const { data: record, isLoading, error } = usePatch(patchId ?? "");
 
-  const dashboardReturnUrl = filterParam ? `/?selected=${filterParam}` : "/";
-
   let breadcrumbItems: BreadcrumbItem[];
-  if (fromDashboard && issueId) {
-    const issueParams = new URLSearchParams({ from: "dashboard" });
+  if (issueId) {
+    const issueParams = new URLSearchParams();
+    if (fromDashboard) issueParams.set("from", "dashboard");
     if (filterParam) issueParams.set("filter", filterParam);
+    const qs = issueParams.toString();
     breadcrumbItems = [
-      { label: "Dashboard", to: dashboardReturnUrl },
-      { label: `Issue ${issueId}`, to: `/issues/${issueId}?${issueParams.toString()}` },
-    ];
-  } else if (issueId) {
-    breadcrumbItems = [
-      { label: "Dashboard", to: "/" },
-      { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+      { label: "Workspace", to: "/" },
+      { label: "Issues", to: "/" },
+      { label: issueId, to: `/issues/${issueId}${qs ? `?${qs}` : ""}`, kind: "code" },
     ];
   } else {
-    breadcrumbItems = [{ label: "Dashboard", to: "/" }];
+    breadcrumbItems = [
+      { label: "Workspace", to: "/" },
+      { label: "Patches", to: "/patches" },
+    ];
   }
 
-  useBreadcrumbs(breadcrumbItems, record?.patch.title || `Patch ${patchId}`);
+  useBreadcrumbs(breadcrumbItems, patchId ?? "", "code");
 
   return (
     <div className={styles.page}>

@@ -15,20 +15,21 @@ export function IssueDetailPage() {
   const tab = searchParams.get("tab");
   const { data: record, isLoading, error } = useIssue(issueId ?? "");
 
-  let dashboardReturnUrl = "/";
+  let issuesReturnUrl = "/";
   if (fromDashboard) {
     const returnParams = new URLSearchParams();
     if (filterParam) returnParams.set("selected", filterParam);
     if (tab) returnParams.set("tab", tab);
     const qs = returnParams.toString();
-    dashboardReturnUrl = qs ? `/?${qs}` : "/";
+    issuesReturnUrl = qs ? `/?${qs}` : "/";
   }
 
-  const breadcrumbItems: BreadcrumbItem[] = fromDashboard
-    ? [{ label: "Dashboard", to: dashboardReturnUrl }]
-    : [{ label: "Dashboard", to: "/" }];
+  const breadcrumbItems: BreadcrumbItem[] = [
+    { label: "Workspace", to: "/" },
+    { label: "Issues", to: issuesReturnUrl },
+  ];
 
-  useBreadcrumbs(breadcrumbItems, record?.issue.title || `Issue ${issueId}`);
+  useBreadcrumbs(breadcrumbItems, issueId ?? "", "code");
 
   return (
     <div className={styles.page}>

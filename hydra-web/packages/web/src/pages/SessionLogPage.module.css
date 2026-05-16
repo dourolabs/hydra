@@ -1,80 +1,182 @@
-.page { composes: page from './page.module.css'; }
-.center { composes: center from './page.module.css'; }
-.errorContainer { composes: errorContainer from './page.module.css'; }
-.error { composes: error from './page.module.css'; }
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
 
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  flex: 1;
+}
+
+.errorContainer {
+  padding: 24px 32px;
+}
+
+.error {
+  color: var(--s-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  margin: 0;
+}
+
+/* ─── Header ─── */
 .header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: var(--space-4);
+  gap: 12px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
 }
 
 .headerTop {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-}
-
-.sessionId {
-  font-family: var(--font-family-terminal);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--color-accent);
-}
-
-.meta {
-  display: flex;
-  gap: var(--space-6);
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.metaItem {
-  display: flex;
+.agentName {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 7px;
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  color: var(--acc);
 }
 
-.metaLabel {
-  font-size: var(--font-size-xs);
+.agentLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-tertiary);
-  font-weight: 600;
+  color: var(--fg-2);
+  margin-right: 4px;
 }
 
-.metaValue {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
-.metaLink {
-  font-size: var(--font-size-sm);
-  color: var(--color-accent-dim);
-  text-decoration: none;
-  font-family: var(--font-family-terminal);
-}
-
-.metaLink:hover {
-  color: var(--color-accent);
+.headerSpacer {
+  flex: 1;
 }
 
 .terminating {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
+}
+
+/* ─── Meta row ─── */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metaLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.metaValue {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.metaLink {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--c-violet);
+  text-decoration: none;
+}
+
+.metaLink:hover {
+  color: oklch(0.85 0.16 290);
+  text-decoration: underline;
+}
+
+/* ─── Tabs ─── */
+.tabs {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-0);
+  flex-shrink: 0;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.tab:hover {
+  color: var(--fg-0);
+}
+
+.tabActive {
+  color: var(--fg-0);
+}
+
+.tabActive::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--acc);
+  border-radius: 1px;
+}
+
+/* ─── Body ─── */
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 768px) {
   .header {
-    gap: var(--space-2);
-    padding-bottom: var(--space-3);
+    padding: 14px 16px 10px;
   }
-
+  .tabs {
+    padding: 0 16px;
+  }
   .meta {
-    gap: var(--space-3);
+    gap: 12px;
   }
 }

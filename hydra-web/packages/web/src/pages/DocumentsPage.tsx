@@ -164,7 +164,7 @@ function ExpandableFolderNode({
 }
 
 export function DocumentsPage() {
-  useBreadcrumbs([], "Documents");
+  useBreadcrumbs([{ label: "Workspace", to: "/" }], "Documents");
   const [createOpen, setCreateOpen] = useState(false);
 
   const { data: topLevel, isLoading, error, refetch } = useDocumentPaths(null, true);

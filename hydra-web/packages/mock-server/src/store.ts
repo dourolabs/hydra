@@ -158,6 +158,30 @@ export class Store {
     return versions[0].timestamp;
   }
 
+  /**
+   * Seed-only helper: append a versioned snapshot with a caller-supplied
+   * timestamp. Creates v1 when the entity does not exist yet, otherwise
+   * appends the next version. No SSE event is emitted — seed data is taken
+   * to predate any client connection.
+   */
+  seedVersion<T>(
+    collectionName: string,
+    id: string,
+    data: T,
+    timestamp: string,
+  ): VersionedEntity<T> {
+    const col = this.getCollection(collectionName);
+    let versions = col.get(id);
+    if (!versions) {
+      versions = [];
+      col.set(id, versions);
+    }
+    const nextVersion = versions.length === 0 ? 1 : versions[versions.length - 1].version + 1;
+    const entry: VersionedEntity<T> = { version: nextVersion, timestamp, data };
+    versions.push(entry);
+    return entry;
+  }
+
   private emitEvent(
     eventType: SseEventType,
     entityType: string,

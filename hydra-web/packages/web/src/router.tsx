@@ -112,6 +112,17 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "patches",
+        lazy: () =>
+          import("./pages/PatchesListPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.PatchesListPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "patches/:patchId",
         lazy: () =>
           import("./pages/PatchDetailPage").then((m) => ({

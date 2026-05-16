@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@hydra/ui";
 import type { DocumentVersionRecord } from "@hydra/api";
@@ -13,20 +13,16 @@ import styles from "./DocumentDetailPage.module.css";
 
 export function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
-  const [searchParams] = useSearchParams();
-  const fromDashboard = searchParams.get("from") === "dashboard";
-  const filterParam = searchParams.get("filter");
   const { data: record, isLoading, error } = useDocument(documentId ?? "");
 
   const displayTitle = record
     ? (record.document.title || record.document.path || record.document_id)
     : `Document ${documentId}`;
 
-  const dashboardReturnUrl = filterParam ? `/?selected=${filterParam}` : "/";
-
-  const breadcrumbItems: BreadcrumbItem[] = fromDashboard
-    ? [{ label: "Dashboard", to: dashboardReturnUrl }]
-    : [{ label: "Documents", to: "/documents" }];
+  const breadcrumbItems: BreadcrumbItem[] = [
+    { label: "Workspace", to: "/" },
+    { label: "Documents", to: "/documents" },
+  ];
 
   useBreadcrumbs(breadcrumbItems, displayTitle);
 

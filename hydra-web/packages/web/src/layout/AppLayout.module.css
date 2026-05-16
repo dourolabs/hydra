@@ -1,128 +1,68 @@
 .layout {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-rows: 100vh;
   height: 100vh;
   height: 100dvh;
-  background: var(--color-bg-primary);
+  background: var(--bg-0);
   overflow: hidden;
   position: relative;
+  transition: grid-template-columns var(--tx-norm);
 }
 
-/*
- * Fixed top-left chrome: hamburger + Hydra wordmark. Positioned absolutely so
- * it stays put when the sidebar is toggled. On desktop with the sidebar open,
- * the chrome overlays the top-left of the sidebar (matching background); when
- * the sidebar is hidden, the chrome overlays the left edge of the SiteHeader
- * (also matching background), and SiteHeader reserves padding-left for it so
- * the breadcrumbs do not shift.
- */
-.leftChrome {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: var(--sidebar-width);
-  height: var(--site-header-height);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  box-sizing: border-box;
-  z-index: 5;
+.layout[data-sidebar="hidden"] {
+  grid-template-columns: 0 1fr;
 }
 
-/* When the sidebar is hidden the chrome sits inside the SiteHeader; carry the
- * header's bottom border across the chrome so the seam stays continuous. */
-.leftChromeOnHeader {
-  border-bottom: 1px solid var(--color-border);
+.layout[data-sidebar="hidden"] .sidebarSlot {
+  transform: translateX(-100%);
 }
 
-.chromeToggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.chromeToggle:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-}
-
-.chromeToggle svg {
-  width: 18px;
-  height: 18px;
-}
-
-@media (max-width: 768px) {
-  .leftChrome {
-    /* Mobile keeps the existing drawer behaviour with a SiteHeader hamburger. */
-    display: none;
-  }
+.sidebarSlot {
+  min-width: 0;
+  transition: transform var(--tx-norm);
 }
 
 .contentColumn {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .main {
   flex: 1;
-  padding: var(--space-6);
-  overflow-y: auto;
+  overflow: auto;
   min-width: 0;
   min-height: 0;
-  animation: fadeIn 200ms ease-out;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .main {
-    animation: none;
-  }
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 768px) {
   .layout {
-    flex-direction: column;
-    height: auto;
-    min-height: 100vh;
-    min-height: 100dvh;
-    overflow: visible;
-    overflow-x: hidden;
+    grid-template-columns: 0 1fr;
   }
 
-  .contentColumn {
-    min-height: auto;
+  .layout[data-sidebar="open"] .sidebarSlot {
+    transform: translateX(0);
+  }
+
+  .sidebarSlot {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(80vw, 320px);
+    transform: translateX(-100%);
+    z-index: 30;
+    background: var(--bg-1);
+    box-shadow: 8px 0 24px oklch(0 0 0 / 0.45);
   }
 
   .main {
-    padding: var(--space-3);
-    padding-bottom: 120px;
-    animation: none;
-    overflow-y: visible;
-    min-height: auto;
+    padding-bottom: 56px;
   }
 }
 
@@ -132,5 +72,27 @@
   justify-content: center;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--color-bg-primary);
+  background: var(--bg-0);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  z-index: 20;
+  animation: backdrop-fade-in var(--tx-norm);
+}
+
+@keyframes backdrop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layout,
+  .sidebarSlot,
+  .backdrop {
+    transition: none;
+    animation: none;
+  }
 }

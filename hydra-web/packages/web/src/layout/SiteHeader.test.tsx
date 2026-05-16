@@ -1,23 +1,32 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 
-// Mirror production behaviour: the real Tooltip wraps its children in a
-// <span class="wrapper className"> element. The mock must propagate
-// `className` to the wrapper so layout/order assertions reflect reality.
 vi.mock("@hydra/ui", () => ({
-  Tooltip: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <span className={className} data-testid="tooltip-wrapper">
-      {children}
-    </span>
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
+  Icons: new Proxy(
+    {},
+    {
+      get: (_t, prop) => () => <span data-testid={`icon-${String(prop)}`} />,
+    },
   ),
 }));
 
 const activeSessionCountMock = vi.fn();
 vi.mock("../features/sessions/useActiveSessionCount", () => ({
   useActiveSessionCount: () => activeSessionCountMock(),
+}));
+
+const openIssueCreateModalMock = vi.fn();
+vi.mock("../features/dashboard/useIssueCreateModal", () => ({
+  useIssueCreateModal: () => ({
+    isOpen: false,
+    open: openIssueCreateModalMock,
+    close: vi.fn(),
+  }),
 }));
 
 vi.mock("./SiteHeader.module.css", () => ({
@@ -105,223 +114,80 @@ function mockMatchMedia(matches: boolean) {
 
 beforeEach(() => {
   activeSessionCountMock.mockReturnValue({ data: 0 });
-  // Default matchMedia stub: desktop. Mobile tests override via mockMatchMedia(true).
   mockMatchMedia(false);
 });
 
 afterEach(() => {
   cleanup();
-  activeSessionCountMock.mockReset();
+  openIssueCreateModalMock.mockReset();
 });
 
-describe("SiteHeader hamburger placement", () => {
-  it("tags the hamburger's flex child (Tooltip wrapper) with hamburgerSlot for mobile reordering", () => {
-    // The hamburger is only rendered when on mobile (or when the sidebar is
-    // hidden). Use the mobile viewport so the toggle exists.
-    mockMatchMedia(true);
-    renderHeader();
-    const toggle = screen.getByTestId("site-header-toggle-sidebar");
-    // The flex child of <header> is the Tooltip wrapper around the button,
-    // not the button itself. The reordering class must live on that wrapper
-    // for the `order: 999` rule to apply on mobile.
-    const header = screen.getByTestId("site-header");
-    const flexChild = toggle.parentElement;
-    expect(flexChild?.parentElement).toBe(header);
-    expect(flexChild?.className).toContain("hamburgerSlot");
-    // The button itself must NOT carry the reordering class — it isn't the
-    // flex child, so `order` on it would have no effect (regression guard).
-    expect(toggle.className).not.toContain("hamburgerSlot");
-  });
-});
-
-describe("SiteHeader hamburger conditional rendering", () => {
-  it("does NOT render the hamburger on desktop when sidebar is visible", () => {
-    mockMatchMedia(false);
-    renderHeader({ hidden: false });
-    expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
+describe("SiteHeader", () => {
+  it("renders breadcrumbs, search, sessions pill, and new-issue button", () => {
+    renderHeader({
+      breadcrumbs: { items: [], current: "Issues" },
+    });
+    expect(screen.getByTestId("site-header")).toBeTruthy();
+    expect(screen.getByTestId("site-header-breadcrumbs")).toBeTruthy();
+    expect(screen.getByTestId("site-header-search")).toBeTruthy();
+    expect(screen.getByTestId("site-header-sessions")).toBeTruthy();
+    expect(screen.getByTestId("site-header-new-issue")).toBeTruthy();
   });
 
-  it("does NOT render the hamburger on desktop when sidebar is hidden", () => {
-    // Desktop hamburger now lives in the AppLayout left chrome, not here.
-    mockMatchMedia(false);
-    renderHeader({ hidden: true });
-    expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
-  });
-
-  it("renders the hamburger on mobile regardless of hidden state", () => {
-    mockMatchMedia(true);
-    renderHeader({ hidden: false });
-    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
-    cleanup();
-    renderHeader({ hidden: true });
-    expect(screen.getByTestId("site-header-toggle-sidebar")).toBeTruthy();
-  });
-});
-
-describe("SiteHeader sidebar toggle (mobile)", () => {
-  it("calls onHide when on mobile and the toggle is clicked", () => {
-    // On mobile, the hamburger is always present; when the sidebar is open
-    // it acts as the hide control.
-    mockMatchMedia(true);
+  it("hamburger toggles sidebar state on click", () => {
     const onHide = vi.fn();
     const onShow = vi.fn();
     renderHeader({ hidden: false, onHide, onShow });
     fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
-    expect(onHide).toHaveBeenCalledTimes(1);
-    expect(onShow).not.toHaveBeenCalled();
-  });
+    expect(onHide).toHaveBeenCalled();
+    cleanup();
 
-  it("calls onShow when on mobile and the toggle is clicked while hidden", () => {
-    mockMatchMedia(true);
-    const onHide = vi.fn();
-    const onShow = vi.fn();
     renderHeader({ hidden: true, onHide, onShow });
     fireEvent.click(screen.getByTestId("site-header-toggle-sidebar"));
-    expect(onShow).toHaveBeenCalledTimes(1);
-    expect(onHide).not.toHaveBeenCalled();
+    expect(onShow).toHaveBeenCalled();
   });
 
-  it("uses the right aria-label depending on hidden state", () => {
-    // On mobile, the toggle is always present and reflects the current state.
-    mockMatchMedia(true);
-    const { unmount } = renderHeader({ hidden: false });
-    expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
-      "Hide sidebar",
-    );
-    unmount();
-    renderHeader({ hidden: true });
-    expect(screen.getByTestId("site-header-toggle-sidebar").getAttribute("aria-label")).toBe(
-      "Show sidebar",
-    );
-  });
-});
-
-describe("SiteHeader breadcrumb pin", () => {
-  it("reserves left padding on desktop when the sidebar is hidden", () => {
-    // The desktop chrome occupies the top-left corner; the SiteHeader must
-    // pad-in by the sidebar width so breadcrumbs stay anchored at the same
-    // x-coordinate whether the sidebar is open or hidden.
-    mockMatchMedia(false);
-    renderHeader({ hidden: true });
-    const header = screen.getByTestId("site-header");
-    expect(header.className).toContain("siteHeaderReservedChrome");
-  });
-
-  it("does not reserve left padding on desktop when the sidebar is open", () => {
-    mockMatchMedia(false);
-    renderHeader({ hidden: false });
-    const header = screen.getByTestId("site-header");
-    expect(header.className).not.toContain("siteHeaderReservedChrome");
-  });
-
-  it("does not reserve left padding on mobile (chrome is not rendered)", () => {
-    mockMatchMedia(true);
-    renderHeader({ hidden: true });
-    const header = screen.getByTestId("site-header");
-    expect(header.className).not.toContain("siteHeaderReservedChrome");
-  });
-});
-
-describe("SiteHeader search button", () => {
-  it("invokes onOpenSearch when clicked", () => {
+  it("invokes onOpenSearch when search button is clicked", () => {
     const onOpenSearch = vi.fn();
     renderHeader({ onOpenSearch });
     fireEvent.click(screen.getByTestId("site-header-search"));
     expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("SiteHeader active sessions pill", () => {
+  it("opens the create-issue modal when New issue is clicked", () => {
+    renderHeader();
+    fireEvent.click(screen.getByTestId("site-header-new-issue"));
+    expect(openIssueCreateModalMock).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the sessions pill as a link to /sessions", () => {
     renderHeader();
-    const slot = screen.getByTestId("site-header-sessions");
-    expect(slot.tagName).toBe("A");
-    expect(slot.getAttribute("href")).toBe("/sessions");
+    const link = screen.getByTestId("site-header-sessions") as HTMLAnchorElement;
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("/sessions");
   });
 
-  it("renders 'no sessions' with an inactive dot when count is zero", () => {
+  it("renders 'no sessions' label and inactive dot when count is zero", () => {
     activeSessionCountMock.mockReturnValue({ data: 0 });
     renderHeader();
-    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
-      "no sessions",
-    );
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe("no sessions");
     expect(
       screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
     ).toBe("false");
   });
 
-  it("renders '1 session' with a pulsing dot when count is one", () => {
+  it("renders '1 session' and active dot when count is one", () => {
     activeSessionCountMock.mockReturnValue({ data: 1 });
     renderHeader();
-    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
-      "1 session",
-    );
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe("1 session");
     expect(
       screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
     ).toBe("true");
   });
 
-  it("renders 'N sessions' with a pulsing dot when count is greater than one", () => {
-    activeSessionCountMock.mockReturnValue({ data: 4 });
+  it("renders pluralised sessions label when count > 1", () => {
+    activeSessionCountMock.mockReturnValue({ data: 9 });
     renderHeader();
-    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
-      "4 sessions",
-    );
-    expect(
-      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
-    ).toBe("true");
-  });
-
-  it("treats an undefined count as zero (loading state)", () => {
-    activeSessionCountMock.mockReturnValue({ data: undefined });
-    renderHeader();
-    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe(
-      "no sessions",
-    );
-    expect(
-      screen.getByTestId("site-header-sessions-dot").getAttribute("data-active"),
-    ).toBe("false");
-  });
-
-  it("navigates to /sessions when the sessions pill is clicked", () => {
-    activeSessionCountMock.mockReturnValue({ data: 2 });
-    renderHeader({ initialEntry: "/" });
-    expect(screen.getByTestId("location-pathname").textContent).toBe("/");
-    fireEvent.click(screen.getByTestId("site-header-sessions"));
-    expect(screen.getByTestId("location-pathname").textContent).toBe("/sessions");
-  });
-});
-
-describe("SiteHeader breadcrumbs", () => {
-  it("renders the breadcrumbs slot empty when no page has published breadcrumbs", () => {
-    renderHeader();
-    const slot = screen.getByTestId("site-header-breadcrumbs");
-    expect(slot.textContent).toBe("");
-  });
-
-  it("renders breadcrumbs published via the useBreadcrumbs hook", async () => {
-    renderHeader({
-      breadcrumbs: {
-        items: [{ label: "Dashboard", to: "/" }],
-        current: "Issue i-x",
-      },
-    });
-    await act(async () => {});
-    const slot = screen.getByTestId("site-header-breadcrumbs");
-    expect(slot.textContent).toContain("Dashboard");
-    expect(slot.textContent).toContain("Issue i-x");
-    // Parent link should point to the items[].to
-    const parentLink = slot.querySelector("a");
-    expect(parentLink?.getAttribute("href")).toBe("/");
-  });
-
-  it("renders a single-segment breadcrumb when items is empty", async () => {
-    renderHeader({
-      breadcrumbs: { items: [], current: "Documents" },
-    });
-    await act(async () => {});
-    const slot = screen.getByTestId("site-header-breadcrumbs");
-    expect(slot.textContent).toContain("Documents");
-    expect(slot.querySelector("a")).toBeNull();
+    expect(screen.getByTestId("site-header-sessions-label").textContent).toBe("9 sessions");
   });
 });

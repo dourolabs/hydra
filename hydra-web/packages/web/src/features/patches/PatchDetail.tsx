@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, CopyButton, DiffViewer, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
+import { Avatar, Badge, DiffViewer, MarkdownViewer } from "@hydra/ui";
 import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
-import { useToast } from "../toast/useToast";
 import { PatchActivity } from "./PatchActivity";
 import styles from "./PatchDetail.module.css";
 
@@ -13,166 +12,167 @@ interface PatchDetailProps {
   referringIssueId?: string;
 }
 
-const TABS = [
-  { id: "diff", label: "Diff" },
-  { id: "reviews", label: "Reviews" },
-  { id: "activity", label: "Activity" },
-  { id: "metadata", label: "Metadata" },
+type TabKey = "diff" | "reviews" | "activity";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "diff", label: "Diff" },
+  { key: "reviews", label: "Reviews" },
+  { key: "activity", label: "Activity" },
 ];
 
 export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
-  const [activeTab, setActiveTab] = useState("diff");
-  const { addToast } = useToast();
+  const [activeTab, setActiveTab] = useState<TabKey>("diff");
   const { patch } = record;
 
-  return (
-    <div className={styles.detail}>
-      {/* Header: Title + Status */}
-      <div className={styles.header}>
-        <h2 className={styles.title}>{patch.title}</h2>
-        <Badge status={normalizePatchStatus(patch.status)} />
-      </div>
+  const status =
+    patch.status === "Open" && patch.reviews.some((r) => r.is_approved)
+      ? "approved"
+      : normalizePatchStatus(patch.status);
+  const authorKind = patch.created_by ? "agent" : "human";
 
-      {/* Metadata row: Branch, Base, Repository, GitHub PR, CI */}
-      <div className={styles.meta}>
-        {patch.branch_name && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Branch</span>
-            <span className={styles.metaValueMono}>
-              {patch.branch_name}
-              <CopyButton
-                value={patch.branch_name}
-                onCopied={() => addToast("Copied!", "success")}
-              />
+  return (
+    <div className={styles.page}>
+      <div className={styles.inner}>
+        {/* Title block */}
+        <div className={styles.titleRow}>
+          <span className={styles.titleId}>{record.patch_id}</span>
+          <Badge status={status} />
+        </div>
+        <h1 className={styles.title}>{patch.title || record.patch_id}</h1>
+
+        {/* Key-vals grid */}
+        <div className={styles.keyvals}>
+          <div className={styles.keyval}>
+            <span className={styles.keyvalLabel}>Author</span>
+            <span className={styles.keyvalValue}>
+              <Avatar name={patch.creator} kind={authorKind} size="md" />
+              <span className={styles.keyvalText}>{patch.creator}</span>
             </span>
           </div>
-        )}
-        {patch.base_branch && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Base</span>
-            <span className={styles.metaValueMono}>{patch.base_branch}</span>
-          </div>
-        )}
-        {patch.service_repo_name && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Repository</span>
-            <span className={styles.metaValueMono}>
-              {patch.service_repo_name}
+          <div className={styles.keyval}>
+            <span className={styles.keyvalLabel}>Repository</span>
+            <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+              <span className={styles.keyvalText}>{patch.service_repo_name}</span>
             </span>
           </div>
-        )}
-        {patch.github && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>GitHub</span>
-            <span className={styles.metaValue}>
+          {patch.branch_name && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>Branch</span>
+              <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+                <span className={styles.keyvalText}>{patch.branch_name}</span>
+              </span>
+            </div>
+          )}
+          {patch.base_branch && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>Base</span>
+              <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+                <span className={styles.keyvalText}>{patch.base_branch}</span>
+              </span>
+            </div>
+          )}
+          <div className={styles.keyval}>
+            <span className={styles.keyvalLabel}>Created</span>
+            <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+              {formatTimestamp(record.creation_time ?? record.timestamp)}
+            </span>
+          </div>
+          <div className={styles.keyval}>
+            <span className={styles.keyvalLabel}>Updated</span>
+            <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+              {formatTimestamp(record.timestamp)}
+            </span>
+          </div>
+          {referringIssueId && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>Linked issue</span>
+              <Link to={`/issues/${referringIssueId}`} className={`${styles.keyvalValue} ${styles.linkAcc} ${styles.keyvalValueMono}`}>
+                <span className={styles.keyvalText}>{referringIssueId}</span>
+              </Link>
+            </div>
+          )}
+          {patch.created_by && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>Linked session</span>
+              <Link
+                to={`/sessions/${patch.created_by}`}
+                className={`${styles.keyvalValue} ${styles.linkAcc} ${styles.keyvalValueMono}`}
+              >
+                <span className={styles.keyvalText}>{patch.created_by}</span>
+              </Link>
+            </div>
+          )}
+          {patch.github && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>GitHub</span>
               {patch.github.url ? (
                 <a
                   href={patch.github.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={styles.ghLink}
+                  className={`${styles.keyvalValue} ${styles.linkAcc} ${styles.keyvalValueMono}`}
                 >
-                  {patch.github.owner}/{patch.github.repo}#
-                  {String(patch.github.number)} ↗
+                  <span className={styles.keyvalText}>
+                    {patch.github.owner}/{patch.github.repo}#{String(patch.github.number)}
+                  </span>
                 </a>
               ) : (
-                <>
-                  {patch.github.owner}/{patch.github.repo}#
-                  {String(patch.github.number)}
-                </>
-              )}
-            </span>
-          </div>
-        )}
-        {patch.github?.ci && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>CI</span>
-            <span className={styles.metaValue}>
-              <Badge status={normalizeCiState(patch.github.ci.state)} />
-              <span className={styles.ciState}>{patch.github.ci.state}</span>
-              {patch.github.ci.failure && (
-                <span className={styles.ciFailure}>
-                  {patch.github.ci.failure.name}
-                  {patch.github.ci.failure.summary &&
-                    `: ${patch.github.ci.failure.summary}`}
-                </span>
-              )}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Description */}
-      {patch.description && (
-        <Panel
-          header={<span className={styles.sectionTitle}>Description</span>}
-        >
-          <div className={styles.sectionBody}>
-            <MarkdownViewer content={patch.description} />
-          </div>
-        </Panel>
-      )}
-
-      {/* Tabbed sections: Diff, Reviews, Activity, Metadata */}
-      <Panel
-        header={
-          <Tabs
-            tabs={TABS}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-          />
-        }
-      >
-        <div className={styles.sectionBody}>
-          {activeTab === "diff" && (
-            <DiffViewer diff={patch.diff} />
-          )}
-          {activeTab === "reviews" && (
-            <ReviewsList reviews={patch.reviews} />
-          )}
-          {activeTab === "activity" && (
-            <PatchActivity patchId={record.patch_id} />
-          )}
-          {activeTab === "metadata" && (
-            <div className={styles.metadataTab}>
-              <div className={styles.metaItem}>
-                <span className={styles.metaLabel}>Creator</span>
-                <span className={styles.metaValue}>
-                  <Avatar name={patch.creator} size="sm" />
-                  {patch.creator}
-                </span>
-              </div>
-              <div className={styles.metaItem}>
-                <span className={styles.metaLabel}>Updated</span>
-                <span className={styles.metaValue}>
-                  {formatTimestamp(record.timestamp)}
-                </span>
-              </div>
-              <div className={styles.metaItem}>
-                <span className={styles.metaLabel}>Patch ID</span>
-                <span className={styles.metaValueMono}>{record.patch_id}</span>
-              </div>
-              <div className={styles.metaItem}>
-                <span className={styles.metaLabel}>Version</span>
-                <span className={styles.metaValue}>{record.version}</span>
-              </div>
-              {referringIssueId && (
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Linked Issue</span>
-                  <span className={styles.metaValue}>
-                    <Link
-                      to={`/issues/${referringIssueId}`}
-                      className={styles.issueLink}
-                    >
-                      {referringIssueId}
-                    </Link>
+                <span className={`${styles.keyvalValue} ${styles.keyvalValueMono}`}>
+                  <span className={styles.keyvalText}>
+                    {patch.github.owner}/{patch.github.repo}#{String(patch.github.number)}
                   </span>
-                </div>
+                </span>
               )}
             </div>
           )}
+          {patch.github?.ci && (
+            <div className={styles.keyval}>
+              <span className={styles.keyvalLabel}>CI</span>
+              <span className={styles.keyvalValue}>
+                <Badge status={normalizeCiState(patch.github.ci.state)} />
+                {patch.github.ci.failure && (
+                  <span className={styles.ciFailure}>
+                    {patch.github.ci.failure.name}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
         </div>
-      </Panel>
+
+        {/* Description */}
+        {patch.description && (
+          <div className={styles.section}>
+            <span className={styles.sectionLabel}>Description</span>
+            <div className={styles.prose}>
+              <MarkdownViewer content={patch.description} />
+            </div>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className={styles.tabs} role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
+              aria-selected={activeTab === t.key}
+              onClick={() => setActiveTab(t.key)}
+              data-testid={`patch-tab-${t.key}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.tabContent}>
+          {activeTab === "diff" && <DiffViewer diff={patch.diff} />}
+          {activeTab === "reviews" && <ReviewsList reviews={patch.reviews} />}
+          {activeTab === "activity" && <PatchActivity patchId={record.patch_id} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -183,23 +183,19 @@ interface ReviewsListProps {
 
 function ReviewsList({ reviews }: ReviewsListProps) {
   if (reviews.length === 0) {
-    return <p className={styles.empty}>No reviews.</p>;
+    return <p className={styles.reviewEmpty}>No reviews.</p>;
   }
 
   return (
     <ul className={styles.reviewList}>
       {reviews.map((review, i) => (
-        <li key={i} className={styles.reviewItem}>
-          <div className={styles.reviewHeader}>
-            <Avatar name={review.author} size="sm" />
+        <li key={i} className={styles.review}>
+          <div className={styles.reviewHead}>
+            <Avatar name={review.author} kind="human" size="md" />
             <span className={styles.reviewAuthor}>{review.author}</span>
-            <Badge
-              status={review.is_approved ? "approved" : "changes-requested"}
-            />
+            <Badge status={review.is_approved ? "approved" : "changes-requested"} />
             {review.submitted_at && (
-              <span className={styles.reviewTime}>
-                {formatTimestamp(review.submitted_at)}
-              </span>
+              <span className={styles.reviewWhen}>{formatTimestamp(review.submitted_at)}</span>
             )}
           </div>
           {review.contents && (

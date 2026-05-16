@@ -1,47 +1,43 @@
 import { useEffect, useRef } from "react";
-import { MarkdownViewer, Tooltip } from "@hydra/ui";
+import { MarkdownViewer } from "@hydra/ui";
 import type { ConversationEvent } from "@hydra/api";
-import { formatTimestamp } from "../../utils/time";
+import { formatRelativeTime, formatTimestamp } from "../../utils/time";
 import styles from "./ChatMessageList.module.css";
 
 function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
   return (
-    <div className={styles.systemEvent}>
-      <Tooltip content={formatTimestamp(timestamp)} trigger="hover-or-click">
-        <span className={styles.systemText}>{text}</span>
-      </Tooltip>
+    <div className={styles.systemEvent} title={formatTimestamp(timestamp)}>
+      <span className={styles.systemText}>{text}</span>
     </div>
   );
 }
 
-function renderEvent(event: ConversationEvent, index: number) {
+function renderEvent(event: ConversationEvent, index: number, agentName: string) {
   switch (event.type) {
     case "user_message":
       return (
-        <div key={index} className={styles.messageRow}>
-          <Tooltip
-            content={formatTimestamp(event.timestamp)}
-            trigger="hover-or-click"
-            position="top"
-            className={styles.userBubbleWrapper}
-          >
-            <div className={styles.userBubble}>
-              <div className={styles.bubbleContent}>{event.content}</div>
-            </div>
-          </Tooltip>
+        <div key={index} className={styles.userRow}>
+          <div className={styles.userHead}>
+            <span className={styles.msgAuthor}>You</span>
+            <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
+              {formatRelativeTime(event.timestamp)}
+            </span>
+          </div>
+          <div className={styles.userBubble}>{event.content}</div>
         </div>
       );
     case "assistant_message":
       return (
-        <div key={index} className={styles.messageRow}>
-          <Tooltip
-            content={formatTimestamp(event.timestamp)}
-            trigger="hover-or-click"
-            position="top"
-            className={styles.assistantContent}
-          >
-            <MarkdownViewer content={event.content} className={styles.markdown} />
-          </Tooltip>
+        <div key={index} className={styles.agentRow}>
+          <div className={styles.agentHead}>
+            <span className={styles.msgAuthor}>{agentName}</span>
+            <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
+              {formatRelativeTime(event.timestamp)}
+            </span>
+          </div>
+          <div className={styles.agentBody}>
+            <MarkdownViewer content={event.content} />
+          </div>
         </div>
       );
     case "suspending":
@@ -65,10 +61,12 @@ function renderEvent(event: ConversationEvent, index: number) {
 
 interface ChatMessageListProps {
   events: ConversationEvent[];
+  agentName?: string | null;
 }
 
-export function ChatMessageList({ events }: ChatMessageListProps) {
+export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const resolvedAgent = agentName || "Agent";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -78,7 +76,9 @@ export function ChatMessageList({ events }: ChatMessageListProps) {
     return (
       <div className={styles.container}>
         <div className={styles.empty}>
-          <p className={styles.emptyText}>No messages yet. Send a message to start the conversation.</p>
+          <p className={styles.emptyText}>
+            No messages yet. Send a message to start the conversation.
+          </p>
         </div>
       </div>
     );
@@ -86,8 +86,10 @@ export function ChatMessageList({ events }: ChatMessageListProps) {
 
   return (
     <div className={styles.container}>
-      {events.map((event, i) => renderEvent(event, i))}
-      <div ref={bottomRef} />
+      <div className={styles.thread}>
+        {events.map((event, i) => renderEvent(event, i, resolvedAgent))}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }
