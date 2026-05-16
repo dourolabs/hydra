@@ -49,13 +49,9 @@ function renderEvent(event: ConversationEvent, index: number, agentName: string)
         />
       );
     case "resumed":
-      return (
-        <SystemEvent key={index} text="Session resumed" timestamp={event.timestamp} />
-      );
+      return <SystemEvent key={index} text="Session resumed" timestamp={event.timestamp} />;
     case "closed":
-      return (
-        <SystemEvent key={index} text="Conversation closed" timestamp={event.timestamp} />
-      );
+      return <SystemEvent key={index} text="Conversation closed" timestamp={event.timestamp} />;
   }
 }
 
@@ -65,16 +61,18 @@ interface ChatMessageListProps {
 }
 
 export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const resolvedAgent = agentName || "Agent";
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = containerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [events.length]);
 
   if (events.length === 0) {
     return (
-      <div className={styles.container}>
+      <div ref={containerRef} className={styles.container} data-testid="chat-message-list">
         <div className={styles.empty}>
           <p className={styles.emptyText}>
             No messages yet. Send a message to start the conversation.
@@ -85,10 +83,9 @@ export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
   }
 
   return (
-    <div className={styles.container}>
+    <div ref={containerRef} className={styles.container} data-testid="chat-message-list">
       <div className={styles.thread}>
         {events.map((event, i) => renderEvent(event, i, resolvedAgent))}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
