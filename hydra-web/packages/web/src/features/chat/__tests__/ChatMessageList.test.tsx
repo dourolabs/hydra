@@ -9,6 +9,7 @@ vi.mock("@hydra/ui", () => ({
 
 vi.mock("../../../utils/time", () => ({
   formatTimestamp: (s: string) => s,
+  formatRelativeTime: (s: string) => s,
 }));
 
 vi.mock("../ChatMessageList.module.css", () => ({

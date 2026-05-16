@@ -1,102 +1,46 @@
+/* ============================================================
+   HYDRA — Design tokens
+   ============================================================ */
+
 :root {
-  /* Background */
-  --color-bg-primary: #0a0a0a;
-  --color-bg-secondary: #111111;
-  --color-bg-tertiary: #1a1a1a;
-  --color-bg-input: #0f0f0f;
+  /* ----- Type families ----- */
+  --f-sans: "Mona Sans", "Mona Sans VF", -apple-system, BlinkMacSystemFont, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --f-display: "Audiowide", "Mona Sans", sans-serif;
 
-  /* Foreground */
-  --color-text-primary: #e0e0e0;
-  --color-text-secondary: #888888;
-  --color-text-tertiary: #555555;
+  /* Legacy aliases (kept for backward compat) */
+  --font-family-sans: var(--f-sans);
+  --font-family-terminal: var(--f-sans);
+  --font-family-mono: var(--f-mono);
+  --font-family-display: var(--f-display);
 
-  /* Accent (green - terminal aesthetic) */
-  --color-accent: #00cc66;
-  --color-accent-dim: #009944;
-  --color-accent-bright: #00ff80;
+  /* ----- Type scale ----- */
+  --t-xxs: 10px;
+  --t-xs: 11px;
+  --t-sm: 12px;
+  --t-md: 13px;
+  --t-lg: 15px;
+  --t-xl: 18px;
+  --t-2xl: 24px;
+  --t-3xl: 32px;
 
-  /* Status colors */
-  --color-status-open: #4a9eff;
-  --color-status-in-progress: #f0c040;
-  --color-status-closed: #cc3333;
-  --color-status-issue-closed: #00cc66;
-  --color-status-approved: #00cc66;
-  --color-status-failed: #ff4444;
-  --color-status-dropped: #8b3030;
-  --color-status-blocked: #e07850;
-  --color-status-attention: #e68a00;
-  --color-status-unknown: #a0a0a0;
-
-  /* Status background colors (translucent) */
-  --color-status-open-bg: color-mix(in srgb, var(--color-status-open) 12%, transparent);
-  --color-status-in-progress-bg: color-mix(
-    in srgb,
-    var(--color-status-in-progress) 12%,
-    transparent
-  );
-  --color-status-closed-bg: color-mix(in srgb, var(--color-status-closed) 12%, transparent);
-  --color-status-issue-closed-bg: color-mix(
-    in srgb,
-    var(--color-status-issue-closed) 12%,
-    transparent
-  );
-  --color-status-approved-bg: color-mix(in srgb, var(--color-status-approved) 12%, transparent);
-  --color-status-failed-bg: color-mix(in srgb, var(--color-status-failed) 12%, transparent);
-  --color-status-dropped-bg: color-mix(in srgb, var(--color-status-dropped) 12%, transparent);
-  --color-status-blocked-bg: color-mix(in srgb, var(--color-status-blocked) 12%, transparent);
-  --color-status-attention-bg: color-mix(in srgb, var(--color-status-attention) 12%, transparent);
-  --color-status-unknown-bg: color-mix(in srgb, var(--color-status-unknown) 12%, transparent);
-  --color-status-neutral-bg: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
-
-  /* Type chip colors */
-  --color-type-merge-request: #cc66ff;
-  --color-type-merge-request-bg: color-mix(
-    in srgb,
-    var(--color-type-merge-request) 12%,
-    transparent
-  );
-
-  /* Archive */
-  --color-archive-bg: color-mix(in srgb, var(--color-accent-dim) 30%, var(--color-bg-primary));
-
-  /* Danger (red - destructive actions) */
-  --color-danger: #cc3333;
-  --color-danger-bright: #ff4444;
-
-  /* Semantic colors */
-  --color-success: var(--color-accent);
-  --color-error: var(--color-danger-bright);
-
-  /* Interactive backgrounds */
-  --color-bg-hover: rgba(255, 255, 255, 0.06);
-
-  /* Overlay and shadow */
-  --color-backdrop: rgba(0, 0, 0, 0.5);
-  --color-shadow: rgba(0, 0, 0, 0.3);
-
-  /* Focus rings */
-  --color-focus-ring: rgba(0, 204, 102, 0.15);
-  --color-focus-ring-error: rgba(255, 68, 68, 0.15);
-
-  /* Border */
-  --color-border: #222222;
-  --color-border-focus: #00cc66;
-
-  /* Typography */
-  --font-family-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
-  --font-family-terminal: "Mona Sans", -apple-system, sans-serif;
-  --font-family-sans: "Inter", -apple-system, sans-serif;
-  --font-family-display: "Audiowide", "Mona Sans", -apple-system, sans-serif;
-  --font-size-xxs: 0.625rem;
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --font-size-md: 0.9375rem;
-  --font-size-lg: 1rem;
-  --font-size-xl: 1.25rem;
+  /* Legacy aliases */
+  --font-size-xxs: var(--t-xxs);
+  --font-size-xs: var(--t-xs);
+  --font-size-sm: var(--t-sm);
+  --font-size-md: var(--t-md);
+  --font-size-lg: var(--t-lg);
+  --font-size-xl: var(--t-xl);
   --line-height-tight: 1.3;
-  --line-height-normal: 1.5;
+  --line-height-normal: 1.45;
 
-  /* Spacing scale (4px base) */
+  /* ----- Density (compact default) ----- */
+  --row-h: 32px;
+  --pad-x: 12px;
+  --pad-y: 8px;
+  --gap: 8px;
+
+  /* Legacy spacing scale */
   --space-0: 2px;
   --space-1: 4px;
   --space-2: 8px;
@@ -106,20 +50,189 @@
   --space-8: 32px;
   --space-12: 48px;
 
-  /* Border radius */
+  /* ----- Theme: WARM DARK (default) ----- */
+  --bg-0: oklch(0.13 0.004 80);
+  --bg-1: oklch(0.155 0.004 80);
+  --bg-2: oklch(0.185 0.004 80);
+  --bg-3: oklch(0.22 0.004 80);
+  --bg-input: oklch(0.11 0.004 80);
+  --bg-overlay: oklch(0.08 0 0 / 0.6);
+
+  --fg-0: oklch(0.95 0.005 80);
+  --fg-1: oklch(0.72 0.005 80);
+  --fg-2: oklch(0.52 0.005 80);
+  --fg-3: oklch(0.38 0.005 80);
+
+  --line: oklch(0.235 0.004 80);
+  --line-strong: oklch(0.32 0.004 80);
+
+  /* ----- Accent (emerald default) ----- */
+  --acc-h: 152;
+  --acc: oklch(0.74 0.14 var(--acc-h));
+  --acc-dim: oklch(0.55 0.13 var(--acc-h));
+  --acc-bright: oklch(0.86 0.16 var(--acc-h));
+  --acc-soft: oklch(0.74 0.14 var(--acc-h) / 0.12);
+  --acc-fg-on: oklch(0.13 0.01 var(--acc-h));
+
+  /* ----- Status tones (fixed band, hue varies) ----- */
+  --s-open: oklch(0.78 0.12 240);       /* blue */
+  --s-progress: oklch(0.82 0.13 90);    /* amber */
+  --s-closed: oklch(0.78 0.13 150);     /* green */
+  --s-failed: oklch(0.72 0.16 28);      /* red */
+  --s-dropped: oklch(0.62 0.05 28);     /* dim red-brown */
+  --s-blocked: oklch(0.78 0.13 50);     /* orange */
+  --s-rejected: oklch(0.72 0.13 350);   /* magenta */
+  --s-neutral: oklch(0.62 0.005 80);
+
+  /* Violet — used for human avatars, IDs in mono spans, agent chips */
+  --c-violet: oklch(0.74 0.16 290);
+  --c-violet-soft: oklch(0.74 0.16 290 / 0.18);
+
+  /* ----- Legacy color aliases (map old names → new tokens) ----- */
+  --color-bg-primary: var(--bg-0);
+  --color-bg-secondary: var(--bg-1);
+  --color-bg-tertiary: var(--bg-2);
+  --color-bg-input: var(--bg-input);
+  --color-text-primary: var(--fg-0);
+  --color-text-secondary: var(--fg-1);
+  --color-text-tertiary: var(--fg-2);
+  --color-accent: var(--acc);
+  --color-accent-dim: var(--acc-dim);
+  --color-accent-bright: var(--acc-bright);
+  --color-border: var(--line);
+  --color-border-focus: var(--acc);
+  --color-bg-hover: var(--bg-2);
+  --color-backdrop: var(--bg-overlay);
+  --color-shadow: oklch(0 0 0 / 0.3);
+  --color-focus-ring: var(--acc-soft);
+  --color-focus-ring-error: oklch(0.72 0.16 28 / 0.18);
+
+  /* Status color aliases (legacy keys) */
+  --color-status-open: var(--s-open);
+  --color-status-in-progress: var(--s-progress);
+  --color-status-closed: var(--s-failed);          /* legacy "closed" was red */
+  --color-status-issue-closed: var(--s-closed);
+  --color-status-approved: var(--s-closed);
+  --color-status-failed: var(--s-failed);
+  --color-status-dropped: var(--s-dropped);
+  --color-status-blocked: var(--s-blocked);
+  --color-status-attention: var(--s-blocked);
+  --color-status-unknown: var(--s-neutral);
+
+  --color-status-open-bg: color-mix(in srgb, var(--s-open) 12%, transparent);
+  --color-status-in-progress-bg: color-mix(in srgb, var(--s-progress) 12%, transparent);
+  --color-status-closed-bg: color-mix(in srgb, var(--s-failed) 12%, transparent);
+  --color-status-issue-closed-bg: color-mix(in srgb, var(--s-closed) 12%, transparent);
+  --color-status-approved-bg: color-mix(in srgb, var(--s-closed) 12%, transparent);
+  --color-status-failed-bg: color-mix(in srgb, var(--s-failed) 12%, transparent);
+  --color-status-dropped-bg: color-mix(in srgb, var(--s-dropped) 12%, transparent);
+  --color-status-blocked-bg: color-mix(in srgb, var(--s-blocked) 12%, transparent);
+  --color-status-attention-bg: color-mix(in srgb, var(--s-blocked) 12%, transparent);
+  --color-status-unknown-bg: color-mix(in srgb, var(--s-neutral) 12%, transparent);
+  --color-status-neutral-bg: color-mix(in srgb, var(--s-neutral) 12%, transparent);
+
+  --color-type-merge-request: var(--c-violet);
+  --color-type-merge-request-bg: color-mix(in srgb, var(--c-violet) 12%, transparent);
+  --color-archive-bg: color-mix(in srgb, var(--acc-dim) 30%, var(--bg-0));
+  --color-danger: var(--s-failed);
+  --color-danger-bright: oklch(0.78 0.18 28);
+  --color-success: var(--acc);
+  --color-error: var(--s-failed);
+
+  /* ----- Effects ----- */
+  --shadow-sm: 0 1px 0 oklch(1 0 0 / 0.02) inset;
+  --shadow-md: 0 8px 24px oklch(0 0 0 / 0.4);
+  --shadow-pop: 0 16px 48px oklch(0 0 0 / 0.5);
+
+  /* ----- Radii ----- */
   --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
+  --radius-sm: 3px;
+  --radius-md: 5px;
   --radius-lg: 8px;
   --radius-pill: 9999px;
 
-  /* Transitions */
-  --transition-subtle: 100ms ease;
-  --transition-fast: 120ms ease;
-  --transition-normal: 200ms ease;
+  /* ----- Transitions ----- */
+  --tx-fast: 110ms ease;
+  --tx-norm: 180ms ease;
 
-  /* Layout */
+  /* Legacy aliases */
+  --transition-subtle: var(--tx-fast);
+  --transition-fast: var(--tx-fast);
+  --transition-normal: var(--tx-norm);
+
+  /* ----- Layout dimensions ----- */
+  --sidebar-w: 224px;
+  --sidebar-rail-w: 52px;
+  --topbar-h: 44px;
+
+  /* Legacy aliases */
+  --sidebar-width: var(--sidebar-w);
+  --site-header-height: var(--topbar-h);
   --mobile-nav-height: 56px;
-  --sidebar-width: 240px;
-  --site-header-height: 44px;
 }
+
+/* ============================================================
+   Theme variants
+   ============================================================ */
+
+/* Pure black */
+:root[data-theme="black"] {
+  --bg-0: #000;
+  --bg-1: oklch(0.10 0 0);
+  --bg-2: oklch(0.145 0 0);
+  --bg-3: oklch(0.19 0 0);
+  --bg-input: oklch(0.06 0 0);
+  --fg-0: oklch(0.96 0 0);
+  --fg-1: oklch(0.72 0 0);
+  --fg-2: oklch(0.50 0 0);
+  --fg-3: oklch(0.34 0 0);
+  --line: oklch(0.19 0 0);
+  --line-strong: oklch(0.28 0 0);
+}
+
+/* Light */
+:root[data-theme="light"] {
+  --bg-0: oklch(0.985 0.003 80);
+  --bg-1: oklch(0.97 0.003 80);
+  --bg-2: oklch(0.94 0.003 80);
+  --bg-3: oklch(0.90 0.003 80);
+  --bg-input: oklch(1 0 0);
+  --bg-overlay: oklch(0 0 0 / 0.3);
+  --fg-0: oklch(0.18 0.005 80);
+  --fg-1: oklch(0.36 0.005 80);
+  --fg-2: oklch(0.52 0.005 80);
+  --fg-3: oklch(0.68 0.005 80);
+  --line: oklch(0.88 0.003 80);
+  --line-strong: oklch(0.78 0.003 80);
+  --acc: oklch(0.50 0.14 var(--acc-h));
+  --acc-dim: oklch(0.40 0.13 var(--acc-h));
+  --acc-bright: oklch(0.42 0.16 var(--acc-h));
+  --acc-soft: oklch(0.50 0.14 var(--acc-h) / 0.12);
+  --acc-fg-on: oklch(1 0 0);
+}
+
+/* ============================================================
+   Density variants
+   ============================================================ */
+
+:root[data-density="comfortable"] {
+  --row-h: 38px;
+  --pad-x: 14px;
+  --pad-y: 10px;
+  --gap: 10px;
+}
+
+:root[data-density="spacious"] {
+  --row-h: 48px;
+  --pad-x: 18px;
+  --pad-y: 14px;
+  --gap: 14px;
+}
+
+/* ============================================================
+   Accent presets
+   ============================================================ */
+
+:root[data-accent="amber"]   { --acc-h: 75; }
+:root[data-accent="violet"]  { --acc-h: 290; }
+:root[data-accent="cyan"]    { --acc-h: 220; }

@@ -1,28 +1,44 @@
 .avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-grid;
+  place-items: center;
   border-radius: 50%;
-  font-family: var(--font-family-terminal);
+  font-family: var(--f-mono);
   font-weight: 600;
   flex-shrink: 0;
   user-select: none;
+  background: var(--bg-3);
+  color: var(--fg-1);
+  text-transform: lowercase;
+  box-sizing: border-box;
 }
 
 .sm {
-  width: 24px;
-  height: 24px;
-  font-size: var(--font-size-xxs);
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
 }
 
 .md {
-  width: 32px;
-  height: 32px;
-  font-size: var(--font-size-xs);
+  width: 20px;
+  height: 20px;
+  font-size: var(--t-xxs);
 }
 
 .lg {
-  width: 40px;
-  height: 40px;
-  font-size: var(--font-size-sm);
+  width: 28px;
+  height: 28px;
+  font-size: var(--t-xs);
+}
+
+/* Agent: accent-soft bg + accent text + dashed border (the visual tell) */
+.avatar[data-kind="agent"] {
+  background: var(--acc-soft);
+  color: var(--acc);
+  border: 1px dashed currentColor;
+}
+
+/* Human: violet-tinted bg + violet text + solid */
+.avatar[data-kind="human"] {
+  background: var(--c-violet-soft);
+  color: var(--c-violet);
 }

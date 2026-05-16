@@ -88,6 +88,12 @@ vi.mock("@hydra/ui", () => ({
       {children}
     </button>
   ),
+  Icons: new Proxy(
+    {},
+    {
+      get: (_t, prop) => () => <span data-testid={`icon-${String(prop)}`} />,
+    },
+  ),
 }));
 
 vi.mock("../../components/LoadingState/LoadingState", () => ({
@@ -144,9 +150,12 @@ describe("ChatListPage New Chat button", () => {
     useBreadcrumbsMock.mockReset();
   });
 
-  it("publishes a single-segment Chats breadcrumb on mount", () => {
+  it("publishes a Workspace / Chats breadcrumb on mount", () => {
     render(<ChatListPage />);
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith([], "Chats");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Workspace", to: "/" }],
+      "Chats",
+    );
     cleanup();
   });
 
@@ -154,7 +163,7 @@ describe("ChatListPage New Chat button", () => {
     mockCreateConversation.mockResolvedValue({ conversation_id: "c-new123" });
     render(<ChatListPage />);
 
-    const button = screen.getByRole("button", { name: "New Chat" });
+    const button = screen.getByRole("button", { name: /new chat/i });
     fireEvent.click(button);
 
     expect(mockCreateConversation).toHaveBeenCalledTimes(1);
@@ -176,20 +185,18 @@ describe("ChatListPage New Chat button", () => {
     mutationState.isPending = true;
     render(<ChatListPage />);
 
-    const button = screen.getByRole("button", { name: "Creating…" });
+    const button = screen.getByRole("button", { name: /creating/i });
     expect(button).toBeDefined();
     expect((button as HTMLButtonElement).disabled).toBe(true);
 
     cleanup();
   });
 
-  it("renders an error state when the create mutation has an error", () => {
+  it("renders an error banner when the create mutation has an error", () => {
     mutationState.error = new Error("network down");
     render(<ChatListPage />);
 
-    expect(screen.getByTestId("error-state").textContent).toContain(
-      "network down",
-    );
+    expect(screen.getByText(/network down/)).toBeDefined();
 
     cleanup();
   });

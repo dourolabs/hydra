@@ -1,38 +1,73 @@
-.inputBar {
+.composer {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--color-border);
+  flex-direction: column;
+  padding: 14px 28px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
   flex-shrink: 0;
 }
 
+.inner {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .textarea {
-  flex: 1;
-  resize: none;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: var(--space-2) var(--space-3);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  line-height: 1.4;
-  min-height: 36px;
-  max-height: 120px;
-  overflow-y: auto;
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+  max-height: 240px;
+  background: var(--bg-input);
+  color: var(--fg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  transition: border-color var(--tx-fast);
 }
 
 .textarea::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--fg-3);
+}
+
+.textarea:hover {
+  border-color: var(--line-strong);
 }
 
 .textarea:focus {
   outline: none;
-  border-color: var(--color-accent);
+  border-color: var(--acc);
 }
 
 .textarea:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actionsSpacer {
+  flex: 1;
+}
+
+.hint {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+}
+
+@media (max-width: 768px) {
+  .composer {
+    padding: 12px 16px 14px;
+  }
 }

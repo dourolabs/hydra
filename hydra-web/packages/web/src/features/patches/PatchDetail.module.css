@@ -1,123 +1,292 @@
-.detail { composes: detail from '../detail.module.css'; }
-.header { composes: header from '../detail.module.css'; }
-.meta { composes: meta from '../detail.module.css'; }
-.metaItem { composes: metaItem from '../detail.module.css'; }
-.metaLabel { composes: metaLabel from '../detail.module.css'; }
-.metaValue { composes: metaValue from '../detail.module.css'; }
-.sectionTitle { composes: sectionTitle from '../detail.module.css'; }
-.sectionBody { composes: sectionBody from '../detail.module.css'; }
-.empty { composes: empty from '../detail.module.css'; }
-
-.title {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xl);
-  font-weight: 700;
-  margin: 0;
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-0);
+  overflow: auto;
 }
 
-.metaValueMono {
+.inner {
+  max-width: 1080px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Title block ── */
+.titleRow {
   display: flex;
   align-items: center;
-  gap: 2px;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family-terminal);
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.ghLink {
-  color: var(--color-accent);
-  text-decoration: none;
+.titleId {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
 }
 
-.ghLink:hover {
-  color: var(--color-accent);
-  text-decoration: underline;
-}
-
-.ciState {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.ciFailure {
-  color: var(--color-status-failed);
-  font-size: var(--font-size-xs);
-}
-
-/* Linked issues */
-.issueLink {
-  color: var(--color-accent);
-  text-decoration: none;
-  font-family: var(--font-family-terminal);
-  font-size: var(--font-size-sm);
+.title {
+  font-family: var(--f-sans);
+  font-size: var(--t-2xl);
   font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--fg-0);
+  margin: 0;
+  line-height: 1.2;
 }
 
-.issueLink:hover {
+/* ── Key-vals grid ── */
+.keyvals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px 20px;
+  padding: 14px 16px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.keyval {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.keyvalLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.keyvalValue {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.keyvalValueMono {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.keyvalText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkAcc {
+  color: var(--acc);
+  text-decoration: none;
+}
+
+.linkAcc:hover {
+  color: var(--acc-bright);
   text-decoration: underline;
 }
 
-/* Reviews */
+/* ── Section (Description, etc) ── */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.prose {
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  color: var(--fg-1);
+  line-height: 1.65;
+}
+
+.prose :global(p),
+.prose :global(ul),
+.prose :global(ol),
+.prose :global(pre),
+.prose :global(blockquote) {
+  margin: 0 0 12px;
+}
+
+.prose :global(p:last-child),
+.prose :global(ul:last-child),
+.prose :global(ol:last-child) {
+  margin-bottom: 0;
+}
+
+.prose :global(code) {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--fg-1);
+}
+
+.prose :global(h1),
+.prose :global(h2),
+.prose :global(h3) {
+  font-family: var(--f-sans);
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 18px 0 8px;
+  letter-spacing: -0.01em;
+}
+
+.prose :global(h1) {
+  font-size: var(--t-xl);
+}
+.prose :global(h2) {
+  font-size: var(--t-lg);
+}
+.prose :global(h3) {
+  font-size: var(--t-md);
+}
+
+/* ── Tabs ── */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.tab:hover {
+  color: var(--fg-0);
+}
+
+.tabActive {
+  color: var(--fg-0);
+}
+
+.tabActive::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--acc);
+  border-radius: 1px;
+}
+
+.tabContent {
+  padding-top: 12px;
+}
+
+/* ── Reviews ── */
 .reviewList {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
 }
 
-.reviewItem {
+.review {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 
-.reviewHeader {
+.reviewHead {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .reviewAuthor {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--fg-0);
 }
 
-.reviewTime {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-terminal);
+.reviewWhen {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
   margin-left: auto;
 }
 
 .reviewBody {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  line-height: 1.6;
 }
 
-/* Metadata tab */
-.metadataTab {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-6);
+.reviewEmpty {
+  padding: 60px 20px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  text-align: center;
 }
 
-/* Mobile adjustments */
-@media (max-width: 768px) {
-  .sectionBody {
-    padding: var(--space-3);
-  }
+/* ── CI cell ── */
+.ciFailure {
+  color: var(--s-failed);
+  font-size: var(--t-xs);
+  font-family: var(--f-mono);
+}
 
-  .metaValueMono {
-    word-break: break-all;
+@media (max-width: 900px) {
+  .keyvals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
-  .reviewHeader {
-    flex-wrap: wrap;
+@media (max-width: 600px) {
+  .inner {
+    padding: 16px;
+  }
+  .keyvals {
+    grid-template-columns: 1fr;
   }
 }

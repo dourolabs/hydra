@@ -1,68 +1,171 @@
 .container {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: 24px 28px;
+  min-height: 0;
+}
+
+.thread {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 26px;
 }
 
 .empty {
-  flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  min-height: 200px;
+  height: 100%;
 }
 
 .emptyText {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
   margin: 0;
 }
 
-.messageRow {
+.msgHead {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
-.userBubbleWrapper {
-  align-self: flex-end;
-  max-width: 75%;
+.msgAuthor {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.msgWhen {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  margin-left: auto;
+}
+
+/* ── User messages ── */
+.userRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.userHead {
+  composes: msgHead;
+  max-width: 76%;
+  justify-content: flex-end;
 }
 
 .userBubble {
-  background: color-mix(in srgb, var(--color-text-primary) 12%, var(--color-bg-primary));
-  color: var(--color-text-primary);
-  border-radius: 12px 12px 2px 12px;
-  padding: var(--space-2) var(--space-3);
-}
-
-.assistantContent {
-  width: 100%;
-  max-width: var(--chat-content-max, 880px);
-  margin: 0 auto;
-}
-
-.bubbleContent {
-  font-size: var(--font-size-sm);
+  max-width: 76%;
+  background: var(--acc-soft);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.markdown {
-  font-size: var(--font-size-sm);
+/* ── Agent messages ── */
+.agentRow {
+  display: flex;
+  flex-direction: column;
+}
+
+.agentHead {
+  composes: msgHead;
+}
+
+.agentBody {
+  font-family: var(--f-sans);
+  font-size: var(--t-lg);
+  color: var(--fg-0);
+  line-height: 1.55;
+}
+
+.agentBody :global(p) {
+  margin: 0 0 12px;
+}
+
+.agentBody :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.agentBody :global(ul),
+.agentBody :global(ol) {
+  margin: 0 0 12px 18px;
+  padding: 0;
+}
+
+.agentBody :global(li) {
+  margin-bottom: 4px;
+}
+
+.agentBody :global(strong) {
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.agentBody :global(em) {
+  font-style: italic;
+  color: var(--fg-1);
+}
+
+.agentBody :global(code) {
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--fg-1);
+}
+
+.agentBody :global(pre) {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  overflow: auto;
+  margin: 0 0 12px;
+}
+
+.agentBody :global(pre code) {
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 
 .systemEvent {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: var(--space-2) 0;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
 }
 
 .systemText {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  color: var(--fg-3);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
   font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+  }
+  .userBubble {
+    max-width: 90%;
+  }
 }

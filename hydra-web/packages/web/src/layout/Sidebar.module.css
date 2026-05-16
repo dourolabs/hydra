@@ -1,161 +1,224 @@
 .sidebar {
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  width: var(--sidebar-width);
-  min-height: 100vh;
-  min-height: 100dvh;
-  background: var(--color-bg-secondary);
-  border-right: 1px solid var(--color-border);
-  flex-shrink: 0;
-  /* Top padding reserves room for the AppLayout left chrome (hamburger + Hydra
-   * wordmark) which is absolutely positioned over the sidebar's top-left. */
-  padding: var(--site-header-height) var(--space-2) var(--space-2);
-  gap: var(--space-2);
-  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  width: var(--sidebar-w);
   overflow: hidden;
-  transition:
-    width 175ms ease,
-    padding 175ms ease,
-    border-right-color 175ms ease;
-}
-
-.sidebarHidden {
-  width: 0;
   min-width: 0;
-  padding-left: 0;
-  padding-right: 0;
-  border-right-color: transparent;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .sidebar {
-    transition: none;
-  }
-}
-
-.sections {
+/* ─── Head ─────────────────────────────────────────────────────── */
+.head {
+  height: var(--topbar-h);
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.logoMark {
+  color: var(--acc);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.wordmark {
+  font-family: var(--f-display);
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global([data-wordmark="orbitron"]) .wordmark {
+  font-family: "Orbitron", system-ui;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-size: 14px;
+}
+
+:global([data-wordmark="iceland"]) .wordmark {
+  font-family: "Iceland", system-ui;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  font-size: 18px;
+}
+
+:global([data-wordmark="audiowide"]) .wordmark {
+  font-family: "Audiowide", system-ui;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  font-size: 16px;
+}
+
+:global([data-wordmark="mono"]) .wordmark {
+  font-family: "Major Mono Display", monospace;
+  letter-spacing: 0.18em;
+  font-size: 13px;
+}
+
+:global([data-wordmark="stencil"]) .wordmark {
+  font-family: "Big Shoulders Stencil Display", system-ui;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  font-size: 18px;
+}
+
+/* ─── Search button ────────────────────────────────────────────── */
+.searchButton {
+  margin: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  font-family: var(--f-sans);
+  text-align: left;
+  cursor: pointer;
+  width: calc(100% - 24px);
+  transition: border-color var(--tx-fast), background var(--tx-fast);
+}
+
+.searchButton:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+
+.searchPlaceholder {
+  flex: 1;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
+}
+
+/* ─── Scroll region ────────────────────────────────────────────── */
+.scroll {
   flex: 1;
   overflow-y: auto;
+  padding: 6px 0 12px;
   min-height: 0;
 }
 
 .section {
-  display: flex;
-  flex-direction: column;
+  padding: 6px 12px 4px;
 }
 
-/* Style (A) — Top-level heading. Used by .sectionHeader and .topLevelLink. */
-.sectionHeader {
-  display: inline-flex;
+.section + .section {
+  margin-top: 4px;
+}
+
+.sectionHead {
+  display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-1);
-  width: 100%;
-  border: none;
-  background: none;
+  justify-content: space-between;
+  padding: 6px 4px 4px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.sectionAdd {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  border-radius: 3px;
   cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  border-radius: var(--radius-md);
+  transition: background var(--tx-fast), color var(--tx-fast);
+}
+
+.sectionAdd:hover {
+  background: var(--bg-2);
+  color: var(--acc);
+}
+
+/* ─── Sidebar item ─────────────────────────────────────────────── */
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-size: var(--t-sm);
+  font-family: var(--f-sans);
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  transition: background var(--tx-fast), color var(--tx-fast);
+  border: 0;
+  background: transparent;
+  width: 100%;
   text-align: left;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.sectionHeader:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.topLevelLink {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--color-text-primary);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
   min-width: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
 }
 
-.topLevelLink:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
+.item:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
-.sectionLabel {
-  flex: 0 0 auto;
+.itemActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
 }
 
-.sectionIcon {
-  width: 16px;
-  height: 16px;
+.itemActive::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--acc);
+  border-radius: 0 2px 2px 0;
+}
+
+.itemIcon {
+  color: var(--fg-2);
   flex-shrink: 0;
-  color: currentColor;
+  display: inline-flex;
 }
 
-.chevron {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  opacity: 0;
-  transition:
-    transform var(--transition-fast),
-    opacity var(--transition-fast);
+.itemActive .itemIcon {
+  color: var(--acc);
 }
 
-.sectionHeader:hover .chevron,
-.sectionHeader:focus-visible .chevron {
-  opacity: 1;
-}
-
-.chevronOpen {
-  transform: rotate(90deg);
-}
-
-.sectionBody {
-  display: flex;
-  flex-direction: column;
-  margin-top: var(--space-1);
-  margin-left: var(--space-3);
-  gap: 2px;
-}
-
-/* Style (B) — Nested item. Reference shape for navItem, actionButton, and
-   the doc-tree row classes below. */
-.navItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  min-width: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.navItem:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.navItemLabel {
+.itemLabel {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -163,389 +226,241 @@
   white-space: nowrap;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.itemMeta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
   flex-shrink: 0;
-  font-size: var(--font-size-xxs);
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-status-blocked);
-  background: var(--color-status-blocked-bg);
-  border-radius: 999px;
-  padding: 1px 6px;
-  min-width: 18px;
 }
 
-.labelSwatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+/* ─── Chat row (with status dot + time) ───────────────────────── */
+.chatRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-size: var(--t-sm);
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
+  transition: background var(--tx-fast), color var(--tx-fast);
+  min-width: 0;
+}
+
+.chatRow:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.chatRowActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+
+.chatRowActive::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--acc);
+  border-radius: 0 2px 2px 0;
+}
+
+.chatDot {
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
+  background: var(--s-neutral);
   flex-shrink: 0;
 }
 
-.actionButton {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--color-text-secondary);
-  text-align: left;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  min-width: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
+.chatDotOpen { background: var(--s-open); }
+.chatDotInProgress {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
 }
+.chatDotClosed { background: var(--s-closed); }
 
-/* Style (C) — See All. Matches (B) on font-family/size/weight, dimmer color. */
-.seeAllLink {
-  display: block;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.seeAllLink:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-}
-
-.actionButton:hover:not(:disabled) {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.actionButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.docTree {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.treeFolder {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  width: 100%;
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 2px var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  text-align: left;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.treeFolder:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.treeFolderName {
+.chatTitle {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.treeChevron {
-  width: 10px;
-  height: 10px;
+.chatTime {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
   flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  transition: transform var(--transition-fast);
 }
 
-.treeChevronOpen {
-  transform: rotate(90deg);
-}
-
-.treeLeaf {
-  display: block;
-  padding: 2px var(--space-2);
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.treeLeaf:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.treeLeafPlaceholder {
-  padding: 2px var(--space-2);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.treeHybrid {
+/* ─── Active session row ──────────────────────────────────────── */
+.sessionRow {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 0;
-}
-
-.treeHybridChevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: none;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-size: var(--t-sm);
+  text-decoration: none;
   cursor: pointer;
-  padding: 2px;
-  color: var(--color-text-secondary);
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.treeHybridChevron:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.treeHybridLink {
-  flex: 1;
-  display: block;
-  padding: 2px var(--space-2);
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.treeHybridLink:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-.treeHybridPlaceholder {
-  flex: 1;
-  padding: 2px var(--space-2);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  position: relative;
+  transition: background var(--tx-fast), color var(--tx-fast);
   min-width: 0;
 }
 
-.navItemActive {
-  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
-  color: var(--color-accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 15%, transparent);
+.sessionRow:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
-.bottom {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
+.sessionRowActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
 }
 
-.connectionIndicator {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+.sessionRowActive::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--acc);
+  border-radius: 0 2px 2px 0;
 }
 
-.connectionLabel {
-  flex: 1;
-}
-
-.connectionDot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+.sessionDot {
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: var(--color-text-tertiary);
+  background: var(--s-progress);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
   flex-shrink: 0;
-  transition: background var(--transition-normal);
 }
 
-.connectionDot.connected {
-  background: var(--color-accent);
+.sessionTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.connectionDot.connecting {
-  background: var(--color-status-in-progress);
-  animation: pulse 1.5s ease-in-out infinite;
+.sessionWhen {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  flex-shrink: 0;
 }
 
-.connectionDot.disconnected {
-  background: var(--color-status-failed);
+.sectionEmpty {
+  padding: 4px 8px;
+  color: var(--fg-3);
+  font-size: var(--t-sm);
+  font-style: italic;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+/* ─── Foot (user card) ─────────────────────────────────────────── */
+.foot {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  flex-shrink: 0;
 }
 
-.userSection {
+.userCard {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
+  gap: 10px;
+}
+
+.userInfo {
+  flex: 1;
+  min-width: 0;
 }
 
 .userName {
-  flex: 1;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userMeta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .logoutButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  color: var(--color-text-tertiary);
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  border-radius: var(--radius-md);
-  padding: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
+  transition: background var(--tx-fast), color var(--tx-fast);
 }
 
 .logoutButton:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-status-failed);
+  background: var(--bg-2);
+  color: var(--s-failed);
 }
 
-.logoutIcon {
-  width: 16px;
-  height: 16px;
+.connectionStrip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
 }
 
-.version {
-  text-align: center;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+.connectionDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-3);
+  flex-shrink: 0;
+  transition: background var(--tx-norm);
 }
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  z-index: 20;
-  animation: backdropFadeIn 175ms ease;
+.connectionDot[data-state="connected"] {
+  background: var(--acc);
 }
 
-@keyframes backdropFadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+.connectionDot[data-state="connecting"] {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .backdrop {
-    animation: none;
-  }
+.connectionDot[data-state="disconnected"] {
+  background: var(--s-failed);
 }
 
+/* ─── Mobile ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(80vw, 320px);
-    min-height: 100vh;
-    min-height: 100dvh;
-    border-right: none;
-    border-left: 1px solid var(--color-border);
-    /* No top chrome on mobile; drop the extra padding-top from desktop. */
-    padding: var(--space-2);
-    transform: translateX(0);
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
-    z-index: 30;
-    transition:
-      transform 175ms ease,
-      border-left-color 175ms ease,
-      box-shadow 175ms ease;
-  }
-
-  .sidebarHidden {
-    width: min(80vw, 320px);
-    padding: var(--space-2);
-    transform: translateX(100%);
-    border-left-color: transparent;
-    box-shadow: none;
-  }
-
-  .sections {
-    overflow-y: auto;
+    width: 100%;
   }
 }

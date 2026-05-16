@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@hydra/ui";
 import type { DocumentVersionRecord } from "@hydra/api";
@@ -13,20 +13,16 @@ import styles from "./DocumentDetailPage.module.css";
 
 export function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
-  const [searchParams] = useSearchParams();
-  const fromDashboard = searchParams.get("from") === "dashboard";
-  const filterParam = searchParams.get("filter");
   const { data: record, isLoading, error } = useDocument(documentId ?? "");
 
   const displayTitle = record
     ? (record.document.title || record.document.path || record.document_id)
     : `Document ${documentId}`;
 
-  const dashboardReturnUrl = filterParam ? `/?selected=${filterParam}` : "/";
-
-  const breadcrumbItems: BreadcrumbItem[] = fromDashboard
-    ? [{ label: "Dashboard", to: dashboardReturnUrl }]
-    : [{ label: "Documents", to: "/documents" }];
+  const breadcrumbItems: BreadcrumbItem[] = [
+    { label: "Workspace", to: "/" },
+    { label: "Documents", to: "/documents" },
+  ];
 
   useBreadcrumbs(breadcrumbItems, displayTitle);
 
@@ -116,19 +112,21 @@ function DocumentDetail({ record }: DocumentDetailProps) {
   );
 
   return (
-    <div className={styles.detail}>
-      <div className={styles.header}>
+    <div className={styles.inner}>
+      <div className={styles.titleRow}>
         <h1 className={styles.title}>{displayTitle}</h1>
-        {!editing && (
-          <Button variant="secondary" size="sm" onClick={handleEdit}>
-            Edit
-          </Button>
-        )}
+        <div className={styles.actions}>
+          {!editing && (
+            <Button variant="secondary" size="sm" onClick={handleEdit}>
+              Edit
+            </Button>
+          )}
+        </div>
       </div>
 
-      <div className={styles.meta}>
+      <div className={styles.metaRow}>
         {record.document.path && (
-          <div className={styles.metaItem}>
+          <span className={styles.metaItem}>
             <span className={styles.metaLabel}>Path</span>
             <span className={styles.metaValue}>
               {record.document.path}
@@ -137,14 +135,12 @@ function DocumentDetail({ record }: DocumentDetailProps) {
                 onCopied={() => addToast("Copied!", "success")}
               />
             </span>
-          </div>
-        )}
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            {formatRelativeTime(record.timestamp)}
           </span>
-        </div>
+        )}
+        <span className={styles.metaItem}>
+          <span className={styles.metaLabel}>Updated</span>
+          <span className={styles.metaValue}>{formatRelativeTime(record.timestamp)}</span>
+        </span>
       </div>
 
       {editing ? (
@@ -163,7 +159,7 @@ function DocumentDetail({ record }: DocumentDetailProps) {
               onClick={handleSave}
               disabled={mutation.isPending}
             >
-              {mutation.isPending ? "Saving..." : "Save"}
+              {mutation.isPending ? "Saving…" : "Save"}
             </Button>
             <Button
               variant="secondary"
@@ -174,13 +170,12 @@ function DocumentDetail({ record }: DocumentDetailProps) {
               Cancel
             </Button>
             <span className={styles.hint}>
-              {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to
-              save
+              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save
             </span>
           </div>
         </div>
       ) : (
-        <div className={styles.content}>
+        <div className={styles.prose}>
           <MarkdownViewer content={record.document.body_markdown} />
         </div>
       )}

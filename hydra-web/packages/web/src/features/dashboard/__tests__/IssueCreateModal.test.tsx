@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -9,67 +10,34 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
-interface SelectOption {
-  value: string;
-  label: string;
-}
-
 vi.mock("@hydra/ui", () => ({
-  Modal: ({
-    open,
-    title,
-    onClose,
+  Avatar: ({ name }: { name: string }) => (
+    <span data-testid={`avatar-${name}`}>{name}</span>
+  ),
+  Button: ({
     children,
+    onClick,
+    disabled,
   }: {
-    open: boolean;
-    title?: string;
-    onClose: () => void;
     children: ReactNode;
-  }) =>
-    open ? (
-      <div role="dialog" aria-label={title}>
-        <button aria-label="Close" onClick={onClose}>
-          Close
-        </button>
-        {children}
-      </div>
-    ) : null,
-  Button: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
-    <button onClick={onClick}>{children}</button>
-  ),
-  Input: ({ label, value, onChange }: { label?: string; value: string; onChange: (e: { target: { value: string } }) => void }) => (
-    <label>
-      {label}
-      <input value={value} onChange={onChange} />
-    </label>
-  ),
-  Textarea: ({ label, value, onChange }: { label?: string; value: string; onChange: (e: { target: { value: string } }) => void }) => (
-    <label>
-      {label}
-      <textarea value={value} onChange={onChange} />
-    </label>
-  ),
-  Select: ({
-    label,
-    options,
-    value,
-    onChange,
-  }: {
-    label?: string;
-    options: SelectOption[];
-    value: string;
-    onChange: (e: { target: { value: string } }) => void;
+    onClick?: () => void;
+    disabled?: boolean;
+    variant?: string;
+    size?: string;
   }) => (
-    <label>
-      {label}
-      <select value={value} onChange={onChange}>
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
+  ),
+  Kbd: ({ children }: { children: ReactNode }) => <kbd>{children}</kbd>,
+  TypeChip: ({ type }: { type: string }) => (
+    <span data-testid={`type-chip-${type}`}>{type}</span>
+  ),
+  Icons: new Proxy(
+    {},
+    {
+      get: (_t, prop) => () => <span data-testid={`icon-${String(prop)}`} />,
+    },
   ),
 }));
 
@@ -97,12 +65,20 @@ vi.mock("../IssueCreateModal.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
-vi.mock("../../../components/LargeModal.module.css", () => ({
-  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
-}));
-
 // --- Import after mocks ---
 const { IssueCreateModal } = await import("../IssueCreateModal");
+
+const TITLE_PLACEHOLDER = "Issue title…";
+const DESC_PLACEHOLDER = /describe the issue/i;
+
+function openAssigneePicker() {
+  // The Assignee pill is the only one with this label.
+  const label = screen.getByText("Assignee");
+  // Pill is the sibling button beneath the label inside the picker wrapper.
+  const wrapper = label.parentElement!;
+  const button = wrapper.querySelector("button")!;
+  fireEvent.click(button);
+}
 
 describe("IssueCreateModal", () => {
   beforeEach(() => {
@@ -113,54 +89,49 @@ describe("IssueCreateModal", () => {
     cleanup();
   });
 
-  it("includes provided agent names in the Assignee dropdown after expanding More options", () => {
+  it("includes provided agent names in the Assignee picker", () => {
     render(
-      <IssueCreateModal
-        open
-        onClose={() => {}}
-        assignees={["pm", "reviewer", "swe"]}
-      />,
+      <IssueCreateModal open onClose={() => {}} assignees={["pm", "reviewer", "swe"]} />,
     );
 
-    // Expand "More options" to reveal the Assignee select
-    fireEvent.click(screen.getByText("More options"));
+    openAssigneePicker();
 
-    const select = screen.getByLabelText("Assignee") as HTMLSelectElement;
-    const optionValues = Array.from(select.options).map((o) => o.value);
-    const optionLabels = Array.from(select.options).map((o) => o.textContent);
-
-    expect(optionValues).toEqual(["", "pm", "reviewer", "swe"]);
-    expect(optionLabels).toEqual(["Unassigned", "pm", "reviewer", "swe"]);
+    // "Unassigned" appears twice: once in the pill, once in the popover.
+    // Avatars are mocked with a data-testid keyed off the name.
+    expect(screen.getAllByText("Unassigned").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("avatar-pm")).toBeDefined();
+    expect(screen.getByTestId("avatar-reviewer")).toBeDefined();
+    expect(screen.getByTestId("avatar-swe")).toBeDefined();
   });
 
   it("renders only Unassigned when assignees is empty", () => {
     render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
 
-    fireEvent.click(screen.getByText("More options"));
+    openAssigneePicker();
 
-    const select = screen.getByLabelText("Assignee") as HTMLSelectElement;
-    const optionLabels = Array.from(select.options).map((o) => o.textContent);
-    expect(optionLabels).toEqual(["Unassigned"]);
+    // No avatars rendered for an empty assignee list — just Unassigned rows
+    // (one in the pill, one in the popover).
+    expect(screen.getAllByText("Unassigned").length).toBeGreaterThan(0);
+    expect(screen.queryAllByTestId(/^avatar-/)).toHaveLength(0);
   });
 
-  it("preserves drafts when the modal is dismissed (Modal onClose)", () => {
+  it("preserves drafts when the modal is dismissed via the close button", () => {
     const onClose = vi.fn();
     const { unmount } = render(
       <IssueCreateModal open onClose={onClose} assignees={[]} />,
     );
 
-    fireEvent.change(screen.getByLabelText("Title"), {
+    fireEvent.change(screen.getByPlaceholderText(TITLE_PLACEHOLDER), {
       target: { value: "Draft title" },
     });
-    fireEvent.change(screen.getByLabelText("Description"), {
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
       target: { value: "Draft description" },
     });
 
-    // Dismiss via the Modal's Close affordance (Escape / backdrop / header ✕).
+    // ✕ close in the header — preserves drafts.
     fireEvent.click(screen.getByLabelText("Close"));
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    // sessionStorage retains the drafts.
     expect(sessionStorage.getItem("hydra:draft:issue-create-modal:title")).toBe(
       JSON.stringify("Draft title"),
     );
@@ -168,14 +139,13 @@ describe("IssueCreateModal", () => {
       sessionStorage.getItem("hydra:draft:issue-create-modal:description"),
     ).toBe(JSON.stringify("Draft description"));
 
-    // Remount and verify the drafts are restored into the inputs.
     unmount();
     render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
-    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
-      "Draft title",
-    );
     expect(
-      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
+      (screen.getByPlaceholderText(TITLE_PLACEHOLDER) as HTMLInputElement).value,
+    ).toBe("Draft title");
+    expect(
+      (screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value,
     ).toBe("Draft description");
   });
 
@@ -185,28 +155,28 @@ describe("IssueCreateModal", () => {
       <IssueCreateModal open onClose={onClose} assignees={[]} />,
     );
 
-    fireEvent.change(screen.getByLabelText("Title"), {
+    fireEvent.change(screen.getByPlaceholderText(TITLE_PLACEHOLDER), {
       target: { value: "Draft title" },
     });
-    fireEvent.change(screen.getByLabelText("Description"), {
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
       target: { value: "Draft description" },
     });
 
     fireEvent.click(screen.getByText("Cancel"));
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    expect(sessionStorage.getItem("hydra:draft:issue-create-modal:title")).toBe(
-      null,
-    );
+    expect(sessionStorage.getItem("hydra:draft:issue-create-modal:title")).toBe(null);
     expect(
       sessionStorage.getItem("hydra:draft:issue-create-modal:description"),
     ).toBe(null);
 
     unmount();
     render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
-    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("");
     expect(
-      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
+      (screen.getByPlaceholderText(TITLE_PLACEHOLDER) as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value,
     ).toBe("");
   });
 });

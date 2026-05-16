@@ -1,112 +1,159 @@
-.siteHeader {
+.topbar {
+  height: var(--topbar-h);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  height: var(--site-header-height);
-  background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+  gap: 14px;
+  padding: 0 16px 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-0);
   box-sizing: border-box;
-  transition: padding-left 175ms ease;
 }
 
-/* When the sidebar is hidden (desktop), reserve padding-left equal to the
- * sidebar width so breadcrumbs do not shift under the left chrome. */
-.siteHeaderReservedChrome {
-  padding-left: calc(var(--sidebar-width) + var(--space-3));
+.hamburger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--tx-fast), color var(--tx-fast);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .siteHeader {
-    transition: none;
-  }
+.hamburger:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
-.breadcrumbsSlot {
+.breadcrumbs {
   flex: 1;
   min-width: 0;
   overflow: hidden;
 }
 
-.iconSlot {
-  position: relative;
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clusterStatus {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  color: var(--color-text-tertiary);
+  gap: 6px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  padding: 4px 9px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  cursor: pointer;
-  padding: 0;
-  text-decoration: none;
+  white-space: nowrap;
   flex-shrink: 0;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
   transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
 }
 
-.iconSlot:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
+.clusterStatus:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+  border-color: var(--line-strong);
 }
 
-.iconSlot svg {
-  width: 18px;
-  height: 18px;
+.clusterDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--acc);
+  box-shadow: 0 0 0 3px var(--acc-soft);
+  animation: hydra-pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
-.sessionsPill {
+.clusterDot[data-empty="true"] {
+  background: var(--fg-3);
+  box-shadow: none;
+  animation: none;
+}
+
+.searchButton {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  border-radius: 999px;
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 400;
-  line-height: 1;
-  text-decoration: none;
-  flex-shrink: 0;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
+  gap: 7px;
+  height: 24px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: background var(--tx-fast), color var(--tx-fast);
 }
 
-.sessionsPill:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
+.searchButton:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
-.sessionsDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--color-text-tertiary);
-  flex-shrink: 0;
+.newIssueButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--acc);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-md);
+  color: var(--acc-fg-on);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--tx-fast), border-color var(--tx-fast);
 }
 
-.sessionsDotActive {
-  background: var(--color-status-in-progress);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+.newIssueButton:hover {
+  background: var(--acc-bright);
+  border-color: var(--acc-bright);
 }
 
 @media (max-width: 768px) {
-  .hamburgerSlot {
-    order: 999;
+  .hamburger {
+    order: -1;
   }
+
+  .searchButton {
+    padding: 0;
+    width: 28px;
+    justify-content: center;
+  }
+
+  .searchButton kbd {
+    display: none;
+  }
+
+  .newIssueButton {
+    padding: 0;
+    width: 28px;
+    justify-content: center;
+  }
+
+  .newIssueButton .label {
+    display: none;
+  }
+}
+
+.label {
+  white-space: nowrap;
 }

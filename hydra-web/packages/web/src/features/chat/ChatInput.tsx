@@ -1,5 +1,5 @@
 import { useState, useCallback, type KeyboardEvent } from "react";
-import { Button } from "@hydra/ui";
+import { Button, Kbd } from "@hydra/ui";
 import styles from "./ChatInput.module.css";
 
 interface ChatInputProps {
@@ -28,7 +28,9 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Match the issue-create modal: ⌘/Ctrl+Enter submits, plain Enter is a
+      // newline (textarea default).
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }
@@ -36,35 +38,46 @@ export function ChatInput({
     [handleSend],
   );
 
+  const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
+
   return (
-    <div className={styles.inputBar}>
-      <textarea
-        className={styles.textarea}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Type a message..."
-        disabled={isDisabled}
-        rows={1}
-      />
-      <Button
-        variant="primary"
-        size="sm"
-        onClick={handleSend}
-        disabled={isDisabled || !value.trim()}
-      >
-        Send
-      </Button>
-      {onEndChat && (
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={onEndChat}
-          disabled={endChatDisabled}
-        >
-          End Chat
-        </Button>
-      )}
+    <div className={styles.composer}>
+      <div className={styles.inner}>
+        <textarea
+          className={styles.textarea}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a message…"
+          disabled={isDisabled}
+          rows={3}
+        />
+        <div className={styles.actions}>
+          <span className={styles.hint}>
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>↵</Kbd> to send · <Kbd>↵</Kbd> for newline
+          </span>
+          <span className={styles.actionsSpacer} />
+          {onEndChat && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onEndChat}
+              disabled={endChatDisabled}
+            >
+              End chat
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleSend}
+            disabled={isDisabled || !value.trim()}
+          >
+            Send
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,0 +1,244 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+/* ─── Page head ─── */
+.pageHead {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.headLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pageTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  margin: 0;
+}
+
+.headSpacer {
+  flex: 1;
+}
+
+/* ─── Toolbar ─── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-0);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.chipFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: var(--t-sm);
+  font-family: var(--f-sans);
+  color: var(--fg-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--tx-fast), color var(--tx-fast), border-color var(--tx-fast);
+}
+
+.chipFilter:hover {
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+.chipFilterActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+.toolbarSpacer {
+  flex: 1;
+}
+
+/* ─── Body ─── */
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+/* ─── Table ─── */
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-0);
+  z-index: 1;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  padding: 9px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--line);
+  transition: background var(--tx-fast);
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-1);
+}
+
+.table tbody td {
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.colAgent {
+  width: 180px;
+}
+
+.colLinked {
+  width: auto;
+  max-width: 0;
+}
+
+.colStatus {
+  width: 130px;
+}
+
+.colStarted {
+  width: 80px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.colDuration {
+  width: 90px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.agentName {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--acc);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.linkedCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.linkedText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.linkedIssueLink {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--c-violet);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.linkedIssueLink:hover {
+  text-decoration: underline;
+}
+
+.dash {
+  color: var(--fg-3);
+}
+
+@media (max-width: 768px) {
+  .colAgent,
+  .colStarted {
+    display: none;
+  }
+}

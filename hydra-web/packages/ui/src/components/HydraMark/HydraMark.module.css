@@ -1,0 +1,5 @@
+.mark {
+  display: inline-block;
+  color: var(--acc);
+  flex-shrink: 0;
+}

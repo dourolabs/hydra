@@ -1,0 +1,145 @@
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-0);
+  z-index: 1;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  padding: 9px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--line);
+  transition: background var(--tx-fast);
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-1);
+}
+
+.table tbody tr[data-selected="true"] {
+  background: var(--bg-2);
+}
+
+.table tbody td {
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.colTitle {
+  width: auto;
+  max-width: 0;
+}
+
+.titleCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.titleText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.colStatus {
+  width: 110px;
+}
+
+.colType {
+  width: 84px;
+}
+
+.colAssignee {
+  width: 116px;
+}
+
+.colUpdated {
+  width: 64px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.colProgress {
+  width: 76px;
+}
+
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  min-width: 0;
+}
+
+.assigneeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dash {
+  color: var(--fg-3);
+}
+
+.progress {
+  width: 64px;
+  height: 4px;
+  background: var(--bg-2);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--acc);
+  border-radius: 4px;
+  transition: width var(--tx-norm);
+}
+
+@media (max-width: 768px) {
+  .colType,
+  .colAssignee,
+  .colUpdated,
+  .colProgress {
+    display: none;
+  }
+}

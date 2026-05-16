@@ -116,6 +116,7 @@ vi.mock("@hydra/ui", () => ({
   ),
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
+  Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
 }));
 
 // CSS Module proxies
@@ -131,6 +132,7 @@ vi.mock("../../features/issues/IssueSettings.module.css", () => ({ default: cssP
 
 vi.mock("../../utils/time", () => ({
   formatTimestamp: (s: string) => s,
+  formatRelativeTime: (s: string) => s,
 }));
 
 vi.mock("../../layout/useBreadcrumbs", () => ({
@@ -167,11 +169,11 @@ describe("ChatPage 2-pane layout", () => {
     mockError = null;
   });
 
-  it("renders Related and Metadata tabs in the right panel", () => {
+  it("renders Related and Settings tabs in the right panel", () => {
     render(<ChatPage />);
 
     expect(screen.getByRole("tab", { name: "Related" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "Metadata" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Settings" })).toBeDefined();
 
     cleanup();
   });
@@ -180,24 +182,24 @@ describe("ChatPage 2-pane layout", () => {
     render(<ChatPage />);
 
     // Chat input is visible by default (Related tab is active).
-    expect(screen.getByPlaceholderText("Type a message...")).toBeDefined();
+    expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
 
-    // Switch to Metadata.
-    fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
+    // Switch to Settings.
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
 
     // Chat input is still visible.
-    expect(screen.getByPlaceholderText("Type a message...")).toBeDefined();
+    expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
 
     cleanup();
   });
 
-  it("reveals Conversation ID when switching to the Metadata tab", () => {
+  it("reveals Conversation ID when switching to the Settings tab", () => {
     render(<ChatPage />);
 
-    // Metadata content is not visible on the Related tab.
+    // Settings content is not visible on the Related tab.
     expect(screen.queryByText("c-test123")).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
 
     expect(screen.getByText("Conversation ID")).toBeDefined();
     expect(screen.getByText("c-test123")).toBeDefined();

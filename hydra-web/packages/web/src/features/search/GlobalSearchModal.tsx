@@ -9,6 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { Icons, Kbd } from "@hydra/ui";
 import { useGlobalSearch } from "./useGlobalSearch";
 import {
   conversationToItem,
@@ -40,6 +41,14 @@ const GROUP_HEADINGS: Record<SearchItemKind, string> = {
   session: "Sessions",
 };
 
+const ROW_ICONS: Record<SearchItemKind, React.ComponentType<{ size?: number }>> = {
+  issue: Icons.IconIssue,
+  patch: Icons.IconPatch,
+  document: Icons.IconDoc,
+  conversation: Icons.IconChat,
+  session: Icons.IconSpark,
+};
+
 const DEBOUNCE_MS = 200;
 
 export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
@@ -61,7 +70,6 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    // Focus the input after the modal renders.
     const t = window.setTimeout(() => {
       inputRef.current?.focus();
     }, 0);
@@ -83,7 +91,6 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
     return () => window.clearTimeout(t);
   }, [rawQuery, open]);
 
-  // Escape closes the modal regardless of focus.
   useEffect(() => {
     if (!open) return;
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -134,7 +141,6 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
     [groups],
   );
 
-  // Reset selection when the query or result set changes.
   useEffect(() => {
     setSelectedIndex(0);
   }, [debouncedQuery, flatItems.length]);
@@ -187,8 +193,7 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
   if (!open) return null;
 
   const hasQuery = debouncedQuery.length > 0;
-  const noResults =
-    hasQuery && !results.isLoading && flatItems.length === 0;
+  const noResults = hasQuery && !results.isLoading && flatItems.length === 0;
 
   let flatCursor = 0;
 
@@ -206,23 +211,14 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
         data-testid="global-search-modal"
       >
         <div className={styles.inputRow}>
-          <svg
-            className={styles.inputIcon}
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <path
-              fillRule="evenodd"
-              d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-              clipRule="evenodd"
-            />
-          </svg>
+          <span className={styles.inputIcon}>
+            <Icons.IconSearch size={16} />
+          </span>
           <input
             ref={inputRef}
             type="text"
             className={styles.input}
-            placeholder="Search issues, patches, documents, chats, sessions…"
+            placeholder="Search issues, patches, docs…"
             value={rawQuery}
             onChange={handleInputChange}
             onKeyDown={handleInputKeyDown}
@@ -242,55 +238,77 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
           role="listbox"
         >
           {!hasQuery && (
-            <div
-              className={styles.hint}
-              data-testid="global-search-empty-hint"
-            >
+            <div className={styles.hint} data-testid="global-search-empty-hint">
               Type to search…
             </div>
           )}
 
           {noResults && (
-            <div
-              className={styles.hint}
-              data-testid="global-search-no-results"
-            >
+            <div className={styles.hint} data-testid="global-search-no-results">
               No results
             </div>
           )}
 
           {hasQuery &&
-            groups.map((group) => (
-              <div
-                key={group.kind}
-                className={styles.group}
-                data-testid={`global-search-group-${group.kind}`}
-              >
-                <div className={styles.groupHeading}>{group.heading}</div>
-                <ul className={styles.list}>
-                  {group.items.map((item) => {
-                    const index = flatCursor++;
-                    const selected = index === selectedIndex;
-                    return (
-                      <li key={`${item.kind}-${item.id}`}>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          className={`${styles.row}${selected ? ` ${styles.rowSelected}` : ""}`}
-                          onClick={() => goTo(item)}
-                          onMouseEnter={() => setSelectedIndex(index)}
-                          data-testid={`global-search-row-${item.kind}-${item.id}`}
-                          title={item.label}
-                        >
-                          <span className={styles.rowLabel}>{item.label}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
+            groups.map((group) => {
+              const Icon = ROW_ICONS[group.kind];
+              return (
+                <div
+                  key={group.kind}
+                  className={styles.group}
+                  data-testid={`global-search-group-${group.kind}`}
+                >
+                  <div className={styles.groupHeading}>
+                    <span>{group.heading}</span>
+                    <span className={styles.groupCount}>{group.items.length}</span>
+                  </div>
+                  <ul className={styles.list}>
+                    {group.items.map((item) => {
+                      const index = flatCursor++;
+                      const selected = index === selectedIndex;
+                      return (
+                        <li key={`${item.kind}-${item.id}`}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={`${styles.row}${selected ? ` ${styles.rowSelected}` : ""}`}
+                            onClick={() => goTo(item)}
+                            onMouseEnter={() => setSelectedIndex(index)}
+                            data-testid={`global-search-row-${item.kind}-${item.id}`}
+                            title={item.label}
+                          >
+                            <span className={styles.rowIcon}>
+                              <Icon size={14} />
+                            </span>
+                            <span className={styles.rowLabel}>{item.label}</span>
+                            {item.meta && (
+                              <span className={styles.rowMeta}>{item.meta}</span>
+                            )}
+                            <span className={styles.rowGo} aria-hidden="true">
+                              <Icons.IconChevronRight size={12} />
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
+        </div>
+
+        <div className={styles.footer}>
+          <span className={styles.footerItem}>
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> navigate
+          </span>
+          <span className={styles.footerItem}>
+            <Kbd>↵</Kbd> open
+          </span>
+          <span className={styles.footerItem}>
+            <Kbd>esc</Kbd> close
+          </span>
         </div>
       </div>
     </div>

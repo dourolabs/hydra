@@ -1,55 +1,61 @@
 .wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .label {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
 }
 
 .input {
-  padding: var(--space-2) var(--space-3);
-  background-color: var(--color-bg-input);
-  border: 1px solid var(--color-border);
+  height: 28px;
+  padding: 0 9px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-md);
-  font-family: var(--font-family-terminal);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
   transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    border-color var(--tx-fast),
+    box-shadow var(--tx-fast);
 }
 
 .input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--fg-3);
+}
+
+.input:hover {
+  border-color: var(--line-strong);
 }
 
 .input:focus {
   outline: none;
-  border-color: var(--color-border-focus);
-  box-shadow:
-    0 0 0 3px var(--color-focus-ring),
-    0 0 8px color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-color: var(--acc);
 }
 
 .input.error {
-  border-color: var(--color-status-failed);
+  border-color: var(--s-failed);
 }
 
 .input.error:focus {
-  box-shadow: 0 0 0 2px var(--color-focus-ring-error);
+  border-color: var(--s-failed);
 }
 
 .errorText {
-  font-size: var(--font-size-xs);
-  color: var(--color-status-failed);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--s-failed);
 }
 
-/* Prevent iOS Safari auto-zoom on input focus */
 @media (max-width: 768px) {
   .input {
     font-size: 16px;
+    height: 32px;
   }
 }

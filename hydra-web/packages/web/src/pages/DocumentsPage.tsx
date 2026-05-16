@@ -1,17 +1,22 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Spinner } from "@hydra/ui";
-import type { ListDocumentPathsResponse, ListDocumentsResponse, PathChildEntry } from "@hydra/api";
+import { Button, Icons, Spinner } from "@hydra/ui";
+import type {
+  DocumentSummaryRecord,
+  ListDocumentPathsResponse,
+  ListDocumentsResponse,
+  PathChildEntry,
+} from "@hydra/api";
 import { apiClient } from "../api/client";
-import { LoadingState } from "../components/LoadingState/LoadingState";
-import { ErrorState } from "../components/ErrorState/ErrorState";
-import { EmptyState } from "../components/EmptyState/EmptyState";
-import { FolderIcon } from "../components/icons/FolderIcon";
-import { DocumentRow } from "../features/documents/DocumentRow";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
+import { getDocumentDisplayTitle } from "../features/documents/utils";
+import { formatRelativeTime } from "../utils/time";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentsPage.module.css";
+
+const ROOT_PATH = "/";
 
 function useDocumentPaths(prefix: string | null, enabled: boolean) {
   return useQuery<ListDocumentPathsResponse, Error>({
@@ -29,7 +34,7 @@ function useDocumentsAtPath(path: string, enabled: boolean) {
   });
 }
 
-function useUncategorizedDocuments() {
+function useUncategorizedDocuments(enabled: boolean) {
   return useQuery<ListDocumentsResponse, Error>({
     queryKey: ["uncategorizedDocuments"],
     queryFn: () => apiClient.listDocuments({ limit: 200 }),
@@ -37,196 +42,332 @@ function useUncategorizedDocuments() {
       ...data,
       documents: data.documents.filter((d) => !d.document.path && !d.document.deleted),
     }),
+    enabled,
   });
 }
 
-interface LeafNodeProps {
-  entry: PathChildEntry;
-  depth: number;
+/** Whether an entry represents a folder (has children) — possibly also a doc. */
+function isFolderEntry(entry: PathChildEntry): boolean {
+  if (!entry.is_document) return true;
+  return Number(entry.child_count) > 1;
 }
 
-interface FolderNodeProps {
+interface TreeBranchProps {
   entry: PathChildEntry;
   depth: number;
+  activePath: string;
+  onSelect: (path: string) => void;
   expandedPaths: Set<string>;
-  onToggle: (path: string) => void;
+  onToggleExpand: (path: string) => void;
 }
 
-function DocumentLeafNode({ entry, depth }: LeafNodeProps) {
-  const { data: docs, isLoading } = useDocumentsAtPath(entry.full_path, true);
-
-  if (isLoading) {
-    return (
-      <li className={styles.loadingRow}>
-        <div style={{ paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))` }}>
-          <Spinner size="sm" />
-        </div>
-      </li>
-    );
-  }
-
-  const doc = docs?.documents.find((d) => !d.document.deleted);
-  if (!doc) return null;
-
-  return <DocumentRow key={doc.document_id} doc={doc} depth={depth} />;
-}
-
-function FolderNode({ entry, depth, expandedPaths, onToggle }: FolderNodeProps) {
-  const isDocOnly = entry.is_document && Number(entry.child_count) === 1;
-  const isDocAndFolder = entry.is_document && Number(entry.child_count) > 1;
-
-  // If entry is purely a document (not also a folder prefix), render directly
-  if (isDocOnly) {
-    return <DocumentLeafNode entry={entry} depth={depth} />;
-  }
-
-  return (
-    <ExpandableFolderNode
-      entry={entry}
-      depth={depth}
-      expandedPaths={expandedPaths}
-      onToggle={onToggle}
-      isDocAndFolder={isDocAndFolder}
-    />
-  );
-}
-
-function ExpandableFolderNode({
+function TreeBranch({
   entry,
   depth,
+  activePath,
+  onSelect,
   expandedPaths,
-  onToggle,
-  isDocAndFolder,
-}: FolderNodeProps & { isDocAndFolder: boolean }) {
+  onToggleExpand,
+}: TreeBranchProps) {
   const expanded = expandedPaths.has(entry.full_path);
+  const isActive = activePath === entry.full_path;
 
-  const { data: childPaths, isLoading: loadingPaths } = useDocumentPaths(entry.full_path, expanded);
+  const { data: childPaths, isLoading } = useDocumentPaths(entry.full_path, expanded);
 
-  const hasChildren = childPaths && childPaths.children.length > 0;
-  const isLeaf = childPaths && childPaths.children.length === 0;
-
-  const { data: leafDocs, isLoading: loadingDocs } = useDocumentsAtPath(
-    entry.full_path,
-    expanded && isLeaf === true,
+  const folderChildren = useMemo(
+    () => (childPaths?.children ?? []).filter(isFolderEntry),
+    [childPaths],
   );
 
-  // For entries that are both a document and a folder prefix, fetch the doc
-  const { data: inlineDocs } = useDocumentsAtPath(entry.full_path, isDocAndFolder);
-  const inlineDoc = inlineDocs?.documents.find((d) => !d.document.deleted);
+  const handleChevron = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onToggleExpand(entry.full_path);
+    },
+    [entry.full_path, onToggleExpand],
+  );
 
-  const toggle = useCallback(() => onToggle(entry.full_path), [onToggle, entry.full_path]);
+  const handleSelect = useCallback(() => {
+    onSelect(entry.full_path);
+    if (!expanded) onToggleExpand(entry.full_path);
+  }, [entry.full_path, onSelect, expanded, onToggleExpand]);
 
   return (
-    <>
-      {isDocAndFolder && inlineDoc && (
-        <DocumentRow key={inlineDoc.document_id} doc={inlineDoc} depth={depth} />
-      )}
-      <li>
+    <li>
+      <div
+        className={`${styles.folderRow}${isActive ? ` ${styles.folderRowActive}` : ""}`}
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        onClick={handleSelect}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleSelect();
+          }
+        }}
+        role="treeitem"
+        aria-expanded={expanded}
+        aria-selected={isActive}
+        tabIndex={0}
+      >
         <button
-          className={styles.folderRow}
-          style={{
-            paddingLeft: `calc(${depth} * var(--space-6) + var(--space-3))`,
-          }}
-          onClick={toggle}
-          aria-expanded={expanded}
+          type="button"
+          className={`${styles.chevron}${expanded ? ` ${styles.chevronOpen}` : ""}`}
+          onClick={handleChevron}
+          aria-label={expanded ? "Collapse" : "Expand"}
+          tabIndex={-1}
         >
-          <span className={styles.chevron}>{expanded ? "\u25BC" : "\u25B6"}</span>
-          <FolderIcon className={styles.folderIcon} />
-          <span className={styles.folderName}>{entry.name}</span>
-          <span className={styles.childCount}>{Number(entry.child_count)}</span>
+          <Icons.IconChevronRight size={12} />
         </button>
-      </li>
+        <span className={styles.folderIcon}>
+          <Icons.IconFolder size={14} />
+        </span>
+        <span className={styles.folderName}>{entry.name}</span>
+        <span className={styles.fileCount}>{Number(entry.child_count)}</span>
+      </div>
       {expanded && (
-        <>
-          {(loadingPaths || loadingDocs) && (
+        <ul className={styles.treeRoot}>
+          {isLoading && (
             <li className={styles.loadingRow}>
               <Spinner size="sm" />
             </li>
           )}
-          {hasChildren &&
-            childPaths.children.map((child) => (
-              <FolderNode
-                key={child.full_path}
-                entry={child}
-                depth={depth + 1}
-                expandedPaths={expandedPaths}
-                onToggle={onToggle}
-              />
-            ))}
-          {isLeaf &&
-            leafDocs?.documents
-              .filter((d) => !d.document.deleted)
-              .map((doc) => <DocumentRow key={doc.document_id} doc={doc} depth={depth + 1} />)}
-        </>
+          {folderChildren.map((child) => (
+            <TreeBranch
+              key={child.full_path}
+              entry={child}
+              depth={depth + 1}
+              activePath={activePath}
+              onSelect={onSelect}
+              expandedPaths={expandedPaths}
+              onToggleExpand={onToggleExpand}
+            />
+          ))}
+        </ul>
       )}
-    </>
+    </li>
+  );
+}
+
+interface BreadcrumbItem {
+  name: string;
+  path: string;
+}
+
+function pathBreadcrumbs(activePath: string): BreadcrumbItem[] {
+  const out: BreadcrumbItem[] = [{ name: "root", path: ROOT_PATH }];
+  if (activePath === ROOT_PATH) return out;
+  const segs = activePath.split("/").filter(Boolean);
+  let cur = "";
+  for (const s of segs) {
+    cur += "/" + s;
+    out.push({ name: s, path: cur });
+  }
+  return out;
+}
+
+interface ReaderPaneProps {
+  activePath: string;
+  onSelectFolder: (path: string) => void;
+}
+
+function ReaderPane({ activePath, onSelectFolder }: ReaderPaneProps) {
+  const isRoot = activePath === ROOT_PATH;
+  const prefix = isRoot ? null : activePath;
+
+  const { data: childPaths } = useDocumentPaths(prefix, true);
+  const { data: docsAtPath, isLoading: docsLoading } = useDocumentsAtPath(
+    activePath,
+    !isRoot,
+  );
+  const { data: rootDocs, isLoading: rootDocsLoading } = useUncategorizedDocuments(isRoot);
+
+  const subfolders = useMemo(
+    () => (childPaths?.children ?? []).filter(isFolderEntry),
+    [childPaths],
+  );
+
+  const docs: DocumentSummaryRecord[] = useMemo(() => {
+    if (isRoot) {
+      return (rootDocs?.documents ?? []).filter((d) => !d.document.deleted);
+    }
+    return (docsAtPath?.documents ?? []).filter((d) => !d.document.deleted);
+  }, [isRoot, docsAtPath, rootDocs]);
+
+  const breadcrumbs = pathBreadcrumbs(activePath);
+  const isLoading = isRoot ? rootDocsLoading : docsLoading;
+  const totalFolders = subfolders.length;
+  const totalFiles = docs.length;
+
+  return (
+    <div className={styles.pane}>
+      <div className={styles.breadcrumb}>
+        {breadcrumbs.map((b, i) => {
+          const isLast = i === breadcrumbs.length - 1;
+          return (
+            <span key={b.path}>
+              {i > 0 && <span className={styles.crumbSep}>/</span>}
+              <span
+                className={isLast ? styles.crumbCurrent : styles.crumb}
+                onClick={isLast ? undefined : () => onSelectFolder(b.path)}
+              >
+                {b.name}
+              </span>
+            </span>
+          );
+        })}
+        <span className={styles.crumbSpacer} />
+        <span className={styles.crumbMeta}>
+          {totalFiles} {totalFiles === 1 ? "file" : "files"} · {totalFolders}{" "}
+          {totalFolders === 1 ? "folder" : "folders"}
+        </span>
+      </div>
+
+      <div className={styles.paneBody}>
+        {isLoading && totalFiles === 0 && totalFolders === 0 && (
+          <div className={styles.center}>
+            <Spinner size="md" />
+          </div>
+        )}
+
+        {!isLoading && totalFiles === 0 && totalFolders === 0 && (
+          <div className={styles.empty}>This folder is empty.</div>
+        )}
+
+        {subfolders.map((f) => (
+          <div
+            key={f.full_path}
+            className={styles.docRow}
+            onClick={() => onSelectFolder(f.full_path)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelectFolder(f.full_path);
+              }
+            }}
+          >
+            <span className={styles.docRowIcon}>
+              <Icons.IconFolder size={14} />
+            </span>
+            <span className={styles.docRowTitle}>{f.name}</span>
+            <span className={styles.docRowMeta}>
+              {Number(f.child_count)} {Number(f.child_count) === 1 ? "file" : "files"}
+            </span>
+          </div>
+        ))}
+
+        {docs.map((doc) => (
+          <Link
+            key={doc.document_id}
+            to={`/documents/${doc.document_id}`}
+            className={styles.docRow}
+          >
+            <span className={styles.docRowIcon}>
+              <Icons.IconDoc size={14} />
+            </span>
+            <span className={styles.docRowTitle}>{getDocumentDisplayTitle(doc)}</span>
+            <span className={styles.docRowDate}>{formatRelativeTime(doc.timestamp)}</span>
+          </Link>
+        ))}
+      </div>
+    </div>
   );
 }
 
 export function DocumentsPage() {
-  useBreadcrumbs([], "Documents");
+  useBreadcrumbs([{ label: "Workspace", to: "/" }], "Documents");
   const [createOpen, setCreateOpen] = useState(false);
+  const [activePath, setActivePath] = useState<string>(ROOT_PATH);
 
-  const { data: topLevel, isLoading, error, refetch } = useDocumentPaths(null, true);
+  const { data: topLevel, isLoading, error } = useDocumentPaths(null, true);
+  const { data: uncategorized } = useUncategorizedDocuments(true);
 
-  const { data: uncategorized, isLoading: loadingUncategorized } = useUncategorizedDocuments();
+  const topLevelFolders = useMemo(
+    () => (topLevel?.children ?? []).filter(isFolderEntry),
+    [topLevel],
+  );
 
   const topLevelPaths = useMemo(
-    () => (topLevel?.children ?? []).map((c) => c.full_path),
-    [topLevel],
+    () => topLevelFolders.map((c) => c.full_path),
+    [topLevelFolders],
   );
 
   const { expandedPaths, onToggle } = useDocumentTreeExpandState(topLevelPaths);
 
-  const hasTopLevel = topLevel && topLevel.children.length > 0;
-  const hasUncategorized = uncategorized && uncategorized.documents.length > 0;
-  const isEmpty = !isLoading && !loadingUncategorized && !hasTopLevel && !hasUncategorized;
+  const totalDocs =
+    (topLevel?.children.length ?? 0) + (uncategorized?.documents.length ?? 0);
+  const totalLabel = totalDocs === 1 ? "1 DOC" : `${totalDocs} DOCS`;
 
   return (
     <div className={styles.page}>
-      <div className={styles.panelHeaderRow}>
-        <h2 className={styles.sectionTitle}>Documents</h2>
+      <div className={styles.pageHead}>
+        <div className={styles.headLeft}>
+          <span className={styles.eyebrow}>KNOWLEDGE · {totalLabel}</span>
+          <h1 className={styles.pageTitle}>Documents</h1>
+        </div>
+        <span className={styles.headSpacer} />
         <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          New Document
+          <Icons.IconPlus />
+          New document
         </Button>
       </div>
 
-      {isLoading && <LoadingState />}
-
       {error && (
-        <ErrorState
-          message={`Failed to load documents: ${error.message}`}
-          onRetry={() => refetch()}
-        />
+        <div className={styles.errorBanner}>
+          Failed to load documents: {error.message}
+        </div>
       )}
 
-      {isEmpty && <EmptyState message="No documents found." />}
-
-      {hasTopLevel && (
-        <section className={styles.section}>
-          <ul className={styles.treeRoot}>
-            {topLevel.children.map((entry) => (
-              <FolderNode
-                key={entry.full_path}
-                entry={entry}
-                depth={0}
-                expandedPaths={expandedPaths}
-                onToggle={onToggle}
-              />
-            ))}
-          </ul>
-        </section>
+      {isLoading && !topLevel && (
+        <div className={styles.center}>
+          <Spinner size="md" />
+        </div>
       )}
 
-      {hasUncategorized && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Uncategorized</h2>
-          <ul className={styles.docList}>
-            {uncategorized.documents.map((doc) => (
-              <DocumentRow key={doc.document_id} doc={doc} />
-            ))}
-          </ul>
-        </section>
+      {topLevel && (
+        <div className={styles.treeLayout}>
+          <aside className={styles.tree} aria-label="Document tree">
+            <ul className={styles.treeRoot} role="tree">
+              <li>
+                <div
+                  className={`${styles.folderRow}${activePath === ROOT_PATH ? ` ${styles.folderRowActive}` : ""}`}
+                  style={{ paddingLeft: "8px" }}
+                  onClick={() => setActivePath(ROOT_PATH)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActivePath(ROOT_PATH);
+                    }
+                  }}
+                  role="treeitem"
+                  aria-selected={activePath === ROOT_PATH}
+                  tabIndex={0}
+                >
+                  <span className={styles.chevronPlaceholder} />
+                  <span className={styles.folderIcon}>
+                    <Icons.IconFolder size={14} />
+                  </span>
+                  <span className={styles.folderName}>root</span>
+                  <span className={styles.fileCount}>{totalDocs}</span>
+                </div>
+              </li>
+              {topLevelFolders.map((entry) => (
+                <TreeBranch
+                  key={entry.full_path}
+                  entry={entry}
+                  depth={1}
+                  activePath={activePath}
+                  onSelect={setActivePath}
+                  expandedPaths={expandedPaths}
+                  onToggleExpand={onToggle}
+                />
+              ))}
+            </ul>
+          </aside>
+
+          <ReaderPane activePath={activePath} onSelectFolder={setActivePath} />
+        </div>
       )}
 
       <DocumentCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />

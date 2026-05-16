@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
-import { Tooltip } from "@hydra/ui";
+import { Icons, Kbd, Tooltip } from "@hydra/ui";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
@@ -15,47 +16,15 @@ interface SiteHeaderProps {
   onOpenSearch: () => void;
 }
 
-function HamburgerIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-      <path
-        fillRule="evenodd"
-        d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-      <path
-        fillRule="evenodd"
-        d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-export function SiteHeader({
-  hidden,
-  onHide,
-  onShow,
-  onOpenSearch,
-}: SiteHeaderProps) {
-  const { items, current } = useBreadcrumbsState();
+export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderProps) {
+  const { items, current, currentKind } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  const { open: openIssueCreate } = useIssueCreateModal();
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
-  // Desktop hamburger lives in the AppLayout left chrome (always visible);
-  // SiteHeader only renders its own hamburger on mobile.
-  const showHamburger = isMobile;
+
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
-  // On desktop, when the sidebar collapses to width 0, reserve padding-left so
-  // breadcrumbs do not shift under the chrome.
-  const reserveChrome = !isMobile && hidden;
+
   const sessionsLabel =
     activeSessionCount === 0
       ? "no sessions"
@@ -65,62 +34,64 @@ export function SiteHeader({
   const sessionsActive = activeSessionCount > 0;
 
   return (
-    <header
-      className={`${styles.siteHeader}${reserveChrome ? ` ${styles.siteHeaderReservedChrome}` : ""}`}
-      data-testid="site-header"
-    >
-      {showHamburger && (
-        <Tooltip
-          content={toggleLabel}
-          // On mobile the hamburger reorders to the right edge (`order: 999`),
-          // so a right-anchored tooltip would overflow the viewport. Anchor
-          // left in that case; on desktop (hidden=true), the hamburger sits at
-          // the left edge and a right-anchored tooltip remains in-bounds.
-          position={isMobile ? "left" : "right"}
-          className={styles.hamburgerSlot}
-        >
-          <button
-            type="button"
-            className={styles.iconSlot}
-            onClick={onToggleSidebar}
-            aria-label={toggleLabel}
-            data-testid="site-header-toggle-sidebar"
-          >
-            <HamburgerIcon />
-          </button>
-        </Tooltip>
-      )}
-
-      <div className={styles.breadcrumbsSlot} data-testid="site-header-breadcrumbs">
-        {current !== null && <Breadcrumbs items={items} current={current} />}
-      </div>
-
-      <Tooltip content="Search" position="bottom">
+    <header className={styles.topbar} data-testid="site-header">
+      <Tooltip content={toggleLabel} position={isMobile ? "left" : "right"}>
         <button
           type="button"
-          className={styles.iconSlot}
+          className={styles.hamburger}
+          onClick={onToggleSidebar}
+          aria-label={toggleLabel}
+          data-testid="site-header-toggle-sidebar"
+        >
+          <Icons.IconMenu />
+        </button>
+      </Tooltip>
+
+      <div className={styles.breadcrumbs} data-testid="site-header-breadcrumbs">
+        {current !== null && (
+          <Breadcrumbs items={items} current={current} currentKind={currentKind} />
+        )}
+      </div>
+
+      <div className={styles.right}>
+        <Link
+          to="/sessions"
+          className={styles.clusterStatus}
+          aria-label="Active sessions"
+          data-testid="site-header-sessions"
+        >
+          <span
+            className={styles.clusterDot}
+            data-empty={sessionsActive ? undefined : "true"}
+            data-testid="site-header-sessions-dot"
+            data-active={sessionsActive ? "true" : "false"}
+            aria-hidden="true"
+          />
+          <span data-testid="site-header-sessions-label">{sessionsLabel}</span>
+        </Link>
+
+        <button
+          type="button"
+          className={styles.searchButton}
           onClick={onOpenSearch}
           aria-label="Search"
           data-testid="site-header-search"
         >
-          <SearchIcon />
+          <Icons.IconSearch />
+          <Kbd>⌘K</Kbd>
         </button>
-      </Tooltip>
 
-      <Link
-        to="/sessions"
-        className={styles.sessionsPill}
-        aria-label="Active sessions"
-        data-testid="site-header-sessions"
-      >
-        <span
-          className={`${styles.sessionsDot} ${sessionsActive ? styles.sessionsDotActive : ""}`}
-          data-testid="site-header-sessions-dot"
-          data-active={sessionsActive ? "true" : "false"}
-          aria-hidden="true"
-        />
-        <span data-testid="site-header-sessions-label">{sessionsLabel}</span>
-      </Link>
+        <button
+          type="button"
+          className={styles.newIssueButton}
+          onClick={openIssueCreate}
+          aria-label="New issue"
+          data-testid="site-header-new-issue"
+        >
+          <Icons.IconPlus />
+          <span className={styles.label}>New issue</span>
+        </button>
+      </div>
     </header>
   );
 }

@@ -58,6 +58,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   Badge: ({ status }: { status: string }) => (
     <span data-testid="badge">{status}</span>
   ),
@@ -176,7 +177,7 @@ afterEach(() => {
 });
 
 describe("SessionLogPage", () => {
-  it("publishes Dashboard / Issue breadcrumbs when issueId is in URL", () => {
+  it("publishes Workspace / Issues / issue-id breadcrumbs when issueId is in URL", () => {
     params.issueId = "i-1";
     params.sessionId = "t-1";
     sessionState.data = makeRecord("t-1");
@@ -185,22 +186,28 @@ describe("SessionLogPage", () => {
 
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [
-        { label: "Dashboard", to: "/" },
-        { label: "Issue i-1", to: "/issues/i-1" },
+        { label: "Workspace", to: "/" },
+        { label: "Issues", to: "/" },
+        { label: "i-1", to: "/issues/i-1", kind: "code" },
       ],
-      "Session t-1",
+      "t-1",
+      "code",
     );
   });
 
-  it("publishes a Sessions breadcrumb when issueId is absent", () => {
+  it("publishes Workspace / Sessions breadcrumbs when issueId is absent", () => {
     params.sessionId = "t-orphan";
     sessionState.data = makeRecord("t-orphan");
 
     render(<SessionLogPage />);
 
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
-      [{ label: "Sessions", to: "/sessions" }],
-      "Session t-orphan",
+      [
+        { label: "Workspace", to: "/" },
+        { label: "Sessions", to: "/sessions" },
+      ],
+      "t-orphan",
+      "code",
     );
   });
 

@@ -1,0 +1,46 @@
+.typeChip {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--line);
+  color: var(--fg-1);
+  background: var(--bg-1);
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.typeChip[data-type="task"] {
+  color: oklch(0.78 0.10 240);
+  border-color: oklch(0.78 0.10 240 / 0.3);
+}
+
+.typeChip[data-type="bug"] {
+  color: oklch(0.72 0.16 28);
+  border-color: oklch(0.72 0.16 28 / 0.3);
+}
+
+.typeChip[data-type="feature"] {
+  color: var(--acc);
+  border-color: color-mix(in srgb, var(--acc) 30%, transparent);
+}
+
+.typeChip[data-type="chore"] {
+  color: var(--fg-2);
+}
+
+.typeChip[data-type="merge-request"] {
+  color: oklch(0.74 0.16 300);
+  border-color: oklch(0.74 0.16 300 / 0.3);
+}
+
+.typeChip[data-type="review-request"] {
+  color: oklch(0.82 0.13 90);
+  border-color: oklch(0.82 0.13 90 / 0.3);
+}

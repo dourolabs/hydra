@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { Panel, Tabs } from "@hydra/ui";
 import type { Conversation } from "@hydra/api";
 import { ChatMetadataTab } from "./ChatMetadataTab";
 import { ChatRelatedTab } from "./ChatRelatedTab";
 import styles from "./ChatRightPanel.module.css";
 
-const TABS = [
-  { id: "related", label: "Related" },
-  { id: "metadata", label: "Metadata" },
+type TabKey = "related" | "settings";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "related", label: "Related" },
+  { key: "settings", label: "Settings" },
 ];
 
 interface ChatRightPanelProps {
@@ -15,22 +16,31 @@ interface ChatRightPanelProps {
 }
 
 export function ChatRightPanel({ conversation }: ChatRightPanelProps) {
-  const [activeTab, setActiveTab] = useState("related");
+  const [activeTab, setActiveTab] = useState<TabKey>("related");
 
   return (
-    <div className={styles.wrapper}>
-      <Panel
-        className={styles.panel}
-        fillHeight
-        header={
-          <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
-        }
-      >
+    <aside className={styles.wrapper}>
+      <div className={styles.tabs} role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
+            aria-selected={activeTab === t.key}
+            onClick={() => setActiveTab(t.key)}
+            data-testid={`chat-rail-tab-${t.key}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.body}>
         {activeTab === "related" && (
           <ChatRelatedTab conversationId={conversation.conversation_id} />
         )}
-        {activeTab === "metadata" && <ChatMetadataTab conversation={conversation} />}
-      </Panel>
-    </div>
+        {activeTab === "settings" && <ChatMetadataTab conversation={conversation} />}
+      </div>
+    </aside>
   );
 }

@@ -8,8 +8,9 @@ function readHidden(): boolean {
     const stored = window.localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY);
     if (stored === "1") return true;
     if (stored === "0") return false;
-    // No stored preference: default to hidden on mobile, visible on desktop.
-    return window.matchMedia?.("(max-width: 768px)").matches ?? false;
+    // Default visible on every breakpoint. The mobile drawer CSS starts the
+    // sidebar off-screen anyway; we don't need React state to track that.
+    return false;
   } catch {
     return false;
   }
@@ -18,10 +19,7 @@ function readHidden(): boolean {
 function writeHidden(hidden: boolean): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      SIDEBAR_HIDDEN_STORAGE_KEY,
-      hidden ? "1" : "0",
-    );
+    window.localStorage.setItem(SIDEBAR_HIDDEN_STORAGE_KEY, hidden ? "1" : "0");
   } catch {
     /* localStorage unavailable; ignore */
   }

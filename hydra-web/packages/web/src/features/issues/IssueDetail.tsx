@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs } from "@hydra/ui";
+import { Badge, Button, Icons, MarkdownViewer, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
-import { apiClient } from "../../api/client";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
@@ -13,29 +11,47 @@ import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
 import { SessionList } from "../sessions/SessionList";
 import { PatchList } from "../patches/PatchList";
-import { PatchPreview } from "./PatchPreview";
-import { DocumentPreview } from "./DocumentPreview";
-import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
-import { FormPanel } from "./FormPanel";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
 import styles from "./IssueDetail.module.css";
 
-function BlockingIssueLink({ issueId }: { issueId: string }) {
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (sec < 60) return "now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mo = Math.floor(day / 30);
+  return `${mo}mo ago`;
+}
+
+function BlockedItemLink({ issueId }: { issueId: string }) {
   const { data: record } = useIssue(issueId);
+  const title = record?.issue.title || issueId;
   return (
-    <span className={styles.blockingIssue}>
-      <Link to={`/issues/${issueId}`} className={styles.blockingIssueLink}>
-        {issueId}
+    <span className={styles.blockedItem}>
+      {record && <Badge status={normalizeIssueStatus(record.issue.status)} />}
+      <Link to={`/issues/${issueId}`} className={styles.blockedLink}>
+        {title}
       </Link>
-      {record && (
-        <>
-          <Badge status={normalizeIssueStatus(record.issue.status)} />
-          <span className={styles.blockingIssueStatus}>({record.issue.status})</span>
-        </>
-      )}
     </span>
+  );
+}
+
+function DepRow({ issueId }: { issueId: string }) {
+  const { data: record } = useIssue(issueId);
+  const title = record?.issue.title || issueId;
+  return (
+    <Link to={`/issues/${issueId}`} className={styles.depRow} title={title}>
+      {record && <Badge status={normalizeIssueStatus(record.issue.status)} />}
+      <span className={styles.depRowTitle}>{title}</span>
+    </Link>
   );
 }
 
@@ -43,21 +59,24 @@ interface IssueDetailProps {
   record: IssueVersionRecord;
 }
 
-const TABS = [
-  { id: "related", label: "Related Issues" },
-  { id: "sessions", label: "Sessions" },
-  { id: "patches", label: "Patches" },
-  { id: "activity", label: "Activity" },
-  { id: "metadata", label: "Metadata" },
+type TabKey = "sessions" | "patches" | "activity" | "sub-issues";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "sessions", label: "Sessions" },
+  { key: "patches", label: "Patches" },
+  { key: "activity", label: "Activity" },
+  { key: "sub-issues", label: "Sub-issues" },
 ];
 
 export function IssueDetail({ record }: IssueDetailProps) {
-  const [activeTab, setActiveTab] = useState("related");
+  const { issue } = record;
+  const issueId = record.issue_id;
+
+  const [activeTab, setActiveTab] = useState<TabKey>("sessions");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
-  const { issue } = record;
 
-  const { data: sessions } = useSessionsByIssue(record.issue_id);
+  const { data: sessions } = useSessionsByIssue(issueId);
   const { durationText, isRunning } = useSessionDuration(sessions);
 
   const blockedOnIds = useMemo(
@@ -68,206 +87,234 @@ export function IssueDetail({ record }: IssueDetailProps) {
     [issue.dependencies],
   );
 
-  const { data: documentRelations } = useQuery({
-    queryKey: ["relations", "has-document", record.issue_id],
-    queryFn: () =>
-      apiClient.listRelations({
-        source_id: record.issue_id,
-        rel_type: "has-document",
-      }),
-    staleTime: 30_000,
-    select: (data) => data.relations,
-  });
-
-  const documentIds = useMemo(
-    () => documentRelations?.map((rel) => rel.target_id) ?? [],
-    [documentRelations],
+  const parentIds = useMemo(
+    () =>
+      issue.dependencies
+        .filter((d) => d.type === "child-of")
+        .map((d) => d.issue_id),
+    [issue.dependencies],
   );
+
+  const status = normalizeIssueStatus(issue.status);
+  const settings = issue.session_settings;
 
   return (
     <div className={styles.detail}>
-      {/* Header: Title + Status */}
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <h1 className={styles.issueTitle}>
-            {issue.title || record.issue_id}
-          </h1>
-        </div>
-        <div className={styles.headerActions}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setFeedbackModalOpen(true)}
-          >
-            Give Feedback
-          </Button>
-          <button
-            type="button"
-            className={styles.statusChip}
-            data-testid="status-chip"
-            onClick={() => setUpdateModalOpen(true)}
-          >
-            <Badge status={normalizeIssueStatus(issue.status)} />
-            <span className={styles.statusChipIcon}>
-              <svg viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-            </span>
-          </button>
-          {isRunning && (
-            <span className={styles.sessionTimer}>{durationText}</span>
+      {/* ── Left column ── */}
+      <div className={styles.main}>
+        <div className={styles.mainInner}>
+          <div className={styles.titleRow}>
+            <span className={styles.titleId}>{issueId}</span>
+            <Badge status={status} />
+            {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
+            <div className={styles.headActions}>
+              {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}
+              <Button variant="secondary" size="sm" onClick={() => setFeedbackModalOpen(true)}>
+                Give feedback
+              </Button>
+            </div>
+          </div>
+
+          <h1 className={styles.title}>{issue.title || issueId}</h1>
+
+          <div className={styles.metaRow}>
+            {issue.creator && (
+              <>
+                <span>opened by {issue.creator}</span>
+                <span className={styles.metaSep}>·</span>
+              </>
+            )}
+            <span>{relativeTime(record.creation_time)}</span>
+            {settings?.repo_name && (
+              <>
+                <span className={styles.metaSep}>·</span>
+                <span>{settings.repo_name}</span>
+              </>
+            )}
+            {settings?.branch && (
+              <>
+                <span className={styles.metaSep}>/</span>
+                <span>{settings.branch}</span>
+              </>
+            )}
+          </div>
+
+          {blockedOnIds.length > 0 && (
+            <div className={styles.blockedBanner}>
+              <span className={styles.blockedLabel}>Blocked on</span>
+              {blockedOnIds.map((id) => (
+                <BlockedItemLink key={id} issueId={id} />
+              ))}
+            </div>
           )}
+
+          <div className={styles.description}>
+            {issue.description ? (
+              <MarkdownViewer content={issue.description} />
+            ) : (
+              <p className={styles.descriptionEmpty}>No description.</p>
+            )}
+          </div>
+
+          {issue.progress && (
+            <div className={styles.section}>
+              <span className={styles.sectionLabel}>Progress</span>
+              <div className={styles.sectionBody}>
+                <MarkdownViewer content={issue.progress} />
+              </div>
+            </div>
+          )}
+
+          {issue.feedback && (
+            <div className={styles.section}>
+              <span className={styles.sectionLabel}>Feedback</span>
+              <div className={styles.sectionBody}>
+                <MarkdownViewer content={issue.feedback} />
+              </div>
+            </div>
+          )}
+
+          <div className={styles.tabs} role="tablist">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
+                aria-selected={activeTab === t.key}
+                onClick={() => setActiveTab(t.key)}
+                data-testid={`issue-tab-${t.key}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.tabContent}>
+            {activeTab === "sessions" && <SessionList issueId={issueId} />}
+            {activeTab === "patches" && (
+              <PatchList patchIds={issue.patches ?? []} issueId={issueId} />
+            )}
+            {activeTab === "activity" && <IssueActivity issueId={issueId} />}
+            {activeTab === "sub-issues" && <IssueRelatedIssues issueId={issueId} />}
+          </div>
         </div>
       </div>
+
+      {/* ── Right rail ── */}
+      <aside className={styles.side}>
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Status</span>
+          <button
+            type="button"
+            className={styles.statusButton}
+            onClick={() => setUpdateModalOpen(true)}
+            data-testid="status-chip"
+          >
+            <Badge status={status} />
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Assignee</span>
+          {issue.assignee ? (
+            <span className={styles.blockValue}>
+              <Icons.IconAgent size={12} />
+              {issue.assignee}
+            </span>
+          ) : (
+            <span className={`${styles.blockValue} ${styles.blockEmpty}`}>Unassigned</span>
+          )}
+        </div>
+
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Type</span>
+          {issue.type && issue.type !== "unknown" ? (
+            <TypeChip type={issue.type} />
+          ) : (
+            <span className={`${styles.blockValue} ${styles.blockEmpty}`}>—</span>
+          )}
+        </div>
+
+        {settings?.repo_name && (
+          <div className={styles.block}>
+            <span className={styles.blockLabel}>Repository</span>
+            <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
+              {settings.repo_name}
+            </span>
+          </div>
+        )}
+
+        {settings?.branch && (
+          <div className={styles.block}>
+            <span className={styles.blockLabel}>Branch</span>
+            <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
+              {settings.branch}
+            </span>
+          </div>
+        )}
+
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Created</span>
+          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
+            {formatTimestamp(record.creation_time)}
+          </span>
+        </div>
+
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Updated</span>
+          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
+            {formatTimestamp(record.timestamp)}
+          </span>
+        </div>
+
+        <div className={styles.block}>
+          <span className={styles.blockLabel}>Labels</span>
+          <IssueLabelEditor issueId={issueId} labels={record.labels ?? []} />
+        </div>
+
+        {blockedOnIds.length > 0 && (
+          <div className={styles.block}>
+            <span className={styles.blockLabel}>Blocked on</span>
+            <div className={styles.depList}>
+              {blockedOnIds.map((id) => (
+                <DepRow key={id} issueId={id} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {parentIds.length > 0 && (
+          <div className={styles.block}>
+            <span className={styles.blockLabel}>Parent</span>
+            <div className={styles.depList}>
+              {parentIds.map((id) => (
+                <DepRow key={id} issueId={id} />
+              ))}
+            </div>
+          </div>
+        )}
+      </aside>
 
       <IssueUpdateModal
         open={updateModalOpen}
         onClose={() => setUpdateModalOpen(false)}
-        issueId={record.issue_id}
+        issueId={issueId}
         issue={issue}
       />
 
       <FeedbackModal
         open={feedbackModalOpen}
         onClose={() => setFeedbackModalOpen(false)}
-        issueId={record.issue_id}
+        issueId={issueId}
       />
-
-      {/* Blocked-by banner */}
-      {blockedOnIds.length > 0 && (
-        <div className={styles.blockedBanner}>
-          <span className={styles.blockedBannerIcon}>⚠</span>
-          <span className={styles.blockedBannerLabel}>Blocked by:</span>
-          {blockedOnIds.map((id, idx) => (
-            <span key={id}>
-              {idx > 0 && <span className={styles.blockedSeparator}>·</span>}
-              <BlockingIssueLink issueId={id} />
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Type + Labels */}
-      <div className={styles.typeAndLabels}>
-        <span className={styles.type}>{issue.type}</span>
-        <IssueLabelEditor
-          issueId={record.issue_id}
-          labels={record.labels ?? []}
-        />
-      </div>
-
-      {/* Description */}
-      <div className={styles.description}>
-        {issue.description ? (
-          <MarkdownViewer content={issue.description} />
-        ) : (
-          <p className={styles.empty}>No description.</p>
-        )}
-      </div>
-
-      {/* Progress */}
-      {issue.progress && (
-        <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
-          <div className={styles.progressBody}>
-            <MarkdownViewer content={issue.progress} />
-          </div>
-        </Panel>
-      )}
-
-      {/* Feedback */}
-      {issue.feedback && (
-        <Panel header={<span className={styles.sectionTitle}>Feedback</span>}>
-          <div className={styles.feedbackBody}>
-            <MarkdownViewer content={issue.feedback} />
-          </div>
-        </Panel>
-      )}
-
-      {/* Patch Preview */}
-      {(issue.patches ?? []).length > 0 && (
-        <PatchPreview
-          patchIds={issue.patches ?? []}
-          issueId={record.issue_id}
-        />
-      )}
-
-      {/* Document Preview */}
-      {documentIds.length > 0 && (
-        <DocumentPreview documentIds={documentIds} />
-      )}
-
-      {/* Form */}
-      {issue.form && (
-        <FormPanel
-          issueId={record.issue_id}
-          form={issue.form}
-          formResponse={issue.form_response}
-        />
-      )}
-
-      {/* Tabbed sections: Related Issues, Sessions, Patches, Activity, Metadata */}
-      <Panel
-        header={
-          <Tabs
-            tabs={TABS}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-          />
-        }
-      >
-        <div className={styles.sectionBody}>
-          {activeTab === "related" && (
-            <IssueRelatedIssues issueId={record.issue_id} />
-          )}
-          {activeTab === "sessions" && <SessionList issueId={record.issue_id} />}
-          {activeTab === "patches" && (
-            <PatchList
-              patchIds={issue.patches ?? []}
-              issueId={record.issue_id}
-            />
-          )}
-          {activeTab === "activity" && (
-            <IssueActivity issueId={record.issue_id} />
-          )}
-          {activeTab === "metadata" && (
-            <div className={styles.metadataTab}>
-              <div className={styles.meta}>
-                {issue.creator && (
-                  <div className={styles.metaItem}>
-                    <span className={styles.metaLabel}>Creator</span>
-                    <span className={styles.metaValue}>
-                      <Avatar name={issue.creator} size="sm" />
-                      {issue.creator}
-                    </span>
-                  </div>
-                )}
-                {issue.assignee && (
-                  <div className={styles.metaItem}>
-                    <span className={styles.metaLabel}>Assignee</span>
-                    <span className={styles.metaValue}>
-                      <Avatar name={issue.assignee} size="sm" />
-                      {issue.assignee}
-                    </span>
-                  </div>
-                )}
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Created</span>
-                  <span className={styles.metaValue}>
-                    {formatTimestamp(record.creation_time)}
-                  </span>
-                </div>
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Updated</span>
-                  <span className={styles.metaValue}>
-                    {formatTimestamp(record.timestamp)}
-                  </span>
-                </div>
-              </div>
-              <IssueSettings jobSettings={issue.session_settings} />
-            </div>
-          )}
-        </div>
-      </Panel>
     </div>
   );
 }

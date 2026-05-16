@@ -89,7 +89,21 @@ vi.mock("../../secrets/SecretsSection.module.css", () => ({
 }));
 
 // --- Import after mocks ---
-const { SecretsSection } = await import("../../secrets/SecretsSection");
+const { SecretsSection: BaseSecretsSection } = await import("../../secrets/SecretsSection");
+
+// Wrapper that gives the section the `adding` state + an "Add Secret" trigger
+// so the existing tests (which click "Add Secret" to open the form) keep
+// working without each one wiring up the prop boilerplate. In production the
+// SecretsPage owns this state and renders the trigger in the page-head.
+function SecretsSection() {
+  const [adding, setAdding] = React.useState(false);
+  return (
+    <>
+      <button onClick={() => setAdding(true)}>Add Secret</button>
+      <BaseSecretsSection adding={adding} onAddingChange={setAdding} />
+    </>
+  );
+}
 
 // --- Tests ---
 
@@ -102,10 +116,8 @@ describe("SecretsSection", () => {
     mutationSuccess = true;
   });
 
-  it("renders section title", () => {
-    render(<SecretsSection />);
-    expect(screen.getByText("Secrets")).toBeDefined();
-  });
+  // Section title moved to the SecretsPage page-head; SecretsSection no
+  // longer renders its own "Secrets" heading.
 
   it("renders known secrets", () => {
     render(<SecretsSection />);

@@ -1,73 +1,178 @@
 .page {
-  composes: page from "./page.module.css";
-}
-
-.headerRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-4);
-}
-
-.title {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0;
-}
-
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
-}
-
-.list > :where(:nth-child(odd)) {
-  background-color: var(--color-bg-secondary);
-}
-
-.row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  text-decoration: none;
-  color: inherit;
-  transition: background 120ms ease;
-}
-
-.row:hover {
-  background: var(--color-bg-hover);
-}
-
-.rowMain {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.rowTitle {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+.pageHead {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.headLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 
-.rowMeta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.metaItem {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+.pageTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  margin: 0;
+}
+
+.headSpacer {
+  flex: 1;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.errorBanner {
+  margin: 16px 24px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--s-failed);
+  background: color-mix(in srgb, var(--s-failed) 8%, transparent);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Table ── */
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-0);
+  z-index: 1;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  padding: 9px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--line);
+  transition: background var(--tx-fast);
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-1);
+}
+
+.table tbody td {
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.colTitle {
+  width: auto;
+  max-width: 0;
+}
+
+.titleCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.titleText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.colStatus {
+  width: 110px;
+}
+
+.colCreator {
+  width: 130px;
+  color: var(--fg-1);
+}
+
+.colMessages {
+  width: 90px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.colUpdated {
+  width: 64px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+@media (max-width: 768px) {
+  .colCreator,
+  .colMessages {
+    display: none;
+  }
 }

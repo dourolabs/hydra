@@ -18,10 +18,28 @@ interface LabelAssociationSeed {
   object_id: string;
 }
 
+// A fixture entity may carry an optional `history` array describing prior
+// versions (oldest first). Each entry is a partial diff merged onto the
+// previous version. The fixture's top-level state (minus `history` and
+// `last_updated_at`) is the latest version.
+interface VersionedFixture<T> {
+  history?: VersionDelta<T>[];
+  last_updated_at?: string;
+}
+
+interface VersionDelta<T> {
+  timestamp: string;
+  patch: Partial<T>;
+}
+
+type IssueFixture = Issue & VersionedFixture<Issue>;
+type SessionFixture = Session & VersionedFixture<Session>;
+type PatchFixture = Patch & VersionedFixture<Patch>;
+
 interface SeedData {
-  issues: Record<string, Issue>;
-  sessions: Record<string, Session>;
-  patches: Record<string, Patch>;
+  issues: Record<string, IssueFixture>;
+  sessions: Record<string, SessionFixture>;
+  patches: Record<string, PatchFixture>;
   documents: Record<string, Document>;
   repositories: Record<string, Repository>;
   agents: Record<string, AgentRecord>;
@@ -39,6 +57,72 @@ function loadFixture(): SeedData {
   return JSON.parse(raw) as SeedData;
 }
 
+function splitVersioned<T>(fixture: T & VersionedFixture<T>): {
+  current: T;
+  history: VersionDelta<T>[];
+  lastUpdatedAt: string | null;
+} {
+  const { history, last_updated_at, ...rest } = fixture as T & {
+    history?: VersionDelta<T>[];
+    last_updated_at?: string;
+  };
+  return {
+    current: rest as T,
+    history: history ?? [],
+    lastUpdatedAt: last_updated_at ?? null,
+  };
+}
+
+function seedVersionedEntity<T extends object>(
+  store: Store,
+  collection: string,
+  id: string,
+  fixture: T & VersionedFixture<T>,
+  finalize: (latest: T) => T,
+): void {
+  const { current, history, lastUpdatedAt } = splitVersioned<T>(fixture);
+
+  if (history.length === 0) {
+    const data = finalize(current);
+    const timestamp = lastUpdatedAt ?? new Date().toISOString();
+    store.seedVersion<T>(collection, id, data, timestamp);
+    return;
+  }
+
+  // Apply forward-chronological partial diffs starting from history[0] (the
+  // creation state). Each subsequent entry is merged onto the running state.
+  let running = { ...history[0].patch } as T;
+  store.seedVersion<T>(collection, id, finalize(running), history[0].timestamp);
+
+  for (let i = 1; i < history.length; i++) {
+    running = { ...running, ...history[i].patch } as T;
+    store.seedVersion<T>(collection, id, finalize(running), history[i].timestamp);
+  }
+
+  // Final version: the fixture's main state. Timestamp defaults to one
+  // minute after the last history entry if not explicitly provided.
+  const lastHistoryTs = history[history.length - 1].timestamp;
+  const finalTimestamp =
+    lastUpdatedAt ?? new Date(new Date(lastHistoryTs).getTime() + 60_000).toISOString();
+  store.seedVersion<T>(collection, id, finalize(current), finalTimestamp);
+}
+
+function normalizeIssue(issue: Issue): Issue {
+  return {
+    ...issue,
+    todo_list: issue.todo_list ?? [],
+    dependencies: issue.dependencies ?? [],
+    patches: issue.patches ?? [],
+  };
+}
+
+function normalizePatch(patch: Patch): Patch {
+  return {
+    ...patch,
+    reviews: patch.reviews ?? [],
+  };
+}
+
 export function loadSeedData(store: Store): void {
   store.clear();
   clearAssociations();
@@ -47,15 +131,15 @@ export function loadSeedData(store: Store): void {
   const seed = loadFixture();
 
   for (const [id, issue] of Object.entries(seed.issues)) {
-    store.create<Issue>("issues", id, issue, "issue");
+    seedVersionedEntity<Issue>(store, "issues", id, issue, normalizeIssue);
   }
 
   for (const [id, task] of Object.entries(seed.sessions)) {
-    store.create<Session>("sessions", id, task, "session");
+    seedVersionedEntity<Session>(store, "sessions", id, task, (s) => s);
   }
 
   for (const [id, patch] of Object.entries(seed.patches)) {
-    store.create<Patch>("patches", id, patch, "patch");
+    seedVersionedEntity<Patch>(store, "patches", id, patch, normalizePatch);
   }
 
   for (const [id, doc] of Object.entries(seed.documents)) {

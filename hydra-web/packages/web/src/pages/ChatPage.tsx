@@ -19,7 +19,10 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const { data: events } = useConversationEvents(conversationId);
 
   useBreadcrumbs(
-    [{ label: "Chats", to: "/chat" }],
+    [
+      { label: "Workspace", to: "/" },
+      { label: "Chats", to: "/chat" },
+    ],
     conversation?.title || conversationId,
   );
 
@@ -118,7 +121,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
     <div className={styles.chatLayout}>
       <div className={styles.chatPane}>
         <ChatHeader conversation={conversation} />
-        <ChatMessageList events={events ?? []} />
+        <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
           onSend={handleSend}
           disabled={sendMutation.isPending}

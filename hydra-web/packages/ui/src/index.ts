@@ -58,6 +58,20 @@ export type { DiffViewerProps } from "./components/DiffViewer";
 export { CopyButton, fallbackCopyText } from "./components/CopyButton";
 export type { CopyButtonProps } from "./components/CopyButton";
 
+export { Chip } from "./components/Chip";
+export type { ChipProps, ChipTone } from "./components/Chip";
+
+export { TypeChip } from "./components/TypeChip";
+export type { TypeChipProps, IssueType } from "./components/TypeChip";
+
+export { Kbd } from "./components/Kbd";
+export type { KbdProps } from "./components/Kbd";
+
+export { HydraMark, HYDRA_VARIANTS } from "./components/HydraMark";
+export type { HydraMarkProps, HydraVariant } from "./components/HydraMark";
+
+export * as Icons from "./components/Icon";
+
 // Hooks
 export { useKeyboardClick } from "./hooks/useKeyboardClick";
 export type { KeyboardClickProps } from "./hooks/useKeyboardClick";
