@@ -163,12 +163,31 @@ async fn handle_relay_socket(
                                 }
                             }
                             Ok(WorkerMessage::SessionStateUpload { data }) => {
-                                if let Err(err) = state
+                                let bytes = data.len();
+                                info!(
+                                    %session_id,
+                                    %conversation_id,
+                                    bytes,
+                                    "received SessionStateUpload — storing"
+                                );
+                                match state
                                     .store
                                     .store_conversation_session_state(&conversation_id, data)
                                     .await
                                 {
-                                    error!(%session_id, error = %err, "failed to store session state");
+                                    Ok(()) => info!(
+                                        %session_id,
+                                        %conversation_id,
+                                        bytes,
+                                        "session_state stored"
+                                    ),
+                                    Err(err) => error!(
+                                        %session_id,
+                                        %conversation_id,
+                                        bytes,
+                                        error = %err,
+                                        "failed to store session state"
+                                    ),
                                 }
                             }
                             Err(err) => {
@@ -273,6 +292,15 @@ async fn build_catch_up(
     } else {
         None
     };
+
+    let session_state_bytes = session_state.as_ref().map(|b| b.len());
+    info!(
+        %conversation_id,
+        events = events.len(),
+        include_session_state,
+        session_state_bytes = ?session_state_bytes,
+        "build_catch_up"
+    );
 
     Ok(WorkerCatchUp {
         events,

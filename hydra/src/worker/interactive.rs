@@ -21,6 +21,7 @@ use tokio::{
     process::Command,
 };
 use tokio_tungstenite::tungstenite;
+use tracing::{error, info, warn};
 
 use crate::claude_formatter::StreamFormatter;
 use crate::client::RelayWebSocket;
@@ -126,14 +127,12 @@ pub async fn run_interactive(
         other => return Err(anyhow!("expected CatchUp message, got {other:?}")),
     };
 
-    println!(
-        "Catch-up received: {} events to replay, session_state {}",
-        catch_up.events.len(),
-        if catch_up.session_state.is_some() {
-            "present"
-        } else {
-            "absent"
-        }
+    let session_state_bytes = catch_up.session_state.as_ref().map(|b| b.len());
+    info!(
+        %session_id,
+        events = catch_up.events.len(),
+        session_state_bytes = ?session_state_bytes,
+        "catch_up_received"
     );
 
     let home_dir = worker_home_dir()?;
@@ -145,14 +144,21 @@ pub async fn run_interactive(
     let resume_session_id: Option<String> = primary_resume.as_ref().map(|p| p.session_id.clone());
 
     match (&primary_resume, &catch_up.session_state) {
-        (Some(p), _) => println!(
-            "Resuming via transcript file: session_id={} bytes={}",
-            p.session_id, p.transcript_bytes
+        (Some(p), _) => info!(
+            %session_id,
+            resume_session_id = %p.session_id,
+            transcript_bytes = p.transcript_bytes,
+            "resume_path=primary_transcript"
         ),
-        (None, Some(_)) => {
-            println!("Session state present but unusable, falling back to primer")
-        }
-        (None, None) => println!("No session state; using primer fallback"),
+        (None, Some(bytes)) => warn!(
+            %session_id,
+            session_state_bytes = bytes.len(),
+            "resume_path=primer_fallback session_state_present_but_unusable"
+        ),
+        (None, None) => info!(
+            %session_id,
+            "resume_path=primer_fallback no_session_state"
+        ),
     }
 
     // Spawn Claude in long-lived interactive mode.
@@ -325,12 +331,22 @@ fn try_primary_resume(
     home_dir: &Path,
     working_dir: &Path,
 ) -> Option<PrimaryResume> {
-    let bytes = catch_up.session_state.as_deref()?;
+    let Some(bytes) = catch_up.session_state.as_deref() else {
+        info!("try_primary_resume session_state=absent");
+        return None;
+    };
+    info!(
+        bytes = bytes.len(),
+        "try_primary_resume session_state=present"
+    );
 
     let payload: SessionStatePayload = match serde_json::from_slice(bytes) {
         Ok(p) => p,
         Err(err) => {
-            eprintln!("Failed to parse SessionStatePayload, falling back to primer: {err}");
+            error!(
+                error = %err,
+                "try_primary_resume parse_failed falling_back_to_primer"
+            );
             return None;
         }
     };
@@ -343,10 +359,18 @@ fn try_primary_resume(
     };
 
     let bytes = match transcript {
-        Some(t) => t,
+        Some(t) => {
+            info!(
+                resume_session_id = %session_id,
+                transcript_bytes = t.len(),
+                "try_primary_resume parsed transcript=present"
+            );
+            t
+        }
         None => {
-            eprintln!(
-                "SessionStatePayload has session_id={session_id} but no transcript; falling back to primer"
+            warn!(
+                resume_session_id = %session_id,
+                "try_primary_resume transcript=absent falling_back_to_primer"
             );
             return None;
         }
@@ -354,12 +378,18 @@ fn try_primary_resume(
 
     let path = transcript_path(home_dir, working_dir, &session_id);
     if let Err(err) = write_transcript_atomic(&path, &bytes) {
-        eprintln!(
-            "Failed to write transcript to {}: {err}; falling back to primer",
-            path.display()
+        error!(
+            transcript_path = %path.display(),
+            error = %err,
+            "try_primary_resume write_failed falling_back_to_primer"
         );
         return None;
     }
+    info!(
+        transcript_path = %path.display(),
+        transcript_bytes = bytes.len(),
+        "try_primary_resume write_succeeded"
+    );
 
     Some(PrimaryResume {
         session_id,
@@ -442,11 +472,21 @@ fn build_session_state_payload(
 ) -> SessionStatePayload {
     let path = transcript_path(home_dir, working_dir, session_id);
     let transcript = match std::fs::read(&path) {
-        Ok(bytes) => Some(bytes),
+        Ok(bytes) => {
+            info!(
+                claude_session_id = session_id,
+                transcript_path = %path.display(),
+                bytes = bytes.len(),
+                "build_session_state_payload read_ok"
+            );
+            Some(bytes)
+        }
         Err(err) => {
-            eprintln!(
-                "Could not read transcript {} for upload ({err}); uploading session_id only",
-                path.display()
+            warn!(
+                claude_session_id = session_id,
+                transcript_path = %path.display(),
+                error = %err,
+                "build_session_state_payload read_failed uploading_session_id_only"
             );
             None
         }
@@ -469,13 +509,19 @@ where
 {
     let data =
         serde_json::to_vec(payload).context("failed to serialize SessionStatePayload to bytes")?;
+    let bytes = data.len();
     let msg = WorkerMessage::SessionStateUpload { data };
     let json = serde_json::to_string(&msg).context("failed to serialize SessionStateUpload")?;
-    ws_sender
-        .send(tungstenite::Message::Text(json))
-        .await
-        .map_err(|_| anyhow!("WebSocket send of SessionStateUpload failed"))?;
-    Ok(())
+    match ws_sender.send(tungstenite::Message::Text(json)).await {
+        Ok(()) => {
+            info!(bytes, "send_session_state_upload ws_send_ok");
+            Ok(())
+        }
+        Err(_) => {
+            error!(bytes, "send_session_state_upload ws_send_failed");
+            Err(anyhow!("WebSocket send of SessionStateUpload failed"))
+        }
+    }
 }
 
 /// Tracks the agent-prompt prepend across `feed_catch_up` and the relay loop.
@@ -880,6 +926,11 @@ async fn emit_suspend<Si>(
 ) where
     Si: Sink<tungstenite::Message> + Unpin,
 {
+    info!(
+        reason,
+        has_claude_session_id = claude_session_id.is_some(),
+        "emit_suspend entry"
+    );
     let suspending_event = ConversationEvent::Suspending {
         reason: reason.to_string(),
         timestamp: Utc::now(),
@@ -893,20 +944,32 @@ async fn emit_suspend<Si>(
             .await
             .is_err()
         {
-            eprintln!("Failed to send Suspending event; WS already closed?");
+            error!(reason, "emit_suspend ws_send_suspending_failed ws_closed");
             return;
         }
     }
 
     let Some(session_id) = claude_session_id else {
-        println!("No Claude session_id captured; skipping SessionStateUpload");
+        warn!(
+            reason,
+            "emit_suspend transcript_upload_skipped — Claude never emitted a session_id"
+        );
         return;
     };
 
     let payload = build_session_state_payload(home_dir, working_dir, session_id);
     match send_session_state_upload(ws_sender, &payload).await {
-        Ok(()) => println!("Uploaded SessionStateUpload for session_id={session_id}"),
-        Err(err) => eprintln!("SessionStateUpload failed: {err}"),
+        Ok(()) => info!(
+            reason,
+            claude_session_id = session_id,
+            "emit_suspend upload_ok"
+        ),
+        Err(err) => error!(
+            reason,
+            claude_session_id = session_id,
+            error = %err,
+            "emit_suspend upload_failed"
+        ),
     }
 }
 
@@ -998,7 +1061,26 @@ fn extract_assistant_text(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
     use tempfile::TempDir;
+
+    /// Install a process-wide tracing subscriber that routes events through
+    /// `print!` so `cargo test -- --nocapture` surfaces them. Tests that
+    /// exercise the new `info!`/`warn!`/`error!` sites added in
+    /// `interactive.rs` for the resume-path instrumentation call this so the
+    /// log lines are visible during local debugging and CI failures.
+    fn init_test_tracing() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_test_writer()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .try_init();
+        });
+    }
 
     fn user_msg(content: &str) -> ConversationEvent {
         ConversationEvent::UserMessage {
@@ -1427,6 +1509,7 @@ mod tests {
 
     #[test]
     fn try_primary_resume_returns_none_when_session_state_missing() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let cu = WorkerCatchUp {
             events: vec![],
@@ -1437,6 +1520,7 @@ mod tests {
 
     #[test]
     fn try_primary_resume_returns_none_when_payload_unparseable() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let cu = WorkerCatchUp {
             events: vec![],
@@ -1447,6 +1531,7 @@ mod tests {
 
     #[test]
     fn try_primary_resume_returns_none_when_transcript_absent() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let payload = SessionStatePayload::V1 {
             session_id: "abc".to_string(),
@@ -1461,6 +1546,7 @@ mod tests {
 
     #[test]
     fn try_primary_resume_writes_transcript_and_returns_session_id() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let working_dir = Path::new("/tmp/.tmpOH7bq5/repo");
         let session_id = "abc-123";
@@ -1486,6 +1572,7 @@ mod tests {
 
     #[test]
     fn build_session_state_payload_with_transcript_on_disk() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let working_dir = Path::new("/tmp/.tmpOH7bq5/repo");
         let session_id = "sid-1";
@@ -1508,6 +1595,7 @@ mod tests {
 
     #[test]
     fn build_session_state_payload_without_transcript_on_disk() {
+        init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let payload =
             build_session_state_payload(tmp.path(), Path::new("/no/such/cwd"), "unknown-sid");
@@ -1661,6 +1749,7 @@ mod tests {
         // When a session_id was captured AND a transcript file exists on
         // disk, idle suspension must emit Suspending followed by a
         // SessionStateUpload carrying the file bytes inside a V1 payload.
+        init_test_tracing();
         tokio::time::pause();
 
         let tmp = TempDir::new().unwrap();
@@ -1746,6 +1835,7 @@ mod tests {
         // (e.g. Claude crashed before any line was flushed). We should still
         // upload a payload with `transcript: None` so the server has the
         // session_id even though the resumer must fall back.
+        init_test_tracing();
         tokio::time::pause();
 
         let tmp = TempDir::new().unwrap();

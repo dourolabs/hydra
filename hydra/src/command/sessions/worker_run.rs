@@ -52,6 +52,21 @@ pub async fn run(
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
 ) -> Result<()> {
+    // Initialize a tracing subscriber so structured `tracing::info!` /
+    // `tracing::warn!` / `tracing::error!` calls from worker code (e.g.
+    // `hydra/src/worker/interactive.rs` suspend/upload/resume instrumentation)
+    // are surfaced on the worker subprocess's stdout/stderr, which the job
+    // engine captures into the per-session log file. `try_init` is a no-op if
+    // a subscriber has already been installed (e.g. inside an integration
+    // test that initializes its own).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+
     let job = session;
 
     let WorkerContext {
