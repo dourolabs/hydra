@@ -74,3 +74,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:issue-detail` — Issue detail page is usable on mobile viewport
 - `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport
+
+## Responsive Layout
+
+- `@layout:responsive` — Main content renders with a non-zero box and is not occluded at every supported viewport width (1440 → 375 px)
+- `@layout:responsive-drawer` — Mobile drawer opens via hamburger and dismisses via backdrop; desktop hamburger collapses sidebar without hiding main content

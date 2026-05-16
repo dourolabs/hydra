@@ -15,11 +15,16 @@
 }
 
 .sidebarSlot {
+  grid-column: 1;
   min-width: 0;
   transition: transform var(--tx-norm);
 }
 
 .contentColumn {
+  /* Pin to column 2. On mobile .sidebarSlot is position: fixed, which removes
+     it from grid auto-placement — without this, .contentColumn would auto-
+     place into column 1 (width 0) and the main element collapses to 0 width. */
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -80,8 +85,12 @@
 }
 
 @keyframes backdrop-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
