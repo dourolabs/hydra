@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import type { IssueStatus, IssueSummaryRecord } from "@hydra/api";
+import type {
+  IssueStatus,
+  IssueSummaryRecord,
+  SessionSummaryRecord,
+} from "@hydra/api";
 import { Icons, Kbd } from "@hydra/ui";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import { IssuesTable } from "./IssuesTable";
@@ -27,6 +31,7 @@ const STATUS_FILTERS: IssueStatusFilter[] = [
 interface IssuesViewProps {
   issues: IssueSummaryRecord[];
   childStatusMap: Map<string, ChildStatus[]>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   filterRootId: string | null;
   hasNextPage: boolean;
@@ -66,6 +71,7 @@ function writeLayout(layout: IssuesLayout): void {
 export function IssuesView({
   issues,
   childStatusMap,
+  sessionsByIssue,
   isLoading,
   filterRootId,
   hasNextPage,
@@ -166,6 +172,7 @@ export function IssuesView({
           <IssuesTable
             issues={issues}
             childStatusMap={childStatusMap}
+            sessionsByIssue={sessionsByIssue}
             filterRootId={filterRootId}
           />
         )}

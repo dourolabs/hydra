@@ -91,15 +91,22 @@
   width: 116px;
 }
 
+.colProgress {
+  width: 76px;
+}
+
+.colRuntime {
+  width: 72px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-1);
+}
+
 .colUpdated {
   width: 64px;
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-1);
-}
-
-.colProgress {
-  width: 76px;
 }
 
 .assignee {
@@ -122,6 +129,20 @@
   color: var(--fg-3);
 }
 
+.runtimeActive {
+  color: var(--s-progress);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  white-space: nowrap;
+}
+
+.runtimeIdle {
+  color: var(--fg-2);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  white-space: nowrap;
+}
+
 .progress {
   width: 64px;
   height: 4px;
@@ -141,11 +162,32 @@
   transition: width var(--tx-norm);
 }
 
+.progressActive {
+  overflow: visible;
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
+  animation: progressGlow 1.6s ease-in-out infinite;
+}
+
+.progressActive > span {
+  background: var(--s-progress);
+}
+
+@keyframes progressGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--s-progress) 25%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--s-progress) 45%, transparent);
+  }
+}
+
 @media (max-width: 768px) {
   .colType,
   .colAssignee,
   .colUpdated,
-  .colProgress {
+  .colProgress,
+  .colRuntime {
     display: none;
   }
 }
