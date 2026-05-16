@@ -1,13 +1,16 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, TypeChip } from "@hydra/ui";
-import type { IssueSummaryRecord } from "@hydra/api";
+import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
+import { formatDuration } from "../../../utils/time";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import styles from "./IssuesTable.module.css";
 
 interface IssuesTableProps {
   issues: IssueSummaryRecord[];
   childStatusMap: Map<string, ChildStatus[]>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   filterRootId: string | null;
 }
 
@@ -35,7 +38,102 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((done / total) * 100);
 }
 
-export function IssuesTable({ issues, childStatusMap, filterRootId }: IssuesTableProps) {
+function isActiveSession(s: SessionSummaryRecord): boolean {
+  return s.session.status === "running" || s.session.status === "pending";
+}
+
+function pickActiveSession(
+  sessions: SessionSummaryRecord[] | undefined,
+): SessionSummaryRecord | undefined {
+  if (!sessions || sessions.length === 0) return undefined;
+  return sessions.find(isActiveSession);
+}
+
+function pickLatestCompletedSession(
+  sessions: SessionSummaryRecord[] | undefined,
+): SessionSummaryRecord | undefined {
+  if (!sessions || sessions.length === 0) return undefined;
+  let best: SessionSummaryRecord | undefined;
+  let bestTs = -Infinity;
+  for (const s of sessions) {
+    if (isActiveSession(s)) continue;
+    const ts = s.session.end_time
+      ? new Date(s.session.end_time).getTime()
+      : new Date(s.timestamp).getTime();
+    if (Number.isFinite(ts) && ts > bestTs) {
+      bestTs = ts;
+      best = s;
+    }
+  }
+  return best;
+}
+
+function useElapsed(startIso: string | null | undefined, active: boolean): string {
+  const compute = () => {
+    if (!startIso) return "0s";
+    return formatDuration(Date.now() - new Date(startIso).getTime());
+  };
+  const [text, setText] = useState<string>(compute);
+
+  useEffect(() => {
+    if (!active || !startIso) {
+      setText(compute());
+      return;
+    }
+    setText(compute());
+    const id = setInterval(() => setText(compute()), 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, startIso]);
+
+  return text;
+}
+
+function RuntimeCell({
+  sessions,
+}: {
+  sessions: SessionSummaryRecord[] | undefined;
+}) {
+  const active = pickActiveSession(sessions);
+  const startIso = active?.session.start_time ?? active?.session.creation_time ?? null;
+  const elapsed = useElapsed(startIso, !!active);
+
+  if (active) {
+    return (
+      <span
+        className={styles.runtimeActive}
+        data-testid="runtime-active"
+      >
+        {elapsed}
+      </span>
+    );
+  }
+
+  const completed = pickLatestCompletedSession(sessions);
+  if (completed && completed.session.start_time) {
+    const start = new Date(completed.session.start_time).getTime();
+    const end = completed.session.end_time
+      ? new Date(completed.session.end_time).getTime()
+      : start;
+    return (
+      <span
+        className={styles.runtimeIdle}
+        data-testid="runtime-idle"
+      >
+        {formatDuration(end - start)}
+      </span>
+    );
+  }
+
+  return <span className={styles.dash}>—</span>;
+}
+
+export function IssuesTable({
+  issues,
+  childStatusMap,
+  sessionsByIssue,
+  filterRootId,
+}: IssuesTableProps) {
   const navigate = useNavigate();
 
   const handleRowClick = (id: string) => {
@@ -55,8 +153,9 @@ export function IssuesTable({ issues, childStatusMap, filterRootId }: IssuesTabl
             <th className={styles.colStatus}>Status</th>
             <th className={styles.colType}>Type</th>
             <th className={styles.colAssignee}>Assignee</th>
-            <th className={styles.colUpdated}>Updated</th>
             <th className={styles.colProgress}>Progress</th>
+            <th className={styles.colRuntime}>Runtime</th>
+            <th className={styles.colUpdated}>Updated</th>
           </tr>
         </thead>
         <tbody>
@@ -66,6 +165,10 @@ export function IssuesTable({ issues, childStatusMap, filterRootId }: IssuesTabl
             const status = normalizeIssueStatus(issue.status);
             const children = childStatusMap.get(id);
             const pct = progressFraction(children);
+            const hasActiveChild = !!children?.some((c) => c.hasActiveTask);
+            const progressClass = hasActiveChild
+              ? `${styles.progress} ${styles.progressActive}`
+              : styles.progress;
 
             return (
               <tr key={id} onClick={() => handleRowClick(id)}>
@@ -94,16 +197,19 @@ export function IssuesTable({ issues, childStatusMap, filterRootId }: IssuesTabl
                     <span className={styles.dash}>—</span>
                   )}
                 </td>
-                <td className={styles.colUpdated}>{relativeTime(rec.timestamp)}</td>
                 <td className={styles.colProgress}>
                   {children && children.length > 0 ? (
-                    <div className={styles.progress} title={`${pct}%`}>
+                    <div className={progressClass} title={`${pct}%`}>
                       <span style={{ width: `${pct}%` }} />
                     </div>
                   ) : (
                     <span className={styles.dash}>—</span>
                   )}
                 </td>
+                <td className={styles.colRuntime}>
+                  <RuntimeCell sessions={sessionsByIssue.get(id)} />
+                </td>
+                <td className={styles.colUpdated}>{relativeTime(rec.timestamp)}</td>
               </tr>
             );
           })}

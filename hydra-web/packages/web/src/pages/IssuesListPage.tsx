@@ -165,7 +165,7 @@ export function IssuesListPage() {
     });
   }, [paginatedData]);
 
-  const { childStatusMap } = usePageIssueTrees(issues, username);
+  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(issues, username);
 
   // Normalise any legacy `?selected=…` URLs the sidebar no longer produces
   // (`patches`, `documents`) back to the default filter without forcing a
@@ -191,6 +191,7 @@ export function IssuesListPage() {
       <IssuesView
         issues={issues}
         childStatusMap={childStatusMap}
+        sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
         filterRootId={filterRootId}
         hasNextPage={hasNextPage ?? false}
