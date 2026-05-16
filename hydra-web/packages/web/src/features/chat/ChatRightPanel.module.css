@@ -24,9 +24,12 @@
   padding: 10px 14px;
   background: transparent;
   border: 0;
-  font-family: var(--f-sans);
-  font-size: var(--t-sm);
-  color: var(--fg-1);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
   cursor: pointer;
   transition: color var(--tx-fast);
 }
