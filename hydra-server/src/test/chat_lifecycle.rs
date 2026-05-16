@@ -37,6 +37,24 @@ use reqwest::StatusCode;
 use std::{sync::Arc, time::Duration};
 use tokio_tungstenite::tungstenite;
 
+/// Install a process-wide tracing subscriber that routes events through
+/// `print!` so `cargo test -- --nocapture` surfaces the
+/// upload/store/catch-up instrumentation in `relay.rs`. Idempotent across
+/// many tests in the same process.
+fn init_test_tracing() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .try_init();
+    });
+}
+
 /// Test helper for short idle timeout: build an `AppState` whose JobSection
 /// reports `interactive_idle_timeout_secs = secs` in the WorkerContext it
 /// serves to interactive workers. In production this defaults to 600s; tests
@@ -1284,6 +1302,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     // same bytes back so it can write the transcript to disk and invoke
     // `claude --resume`. Verifies the wire envelope is preserved and the
     // payload survives the store round-trip.
+    init_test_tracing();
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
