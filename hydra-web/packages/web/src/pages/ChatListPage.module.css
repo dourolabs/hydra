@@ -80,6 +80,10 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Right-edge breathing room so the rightmost column (Updated, 64px) and
+     its content don't clip against the viewport. See IssuesTable.module.css
+     for the parity rationale with Patches. */
+  padding-right: var(--pad-x);
 }
 
 .table {

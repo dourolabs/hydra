@@ -2,6 +2,12 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Right-edge breathing room so the rightmost column (Progress) doesn't
+     bump against the viewport edge. Patches's rightmost column holds short
+     content with most of its 80px width as whitespace; the Progress column
+     is narrower (76px) and its 64px progress bar fills the cell's content
+     area, so without this padding the bar visibly clips at the viewport. */
+  padding-right: var(--pad-x);
 }
 
 .table {
