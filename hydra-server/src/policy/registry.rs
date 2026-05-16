@@ -12,7 +12,15 @@ pub type AutomationFactory =
     Box<dyn Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Automation>, String> + Send + Sync>;
 
 /// Registry that maps policy names to factory functions and builds a
-/// `PolicyEngine` from a `PolicyConfig`.
+/// [`PolicyEngine`] from a [`PolicyConfig`].
+///
+/// The registry is just a name → factory map. Calling
+/// [`Self::register_restriction`] or [`Self::register_automation`] does
+/// **not** activate the policy — activation happens when the operator's
+/// [`PolicyConfig`] (or the default returned by
+/// [`crate::app::default_policy_config`]) lists the name. See
+/// the [`super::Restriction`] and [`super::Automation`] trait docs for the
+/// full three-step registration pattern.
 pub struct PolicyRegistry {
     restriction_factories: HashMap<String, RestrictionFactory>,
     automation_factories: HashMap<String, AutomationFactory>,
@@ -125,8 +133,19 @@ impl Default for PolicyRegistry {
     }
 }
 
-/// Build a `PolicyRegistry` pre-loaded with all built-in policies
+/// Build a [`PolicyRegistry`] pre-loaded with all built-in policies
 /// (restrictions and automations).
+///
+/// This populates the name → factory map for every built-in policy, but a
+/// registered factory is **inert** until its name appears in the active
+/// [`PolicyList`]. The default activation list lives in
+/// [`crate::app::default_policy_config`]; operators can override
+/// it via the `policies` section of `config.yaml`.
+///
+/// When adding a new built-in policy, add the `register_*` call here AND
+/// add the name to `default_policy_config()` (or document it as opt-in).
+/// See the [`super::Restriction`] / [`super::Automation`] trait docs for
+/// the full pattern.
 pub fn build_default_registry() -> PolicyRegistry {
     use super::automations::*;
     use super::restrictions::*;
