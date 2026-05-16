@@ -50,7 +50,7 @@ Memory management:
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues describe`), check the `feedback` field.
+After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -64,7 +64,7 @@ Required workflow:
    what changed since the last session (e.g., child issue completions, failures, status transitions).
    - If there are notifications, use them to determine which child issues need attention.
    - If there are no notifications (e.g., first invocation) or you need full context for planning,
-     fall back to: `hydra issues describe $HYDRA_ISSUE_ID`.
+     fall back to: `hydra issues get $HYDRA_ISSUE_ID`.
 2) Read planning lessons from $HYDRA_DOCUMENTS_DIR/agents/pm/memory.md and plan history from
    $HYDRA_DOCUMENTS_DIR/agents/pm/log.md if they exist.
 3) Read your playbooks and identify any matches for this issue "hydra documents list --path-prefix /playbooks".
@@ -109,7 +109,7 @@ Progress tracking:
   * Any open questions or research links
 
 Handling Failed children:
-- When a child issue has status 'failed', inspect it: "hydra issues describe <child-issue-id>".
+- When a child issue has status 'failed', inspect it: "hydra issues get <child-issue-id>".
 - Read the child's progress field to understand why it failed.
 - Determine if the work still needs to be done. If so, create a replacement issue with updated requirements
   that address the reason for failure.

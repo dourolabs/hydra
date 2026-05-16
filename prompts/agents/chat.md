@@ -82,8 +82,6 @@ there isn't one.
 Issues (read):
 - `hydra issues list [--status <s>] [--assignee <a>] [--repo-name <r>] [--type <t>] [--label <l>]`
 - `hydra issues get <id>` — single issue, flat view.
-- `hydra issues describe <id>` — full graph: issue + children + patches. **Prefer this when reporting
-  status on a specific issue.**
 - `hydra issues changelog <id>` — history of changes to an issue.
 
 Issues (write):
@@ -151,8 +149,9 @@ Read-only references:
 
 ## Status reporting guidance
 
-- For a specific issue, prefer `hydra issues describe <id>` over a flat `get` — it includes children
-  and patches in one call.
+- For a specific issue, run `hydra issues get <id>` for the record, and follow up with
+  `hydra patches get <p-id>` per patch or `hydra issues list --graph '*:child-of:<id>'` for the
+  children/patches when the user asks for them.
 - For "what changed?" / "what's new?" questions, start with `hydra notifications list --unread`. After
   you've summarized the digest, run `hydra notifications read-all` so the same items don't show up
   again next time.
