@@ -1,0 +1,128 @@
+.kanban {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
+  gap: 12px;
+  padding: 14px 20px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  max-height: 100%;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.colHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--fg-0);
+  background: var(--bg-1);
+  position: sticky;
+  top: 0;
+  flex-shrink: 0;
+}
+
+.colCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  margin-left: auto;
+}
+
+.colBody {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  cursor: pointer;
+  transition: border-color var(--tx-fast), background var(--tx-fast);
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-3);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+
+.cardTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  line-height: 1.35;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.cardFootSpacer {
+  flex: 1;
+}
+
+.progress {
+  width: 48px;
+  height: 4px;
+  background: var(--bg-1);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--acc);
+  border-radius: 4px;
+  transition: width var(--tx-norm);
+}
+
+.colEmpty {
+  padding: 16px 8px;
+  color: var(--fg-3);
+  font-size: var(--t-sm);
+  text-align: center;
+  font-style: italic;
+}

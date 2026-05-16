@@ -1,0 +1,263 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+/* ─── Page head ─── */
+.pageHead {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.headLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pageTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  margin: 0;
+}
+
+.headSpacer {
+  flex: 1;
+}
+
+.headRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── Toolbar ─── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-0);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.chipFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: var(--t-sm);
+  font-family: var(--f-sans);
+  color: var(--fg-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast),
+    border-color var(--tx-fast);
+}
+
+.chipFilter:hover {
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+.chipFilterActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+.filterCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.chipFilterActive .filterCount {
+  color: var(--fg-1);
+}
+
+.toolbarSpacer {
+  flex: 1;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 9px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  min-width: 200px;
+  transition: border-color var(--tx-fast);
+}
+
+.searchBox:focus-within {
+  border-color: var(--acc);
+}
+
+.searchBox input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.searchBox input::placeholder {
+  color: var(--fg-3);
+}
+
+.searchIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
+}
+
+/* ─── Segmented control (Table/Board) ─── */
+.segmented {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-1);
+  flex-shrink: 0;
+}
+
+.segmented button {
+  height: 26px;
+  padding: 0 9px;
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: background var(--tx-fast), color var(--tx-fast);
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.segmentedActive {
+  background: var(--bg-3) !important;
+  color: var(--fg-0) !important;
+}
+
+/* ─── Body ─── */
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Empty ─── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+/* ─── Load more ─── */
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: 16px 20px 24px;
+}
+
+.loadMoreButton {
+  height: 28px;
+  padding: 0 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition: background var(--tx-fast), border-color var(--tx-fast), color var(--tx-fast);
+}
+
+.loadMoreButton:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .pageHead {
+    padding: 14px 16px 10px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .headRight {
+    width: 100%;
+  }
+
+  .toolbar {
+    padding: 8px 16px;
+  }
+
+  .searchBox {
+    min-width: 0;
+    flex: 1;
+  }
+}
