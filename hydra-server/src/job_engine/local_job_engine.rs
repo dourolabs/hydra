@@ -20,6 +20,13 @@ const COMPLETED_PROCESS_TTL: TimeDelta = TimeDelta::hours(1);
 /// How often the reaper task runs.
 const REAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+/// Max wall-clock budget for a worker to exit after SIGTERM before we resort to
+/// SIGKILL. The previous fixed 2s sleep was not enough for the worker's
+/// `emit_suspend` chain (Suspending WS message + transcript FS read +
+/// SessionStateUpload + server ack) on `/close`; a SIGKILL mid-chain left the
+/// store row unpopulated and forced resume to fall back to the text primer.
+const GRACEFUL_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Tracks the runtime status of a local subprocess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessStatus {
@@ -455,7 +462,8 @@ impl JobEngine for LocalJobEngine {
             .ok_or_else(|| JobEngineError::NotFound(hydra_id.clone()))?;
 
         let pid = info.pid;
-        let is_running = *info.status_rx.borrow() == ProcessStatus::Running;
+        let mut status_rx = info.status_rx.clone();
+        let is_running = *status_rx.borrow() == ProcessStatus::Running;
         drop(info);
 
         if let Some(pid) = pid {
@@ -463,12 +471,40 @@ impl JobEngine for LocalJobEngine {
                 // Send SIGTERM for graceful shutdown.
                 let _ = Self::send_signal(pid, "-TERM").await;
 
-                // Give the process a moment to exit gracefully.
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                // Wait for the worker to actually exit, bounded by the grace.
+                // Common case: emit_suspend finishes and the watch flips to
+                // Complete/Failed well before the deadline, so we short-circuit
+                // without burning the full grace. The `wait_for` result holds
+                // a `RwLockReadGuard` (non-Send), so we discard it eagerly to
+                // keep this future `Send`.
+                let wait_result = tokio::time::timeout(
+                    GRACEFUL_SHUTDOWN_GRACE,
+                    status_rx.wait_for(|s| *s != ProcessStatus::Running),
+                )
+                .await
+                .map(|r| r.map(|_| ()));
 
-                // Check if still running and send SIGKILL.
-                if let Some(info) = self.processes.get(hydra_id) {
-                    if *info.status_rx.borrow() == ProcessStatus::Running {
+                match wait_result {
+                    Ok(Ok(())) => {
+                        info!(hydra_id = %hydra_id, pid, "kill_job graceful exit");
+                    }
+                    Ok(Err(_)) => {
+                        // Watch sender dropped without ever flipping out of
+                        // Running — unexpected; SIGKILL as a safety net.
+                        warn!(
+                            hydra_id = %hydra_id,
+                            pid,
+                            "kill_job status channel closed without exit status, sending SIGKILL"
+                        );
+                        let _ = Self::send_signal(pid, "-KILL").await;
+                    }
+                    Err(_) => {
+                        warn!(
+                            hydra_id = %hydra_id,
+                            pid,
+                            grace_secs = GRACEFUL_SHUTDOWN_GRACE.as_secs(),
+                            "kill_job grace expired, sending SIGKILL"
+                        );
                         let _ = Self::send_signal(pid, "-KILL").await;
                     }
                 }
@@ -1099,6 +1135,130 @@ mod tests {
         let engine = make_failing_engine();
         let result = engine.find_job_by_hydra_id(&SessionId::new()).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn kill_job_returns_immediately_after_graceful_exit() {
+        // Child traps SIGTERM and exits cleanly. kill_job should observe the
+        // status flip via the watch channel and return well under the grace.
+        let engine = LocalJobEngine::new(
+            "http://localhost:0".to_string(),
+            std::env::temp_dir().join("hydra-local-jobs-test"),
+            Some((
+                std::path::PathBuf::from("/bin/sh"),
+                vec![
+                    "-c".to_string(),
+                    // Use `&` + `wait` so the shell isn't blocked in a
+                    // foreground syscall when SIGTERM arrives; otherwise dash
+                    // queues the trap until `sleep` finishes.
+                    "trap 'exit 0' TERM; sleep 60 & wait".to_string(),
+                ],
+            )),
+        );
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        // Give the shell a moment to install its SIGTERM trap.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let start = std::time::Instant::now();
+        engine.kill_job(&hydra_id).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "kill_job took {elapsed:?}; should short-circuit on graceful SIGTERM exit, not wait the full grace"
+        );
+    }
+
+    #[tokio::test]
+    async fn kill_job_sigkills_after_grace_when_process_ignores_sigterm() {
+        // Child ignores SIGTERM; kill_job must wait the grace and then SIGKILL.
+        let engine = LocalJobEngine::new(
+            "http://localhost:0".to_string(),
+            std::env::temp_dir().join("hydra-local-jobs-test"),
+            Some((
+                std::path::PathBuf::from("/bin/sh"),
+                vec!["-c".to_string(), "trap '' TERM; sleep 60".to_string()],
+            )),
+        );
+        let hydra_id = SessionId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &hydra_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        // Capture the PID before kill_job removes the entry.
+        let pid = engine
+            .processes
+            .get(&hydra_id)
+            .expect("process must be tracked")
+            .pid
+            .expect("real subprocess must have a PID");
+
+        // Give the shell a moment to install its SIGTERM trap.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let start = std::time::Instant::now();
+        engine.kill_job(&hydra_id).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= GRACEFUL_SHUTDOWN_GRACE,
+            "kill_job returned in {elapsed:?}, expected at least the full {GRACEFUL_SHUTDOWN_GRACE:?} grace"
+        );
+        assert!(
+            elapsed < GRACEFUL_SHUTDOWN_GRACE + std::time::Duration::from_secs(3),
+            "kill_job returned in {elapsed:?}, should not have lingered far beyond the grace"
+        );
+
+        // Allow time for SIGKILL delivery + the child to actually exit before
+        // checking the OS state.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // kill -0 returns success iff the PID is still alive; a SIGKILLed
+        // child has been reaped by our background wait task, so the PID is
+        // gone (ESRCH).
+        let alive = tokio::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success();
+        assert!(
+            !alive,
+            "pid {pid} should be dead after the SIGKILL fallback"
+        );
     }
 
     #[tokio::test]
