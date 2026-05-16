@@ -144,7 +144,9 @@ describe("Sidebar", () => {
   it("renders the brand and workspace nav items", () => {
     renderSidebar();
     expect(screen.getByTestId("hydra-brand")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-issues")).toBeTruthy();
+    const issuesLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(issuesLink).toBeTruthy();
+    expect(issuesLink.getAttribute("href")).toBe("/?selected=all");
     expect(screen.getByTestId("sidebar-patches")).toBeTruthy();
     expect(screen.getByTestId("sidebar-sessions")).toBeTruthy();
     expect(screen.getByTestId("sidebar-chats")).toBeTruthy();

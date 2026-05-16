@@ -134,11 +134,16 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // ── Workspace items ── (Chats lives in its own top section)
   const workspaceItems: NavItem[] = [
     {
-      to: "/",
+      to: "/?selected=all",
       end: true,
       label: "Issues",
-      testId: "sidebar-issues",
+      testId: "sidebar-issues-all",
       icon: <Icons.IconIssue />,
+      isActive: (pathname, search) => {
+        if (pathname !== "/") return false;
+        const selected = search.get("selected");
+        return selected === null || selected === "all";
+      },
     },
     {
       to: "/patches",
