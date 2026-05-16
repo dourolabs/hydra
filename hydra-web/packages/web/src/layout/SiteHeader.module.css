@@ -73,8 +73,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--acc);
-  box-shadow: 0 0 0 3px var(--acc-soft);
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-progress) 18%, transparent);
   animation: hydra-pulse 2.4s ease-in-out infinite;
   flex-shrink: 0;
 }
