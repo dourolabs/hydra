@@ -12,7 +12,7 @@ import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
 import { useInboxLabel } from "../features/labels/useLabels";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
-import styles from "./DashboardPage.module.css";
+import styles from "./IssuesListPage.module.css";
 
 const VALID_FILTERS = ["your-issues", "assigned", "all", "in_progress"];
 
@@ -77,7 +77,7 @@ function titleFor(filterRootId: string | null): string {
   }
 }
 
-export function DashboardPage() {
+export function IssuesListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedParam = searchParams.get("selected");
   useBreadcrumbs([{ label: "Workspace", to: "/" }], titleFor(selectedParam));

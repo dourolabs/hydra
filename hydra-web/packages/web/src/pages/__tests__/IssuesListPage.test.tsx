@@ -91,12 +91,12 @@ vi.mock("../../features/dashboard/useIssueCreateModal", () => ({
   }),
 }));
 
-vi.mock("../DashboardPage.module.css", () => ({
+vi.mock("../IssuesListPage.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
 // --- Import after mocks ---
-const { DashboardPage } = await import("../DashboardPage");
+const { IssuesListPage } = await import("../IssuesListPage");
 
 function LocationDisplay() {
   const location = useLocation();
@@ -108,11 +108,11 @@ function LocationDisplay() {
   );
 }
 
-function renderDashboard(initialEntry: string) {
+function renderIssuesList(initialEntry: string) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<IssuesListPage />} />
       </Routes>
       <LocationDisplay />
     </MemoryRouter>,
@@ -128,18 +128,18 @@ afterEach(() => {
   openIssueCreateModalMock.mockReset();
 });
 
-describe("DashboardPage Issue Create modal", () => {
+describe("IssuesListPage Issue Create modal", () => {
   // The "+ Create Issue" button moved from the dashboard body to the topbar in
   // the design refresh — its create flow is exercised in SiteHeader tests now.
   it("does not mount its own IssueCreateModal", () => {
-    renderDashboard("/?create-issue=1");
+    renderIssuesList("/?create-issue=1");
     expect(screen.queryByTestId("issue-create-modal")).toBeNull();
   });
 });
 
-describe("DashboardPage breadcrumb label", () => {
+describe("IssuesListPage breadcrumb label", () => {
   it("publishes Workspace / Issues breadcrumb on the default view", () => {
-    renderDashboard("/");
+    renderIssuesList("/");
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
       "Issues",
@@ -147,7 +147,7 @@ describe("DashboardPage breadcrumb label", () => {
   });
 
   it("publishes Workspace / Assigned to me when ?selected=assigned", () => {
-    renderDashboard("/?selected=assigned");
+    renderIssuesList("/?selected=assigned");
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
       "Assigned to me",
@@ -155,7 +155,7 @@ describe("DashboardPage breadcrumb label", () => {
   });
 
   it("normalises legacy ?selected=patches back to the default Issues view", () => {
-    renderDashboard("/?selected=patches");
+    renderIssuesList("/?selected=patches");
     // patches is no longer a dashboard tab — fall back to Issues
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
