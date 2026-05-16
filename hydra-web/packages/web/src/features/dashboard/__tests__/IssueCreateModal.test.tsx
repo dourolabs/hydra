@@ -57,12 +57,30 @@ vi.mock("../../toast/useToast", () => ({
   useToast: () => ({ addToast: vi.fn() }),
 }));
 
+const SEEDED_LABELS = [
+  { label_id: "l1", name: "bug", color: "#e74c3c", hidden: false },
+  { label_id: "l2", name: "feature", color: "#3498db", hidden: false },
+  { label_id: "l3", name: "infra", color: "#2ecc71", hidden: false },
+];
+const SEEDED_PALETTE = [
+  "#e74c3c",
+  "#e67e22",
+  "#f1c40f",
+  "#2ecc71",
+  "#1abc9c",
+  "#3498db",
+  "#9b59b6",
+  "#e91e63",
+  "#795548",
+  "#607d8b",
+];
+
 vi.mock("../../labels/useLabels", () => ({
-  useLabels: () => ({ data: [] }),
+  useLabels: () => ({ data: SEEDED_LABELS }),
 }));
 
 vi.mock("../../labels/LabelPicker", () => ({
-  LABEL_COLOR_PALETTE: ["#e74c3c", "#3498db"],
+  LABEL_COLOR_PALETTE: SEEDED_PALETTE,
 }));
 
 vi.mock("../IssueCreateModal.module.css", () => ({
@@ -75,13 +93,16 @@ const { IssueCreateModal } = await import("../IssueCreateModal");
 const TITLE_PLACEHOLDER = "Issue title…";
 const DESC_PLACEHOLDER = /describe the issue/i;
 
-function openAssigneePicker() {
-  // The Assignee pill is the only one with this label.
-  const label = screen.getByText("Assignee");
-  // Pill is the sibling button beneath the label inside the picker wrapper.
+function openPickerByLabel(labelText: string) {
+  // The picker label uniquely identifies the picker; the pill is its sibling.
+  const label = screen.getByText(labelText);
   const wrapper = label.parentElement!;
   const button = wrapper.querySelector("button")!;
   fireEvent.click(button);
+}
+
+function openAssigneePicker() {
+  openPickerByLabel("Assignee");
 }
 
 describe("IssueCreateModal", () => {
@@ -151,6 +172,54 @@ describe("IssueCreateModal", () => {
     expect(
       (screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value,
     ).toBe("Draft description");
+  });
+
+  it("renders all label rows in the Labels picker popover when opened", () => {
+    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+
+    openPickerByLabel("Labels");
+
+    // Search input + every seeded label row should be reachable from `screen`
+    // even though the popover is rendered into document.body via a portal.
+    expect(screen.getByPlaceholderText("Search or create…")).toBeDefined();
+    for (const label of SEEDED_LABELS) {
+      expect(screen.getByText(label.name)).toBeDefined();
+    }
+  });
+
+  it("renders all color swatches in the Labels picker create-new section", () => {
+    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+
+    openPickerByLabel("Labels");
+
+    // Typing in the search box reveals the create-new section + palette.
+    fireEvent.change(screen.getByPlaceholderText("Search or create…"), {
+      target: { value: "needs-triage" },
+    });
+
+    expect(screen.getByText(/Create [“"]needs-triage[”"]/)).toBeDefined();
+    // All ten color swatches must render and be queryable, including the last one.
+    const swatches = screen.getAllByRole("radio");
+    expect(swatches).toHaveLength(SEEDED_PALETTE.length);
+
+    // Clicking the last swatch updates the active radio — proves it's clickable
+    // (i.e. not clipped/inert in the DOM).
+    const lastSwatch = swatches[swatches.length - 1];
+    fireEvent.click(lastSwatch);
+    expect(lastSwatch.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("renders the Type picker rows when opened", () => {
+    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+
+    openPickerByLabel("Type");
+
+    // Each issue type renders as its own TypeChip row in the popover (in
+    // addition to the trigger pill chip).
+    expect(screen.getAllByTestId("type-chip-task").length).toBeGreaterThan(1);
+    expect(screen.getByTestId("type-chip-bug")).toBeDefined();
+    expect(screen.getByTestId("type-chip-feature")).toBeDefined();
+    expect(screen.getByTestId("type-chip-chore")).toBeDefined();
   });
 
   it("clears drafts when the user clicks Cancel", () => {

@@ -1,12 +1,15 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Avatar, Button, Icons, Kbd, TypeChip } from "@hydra/ui";
 import type { IssueType, LabelRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -425,19 +428,60 @@ interface PickerProps {
   children: ReactNode;
 }
 
+const POP_MAX_HEIGHT = 280;
+const POP_GAP = 4;
+
 function Picker({ label, value, open, onToggle, wide, children }: PickerProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const [popStyle, setPopStyle] = useState<CSSProperties | null>(null);
 
+  // Outside-click handler must ignore both the trigger wrap and the portaled popover.
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        onToggle();
-      }
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (wrapRef.current?.contains(target)) return;
+      if (popRef.current?.contains(target)) return;
+      onToggle();
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open, onToggle]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopStyle(null);
+      return;
+    }
+    const reposition = () => {
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const rect = wrap.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const spaceBelow = viewportH - rect.bottom;
+      const spaceAbove = rect.top;
+      // Flip upward if there's not enough room below AND there's more room above.
+      const openUp =
+        spaceBelow < POP_MAX_HEIGHT + POP_GAP && spaceAbove > spaceBelow;
+      const next: CSSProperties = { left: rect.left };
+      if (openUp) {
+        next.bottom = viewportH - rect.top + POP_GAP;
+      } else {
+        next.top = rect.bottom + POP_GAP;
+      }
+      setPopStyle(next);
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    // Capture-phase scroll catches ancestor scrolling (e.g. the modal body).
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open]);
 
   return (
     <div className={styles.picker} ref={wrapRef}>
@@ -453,11 +497,18 @@ function Picker({ label, value, open, onToggle, wide, children }: PickerProps) {
           <Icons.IconChevronDown size={12} />
         </span>
       </button>
-      {open && (
-        <div className={`${styles.pop}${wide ? ` ${styles.popWide}` : ""}`}>
-          {children}
-        </div>
-      )}
+      {open &&
+        popStyle &&
+        createPortal(
+          <div
+            ref={popRef}
+            className={`${styles.pop}${wide ? ` ${styles.popWide}` : ""}`}
+            style={popStyle}
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
