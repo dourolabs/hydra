@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
-import type { SessionSummaryRecord } from "@hydra/api";
+import type { ListSessionsResponse, SessionSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
 
@@ -26,23 +26,37 @@ vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock,
 }));
 
-interface AllSessionsState {
-  data: SessionSummaryRecord[] | undefined;
+interface PaginatedSessionsState {
+  pages: ListSessionsResponse[] | undefined;
   isLoading: boolean;
   error: Error | null;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
 }
 
-const allSessionsState: AllSessionsState = {
-  data: undefined,
+const paginatedState: PaginatedSessionsState = {
+  pages: undefined,
   isLoading: false,
   error: null,
+  hasNextPage: false,
+  isFetchingNextPage: false,
 };
 
-vi.mock("../../features/sessions/useAllSessions", () => ({
-  useAllSessions: () => ({
-    data: allSessionsState.data,
-    isLoading: allSessionsState.isLoading,
-    error: allSessionsState.error,
+const fetchNextPageMock = vi.fn();
+
+const sessionCountState: { count: number | undefined } = { count: undefined };
+
+vi.mock("../../features/sessions/usePaginatedSessions", () => ({
+  usePaginatedSessions: () => ({
+    data: paginatedState.pages ? { pages: paginatedState.pages } : undefined,
+    isLoading: paginatedState.isLoading,
+    error: paginatedState.error,
+    fetchNextPage: fetchNextPageMock,
+    hasNextPage: paginatedState.hasNextPage,
+    isFetchingNextPage: paginatedState.isFetchingNextPage,
+  }),
+  useSessionCount: () => ({
+    data: sessionCountState.count,
   }),
 }));
 
@@ -100,11 +114,19 @@ function rec(
   };
 }
 
+function setSessions(sessions: SessionSummaryRecord[]) {
+  paginatedState.pages = [{ sessions }];
+}
+
 function reset() {
-  allSessionsState.data = undefined;
-  allSessionsState.isLoading = false;
-  allSessionsState.error = null;
+  paginatedState.pages = undefined;
+  paginatedState.isLoading = false;
+  paginatedState.error = null;
+  paginatedState.hasNextPage = false;
+  paginatedState.isFetchingNextPage = false;
+  sessionCountState.count = undefined;
   navigateMock.mockReset();
+  fetchNextPageMock.mockReset();
 }
 
 describe("SessionsListPage", () => {
@@ -115,7 +137,7 @@ describe("SessionsListPage", () => {
   });
 
   it("publishes a Workspace / Sessions breadcrumb on mount", () => {
-    allSessionsState.data = [];
+    setSessions([]);
     render(<SessionsListPage />);
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
@@ -124,28 +146,28 @@ describe("SessionsListPage", () => {
   });
 
   it("shows a loading message before data arrives", () => {
-    allSessionsState.isLoading = true;
+    paginatedState.isLoading = true;
     render(<SessionsListPage />);
     expect(screen.getByText(/loading sessions/i)).toBeDefined();
   });
 
   it("shows an empty message when no sessions exist", () => {
-    allSessionsState.data = [];
+    setSessions([]);
     render(<SessionsListPage />);
     expect(screen.getByText(/no sessions match the current filters/i)).toBeDefined();
   });
 
   it("shows an error message when the query fails", () => {
-    allSessionsState.error = new Error("boom");
+    paginatedState.error = new Error("boom");
     render(<SessionsListPage />);
     expect(screen.getByText(/failed to load sessions/i)).toBeDefined();
   });
 
   it("renders one row per session, links spawned-from issue, no ID column", () => {
-    allSessionsState.data = [
+    setSessions([
       rec("t-1", "running", "i-1", "first task"),
       rec("t-2", "complete", undefined, "orphan task"),
-    ];
+    ]);
 
     render(<SessionsListPage />);
 
@@ -162,16 +184,67 @@ describe("SessionsListPage", () => {
   });
 
   it("orders active sessions before terminal sessions", () => {
-    allSessionsState.data = [
+    setSessions([
       rec("term", "complete"),
       rec("active", "running"),
-    ];
+    ]);
 
     render(<SessionsListPage />);
 
     const rows = screen.getAllByTestId(/^sessions-list-row-/);
-    // useAllSessions hook + sortSessions util order active before terminal.
+    // sortSessions util orders active before terminal.
     expect(rows[0].getAttribute("data-testid")).toBe("sessions-list-row-active");
     expect(rows[1].getAttribute("data-testid")).toBe("sessions-list-row-term");
+  });
+
+  it("deduplicates sessions appearing in multiple pages", () => {
+    paginatedState.pages = [
+      { sessions: [rec("t-1", "running")] },
+      { sessions: [rec("t-1", "running"), rec("t-2", "running")] },
+    ];
+
+    render(<SessionsListPage />);
+
+    expect(screen.getAllByTestId(/^sessions-list-row-/).length).toBe(2);
+  });
+
+  it("renders Load more when hasNextPage is true and invokes fetchNextPage on click", () => {
+    setSessions([rec("t-1", "running")]);
+    paginatedState.hasNextPage = true;
+
+    render(<SessionsListPage />);
+
+    const btn = screen.getByTestId("sessions-load-more") as HTMLButtonElement;
+    expect(btn).toBeDefined();
+    expect(btn.disabled).toBe(false);
+    btn.click();
+    expect(fetchNextPageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Load more when there is no next page", () => {
+    setSessions([rec("t-1", "running")]);
+    paginatedState.hasNextPage = false;
+
+    render(<SessionsListPage />);
+
+    expect(screen.queryByTestId("sessions-load-more")).toBeNull();
+  });
+
+  it("uses the total count hook value in the eyebrow when available", () => {
+    setSessions([rec("t-1", "running")]);
+    sessionCountState.count = 1234;
+
+    render(<SessionsListPage />);
+
+    expect(screen.getByText(/1234 SESSIONS/)).toBeDefined();
+  });
+
+  it("falls back to row count in the eyebrow when total count is not available", () => {
+    setSessions([rec("t-1", "running"), rec("t-2", "complete")]);
+    sessionCountState.count = undefined;
+
+    render(<SessionsListPage />);
+
+    expect(screen.getByText(/2 SESSIONS/)).toBeDefined();
   });
 });

@@ -1,8 +1,11 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, Badge } from "@hydra/ui";
 import type { SessionSummaryRecord, Status as SessionStatus } from "@hydra/api";
-import { useAllSessions } from "../useAllSessions";
+import {
+  usePaginatedSessions,
+  useSessionCount,
+} from "../usePaginatedSessions";
 import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
 import { getRuntime } from "../../../utils/time";
@@ -41,21 +44,43 @@ function relativeTime(iso: string | null | undefined): string {
 export function SessionsView() {
   const navigate = useNavigate();
   const [selectedStatus, setSelectedStatus] = useState<SessionStatus | null>(null);
-  const { data, isLoading, error } = useAllSessions();
 
-  const filteredSorted = useMemo<SessionSummaryRecord[]>(() => {
-    const sorted = data ? sortSessions(data) : [];
-    if (!selectedStatus) return sorted;
-    return sorted.filter((r) => r.session.status === selectedStatus);
-  }, [data, selectedStatus]);
+  const filters = useMemo(() => ({ status: selectedStatus }), [selectedStatus]);
+
+  const {
+    data: paginatedData,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedSessions(filters);
+
+  const { data: totalCount } = useSessionCount(filters);
+
+  const rows = useMemo<SessionSummaryRecord[]>(() => {
+    const flat = paginatedData?.pages.flatMap((p) => p.sessions) ?? [];
+    const seen = new Set<string>();
+    const deduped: SessionSummaryRecord[] = [];
+    for (const rec of flat) {
+      if (seen.has(rec.session_id)) continue;
+      seen.add(rec.session_id);
+      deduped.push(rec);
+    }
+    return sortSessions(deduped);
+  }, [paginatedData]);
 
   const handleRowClick = (id: string) => {
     navigate(`/sessions/${id}`);
   };
 
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const activeKey: StatusFilter["key"] = selectedStatus ?? "all";
-  const totalLabel =
-    filteredSorted.length === 1 ? "1 SESSION" : `${filteredSorted.length} SESSIONS`;
+  const displayCount = totalCount ?? rows.length;
+  const totalLabel = displayCount === 1 ? "1 SESSION" : `${displayCount} SESSIONS`;
 
   return (
     <div className={styles.page}>
@@ -83,7 +108,7 @@ export function SessionsView() {
       </div>
 
       <div className={styles.body}>
-        {isLoading && filteredSorted.length === 0 && (
+        {isLoading && rows.length === 0 && (
           <div className={styles.empty}>Loading sessions…</div>
         )}
 
@@ -91,11 +116,11 @@ export function SessionsView() {
           <div className={styles.empty}>Failed to load sessions: {error.message}</div>
         )}
 
-        {!isLoading && !error && filteredSorted.length === 0 && (
+        {!isLoading && !error && rows.length === 0 && (
           <div className={styles.empty}>No sessions match the current filters.</div>
         )}
 
-        {filteredSorted.length > 0 && (
+        {rows.length > 0 && (
           <div className={styles.tableWrap}>
             <table className={styles.table} data-testid="sessions-list">
               <thead>
@@ -108,7 +133,7 @@ export function SessionsView() {
                 </tr>
               </thead>
               <tbody>
-                {filteredSorted.map((rec) => {
+                {rows.map((rec) => {
                   const s = rec.session;
                   const startedTs = s.start_time ?? s.creation_time ?? rec.timestamp;
                   const promptText = descriptionSnippet(s.prompt);
@@ -151,6 +176,20 @@ export function SessionsView() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {hasNextPage && (
+          <div className={styles.loadMore}>
+            <button
+              type="button"
+              className={styles.loadMoreButton}
+              onClick={handleLoadMore}
+              disabled={isFetchingNextPage}
+              data-testid="sessions-load-more"
+            >
+              {isFetchingNextPage ? "Loading…" : "Load more"}
+            </button>
           </div>
         )}
       </div>

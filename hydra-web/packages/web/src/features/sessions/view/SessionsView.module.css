@@ -71,7 +71,10 @@
   border-radius: var(--radius-md);
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--tx-fast), color var(--tx-fast), border-color var(--tx-fast);
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast),
+    border-color var(--tx-fast);
 }
 
 .chipFilter:hover {
@@ -234,6 +237,40 @@
 
 .dash {
   color: var(--fg-3);
+}
+
+/* ─── Load more ─── */
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: 16px 20px 24px;
+}
+
+.loadMoreButton {
+  height: 28px;
+  padding: 0 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.loadMoreButton:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 @media (max-width: 768px) {

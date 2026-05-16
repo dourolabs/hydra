@@ -144,6 +144,9 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["issues", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions"] });
+  // /sessions paginated list and eyebrow count (separate root keys)
+  qc.invalidateQueries({ queryKey: ["paginatedSessions"] });
+  qc.invalidateQueries({ queryKey: ["sessionCount"] });
   // Patch list caches
   qc.invalidateQueries({ queryKey: ["patches"] });
   // Paginated document caches
@@ -228,9 +231,6 @@ export function useSSE(): SSEConnectionState {
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);
-          // Also refresh the all-sessions list used by /sessions; the
-          // spawned-from upsert above does not touch it.
-          queryClient.invalidateQueries({ queryKey: ["sessions", "all"] });
         } else {
           queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }
@@ -238,6 +238,11 @@ export function useSSE(): SSEConnectionState {
         // does not broadly invalidate ["sessions"], so refresh the count
         // query explicitly on every session event.
         queryClient.invalidateQueries({ queryKey: ["sessions", "activeCount"] });
+        // /sessions page pagination + eyebrow total. Both use root keys that
+        // do not match the ["sessions"] prefix above, so invalidate
+        // unconditionally for both branches.
+        queryClient.invalidateQueries({ queryKey: ["paginatedSessions"] });
+        queryClient.invalidateQueries({ queryKey: ["sessionCount"] });
         // Directly update batch session caches so hasActiveTask recomputes
         upsertBatchSession(queryClient, entity_id, record);
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
