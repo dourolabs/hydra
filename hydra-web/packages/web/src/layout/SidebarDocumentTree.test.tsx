@@ -11,20 +11,18 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   ListDocumentPathsResponse,
-  ListDocumentsResponse,
+  PathChildDocumentRef,
   PathChildEntry,
 } from "@hydra/api";
 
 // --- Mocks ---
 
 const mockListDocumentPaths = vi.fn();
-const mockListDocuments = vi.fn();
 
 vi.mock("../api/client", () => ({
   apiClient: {
     listDocumentPaths: (...args: unknown[]) =>
       mockListDocumentPaths(...args),
-    listDocuments: (...args: unknown[]) => mockListDocuments(...args),
   },
 }));
 
@@ -42,7 +40,12 @@ function makeEntry(
     full_path: partial.full_path,
     child_count: partial.child_count ?? 1n,
     is_document: partial.is_document ?? false,
+    document: partial.document,
   };
+}
+
+function makeDocRef(documentId: string, title?: string): PathChildDocumentRef {
+  return { document_id: documentId, title: title ?? `Doc ${documentId}` };
 }
 
 function makePathResponse(
@@ -51,36 +54,37 @@ function makePathResponse(
   return { children };
 }
 
-function makeDocumentRecord(documentId: string, path: string) {
-  return {
-    document_id: documentId,
-    version: 1n,
-    timestamp: "2026-01-01T00:00:00Z",
-    creation_time: "2026-01-01T00:00:00Z",
-    document: {
-      title: `Doc ${documentId}`,
-      path,
-      deleted: false,
-      labels: [],
-    },
+/**
+ * Build a batched-response mock from a per-prefix child map. Mirrors the
+ * server: returns the union of children across the requested prefixes,
+ * deduped by `full_path` (first occurrence wins).
+ */
+function batchedResponder(
+  perPrefix: Record<string, PathChildEntry[]>,
+): (query: { prefixes?: string; prefix?: string | null }) => Promise<ListDocumentPathsResponse> {
+  return (query) => {
+    const raw =
+      typeof query.prefixes === "string"
+        ? query.prefixes.split(",").filter(Boolean)
+        : query.prefix != null
+          ? [query.prefix]
+          : ["/"];
+    const seen = new Set<string>();
+    const out: PathChildEntry[] = [];
+    for (const p of raw) {
+      const normalized = p.endsWith("/") || p === "/" ? p : `${p}/`;
+      // Look up by either normalized form (with trailing slash) or the
+      // non-trailing form for convenience.
+      const key = perPrefix[normalized] != null ? normalized : p;
+      const entries = perPrefix[key] ?? [];
+      for (const entry of entries) {
+        if (seen.has(entry.full_path)) continue;
+        seen.add(entry.full_path);
+        out.push(entry);
+      }
+    }
+    return Promise.resolve(makePathResponse(out));
   };
-}
-
-function makeDocumentsResponse(
-  documentId: string,
-  path: string,
-): ListDocumentsResponse {
-  return {
-    documents: [makeDocumentRecord(documentId, path)],
-  } as ListDocumentsResponse;
-}
-
-function makeDocumentsResponseMulti(
-  docs: Array<{ documentId: string; path: string }>,
-): ListDocumentsResponse {
-  return {
-    documents: docs.map((d) => makeDocumentRecord(d.documentId, d.path)),
-  } as ListDocumentsResponse;
 }
 
 function renderTree() {
@@ -108,29 +112,24 @@ describe("SidebarDocumentTree", () => {
     cleanup();
   });
 
-  it("renders top-level folders fetched from listDocumentPaths", async () => {
+  it("renders top-level folders fetched from a single batched listDocumentPaths call", async () => {
     mockListDocumentPaths.mockImplementation(
-      ({ prefix }: { prefix: string | null }) => {
-        if (prefix == null) {
-          return Promise.resolve(
-            makePathResponse([
-              makeEntry({
-                name: "docs",
-                full_path: "/docs",
-                child_count: 2n,
-                is_document: false,
-              }),
-              makeEntry({
-                name: "research",
-                full_path: "/research",
-                child_count: 3n,
-                is_document: false,
-              }),
-            ]),
-          );
-        }
-        return Promise.resolve(makePathResponse([]));
-      },
+      batchedResponder({
+        "/": [
+          makeEntry({
+            name: "docs",
+            full_path: "/docs",
+            child_count: 2n,
+            is_document: false,
+          }),
+          makeEntry({
+            name: "research",
+            full_path: "/research",
+            child_count: 3n,
+            is_document: false,
+          }),
+        ],
+      }),
     );
 
     renderTree();
@@ -143,22 +142,24 @@ describe("SidebarDocumentTree", () => {
     expect(
       screen.getByTestId("sidebar-doc-tree-folder-/research"),
     ).toBeTruthy();
-    expect(mockListDocumentPaths).toHaveBeenCalledWith({ prefix: null });
+    // The initial call asks only for the root listing.
+    expect(mockListDocumentPaths).toHaveBeenCalledWith({ prefixes: "/" });
+    expect(mockListDocumentPaths).toHaveBeenCalledTimes(1);
   });
 
-  it("renders top-level documents as leaf links to /documents/<id>", async () => {
-    mockListDocumentPaths.mockResolvedValue(
-      makePathResponse([
-        makeEntry({
-          name: "readme",
-          full_path: "/readme",
-          child_count: 1n,
-          is_document: true,
-        }),
-      ]),
-    );
-    mockListDocuments.mockResolvedValue(
-      makeDocumentsResponse("d-readme", "/readme"),
+  it("renders top-level documents as leaf links using inline document ref", async () => {
+    mockListDocumentPaths.mockImplementation(
+      batchedResponder({
+        "/": [
+          makeEntry({
+            name: "readme",
+            full_path: "/readme",
+            child_count: 1n,
+            is_document: true,
+            document: makeDocRef("d-readme"),
+          }),
+        ],
+      }),
     );
 
     renderTree();
@@ -178,7 +179,9 @@ describe("SidebarDocumentTree", () => {
         is_document: false,
       }),
     );
-    mockListDocumentPaths.mockResolvedValue(makePathResponse(many));
+    mockListDocumentPaths.mockImplementation(
+      batchedResponder({ "/": many }),
+    );
 
     renderTree();
 
@@ -198,54 +201,34 @@ describe("SidebarDocumentTree", () => {
     ).toBeNull();
   });
 
-  it("expanding a folder fires listDocumentPaths with the folder prefix and renders children", async () => {
+  it("expanding a folder refires listDocumentPaths with the union of prefixes and renders children", async () => {
     mockListDocumentPaths.mockImplementation(
-      ({ prefix }: { prefix: string | null }) => {
-        if (prefix == null) {
-          return Promise.resolve(
-            makePathResponse([
-              makeEntry({
-                name: "research",
-                full_path: "/research",
-                child_count: 2n,
-                is_document: false,
-              }),
-            ]),
-          );
-        }
-        if (prefix === "/research") {
-          return Promise.resolve(
-            makePathResponse([
-              makeEntry({
-                name: "adr-001",
-                full_path: "/research/adr-001",
-                child_count: 1n,
-                is_document: true,
-              }),
-              makeEntry({
-                name: "adr-002",
-                full_path: "/research/adr-002",
-                child_count: 1n,
-                is_document: true,
-              }),
-            ]),
-          );
-        }
-        return Promise.resolve(makePathResponse([]));
-      },
-    );
-    mockListDocuments.mockImplementation(
-      (query: { path_prefix: string; path_is_exact?: boolean }) => {
-        if (query.path_prefix === "/research") {
-          return Promise.resolve(
-            makeDocumentsResponseMulti([
-              { documentId: "d-adr001", path: "/research/adr-001" },
-              { documentId: "d-adr002", path: "/research/adr-002" },
-            ]),
-          );
-        }
-        return Promise.resolve({ documents: [] } as ListDocumentsResponse);
-      },
+      batchedResponder({
+        "/": [
+          makeEntry({
+            name: "research",
+            full_path: "/research",
+            child_count: 2n,
+            is_document: false,
+          }),
+        ],
+        "/research/": [
+          makeEntry({
+            name: "adr-001",
+            full_path: "/research/adr-001",
+            child_count: 1n,
+            is_document: true,
+            document: makeDocRef("d-adr001"),
+          }),
+          makeEntry({
+            name: "adr-002",
+            full_path: "/research/adr-002",
+            child_count: 1n,
+            is_document: true,
+            document: makeDocRef("d-adr002"),
+          }),
+        ],
+      }),
     );
 
     renderTree();
@@ -254,12 +237,10 @@ describe("SidebarDocumentTree", () => {
       "sidebar-doc-tree-folder-/research",
     );
 
-    // Folder is initially collapsed and child fetch has not been issued.
+    // Folder is initially collapsed; only the root listing has been fetched.
     expect(folder.getAttribute("aria-expanded")).toBe("false");
-    expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
-      prefix: "/research",
-    });
-    expect(mockListDocuments).not.toHaveBeenCalled();
+    expect(mockListDocumentPaths).toHaveBeenCalledTimes(1);
+    expect(mockListDocumentPaths).toHaveBeenLastCalledWith({ prefixes: "/" });
 
     fireEvent.click(folder);
 
@@ -268,28 +249,29 @@ describe("SidebarDocumentTree", () => {
     });
 
     await waitFor(() => {
-      expect(mockListDocumentPaths).toHaveBeenCalledWith({
-        prefix: "/research",
+      expect(mockListDocumentPaths).toHaveBeenLastCalledWith({
+        prefixes: "/,/research/",
       });
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-doc-tree-leaf-d-adr001")).toBeTruthy();
+      expect(
+        screen.getByTestId("sidebar-doc-tree-leaf-d-adr001"),
+      ).toBeTruthy();
     });
     expect(screen.getByTestId("sidebar-doc-tree-leaf-d-adr002")).toBeTruthy();
 
-    // Exactly one batched listDocuments call for the folder prefix — no N+1 per leaf.
-    expect(mockListDocuments).toHaveBeenCalledTimes(1);
-    const docsCallArg = mockListDocuments.mock.calls[0]?.[0] as {
-      path_prefix: string;
-      path_is_exact?: boolean;
-    };
-    expect(docsCallArg.path_prefix).toBe("/research");
-    expect(docsCallArg.path_is_exact).toBeFalsy();
+    // No fanout to /v1/documents — exactly two batched listDocumentPaths
+    // calls so far (root, then root + /research).
+    expect(mockListDocumentPaths).toHaveBeenCalledTimes(2);
 
-    // Collapsing hides the children.
+    // Collapsing refires the call back to just the root prefix and hides
+    // the children.
     fireEvent.click(folder);
     expect(folder.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => {
+      expect(mockListDocumentPaths).toHaveBeenLastCalledWith({ prefixes: "/" });
+    });
     expect(screen.queryByTestId("sidebar-doc-tree-leaf-d-adr001")).toBeNull();
   });
 
@@ -299,7 +281,7 @@ describe("SidebarDocumentTree", () => {
     renderTree();
 
     await waitFor(() => {
-      expect(mockListDocumentPaths).toHaveBeenCalledWith({ prefix: null });
+      expect(mockListDocumentPaths).toHaveBeenCalledWith({ prefixes: "/" });
     });
     expect(screen.queryByTestId("sidebar-doc-tree")).toBeNull();
   });
@@ -308,26 +290,19 @@ describe("SidebarDocumentTree", () => {
   // The chevron toggle uses testid `sidebar-doc-tree-hybrid-<full_path>`;
   // the NavLink uses testid `sidebar-doc-tree-leaf-<document_id>`.
   describe("hybrid rows", () => {
-    it("renders a chevron toggle AND a NavLink to /documents/<id>", async () => {
+    it("renders a chevron toggle AND a NavLink using the inline document ref", async () => {
       mockListDocumentPaths.mockImplementation(
-        ({ prefix }: { prefix: string | null }) => {
-          if (prefix == null) {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "guide",
-                  full_path: "/guide",
-                  child_count: 3n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          return Promise.resolve(makePathResponse([]));
-        },
-      );
-      mockListDocuments.mockResolvedValue(
-        makeDocumentsResponse("d-guide", "/guide"),
+        batchedResponder({
+          "/": [
+            makeEntry({
+              name: "guide",
+              full_path: "/guide",
+              child_count: 3n,
+              is_document: true,
+              document: makeDocRef("d-guide"),
+            }),
+          ],
+        }),
       );
 
       renderTree();
@@ -343,57 +318,33 @@ describe("SidebarDocumentTree", () => {
 
     it("clicking the chevron toggles aria-expanded and renders children", async () => {
       mockListDocumentPaths.mockImplementation(
-        ({ prefix }: { prefix: string | null }) => {
-          if (prefix == null) {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "guide",
-                  full_path: "/guide",
-                  child_count: 3n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          if (prefix === "/guide") {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "chapter-1",
-                  full_path: "/guide/chapter-1",
-                  child_count: 1n,
-                  is_document: true,
-                }),
-                makeEntry({
-                  name: "chapter-2",
-                  full_path: "/guide/chapter-2",
-                  child_count: 1n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          return Promise.resolve(makePathResponse([]));
-        },
-      );
-      // Both the hybrid's own per-row exact-path lookup and the batched
-      // `path_is_exact`-falsy lookup hit `path_prefix: "/guide"`; return the
-      // full set of docs under `/guide` so the children leaves resolve from
-      // the batched map.
-      mockListDocuments.mockImplementation(
-        ({ path_prefix }: { path_prefix: string }) => {
-          if (path_prefix === "/guide") {
-            return Promise.resolve(
-              makeDocumentsResponseMulti([
-                { documentId: "d-guide", path: "/guide" },
-                { documentId: "d-ch1", path: "/guide/chapter-1" },
-                { documentId: "d-ch2", path: "/guide/chapter-2" },
-              ]),
-            );
-          }
-          return Promise.resolve({ documents: [] } as ListDocumentsResponse);
-        },
+        batchedResponder({
+          "/": [
+            makeEntry({
+              name: "guide",
+              full_path: "/guide",
+              child_count: 3n,
+              is_document: true,
+              document: makeDocRef("d-guide"),
+            }),
+          ],
+          "/guide/": [
+            makeEntry({
+              name: "chapter-1",
+              full_path: "/guide/chapter-1",
+              child_count: 1n,
+              is_document: true,
+              document: makeDocRef("d-ch1"),
+            }),
+            makeEntry({
+              name: "chapter-2",
+              full_path: "/guide/chapter-2",
+              child_count: 1n,
+              is_document: true,
+              document: makeDocRef("d-ch2"),
+            }),
+          ],
+        }),
       );
 
       renderTree();
@@ -403,9 +354,7 @@ describe("SidebarDocumentTree", () => {
       );
 
       expect(chevron.getAttribute("aria-expanded")).toBe("false");
-      expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
-        prefix: "/guide",
-      });
+      expect(mockListDocumentPaths).toHaveBeenCalledTimes(1);
 
       fireEvent.click(chevron);
 
@@ -413,36 +362,31 @@ describe("SidebarDocumentTree", () => {
         expect(chevron.getAttribute("aria-expanded")).toBe("true");
       });
       await waitFor(() => {
-        expect(mockListDocumentPaths).toHaveBeenCalledWith({
-          prefix: "/guide",
+        expect(mockListDocumentPaths).toHaveBeenLastCalledWith({
+          prefixes: "/,/guide/",
         });
       });
       await waitFor(() => {
-        expect(screen.getByTestId("sidebar-doc-tree-leaf-d-ch1")).toBeTruthy();
+        expect(
+          screen.getByTestId("sidebar-doc-tree-leaf-d-ch1"),
+        ).toBeTruthy();
       });
       expect(screen.getByTestId("sidebar-doc-tree-leaf-d-ch2")).toBeTruthy();
     });
 
     it("clicking the chevron does NOT navigate (does not click the link)", async () => {
       mockListDocumentPaths.mockImplementation(
-        ({ prefix }: { prefix: string | null }) => {
-          if (prefix == null) {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "guide",
-                  full_path: "/guide",
-                  child_count: 3n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          return Promise.resolve(makePathResponse([]));
-        },
-      );
-      mockListDocuments.mockResolvedValue(
-        makeDocumentsResponse("d-guide", "/guide"),
+        batchedResponder({
+          "/": [
+            makeEntry({
+              name: "guide",
+              full_path: "/guide",
+              child_count: 3n,
+              is_document: true,
+              document: makeDocRef("d-guide"),
+            }),
+          ],
+        }),
       );
 
       renderTree();
@@ -462,36 +406,26 @@ describe("SidebarDocumentTree", () => {
 
     it("clicking the link does NOT toggle expansion", async () => {
       mockListDocumentPaths.mockImplementation(
-        ({ prefix }: { prefix: string | null }) => {
-          if (prefix == null) {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "guide",
-                  full_path: "/guide",
-                  child_count: 3n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          if (prefix === "/guide") {
-            return Promise.resolve(
-              makePathResponse([
-                makeEntry({
-                  name: "chapter-1",
-                  full_path: "/guide/chapter-1",
-                  child_count: 1n,
-                  is_document: true,
-                }),
-              ]),
-            );
-          }
-          return Promise.resolve(makePathResponse([]));
-        },
-      );
-      mockListDocuments.mockResolvedValue(
-        makeDocumentsResponse("d-guide", "/guide"),
+        batchedResponder({
+          "/": [
+            makeEntry({
+              name: "guide",
+              full_path: "/guide",
+              child_count: 3n,
+              is_document: true,
+              document: makeDocRef("d-guide"),
+            }),
+          ],
+          "/guide/": [
+            makeEntry({
+              name: "chapter-1",
+              full_path: "/guide/chapter-1",
+              child_count: 1n,
+              is_document: true,
+              document: makeDocRef("d-ch1"),
+            }),
+          ],
+        }),
       );
 
       renderTree();
@@ -504,11 +438,9 @@ describe("SidebarDocumentTree", () => {
       // Click on the link itself (the name) — should not toggle.
       fireEvent.click(link);
 
-      // aria-expanded stays false, and children fetch is not triggered.
+      // aria-expanded stays false, no extra batched fetch has been triggered.
       expect(chevron.getAttribute("aria-expanded")).toBe("false");
-      expect(mockListDocumentPaths).not.toHaveBeenCalledWith({
-        prefix: "/guide",
-      });
+      expect(mockListDocumentPaths).toHaveBeenCalledTimes(1);
       expect(
         screen.queryByTestId("sidebar-doc-tree-leaf-loading-/guide/chapter-1"),
       ).toBeNull();

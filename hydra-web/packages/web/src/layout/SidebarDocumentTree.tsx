@@ -1,13 +1,30 @@
-import { useCallback, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import type { DocumentSummaryRecord, PathChildEntry } from "@hydra/api";
-import { useDocumentPathChildren } from "../features/documents/useDocumentPathChildren";
-import { useDocumentSummariesAtPath } from "../features/documents/useDocumentSummariesAtPath";
-import { useDocumentSummariesUnderPath } from "../features/documents/useDocumentSummariesUnderPath";
+import type { PathChildEntry } from "@hydra/api";
+import {
+  useBatchedDocumentPaths,
+  type BatchedDocumentPaths,
+} from "../features/documents/useBatchedDocumentPaths";
 import styles from "./Sidebar.module.css";
 
 const TOP_LEVEL_LIMIT = 10;
 const INDENT_STEP_PX = 12;
+
+interface TreeContext {
+  expanded: Set<string>;
+  toggle: (prefix: string) => void;
+  batched: BatchedDocumentPaths;
+}
+
+const SidebarTreeContext = createContext<TreeContext | null>(null);
+
+function useTreeContext(): TreeContext {
+  const ctx = useContext(SidebarTreeContext);
+  if (!ctx) {
+    throw new Error("SidebarTreeContext missing");
+  }
+  return ctx;
+}
 
 function TreeChevron({ expanded }: { expanded: boolean }) {
   return (
@@ -41,32 +58,12 @@ function hybridLinkClass({ isActive }: { isActive: boolean }) {
 interface NodeProps {
   entry: PathChildEntry;
   depth: number;
-  pathToDoc?: Map<string, DocumentSummaryRecord>;
-  pathToDocLoading?: boolean;
 }
 
-function DocumentLeafRow({
-  entry,
-  depth,
-  pathToDoc,
-  pathToDocLoading,
-}: NodeProps) {
-  const fallback = useDocumentSummariesAtPath(
-    entry.full_path,
-    pathToDoc === undefined,
-  );
+function DocumentLeafRow({ entry, depth }: NodeProps) {
+  const doc = entry.document ?? undefined;
 
-  let doc: DocumentSummaryRecord | undefined;
-  let isLoading: boolean;
-  if (pathToDoc !== undefined) {
-    doc = pathToDoc.get(entry.full_path);
-    isLoading = pathToDocLoading ?? false;
-  } else {
-    doc = fallback.data?.documents.find((d) => !d.document.deleted);
-    isLoading = fallback.isLoading;
-  }
-
-  if (isLoading || !doc) {
+  if (!doc) {
     return (
       <div
         className={styles.treeLeafPlaceholder}
@@ -93,23 +90,13 @@ function DocumentLeafRow({
 }
 
 function FolderRow({ entry, depth }: NodeProps) {
-  const [expanded, setExpanded] = useState(false);
-  const toggle = useCallback(() => setExpanded((p) => !p), []);
-  const { data } = useDocumentPathChildren(entry.full_path, expanded);
-  const children = data?.children ?? [];
-
-  const { data: docsData, isLoading: docsLoading } =
-    useDocumentSummariesUnderPath(entry.full_path, expanded);
-  const pathToDoc = useMemo(() => {
-    const map = new Map<string, DocumentSummaryRecord>();
-    for (const record of docsData?.documents ?? []) {
-      if (record.document.deleted) continue;
-      const path = record.document.path;
-      if (path == null) continue;
-      if (!map.has(path)) map.set(path, record);
-    }
-    return map;
-  }, [docsData]);
+  const { expanded, toggle, batched } = useTreeContext();
+  const isOpen = expanded.has(entry.full_path);
+  const onToggle = useCallback(
+    () => toggle(entry.full_path),
+    [entry.full_path, toggle],
+  );
+  const children = isOpen ? batched.getChildren(entry.full_path) : [];
 
   return (
     <>
@@ -117,68 +104,31 @@ function FolderRow({ entry, depth }: NodeProps) {
         type="button"
         className={styles.treeFolder}
         style={indentStyle(depth)}
-        onClick={toggle}
-        aria-expanded={expanded}
+        onClick={onToggle}
+        aria-expanded={isOpen}
         data-testid={`sidebar-doc-tree-folder-${entry.full_path}`}
         title={entry.name}
       >
-        <TreeChevron expanded={expanded} />
+        <TreeChevron expanded={isOpen} />
         <span className={styles.treeFolderName}>{entry.name}</span>
       </button>
-      {expanded &&
+      {isOpen &&
         children.map((child) => (
-          <TreeNode
-            key={child.full_path}
-            entry={child}
-            depth={depth + 1}
-            pathToDoc={pathToDoc}
-            pathToDocLoading={docsLoading}
-          />
+          <TreeNode key={child.full_path} entry={child} depth={depth + 1} />
         ))}
     </>
   );
 }
 
-function HybridRow({ entry, depth, pathToDoc, pathToDocLoading }: NodeProps) {
-  const [expanded, setExpanded] = useState(false);
-  const toggle = useCallback(() => setExpanded((p) => !p), []);
-
-  // Resolve this row's own document for its NavLink. Prefer the parent's
-  // batched map when available; otherwise fall back to a per-row lookup
-  // (e.g., for a hybrid row at the top level).
-  const fallback = useDocumentSummariesAtPath(
-    entry.full_path,
-    pathToDoc === undefined,
+function HybridRow({ entry, depth }: NodeProps) {
+  const { expanded, toggle, batched } = useTreeContext();
+  const isOpen = expanded.has(entry.full_path);
+  const onToggle = useCallback(
+    () => toggle(entry.full_path),
+    [entry.full_path, toggle],
   );
-  let doc: DocumentSummaryRecord | undefined;
-  let docLoading: boolean;
-  if (pathToDoc !== undefined) {
-    doc = pathToDoc.get(entry.full_path);
-    docLoading = pathToDocLoading ?? false;
-  } else {
-    doc = fallback.data?.documents.find((d) => !d.document.deleted);
-    docLoading = fallback.isLoading;
-  }
-
-  // Children: same pattern as FolderRow — fetch path children, plus a single
-  // batched listDocuments under this path so child leaves resolve from a map.
-  const { data: childrenData } = useDocumentPathChildren(
-    entry.full_path,
-    expanded,
-  );
-  const children = childrenData?.children ?? [];
-  const { data: childDocsData, isLoading: childDocsLoading } =
-    useDocumentSummariesUnderPath(entry.full_path, expanded);
-  const childPathToDoc = useMemo(() => {
-    const map = new Map<string, DocumentSummaryRecord>();
-    for (const record of childDocsData?.documents ?? []) {
-      if (record.document.deleted) continue;
-      const path = record.document.path;
-      if (path == null) continue;
-      if (!map.has(path)) map.set(path, record);
-    }
-    return map;
-  }, [childDocsData]);
+  const doc = entry.document ?? undefined;
+  const children = isOpen ? batched.getChildren(entry.full_path) : [];
 
   return (
     <>
@@ -186,14 +136,14 @@ function HybridRow({ entry, depth, pathToDoc, pathToDocLoading }: NodeProps) {
         <button
           type="button"
           className={styles.treeHybridChevron}
-          onClick={toggle}
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse" : "Expand"}
+          onClick={onToggle}
+          aria-expanded={isOpen}
+          aria-label={isOpen ? "Collapse" : "Expand"}
           data-testid={`sidebar-doc-tree-hybrid-${entry.full_path}`}
         >
-          <TreeChevron expanded={expanded} />
+          <TreeChevron expanded={isOpen} />
         </button>
-        {docLoading || !doc ? (
+        {!doc ? (
           <div
             className={styles.treeHybridPlaceholder}
             data-testid={`sidebar-doc-tree-leaf-loading-${entry.full_path}`}
@@ -212,62 +162,69 @@ function HybridRow({ entry, depth, pathToDoc, pathToDocLoading }: NodeProps) {
           </NavLink>
         )}
       </div>
-      {expanded &&
+      {isOpen &&
         children.map((child) => (
-          <TreeNode
-            key={child.full_path}
-            entry={child}
-            depth={depth + 1}
-            pathToDoc={childPathToDoc}
-            pathToDocLoading={childDocsLoading}
-          />
+          <TreeNode key={child.full_path} entry={child} depth={depth + 1} />
         ))}
     </>
   );
 }
 
-function TreeNode({ entry, depth, pathToDoc, pathToDocLoading }: NodeProps) {
-  // Pure document (no descendants beyond itself): leaf row.
+function TreeNode({ entry, depth }: NodeProps) {
   if (entry.is_document && Number(entry.child_count) <= 1) {
-    return (
-      <DocumentLeafRow
-        entry={entry}
-        depth={depth}
-        pathToDoc={pathToDoc}
-        pathToDocLoading={pathToDocLoading}
-      />
-    );
+    return <DocumentLeafRow entry={entry} depth={depth} />;
   }
-  // Hybrid (document with descendants): chevron + link row.
   if (entry.is_document && Number(entry.child_count) > 1) {
-    return (
-      <HybridRow
-        entry={entry}
-        depth={depth}
-        pathToDoc={pathToDoc}
-        pathToDocLoading={pathToDocLoading}
-      />
-    );
+    return <HybridRow entry={entry} depth={depth} />;
   }
   return <FolderRow entry={entry} depth={depth} />;
 }
 
 export function SidebarDocumentTree() {
-  const { data, isLoading } = useDocumentPathChildren(null);
-  const entries = (data?.children ?? []).slice(0, TOP_LEVEL_LIMIT);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
-  if (isLoading) {
+  const toggle = useCallback((prefix: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(prefix)) {
+        next.delete(prefix);
+      } else {
+        next.add(prefix);
+      }
+      return next;
+    });
+  }, []);
+
+  const prefixes = useMemo<Array<string | null>>(
+    () => [null, ...expanded],
+    [expanded],
+  );
+
+  const batched = useBatchedDocumentPaths(prefixes);
+  const topLevel = useMemo(
+    () => batched.getChildren(null).slice(0, TOP_LEVEL_LIMIT),
+    [batched],
+  );
+
+  const contextValue = useMemo<TreeContext>(
+    () => ({ expanded, toggle, batched }),
+    [expanded, toggle, batched],
+  );
+
+  if (batched.isLoading && !batched.data) {
     return null;
   }
-  if (entries.length === 0) {
+  if (topLevel.length === 0) {
     return null;
   }
 
   return (
-    <div className={styles.docTree} data-testid="sidebar-doc-tree">
-      {entries.map((entry) => (
-        <TreeNode key={entry.full_path} entry={entry} depth={0} />
-      ))}
-    </div>
+    <SidebarTreeContext.Provider value={contextValue}>
+      <div className={styles.docTree} data-testid="sidebar-doc-tree">
+        {topLevel.map((entry) => (
+          <TreeNode key={entry.full_path} entry={entry} depth={0} />
+        ))}
+      </div>
+    </SidebarTreeContext.Provider>
   );
 }
