@@ -75,6 +75,43 @@ impl EventFilter {
 
 /// A policy that validates a proposed mutation before it is persisted.
 /// Returning `Err` rejects the mutation with a descriptive violation.
+///
+/// # Adding a new restriction
+///
+/// Registering a restriction takes three steps. Skipping any of them leaves
+/// it silently inactive in production deployments:
+///
+/// 1. **Implement `Restriction`** on a struct, typically in
+///    `hydra-server/src/policy/restrictions/`. Pick a stable `name()` —
+///    it is the key in YAML config and in logs.
+/// 2. **Register a factory** under that name in
+///    [`crate::policy::registry::build_default_registry`]. The factory
+///    receives the optional YAML `params` and produces a `Box<dyn Restriction>`.
+/// 3. **Add the name to the active list** in
+///    [`crate::app::default_policy_config`] if it should run by
+///    default, OR document it as opt-in (the operator must add it to their
+///    `policies.restrictions` config). Anything registered in step 2 but
+///    absent from both the default list and the operator's config is
+///    inert — the registry is just a name → factory map; activation comes
+///    from the `PolicyList`.
+///
+/// ```ignore
+/// // Step 1 (restrictions/my_restriction.rs):
+/// pub struct MyRestriction;
+/// #[async_trait]
+/// impl Restriction for MyRestriction {
+///     fn name(&self) -> &str { "my_restriction" }
+///     async fn evaluate(&self, _ctx: &RestrictionContext<'_>) -> Result<(), PolicyViolation> {
+///         Ok(())
+///     }
+/// }
+///
+/// // Step 2 (in build_default_registry):
+/// registry.register_restriction("my_restriction", |_params| Ok(Box::new(MyRestriction)));
+///
+/// // Step 3 (in default_policy_config, optional):
+/// PolicyEntry::Name("my_restriction".to_string()),
+/// ```
 #[async_trait]
 pub trait Restriction: Send + Sync {
     /// A unique name for this restriction (used in config and logging).
@@ -87,6 +124,57 @@ pub trait Restriction: Send + Sync {
 
 /// A policy that reacts to a successfully persisted event by performing
 /// side effects.
+///
+/// # Adding a new automation
+///
+/// Registering an automation takes three steps — the same shape as
+/// [`Restriction`]:
+///
+/// 1. **Implement `Automation`** on a struct in
+///    `hydra-server/src/policy/automations/`. Pick a stable `name()`.
+/// 2. **Register a factory** under that name in
+///    [`crate::policy::registry::build_default_registry`].
+/// 3. **Add the name to the active list** in
+///    [`crate::app::default_policy_config`] if it should run by
+///    default. Registration alone does **not** activate the automation; it
+///    must also appear in the active `PolicyList` returned by
+///    `default_policy_config()` or in the operator's `policies.automations`
+///    config. This is the most common debugging gotcha — see the
+///    `default_policy_config` docs for the activation-vs-registration split.
+///
+/// # Event filtering and silent paths
+///
+/// [`Self::event_filter`] selects which [`ServerEvent`] variants trigger
+/// the automation; the runner skips any event that does not match. Inside
+/// [`Self::execute`], **every silent early-return path should emit a
+/// `tracing::warn!` with structured fields** (`automation`, plus any
+/// relevant entity id) so operators can see why an automation no-op'd
+/// instead of acting. Hard misconfigurations that prevent the automation
+/// from doing its job (e.g. missing default agent, missing prompt
+/// document) should return [`AutomationError`] so the runner surfaces them
+/// at `error!` level via its `"automation failed"` log — these are far
+/// more visible than a `warn!` in noisy production logs.
+///
+/// ```ignore
+/// // Step 1 (automations/my_automation.rs):
+/// pub struct MyAutomation;
+/// #[async_trait]
+/// impl Automation for MyAutomation {
+///     fn name(&self) -> &str { "my_automation" }
+///     fn event_filter(&self) -> EventFilter {
+///         EventFilter { event_types: vec![EventType::IssueCreated], ..Default::default() }
+///     }
+///     async fn execute(&self, _ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
+///         Ok(())
+///     }
+/// }
+///
+/// // Step 2 (in build_default_registry):
+/// registry.register_automation("my_automation", |params| Ok(Box::new(MyAutomation::new(params)?)));
+///
+/// // Step 3 (in default_policy_config, optional):
+/// PolicyEntry::Name("my_automation".to_string()),
+/// ```
 #[async_trait]
 pub trait Automation: Send + Sync {
     /// A unique name for this automation (used in config and logging).

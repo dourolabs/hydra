@@ -79,7 +79,7 @@ impl Automation for SpawnConversationSessionsAutomation {
                 if new.status != ConversationStatus::Active {
                     return Ok(());
                 }
-                spawn_session(ctx, conversation_id, new, None).await;
+                spawn_session(ctx, conversation_id, new, None).await?;
             }
             ServerEvent::ConversationUpdated {
                 conversation_id,
@@ -98,7 +98,7 @@ impl Automation for SpawnConversationSessionsAutomation {
                     return Ok(());
                 }
                 let resume_from = compute_resume_index(ctx, conversation_id).await;
-                spawn_session(ctx, conversation_id, new, resume_from).await;
+                spawn_session(ctx, conversation_id, new, resume_from).await?;
             }
             ServerEvent::SessionUpdated { payload, .. } => {
                 let MutationPayload::Session { old, new, .. } = payload.as_ref() else {
@@ -128,14 +128,21 @@ impl Automation for SpawnConversationSessionsAutomation {
 /// from that event index) and `None` for fresh spawns. When `resume_from` is
 /// `Some`, the spawned session's `conversation_resume_from` is stamped and a
 /// `Resumed` event is appended to the conversation log.
+///
+/// Returns `Err` for misconfiguration cases that prevent a spawn (no agent
+/// available, agent prompt missing, `create_session` fails). The runner
+/// surfaces these via its `automation failed` error log so they aren't lost
+/// in the noise of normal `tracing::warn!` output — this is the primary
+/// debugging hook for operators who list `spawn_conversation_sessions` in
+/// `policies.automations` but observe no session being created.
 async fn spawn_session(
     ctx: &AutomationContext<'_>,
     conversation_id: &ConversationId,
     conversation: &Conversation,
     resume_from: Option<usize>,
-) {
+) -> Result<(), AutomationError> {
     if conversation.deleted {
-        return;
+        return Ok(());
     }
 
     let agent = match ctx
@@ -145,35 +152,31 @@ async fn spawn_session(
     {
         Ok(Some(agent)) => agent,
         Ok(None) => {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                "no agent configured for conversation and no default conversation agent registered; not spawning session"
-            );
-            return;
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] cannot spawn session for conversation {conversation_id}: \
+                 the conversation has no `agent_name` and no agent is registered with \
+                 `is_default_conversation_agent: true`. Register one with \
+                 `POST /v1/agents` (e.g., `is_default_conversation_agent: true`) or pass \
+                 `agent_name` on `POST /v1/conversations`."
+            )));
         }
         Err(err) => {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                error = %err,
-                "failed to resolve conversation agent; not spawning session"
-            );
-            return;
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve agent for conversation \
+                 {conversation_id}: {err}"
+            )));
         }
     };
 
     let agent_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
         Ok(prompt) => prompt,
         Err(err) => {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                agent = %agent.name,
-                error = %err,
-                "failed to resolve agent prompt; not spawning session"
-            );
-            return;
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
+                 {conversation_id} (prompt_path='{}'): {err}",
+                agent.name,
+                agent.prompt_path
+            )));
         }
     };
 
@@ -199,13 +202,10 @@ async fn spawn_session(
     {
         Ok(id) => id,
         Err(err) => {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                error = %err,
-                "failed to spawn conversation session"
-            );
-            return;
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to create session for conversation \
+                 {conversation_id}: {err}"
+            )));
         }
     };
 
@@ -269,6 +269,8 @@ async fn spawn_session(
         resume = resume_from.is_some(),
         "spawned conversation session"
     );
+
+    Ok(())
 }
 
 /// Compute the `conversation_resume_from` index for a resume spawn.
@@ -776,6 +778,14 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_spawn_when_no_agent_and_no_default() {
+        // Reproduces the user-reported "spawn_conversation_sessions does not
+        // seem to be active" scenario: the automation IS wired and IS firing,
+        // but it cannot resolve an agent for the conversation (no `agent_name`
+        // on the conversation, no default conversation agent registered) so
+        // it bails. The bail must propagate as `Err(AutomationError)` so the
+        // runner surfaces it via `tracing::error!("automation failed")` —
+        // previously this was a silent `tracing::warn!` that operators missed
+        // when filtering server logs.
         let state = state_with_default_model("default-model");
         // No agents registered at all.
 
@@ -794,7 +804,19 @@ mod tests {
             store: state.store(),
         };
 
-        automation.execute(&ctx).await.unwrap();
+        let err = automation
+            .execute(&ctx)
+            .await
+            .expect_err("expected an error when no agent can be resolved");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("is_default_conversation_agent"),
+            "error message should point operators at the registration knob; got: {msg}"
+        );
+        assert!(
+            msg.contains("agent_name"),
+            "error message should mention the request-side knob too; got: {msg}"
+        );
 
         assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
     }

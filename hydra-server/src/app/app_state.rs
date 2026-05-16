@@ -17,8 +17,29 @@ use super::ServiceState;
 
 /// Returns the production-default policy configuration.
 ///
-/// This is the canonical source of truth for which restrictions and automations
-/// are active when no explicit `[policies]` section is present in the config.
+/// This is the canonical source of truth for which restrictions and
+/// automations are **active** when no explicit `policies` section is
+/// present in the operator's `config.yaml`.
+///
+/// # Activation vs. registration
+///
+/// A policy is registered (in
+/// [`crate::policy::registry::build_default_registry`]) so the engine
+/// *knows how to construct* it, but is only active if it appears in the
+/// `PolicyList` returned here or in the operator's explicit
+/// `policies.restrictions` / `policies.automations` config. **Anything
+/// registered but absent from both is silently inactive** — this is the
+/// most common debugging gotcha when a built-in automation appears not
+/// to fire. See the [`crate::policy::Restriction`] /
+/// [`crate::policy::Automation`] trait docs for the full registration
+/// pattern.
+///
+/// When an operator supplies their own `policies` section, the list here
+/// is ignored — the operator's list is taken verbatim, so they must
+/// re-list every automation/restriction they want active (including any
+/// dependencies between them, e.g. `spawn_conversation_sessions` only
+/// produces *running* sessions if `start_created_sessions` is also
+/// active).
 pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
     use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 
