@@ -167,6 +167,9 @@ describe("ChatPage 2-pane layout", () => {
     mockEvents = [];
     mockIsLoading = false;
     mockError = null;
+    // jsdom doesn't implement Element.scrollTo, which the ChatMessageList
+    // auto-scroll effect calls.
+    Element.prototype.scrollTo = vi.fn() as unknown as typeof Element.prototype.scrollTo;
   });
 
   it("renders Related and Settings tabs in the right panel", () => {

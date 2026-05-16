@@ -44,7 +44,6 @@
 @media (max-width: 1024px) {
   .chatLayout {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr auto;
-    overflow: auto;
+    grid-template-rows: 1fr minmax(0, 1fr);
   }
 }

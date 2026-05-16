@@ -23,49 +23,48 @@ function userMessage(content: string, ts = "2026-05-14T00:00:00Z"): Conversation
 }
 
 describe("ChatMessageList auto-scroll", () => {
-  let scrollIntoViewSpy: ReturnType<typeof vi.fn>;
-  let originalScrollIntoView: typeof Element.prototype.scrollIntoView | undefined;
+  let scrollToSpy: ReturnType<typeof vi.fn>;
+  let originalScrollTo: typeof Element.prototype.scrollTo | undefined;
 
   beforeEach(() => {
-    originalScrollIntoView = Element.prototype.scrollIntoView;
-    scrollIntoViewSpy = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoViewSpy;
+    originalScrollTo = Element.prototype.scrollTo;
+    scrollToSpy = vi.fn();
+    Element.prototype.scrollTo = scrollToSpy as unknown as typeof Element.prototype.scrollTo;
   });
 
   afterEach(() => {
     cleanup();
-    if (originalScrollIntoView) {
-      Element.prototype.scrollIntoView = originalScrollIntoView;
+    if (originalScrollTo) {
+      Element.prototype.scrollTo = originalScrollTo;
     }
     vi.clearAllMocks();
   });
 
-  it("calls scrollIntoView on initial mount", () => {
+  it("scrolls the container to bottom on initial mount", () => {
     render(<ChatMessageList events={[userMessage("hello")]} />);
-    expect(scrollIntoViewSpy).toHaveBeenCalled();
-    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth" });
+    expect(scrollToSpy).toHaveBeenCalled();
+    const call = scrollToSpy.mock.calls[0]?.[0];
+    expect(call).toMatchObject({ behavior: "smooth" });
+    expect(typeof call.top).toBe("number");
   });
 
-  it("calls scrollIntoView again when events grows", () => {
+  it("scrolls the container to bottom when events grows", () => {
     const { rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
-    scrollIntoViewSpy.mockClear();
+    scrollToSpy.mockClear();
 
-    rerender(
-      <ChatMessageList events={[userMessage("hi"), userMessage("hello")]} />,
-    );
+    rerender(<ChatMessageList events={[userMessage("hi"), userMessage("hello")]} />);
 
-    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1);
-    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth" });
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+    expect(scrollToSpy.mock.calls[0]?.[0]).toMatchObject({ behavior: "smooth" });
   });
 
-  it("does not call scrollIntoView again when events length is unchanged", () => {
+  it("does not scroll again when events length is unchanged", () => {
     const events = [userMessage("hi"), userMessage("there")];
     const { rerender } = render(<ChatMessageList events={events} />);
-    scrollIntoViewSpy.mockClear();
+    scrollToSpy.mockClear();
 
-    // Re-render with a new array reference but same length.
     rerender(<ChatMessageList events={[...events]} />);
 
-    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    expect(scrollToSpy).not.toHaveBeenCalled();
   });
 });
