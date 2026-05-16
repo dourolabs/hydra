@@ -1,93 +1,99 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background-color: var(--color-backdrop);
+  background-color: var(--bg-overlay);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 12vh;
   z-index: 1000;
-  animation: fadeIn var(--transition-fast);
+  animation: hydra-modal-fade-in var(--tx-fast);
 }
 
 .modal {
-  background-color: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  min-width: min(400px, calc(100vw - 2rem));
-  max-width: 640px;
-  max-height: 80vh;
-  max-height: 80dvh;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  min-width: min(420px, calc(100vw - 2rem));
+  max-width: 560px;
+  width: 100%;
+  max-height: 76vh;
+  max-height: 76dvh;
   display: flex;
   flex-direction: column;
-  animation: slideIn var(--transition-normal);
+  font-family: var(--f-sans);
+  color: var(--fg-0);
+  animation: hydra-modal-slide-in var(--tx-norm);
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
 }
 
 .title {
-  font-size: var(--font-size-lg);
+  font-family: var(--f-sans);
+  font-size: var(--t-lg);
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
 .close {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-md);
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-2);
+  font-size: var(--t-md);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
+  transition: background var(--tx-fast), color var(--tx-fast);
 }
 
 .close:hover {
-  background-color: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
 .body {
-  padding: var(--space-4);
+  padding: 16px;
   overflow-y: auto;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+@keyframes hydra-modal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+@keyframes hydra-modal-slide-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .modal {
+    animation: none;
   }
 }
 
 @media (max-width: 768px) {
+  .backdrop {
+    padding-top: 6vh;
+  }
+
   .modal {
     min-width: calc(100vw - 1rem);
-    max-height: calc(100dvh - var(--mobile-nav-height) - 2rem);
-    border-radius: var(--radius-md);
+    max-height: calc(100dvh - var(--mobile-nav-height, 0px) - 2rem);
   }
 }

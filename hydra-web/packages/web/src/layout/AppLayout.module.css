@@ -7,7 +7,6 @@
   background: var(--bg-0);
   overflow: hidden;
   position: relative;
-  transition: grid-template-columns var(--tx-norm);
 }
 
 .layout[data-sidebar="hidden"] {

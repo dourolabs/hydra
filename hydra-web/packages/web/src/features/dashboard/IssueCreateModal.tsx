@@ -1,7 +1,13 @@
-import { useCallback, useState } from "react";
-import { Modal, Button, Input, Textarea, Select } from "@hydra/ui";
-import type { SelectOption } from "@hydra/ui";
-import type { IssueType, RepositoryRecord } from "@hydra/api";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { Avatar, Button, Icons, Kbd, TypeChip } from "@hydra/ui";
+import type { IssueType } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -9,25 +15,11 @@ import { useFormModal } from "../../hooks/useFormModal";
 import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
 import { LabelPicker } from "../labels/LabelPicker";
-import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./IssueCreateModal.module.css";
 
-const issueTypeOptions: SelectOption[] = [
-  { value: "task", label: "Task" },
-  { value: "bug", label: "Bug" },
-  { value: "feature", label: "Feature" },
-  { value: "chore", label: "Chore" },
-];
+type PickerKey = "type" | "assignee" | "repo" | null;
 
-function buildRepoOptions(repos: RepositoryRecord[] | undefined): SelectOption[] {
-  const options: SelectOption[] = [{ value: "", label: "None" }];
-  if (repos) {
-    for (const r of repos) {
-      options.push({ value: r.name, label: r.name });
-    }
-  }
-  return options;
-}
+const ISSUE_TYPES: IssueType[] = ["task", "bug", "feature", "chore"];
 
 interface IssueCreateModalProps {
   open: boolean;
@@ -64,7 +56,35 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "hydra:draft:issue-create-modal:labelNames",
     [],
   );
-  const [showMoreOptions, setShowMoreOptions] = useState(false);
+
+  const [picker, setPicker] = useState<PickerKey>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setPicker(null);
+      return;
+    }
+    const t = window.setTimeout(() => titleInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  // Esc closes the modal globally.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (picker) {
+          setPicker(null);
+        } else {
+          onClose();
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose, picker]);
 
   const resetForm = useCallback(() => {
     setTitle("");
@@ -148,92 +168,291 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
       ...(repoName && { repoName }),
       ...(labelNames.length > 0 && { labelNames }),
     });
-  }, [title, description, currentUsername, issueType, assignee, repoName, labelNames, mutation]);
+  }, [
+    title,
+    description,
+    currentUsername,
+    issueType,
+    assignee,
+    repoName,
+    labelNames,
+    mutation,
+  ]);
 
-  const resetAll = useCallback(() => {
-    resetForm();
-    setShowMoreOptions(false);
-  }, [resetForm]);
+  // X close / backdrop / Esc — preserves drafts.
+  const requestClose = useCallback(() => {
+    handleClose(onClose);
+  }, [handleClose, onClose]);
 
-  const assigneeOptions: SelectOption[] = [
-    { value: "", label: "Unassigned" },
-    ...assignees.map((a) => ({ value: a, label: a })),
-  ];
+  // Cancel button — clears drafts before closing.
+  const handleCancel = useCallback(() => {
+    handleClose(onClose, resetForm);
+  }, [handleClose, onClose, resetForm]);
+
+  const onSubmitKeyDown = (e: KeyboardEvent<HTMLDivElement>) =>
+    handleKeyDown(e, handleSubmit);
+
+  const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
+
+  if (!open) return null;
+
+  const repoEntries = repos ?? [];
+  const canSubmit = description.trim().length > 0 && !isPending;
 
   return (
-    <Modal
-      open={open}
-      onClose={() => handleClose(onClose)}
-      title="Create Issue"
-      className={largeModalStyles.largeModal}
+    <div
+      className={styles.backdrop}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) requestClose();
+      }}
+      data-testid="issue-create-backdrop"
     >
-      <div className={styles.form} onKeyDown={(e) => handleKeyDown(e, handleSubmit)}>
-        <Input
-          label="Title"
-          placeholder="Short summary (optional)"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <div className={styles.descriptionWrapper}>
-          <Textarea
-            label="Description"
-            placeholder="Describe the issue..."
+      <div
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create issue"
+        data-testid="issue-create-modal"
+        onKeyDown={onSubmitKeyDown}
+      >
+        <div className={styles.head}>
+          <div className={styles.headLeft}>
+            <span className={styles.headIcon}>
+              <Icons.IconIssue size={16} />
+            </span>
+            <span className={styles.headTitle}>New issue</span>
+          </div>
+          <button
+            type="button"
+            className={styles.close}
+            onClick={requestClose}
+            aria-label="Close"
+          >
+            <Icons.IconX size={14} />
+          </button>
+        </div>
+
+        <div className={styles.body}>
+          <input
+            ref={titleInputRef}
+            className={styles.title}
+            placeholder="Issue title…"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <textarea
+            className={styles.desc}
+            placeholder="Describe the issue. Acceptance criteria, repro steps, anything an agent needs to know…"
+            rows={6}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className={styles.descriptionTextarea}
           />
-        </div>
-        {showMoreOptions && (
-          <div className={styles.fields}>
-            <Select
+
+          <div className={styles.pickers}>
+            <Picker
               label="Type"
-              options={issueTypeOptions}
-              value={issueType}
-              onChange={(e) => setIssueType(e.target.value as IssueType)}
-            />
-            <Select
+              open={picker === "type"}
+              onToggle={() => setPicker(picker === "type" ? null : "type")}
+              value={<TypeChip type={issueType} />}
+            >
+              {ISSUE_TYPES.map((t) => (
+                <PickerRow
+                  key={t}
+                  active={issueType === t}
+                  onClick={() => {
+                    setIssueType(t);
+                    setPicker(null);
+                  }}
+                >
+                  <TypeChip type={t} />
+                  <span className={styles.popSpacer} />
+                </PickerRow>
+              ))}
+            </Picker>
+
+            <Picker
               label="Assignee"
-              options={assigneeOptions}
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-            />
-            <Select
+              open={picker === "assignee"}
+              onToggle={() => setPicker(picker === "assignee" ? null : "assignee")}
+              wide
+              value={
+                assignee ? (
+                  <span className={styles.pillContent}>
+                    <Avatar name={assignee} kind="agent" size="md" />
+                    <span>{assignee}</span>
+                  </span>
+                ) : (
+                  <span className={styles.pillEmpty}>Unassigned</span>
+                )
+              }
+            >
+              <PickerRow
+                active={!assignee}
+                onClick={() => {
+                  setAssignee("");
+                  setPicker(null);
+                }}
+              >
+                <span className={styles.pillEmpty}>Unassigned</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+              {assignees.length > 0 && (
+                <>
+                  <div className={styles.popSection}>Agents</div>
+                  {assignees.map((name) => (
+                    <PickerRow
+                      key={name}
+                      active={assignee === name}
+                      onClick={() => {
+                        setAssignee(name);
+                        setPicker(null);
+                      }}
+                    >
+                      <Avatar name={name} kind="agent" size="md" />
+                      <span>{name}</span>
+                      <span className={styles.popSpacer} />
+                    </PickerRow>
+                  ))}
+                </>
+              )}
+            </Picker>
+
+            <Picker
               label="Repository"
-              options={buildRepoOptions(repos)}
-              value={repoName}
-              onChange={(e) => setRepoName(e.target.value)}
-            />
-          </div>
-        )}
-        <LabelPicker selectedNames={labelNames} onChange={setLabelNames} />
-        <div className={styles.footer}>
-          <div className={styles.footerLeft}>
-            <button
-              type="button"
-              className={styles.toggleOptions}
-              onClick={() => setShowMoreOptions(!showMoreOptions)}
+              open={picker === "repo"}
+              onToggle={() => setPicker(picker === "repo" ? null : "repo")}
+              wide
+              value={
+                repoName ? (
+                  <code className={styles.pillCode}>{repoName}</code>
+                ) : (
+                  <span className={styles.pillEmpty}>None</span>
+                )
+              }
             >
-              {showMoreOptions ? "Hide options" : "More options"}
-            </button>
-            <span className={styles.hint}>
-              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit
-            </span>
+              <PickerRow
+                active={!repoName}
+                onClick={() => {
+                  setRepoName("");
+                  setPicker(null);
+                }}
+              >
+                <span className={styles.pillEmpty}>None</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+              {repoEntries.map((r) => (
+                <PickerRow
+                  key={r.name}
+                  active={repoName === r.name}
+                  onClick={() => {
+                    setRepoName(r.name);
+                    setPicker(null);
+                  }}
+                >
+                  <Icons.IconRepo size={14} />
+                  <code className={styles.popCode}>{r.name}</code>
+                  <span className={styles.popSpacer} />
+                </PickerRow>
+              ))}
+            </Picker>
           </div>
-          <div className={styles.footerActions}>
-            <Button variant="secondary" size="md" onClick={() => handleClose(onClose, resetAll)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleSubmit}
-              disabled={!description.trim() || isPending}
-            >
-              {isPending ? "Creating..." : "Create Issue"}
-            </Button>
+
+          <div className={styles.labelRow}>
+            <LabelPicker selectedNames={labelNames} onChange={setLabelNames} />
           </div>
+        </div>
+
+        <div className={styles.foot}>
+          <span className={styles.footSpacer} />
+          <span className={styles.footHint}>
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>↵</Kbd> submit
+          </span>
+          <Button variant="ghost" size="sm" onClick={handleCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
+            <Icons.IconPlus size={14} />
+            {isPending ? "Creating…" : "Create issue"}
+          </Button>
         </div>
       </div>
-    </Modal>
+    </div>
+  );
+}
+
+/** ── Internal Picker + Row ── */
+
+interface PickerProps {
+  label: string;
+  value: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  wide?: boolean;
+  children: ReactNode;
+}
+
+function Picker({ label, value, open, onToggle, wide, children }: PickerProps) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        onToggle();
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, onToggle]);
+
+  return (
+    <div className={styles.picker} ref={wrapRef}>
+      <div className={styles.pickerLabel}>{label}</div>
+      <button
+        type="button"
+        className={`${styles.pill}${open ? ` ${styles.pillActive}` : ""}`}
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        {value}
+        <span className={styles.pillChevron}>
+          <Icons.IconChevronDown size={12} />
+        </span>
+      </button>
+      {open && (
+        <div className={`${styles.pop}${wide ? ` ${styles.popWide}` : ""}`}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface PickerRowProps {
+  active?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}
+
+function PickerRow({ active, onClick, children }: PickerRowProps) {
+  return (
+    <button
+      type="button"
+      className={`${styles.popRow}${active ? ` ${styles.popRowActive}` : ""}`}
+      onClick={onClick}
+    >
+      {children}
+      <span className={styles.popCheck}>
+        <Icons.IconCheck size={12} />
+      </span>
+    </button>
   );
 }

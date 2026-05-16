@@ -112,19 +112,21 @@ function DocumentDetail({ record }: DocumentDetailProps) {
   );
 
   return (
-    <div className={styles.detail}>
-      <div className={styles.header}>
+    <div className={styles.inner}>
+      <div className={styles.titleRow}>
         <h1 className={styles.title}>{displayTitle}</h1>
-        {!editing && (
-          <Button variant="secondary" size="sm" onClick={handleEdit}>
-            Edit
-          </Button>
-        )}
+        <div className={styles.actions}>
+          {!editing && (
+            <Button variant="secondary" size="sm" onClick={handleEdit}>
+              Edit
+            </Button>
+          )}
+        </div>
       </div>
 
-      <div className={styles.meta}>
+      <div className={styles.metaRow}>
         {record.document.path && (
-          <div className={styles.metaItem}>
+          <span className={styles.metaItem}>
             <span className={styles.metaLabel}>Path</span>
             <span className={styles.metaValue}>
               {record.document.path}
@@ -133,14 +135,12 @@ function DocumentDetail({ record }: DocumentDetailProps) {
                 onCopied={() => addToast("Copied!", "success")}
               />
             </span>
-          </div>
-        )}
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            {formatRelativeTime(record.timestamp)}
           </span>
-        </div>
+        )}
+        <span className={styles.metaItem}>
+          <span className={styles.metaLabel}>Updated</span>
+          <span className={styles.metaValue}>{formatRelativeTime(record.timestamp)}</span>
+        </span>
       </div>
 
       {editing ? (
@@ -159,7 +159,7 @@ function DocumentDetail({ record }: DocumentDetailProps) {
               onClick={handleSave}
               disabled={mutation.isPending}
             >
-              {mutation.isPending ? "Saving..." : "Save"}
+              {mutation.isPending ? "Saving…" : "Save"}
             </Button>
             <Button
               variant="secondary"
@@ -170,13 +170,12 @@ function DocumentDetail({ record }: DocumentDetailProps) {
               Cancel
             </Button>
             <span className={styles.hint}>
-              {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to
-              save
+              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save
             </span>
           </div>
         </div>
       ) : (
-        <div className={styles.content}>
+        <div className={styles.prose}>
           <MarkdownViewer content={record.document.body_markdown} />
         </div>
       )}

@@ -1,10 +1,8 @@
-import { useState } from "react";
-import { Button, Spinner } from "@hydra/ui";
+import { Spinner } from "@hydra/ui";
 import { useUsername } from "../auth/useUsername";
 import { useSecrets } from "./useSecrets";
 import { SecretRow } from "./SecretRow";
 import { AddSecretForm } from "./AddSecretForm";
-import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./SecretsSection.module.css";
 
 const KNOWN_SECRETS = [
@@ -19,13 +17,17 @@ const KNOWN_SECRETS = [
   { name: "CLAUDE_CODE_OAUTH_TOKEN", label: "Claude Code OAuth Token" },
 ];
 
-export function SecretsSection() {
+interface SecretsSectionProps {
+  adding: boolean;
+  onAddingChange: (adding: boolean) => void;
+}
+
+export function SecretsSection({ adding, onAddingChange }: SecretsSectionProps) {
   const username = useUsername();
   const { data, isLoading, error } = useSecrets(username);
   const configuredSecrets = data?.secrets ?? [];
   const knownSecretNames = new Set(KNOWN_SECRETS.map((s) => s.name));
   const customSecrets = configuredSecrets.filter((n) => !knownSecretNames.has(n));
-  const [adding, setAdding] = useState(false);
 
   return (
     <>
@@ -39,12 +41,6 @@ export function SecretsSection() {
 
       {data && (
         <>
-          <div className={sharedStyles.sectionHeader}>
-            <span className={sharedStyles.sectionTitle}>Secrets</span>
-            <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-              Add Secret
-            </Button>
-          </div>
           <div className={styles.secretList}>
             {KNOWN_SECRETS.map((secret) => (
               <SecretRow
@@ -70,7 +66,7 @@ export function SecretsSection() {
             username={username!}
             existingNames={configuredSecrets}
             adding={adding}
-            onClose={() => setAdding(false)}
+            onClose={() => onAddingChange(false)}
           />
         </>
       )}

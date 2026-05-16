@@ -150,11 +150,11 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
       to: "/sessions",
       label: "Sessions",
       testId: "sidebar-sessions",
-      icon: <Icons.IconSpark />,
+      icon: <Icons.IconPlay />,
     },
     {
       to: "/documents",
-      label: "Docs",
+      label: "Documents",
       testId: "sidebar-documents",
       icon: <Icons.IconDoc />,
     },
@@ -166,7 +166,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
     },
     {
       to: "/repositories",
-      label: "Repos",
+      label: "Repositories",
       testId: "sidebar-context-repositories",
       icon: <Icons.IconRepo />,
     },

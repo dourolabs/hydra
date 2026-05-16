@@ -1,18 +1,14 @@
 .largeModal {
-  width: 80vw;
-  max-width: 80vw;
-  height: 70vh;
-  height: 70dvh;
-  max-height: 70vh;
-  max-height: 70dvh;
+  width: min(560px, calc(100vw - 2rem));
+  max-width: min(560px, calc(100vw - 2rem));
+  max-height: 76vh;
+  max-height: 76dvh;
 }
 
 @media (max-width: 768px) {
   .largeModal {
-    width: 95vw;
-    max-width: 95vw;
-    height: 85vh;
-    height: 85dvh;
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
     max-height: 85vh;
     max-height: 85dvh;
   }

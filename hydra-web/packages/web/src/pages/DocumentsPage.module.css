@@ -1,36 +1,83 @@
 .page {
-  composes: page from "./page.module.css";
-}
-.center {
-  composes: center from "./page.module.css";
-}
-
-.panelHeaderRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-4);
-}
-
-.section {
-  margin-bottom: var(--space-6);
-}
-
-.sectionTitle {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0;
-}
-
-.docList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+.pageHead {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.headLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pageTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  margin: 0;
+}
+
+.headSpacer {
+  flex: 1;
+}
+
+.errorBanner {
+  margin: 16px 24px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--s-failed);
+  background: color-mix(in srgb, var(--s-failed) 8%, transparent);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  border-radius: var(--radius-sm);
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  flex: 1;
+}
+
+/* ─── Two-column tree layout ─── */
+.treeLayout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tree {
+  border-right: 1px solid var(--line);
+  background: var(--bg-1);
+  overflow: auto;
+  min-height: 0;
+  padding: 8px 0 16px;
 }
 
 .treeRoot {
@@ -42,56 +89,229 @@
 .folderRow {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  background: none;
-  border: none;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  height: 28px;
+  padding-right: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
   cursor: pointer;
   text-align: left;
-  transition: background 120ms ease;
+  border-radius: var(--radius-sm);
+  transition: background var(--tx-fast), color var(--tx-fast);
 }
 
 .folderRow:hover {
-  background: var(--color-bg-hover);
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.folderRowActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
 }
 
 .chevron {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  width: 1em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-3);
   flex-shrink: 0;
-  text-align: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--tx-fast), color var(--tx-fast);
 }
 
-.folderName {
-  font-weight: 500;
-  color: var(--color-text-primary);
+.chevron:hover {
+  color: var(--fg-1);
 }
 
-.childCount {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  margin-left: auto;
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.chevronPlaceholder {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .folderIcon {
-  display: block;
+  color: var(--fg-2);
   flex-shrink: 0;
-  color: var(--color-text-tertiary);
+  display: inline-flex;
+}
+
+.folderRowActive .folderIcon,
+.folderRow:hover .folderIcon {
+  color: var(--fg-1);
+}
+
+.folderName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  flex-shrink: 0;
 }
 
 .loadingRow {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-2) var(--space-4);
+  padding: 6px 8px;
 }
 
-.treeRoot > :where(:nth-child(odd)),
-.docList > :where(:nth-child(odd)) {
-  background-color: var(--color-bg-secondary);
+/* ─── Right pane ─── */
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-0);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.crumb {
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.crumb:hover {
+  color: var(--fg-0);
+}
+
+.crumbCurrent {
+  color: var(--fg-0);
+}
+
+.crumbSep {
+  color: var(--fg-3);
+}
+
+.crumbSpacer {
+  flex: 1;
+}
+
+.crumbMeta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+.paneBody {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 6px 12px 20px;
+}
+
+.docRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row-h);
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  transition: background var(--tx-fast);
+}
+
+.docRow:hover {
+  background: var(--bg-1);
+}
+
+.docRowIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.docRow:hover .docRowIcon {
+  color: var(--fg-1);
+}
+
+.docRowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docRowMeta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  flex-shrink: 0;
+}
+
+.docRowDate {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  flex-shrink: 0;
+  min-width: 60px;
+  text-align: right;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .treeLayout {
+    grid-template-columns: 220px 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .treeLayout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 200px;
+  }
+}

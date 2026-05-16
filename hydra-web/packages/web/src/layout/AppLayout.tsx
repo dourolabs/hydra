@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
@@ -42,6 +42,22 @@ export function AppLayout() {
   const toggleSearch = useCallback(() => setSearchOpen((prev) => !prev), []);
 
   useGlobalSearchShortcut(toggleSearch);
+
+  // When crossing the mobile→desktop boundary, auto-close any open drawer.
+  // Without this, an open mobile drawer (hidden=false) translates into
+  // sidebarMode="wide" on desktop — fine — but a closed mobile drawer
+  // (hidden=true) leaves the sidebar collapsed on desktop with no obvious
+  // way to recover. The hamburger in the topbar handles the recovery case,
+  // but we still snap state cleanly when the breakpoint flips.
+  const wasMobileRef = useRef(isMobile);
+  useEffect(() => {
+    if (wasMobileRef.current && !isMobile && hidden) {
+      // Coming back to desktop with a hidden sidebar — show it so the user
+      // doesn't end up with no sidebar and no visible toggle.
+      show();
+    }
+    wasMobileRef.current = isMobile;
+  }, [isMobile, hidden, show]);
 
   if (loading) {
     return (

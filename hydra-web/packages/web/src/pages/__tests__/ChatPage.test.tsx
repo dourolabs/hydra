@@ -116,6 +116,7 @@ vi.mock("@hydra/ui", () => ({
   ),
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
+  Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
 }));
 
 // CSS Module proxies

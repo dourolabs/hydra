@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@hydra/ui";
 import type { RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -14,11 +13,15 @@ import { RepositoryEditModal } from "./RepositoryEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
-export function RepositoriesSection() {
+interface RepositoriesSectionProps {
+  createOpen: boolean;
+  onCreateOpenChange: (open: boolean) => void;
+}
+
+export function RepositoriesSection({ createOpen, onCreateOpenChange }: RepositoriesSectionProps) {
   const { data: repositories, isLoading, error, refetch } = useRepositories();
   const { addToast } = useToast();
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RepositoryRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RepositoryRecord | null>(null);
 
@@ -44,13 +47,6 @@ export function RepositoriesSection() {
           onRetry={() => refetch()}
         />
       )}
-
-      <div className={sharedStyles.sectionHeader}>
-        <span className={sharedStyles.sectionTitle}>Repositories</span>
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          Add Repository
-        </Button>
-      </div>
 
       {repositories && repositories.length === 0 && (
         <EmptyState message="No repositories configured." />
@@ -111,7 +107,7 @@ export function RepositoriesSection() {
         </div>
       )}
 
-      <RepositoryCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <RepositoryCreateModal open={createOpen} onClose={() => onCreateOpenChange(false)} />
 
       {editTarget && (
         <RepositoryEditModal

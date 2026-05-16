@@ -19,14 +19,17 @@ export interface SearchItem {
   id: string;
   label: string;
   href: string;
+  /** Short mono meta string shown on the right side of the row. */
+  meta?: string;
 }
 
 export function issueToItem(record: IssueSummaryRecord): SearchItem {
   return {
     kind: "issue",
     id: record.issue_id,
-    label: record.issue.title,
+    label: record.issue.title || record.issue_id,
     href: `/issues/${record.issue_id}`,
+    meta: record.issue.status.replace("-", " "),
   };
 }
 
@@ -34,8 +37,9 @@ export function patchToItem(record: PatchSummaryRecord): SearchItem {
   return {
     kind: "patch",
     id: record.patch_id,
-    label: record.patch.title,
+    label: record.patch.title || record.patch_id,
     href: `/patches/${record.patch_id}`,
+    meta: record.patch.service_repo_name,
   };
 }
 
@@ -47,6 +51,7 @@ export function documentToItem(record: DocumentSummaryRecord): SearchItem {
     id: record.document_id,
     label: title || path || record.document_id,
     href: `/documents/${record.document_id}`,
+    meta: path ?? undefined,
   };
 }
 
@@ -56,6 +61,7 @@ export function conversationToItem(c: ConversationSummary): SearchItem {
     id: c.conversation_id,
     label: conversationTitle(c),
     href: `/chat/${c.conversation_id}`,
+    meta: c.status,
   };
 }
 
@@ -67,5 +73,6 @@ export function sessionToItem(record: SessionSummaryRecord): SearchItem {
     id: record.session_id,
     label,
     href: `/sessions/${record.session_id}`,
+    meta: record.session.status,
   };
 }

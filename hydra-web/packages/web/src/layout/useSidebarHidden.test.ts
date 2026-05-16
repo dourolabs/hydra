@@ -35,10 +35,14 @@ describe("useSidebarHidden", () => {
     expect(result.current.hidden).toBe(false);
   });
 
-  it("defaults to hidden when no value is stored on a mobile viewport", () => {
+  it("defaults to visible on a mobile viewport too (drawer CSS handles off-screen)", () => {
+    // The mobile drawer CSS starts the sidebar off-screen via translateX(-100%)
+    // when data-sidebar !== "open", so we no longer need React state to track
+    // that. Defaulting to false keeps the user from getting stranded with a
+    // hidden sidebar after a mobile→desktop resize.
     mockMatchMedia(true);
     const { result } = renderHook(() => useSidebarHidden());
-    expect(result.current.hidden).toBe(true);
+    expect(result.current.hidden).toBe(false);
   });
 
   it("respects a stored '0' even on a mobile viewport", () => {

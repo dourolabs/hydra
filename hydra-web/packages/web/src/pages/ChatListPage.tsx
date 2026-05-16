@@ -1,7 +1,8 @@
 import { useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Icons } from "@hydra/ui";
+import { Badge, Button, Icons } from "@hydra/ui";
+import type { BadgeStatus } from "@hydra/ui";
 import type { Conversation, ConversationStatus } from "@hydra/api";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
@@ -10,8 +11,15 @@ import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
 
-function statusTone(status: ConversationStatus): string {
-  return status;
+function chatBadgeStatus(status: ConversationStatus): BadgeStatus {
+  switch (status) {
+    case "active":
+      return "in-progress";
+    case "idle":
+      return "open";
+    case "closed":
+      return "issue-closed";
+  }
 }
 
 export function ChatListPage() {
@@ -78,23 +86,40 @@ export function ChatListPage() {
         )}
 
         {sorted.length > 0 && (
-          <ul className={styles.list} data-testid="chats-list">
-            {sorted.map((c) => (
-              <li key={c.conversation_id}>
-                <Link
-                  to={`/chat/${c.conversation_id}`}
-                  className={styles.row}
-                  data-testid={`chats-list-row-${c.conversation_id}`}
-                >
-                  <span className={styles.statusDot} data-tone={statusTone(c.status)} />
-                  <span className={styles.title}>{conversationTitle(c)}</span>
-                  <span className={styles.eventCount}>{c.event_count} msgs</span>
-                  <span className={styles.creator}>{c.creator}</span>
-                  <span className={styles.updated}>{formatRelativeTime(c.updated_at)}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <div className={styles.tableWrap}>
+            <table className={styles.table} data-testid="chats-list">
+              <thead>
+                <tr>
+                  <th className={styles.colTitle}>Title</th>
+                  <th className={styles.colStatus}>Status</th>
+                  <th className={styles.colCreator}>Creator</th>
+                  <th className={styles.colMessages}>Messages</th>
+                  <th className={styles.colUpdated}>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((c) => (
+                  <tr
+                    key={c.conversation_id}
+                    onClick={() => navigate(`/chat/${c.conversation_id}`)}
+                    data-testid={`chats-list-row-${c.conversation_id}`}
+                  >
+                    <td className={styles.colTitle}>
+                      <div className={styles.titleCell}>
+                        <span className={styles.titleText}>{conversationTitle(c)}</span>
+                      </div>
+                    </td>
+                    <td className={styles.colStatus}>
+                      <Badge status={chatBadgeStatus(c.status)} />
+                    </td>
+                    <td className={styles.colCreator}>{c.creator}</td>
+                    <td className={styles.colMessages}>{c.event_count}</td>
+                    <td className={styles.colUpdated}>{formatRelativeTime(c.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

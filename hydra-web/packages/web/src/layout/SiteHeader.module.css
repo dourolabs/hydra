@@ -11,7 +11,7 @@
 }
 
 .hamburger {
-  display: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -130,7 +130,6 @@
 
 @media (max-width: 768px) {
   .hamburger {
-    display: inline-flex;
     order: -1;
   }
 

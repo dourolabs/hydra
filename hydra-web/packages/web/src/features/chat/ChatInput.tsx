@@ -28,13 +28,17 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Match the issue-create modal: ⌘/Ctrl+Enter submits, plain Enter is a
+      // newline (textarea default).
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }
     },
     [handleSend],
   );
+
+  const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 
   return (
     <div className={styles.composer}>
@@ -49,9 +53,14 @@ export function ChatInput({
           rows={3}
         />
         <div className={styles.actions}>
+          <span className={styles.hint}>
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>↵</Kbd> to send · <Kbd>↵</Kbd> for newline
+          </span>
+          <span className={styles.actionsSpacer} />
           {onEndChat && (
             <Button
-              variant="danger"
+              variant="secondary"
               size="sm"
               onClick={onEndChat}
               disabled={endChatDisabled}
@@ -59,10 +68,6 @@ export function ChatInput({
               End chat
             </Button>
           )}
-          <span className={styles.actionsSpacer} />
-          <span className={styles.hint}>
-            <Kbd>↵</Kbd> to send · <Kbd>⇧↵</Kbd> for newline
-          </span>
           <Button
             variant="primary"
             size="sm"
