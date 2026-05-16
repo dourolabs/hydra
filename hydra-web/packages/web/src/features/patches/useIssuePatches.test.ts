@@ -69,9 +69,38 @@ describe("useIssuePatches", () => {
       source_id: "i-1",
       rel_type: "has-patch",
     });
-    expect(mockListPatches).toHaveBeenCalledWith({ ids: "p-a,p-b" });
+    expect(mockListPatches).toHaveBeenCalledWith({ ids: "p-a,p-b", limit: 2 });
     expect(result.current.data.map((p) => p.patch_id)).toEqual(["p-a", "p-b"]);
     expect(result.current.error).toBeNull();
+  });
+
+  it("filters and orders the response by patchIds when listPatches returns extras or different order", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [
+        { source_id: "i-1", target_id: "p-b", rel_type: "has-patch" },
+        { source_id: "i-1", target_id: "p-a", rel_type: "has-patch" },
+      ],
+    });
+    // Mock-server returns the full patch list and ignores the `ids` filter.
+    mockListPatches.mockResolvedValue({
+      patches: [
+        makePatch("p-a"),
+        makePatch("p-b"),
+        makePatch("p-c"),
+        makePatch("p-d"),
+      ],
+    });
+
+    const { result } = renderHook(() => useIssuePatches("i-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(2);
+    });
+
+    // Only the patches named in the relations should appear, in relations order.
+    expect(result.current.data.map((p) => p.patch_id)).toEqual(["p-b", "p-a"]);
   });
 
   it("returns an empty array and does not call listPatches when no relations exist", async () => {

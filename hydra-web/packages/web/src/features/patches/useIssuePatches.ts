@@ -30,19 +30,33 @@ export function useIssuePatches(issueId: string) {
 
   const idsParam = patchIds.join(",");
   const patchesQuery = useQuery({
-    queryKey: ["patches", { ids: patchIds }],
-    queryFn: () => apiClient.listPatches({ ids: idsParam }),
+    queryKey: ["patches", idsParam],
+    queryFn: () => apiClient.listPatches({ ids: idsParam, limit: patchIds.length }),
     select: (resp): PatchSummaryRecord[] => resp.patches,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
   });
+
+  const orderedPatches = useMemo(() => {
+    if (patchIds.length === 0) return [];
+    const map = new Map<string, PatchSummaryRecord>();
+    for (const patch of patchesQuery.data ?? []) {
+      map.set(patch.patch_id, patch);
+    }
+    const out: PatchSummaryRecord[] = [];
+    for (const id of patchIds) {
+      const patch = map.get(id);
+      if (patch) out.push(patch);
+    }
+    return out;
+  }, [patchIds, patchesQuery.data]);
 
   const isLoading =
     relationsQuery.isLoading || (patchIds.length > 0 && patchesQuery.isLoading);
   const error = relationsQuery.error ?? patchesQuery.error ?? null;
 
   return {
-    data: patchIds.length === 0 ? [] : (patchesQuery.data ?? []),
+    data: orderedPatches,
     isLoading,
     error,
   };
