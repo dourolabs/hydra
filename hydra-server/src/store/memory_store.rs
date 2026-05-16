@@ -910,6 +910,43 @@ impl ReadOnlyStore for MemoryStore {
         Ok(documents)
     }
 
+    async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: std::collections::HashSet<&str> = paths.iter().map(|p| p.as_str()).collect();
+        let mut results: Vec<(String, DocumentId, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for entry in self.documents.iter() {
+            let versions = entry.value();
+            let Some(latest) = Self::latest_versioned(versions) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            let Some(ref path) = latest.item.path else {
+                continue;
+            };
+            let path_str: &str = path.as_ref();
+            if !wanted.contains(path_str) {
+                continue;
+            }
+            if !seen.insert(path_str.to_string()) {
+                continue;
+            }
+            results.push((
+                path_str.to_string(),
+                entry.key().clone(),
+                latest.item.title.clone(),
+            ));
+        }
+        Ok(results)
+    }
+
     async fn list_document_path_children(
         &self,
         prefix: &str,

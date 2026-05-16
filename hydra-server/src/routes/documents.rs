@@ -211,20 +211,72 @@ pub async fn list_document_paths(
     State(state): State<AppState>,
     Query(query): Query<v1::documents::ListDocumentPathsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentPathsResponse>, ApiError> {
-    let prefix = query.prefix.as_deref().unwrap_or("/");
-    info!(prefix = %prefix, "list_document_paths invoked");
+    // Resolve the list of prefixes to query. `prefix` and `prefixes` are
+    // mutually exclusive; if neither is set we fall back to the root listing
+    // (preserving today's single-prefix behavior).
+    let prefixes: Vec<String> = match (&query.prefix, query.prefixes.as_slice()) {
+        (Some(_), rest) if !rest.is_empty() => {
+            return Err(ApiError::bad_request(
+                "specify either `prefix` or `prefixes`, not both",
+            ));
+        }
+        (Some(prefix), _) => vec![prefix.clone()],
+        (None, rest) if !rest.is_empty() => rest.to_vec(),
+        (None, _) => vec!["/".to_string()],
+    };
+    info!(prefixes = ?prefixes, "list_document_paths invoked");
 
-    let children = state
-        .list_document_path_children(prefix)
-        .await
-        .map_err(|err| map_document_error(err, None))?;
+    // For each prefix, fetch children in order. Dedupe across prefixes by
+    // full_path, preferring the first occurrence so the order is stable per
+    // input prefix.
+    let mut entries: Vec<v1::documents::PathChildEntry> = Vec::new();
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for prefix in &prefixes {
+        let children = state
+            .list_document_path_children(prefix)
+            .await
+            .map_err(|err| map_document_error(err, None))?;
+        for (name, full_path, child_count, is_document) in children {
+            if !seen_paths.insert(full_path.clone()) {
+                continue;
+            }
+            entries.push(v1::documents::PathChildEntry::new(
+                name,
+                full_path,
+                child_count,
+                is_document,
+                None,
+            ));
+        }
+    }
 
-    let entries = children
-        .into_iter()
-        .map(|(name, full_path, child_count, is_document)| {
-            v1::documents::PathChildEntry::new(name, full_path, child_count, is_document)
-        })
+    // Resolve inline document refs in a single batched lookup. Only entries
+    // flagged `is_document` can correspond to a live document at that path.
+    let doc_paths: Vec<String> = entries
+        .iter()
+        .filter(|entry| entry.is_document)
+        .map(|entry| entry.full_path.clone())
         .collect();
+    if !doc_paths.is_empty() {
+        let docs = state
+            .get_documents_by_paths(&doc_paths)
+            .await
+            .map_err(|err| map_document_error(err, None))?;
+        let by_path: std::collections::HashMap<String, v1::documents::PathChildDocumentRef> = docs
+            .into_iter()
+            .map(|(path, document_id, title)| {
+                (
+                    path,
+                    v1::documents::PathChildDocumentRef::new(document_id, title),
+                )
+            })
+            .collect();
+        for entry in entries.iter_mut() {
+            if entry.is_document {
+                entry.document = by_path.get(&entry.full_path).cloned();
+            }
+        }
+    }
 
     let response = v1::documents::ListDocumentPathsResponse::new(entries);
     info!(

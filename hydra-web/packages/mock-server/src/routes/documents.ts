@@ -84,33 +84,78 @@ export function createDocumentRoutes(store: Store): Hono {
 
   // GET /v1/documents/paths — must be registered BEFORE /v1/documents/:id
   app.get("/v1/documents/paths", (c) => {
-    const prefix = c.req.query("prefix") || "/";
-    const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    // `prefix` and `prefixes` are mutually exclusive. `prefixes` is a
+    // comma-separated list (matching the Rust serde-helper encoding).
+    const prefixParam = c.req.query("prefix");
+    const prefixesParam = c.req.query("prefixes");
+    if (prefixParam && prefixesParam) {
+      return c.json(
+        { error: "specify either `prefix` or `prefixes`, not both" },
+        400,
+      );
+    }
+    const rawPrefixes: string[] = prefixesParam
+      ? prefixesParam.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
+      : prefixParam
+        ? [prefixParam]
+        : ["/"];
     const items = store.list<Document>(COLLECTION, false);
 
-    const segmentCounts = new Map<string, number>();
-    const segmentIsDoc = new Map<string, boolean>();
-    for (const { entry } of items) {
-      const docPath = entry.data.path;
-      if (!docPath || !docPath.startsWith(normalizedPrefix)) continue;
-      const rest = docPath.slice(normalizedPrefix.length);
-      if (!rest) continue;
-      const slashIdx = rest.indexOf("/");
-      const segment = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
-      segmentCounts.set(segment, (segmentCounts.get(segment) || 0) + 1);
-      if (docPath === `${normalizedPrefix}${segment}`) {
-        segmentIsDoc.set(segment, true);
+    // Index path -> document for is_document entries (used to populate the
+    // inline `document` ref).
+    const docByPath = new Map<string, { id: string; title: string }>();
+    for (const { id, entry } of items) {
+      if (entry.data.path) {
+        docByPath.set(entry.data.path, { id, title: entry.data.title });
       }
     }
 
-    const children: PathChildEntry[] = Array.from(segmentCounts.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, child_count]) => ({
-        name,
-        full_path: `${normalizedPrefix}${name}`,
-        child_count: BigInt(child_count),
-        is_document: segmentIsDoc.get(name) || false,
-      }));
+    const children: PathChildEntry[] = [];
+    const seenPaths = new Set<string>();
+    for (const prefix of rawPrefixes) {
+      const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+      const segmentCounts = new Map<string, number>();
+      const segmentIsDoc = new Map<string, boolean>();
+      for (const { entry } of items) {
+        const docPath = entry.data.path;
+        if (!docPath || !docPath.startsWith(normalizedPrefix)) continue;
+        const rest = docPath.slice(normalizedPrefix.length);
+        if (!rest) continue;
+        const slashIdx = rest.indexOf("/");
+        const segment = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
+        segmentCounts.set(segment, (segmentCounts.get(segment) || 0) + 1);
+        if (docPath === `${normalizedPrefix}${segment}`) {
+          segmentIsDoc.set(segment, true);
+        }
+      }
+
+      const entries = Array.from(segmentCounts.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, child_count]) => {
+          const full_path = `${normalizedPrefix}${name}`;
+          const is_document = segmentIsDoc.get(name) || false;
+          const docRef = is_document ? docByPath.get(full_path) : undefined;
+          const childEntry: PathChildEntry = {
+            name,
+            full_path,
+            child_count: BigInt(child_count),
+            is_document,
+          };
+          if (docRef) {
+            childEntry.document = {
+              document_id: docRef.id,
+              title: docRef.title,
+            };
+          }
+          return childEntry;
+        });
+
+      for (const entry of entries) {
+        if (seenPaths.has(entry.full_path)) continue;
+        seenPaths.add(entry.full_path);
+        children.push(entry);
+      }
+    }
 
     const resp: ListDocumentPathsResponse = { children };
     return c.json(resp);

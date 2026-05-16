@@ -2826,6 +2826,53 @@ impl ReadOnlyStore for SqliteStore {
         .await
     }
 
+    async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Deduplicate inputs (preserve first-seen order) so we don't bind the
+        // same path twice and so we never emit duplicates in the result.
+        let mut deduped: Vec<&str> = Vec::with_capacity(paths.len());
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for path in paths {
+            if seen.insert(path.as_str()) {
+                deduped.push(path.as_str());
+            }
+        }
+
+        let placeholders: Vec<String> = (1..=deduped.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT path, id, title FROM {TABLE_DOCUMENTS_V2} \
+             WHERE is_latest = 1 \
+               AND COALESCE(deleted, 0) = 0 \
+               AND path IN ({})",
+            placeholders.join(", ")
+        );
+        let mut query_builder = sqlx::query_as::<_, (Option<String>, String, String)>(&sql);
+        for path in &deduped {
+            query_builder = query_builder.bind(*path);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for (path, id, title) in rows {
+            let Some(path) = path else { continue };
+            let document_id = id
+                .parse::<DocumentId>()
+                .map_err(|e| StoreError::Internal(format!("invalid document id: {e}")))?;
+            results.push((path, document_id, title));
+        }
+        Ok(results)
+    }
+
     async fn list_document_path_children(
         &self,
         prefix: &str,
@@ -9485,5 +9532,72 @@ mod tests {
         // get_conversation with include_deleted=true should return the deleted conversation
         let fetched = store.get_conversation(&id, true).await.unwrap();
         assert!(fetched.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_documents_by_paths_returns_titles_for_live_docs() {
+        let store = create_test_store().await;
+
+        let mut doc_a = sample_document(Some("agents/swe/prompt.md"), None);
+        doc_a.title = "SWE Prompt".to_string();
+        let (id_a, _) = store.add_document(doc_a, &ActorRef::test()).await.unwrap();
+
+        let mut doc_b = sample_document(Some("agents/pm/prompt.md"), None);
+        doc_b.title = "PM Prompt".to_string();
+        let (id_b, _) = store.add_document(doc_b, &ActorRef::test()).await.unwrap();
+
+        // A document the caller will not ask about — ensures filtering works.
+        store
+            .add_document(
+                sample_document(Some("notes/unused.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let paths = vec![
+            "/agents/swe/prompt.md".to_string(),
+            "/agents/pm/prompt.md".to_string(),
+            // Duplicate input path must not produce a duplicate result.
+            "/agents/pm/prompt.md".to_string(),
+            // Non-matching path must be silently skipped.
+            "/agents/missing.md".to_string(),
+        ];
+        let mut results = store.get_documents_by_paths(&paths).await.unwrap();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "/agents/pm/prompt.md");
+        assert_eq!(results[0].1, id_b);
+        assert_eq!(results[0].2, "PM Prompt");
+        assert_eq!(results[1].0, "/agents/swe/prompt.md");
+        assert_eq!(results[1].1, id_a);
+        assert_eq!(results[1].2, "SWE Prompt");
+    }
+
+    #[tokio::test]
+    async fn get_documents_by_paths_excludes_deleted() {
+        let store = create_test_store().await;
+        let (id, _) = store
+            .add_document(
+                sample_document(Some("docs/transient.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store.delete_document(&id, &ActorRef::test()).await.unwrap();
+
+        let results = store
+            .get_documents_by_paths(&["/docs/transient.md".to_string()])
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_documents_by_paths_empty_input_returns_empty() {
+        let store = create_test_store().await;
+        let results = store.get_documents_by_paths(&[]).await.unwrap();
+        assert!(results.is_empty());
     }
 }

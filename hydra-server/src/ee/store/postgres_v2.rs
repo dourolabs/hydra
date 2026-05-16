@@ -2673,6 +2673,51 @@ impl ReadOnlyStore for PostgresStoreV2 {
         .await
     }
 
+    async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut deduped: Vec<&str> = Vec::with_capacity(paths.len());
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for path in paths {
+            if seen.insert(path.as_str()) {
+                deduped.push(path.as_str());
+            }
+        }
+
+        let placeholders: Vec<String> = (1..=deduped.len()).map(|i| format!("${i}")).collect();
+        let sql = format!(
+            "SELECT d.path, d.id, d.title FROM {TABLE_DOCUMENTS_V2} d \
+             WHERE d.is_latest = true \
+               AND COALESCE(d.deleted, false) = false \
+               AND d.path IN ({})",
+            placeholders.join(", ")
+        );
+        let mut query_builder = sqlx::query_as::<_, (Option<String>, String, String)>(&sql);
+        for path in &deduped {
+            query_builder = query_builder.bind(*path);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for (path, id, title) in rows {
+            let Some(path) = path else { continue };
+            let document_id = id
+                .parse::<DocumentId>()
+                .map_err(|e| StoreError::Internal(format!("invalid document id: {e}")))?;
+            results.push((path, document_id, title));
+        }
+        Ok(results)
+    }
+
     async fn list_document_path_children(
         &self,
         prefix: &str,

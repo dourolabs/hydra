@@ -13,8 +13,8 @@ use chrono::Utc;
 use hydra_common::{
     DocumentId, SessionId,
     api::v1::documents::{
-        Document, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
-        SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
+        Document, DocumentVersionRecord, ListDocumentPathsResponse, ListDocumentVersionsResponse,
+        ListDocumentsResponse, SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
     },
 };
 use reqwest::StatusCode;
@@ -844,6 +844,240 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+// ===== /v1/documents/paths tests =====
+
+async fn create_doc_at(
+    client: &reqwest::Client,
+    base: &str,
+    title: &str,
+    path: &str,
+) -> anyhow::Result<DocumentId> {
+    let doc = Document::new(
+        title.to_string(),
+        "body".to_string(),
+        Some(path.to_string()),
+        None,
+        false,
+    )
+    .unwrap();
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(doc))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(created.document_id)
+}
+
+#[tokio::test]
+async fn list_document_paths_single_prefix_inlines_document_ref() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    create_doc_at(&client, &base, "SWE Memory", "agents/swe/memory.md").await?;
+    create_doc_at(&client, &base, "SWE Plan", "agents/swe/plan.md").await?;
+    let pm_id = create_doc_at(&client, &base, "PM Notes", "agents/pm").await?;
+
+    let response: ListDocumentPathsResponse = client
+        .get(format!("{base}/v1/documents/paths?prefix=/agents/"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let mut by_name: HashMap<&str, &hydra_common::api::v1::documents::PathChildEntry> =
+        HashMap::new();
+    for entry in &response.children {
+        by_name.insert(entry.name.as_str(), entry);
+    }
+
+    let swe = by_name.get("swe").expect("/agents/swe entry");
+    assert_eq!(swe.full_path, "/agents/swe");
+    assert!(!swe.is_document);
+    assert!(
+        swe.document.is_none(),
+        "folder entries must not have inline document ref"
+    );
+
+    let pm = by_name.get("pm").expect("/agents/pm entry");
+    assert_eq!(pm.full_path, "/agents/pm");
+    assert!(pm.is_document);
+    let doc_ref = pm.document.as_ref().expect("inline document ref expected");
+    assert_eq!(doc_ref.document_id, pm_id);
+    assert_eq!(doc_ref.title, "PM Notes");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_document_paths_multi_prefix_unions_and_inlines_refs() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let agents_pm = create_doc_at(&client, &base, "PM Notes", "agents/pm").await?;
+    create_doc_at(&client, &base, "SWE Memory", "agents/swe/memory.md").await?;
+    let repos_readme = create_doc_at(&client, &base, "Readme", "repos/hydra").await?;
+
+    let response: ListDocumentPathsResponse = client
+        .get(format!(
+            "{base}/v1/documents/paths?prefixes=/agents/,/repos/"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // /agents/ entries must precede /repos/ entries in the union (prefixes
+    // processed in input order).
+    let positions: HashMap<&str, usize> = response
+        .children
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.full_path.as_str(), i))
+        .collect();
+    let pm_idx = positions["/agents/pm"];
+    let swe_idx = positions["/agents/swe"];
+    let hydra_idx = positions["/repos/hydra"];
+    assert!(pm_idx < hydra_idx);
+    assert!(swe_idx < hydra_idx);
+
+    let pm = response
+        .children
+        .iter()
+        .find(|e| e.full_path == "/agents/pm")
+        .unwrap();
+    let pm_ref = pm
+        .document
+        .as_ref()
+        .expect("/agents/pm should have doc ref");
+    assert_eq!(pm_ref.document_id, agents_pm);
+    assert_eq!(pm_ref.title, "PM Notes");
+
+    let hydra = response
+        .children
+        .iter()
+        .find(|e| e.full_path == "/repos/hydra")
+        .unwrap();
+    let hydra_ref = hydra
+        .document
+        .as_ref()
+        .expect("/repos/hydra should have doc ref");
+    assert_eq!(hydra_ref.document_id, repos_readme);
+    assert_eq!(hydra_ref.title, "Readme");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_document_paths_rejects_prefix_and_prefixes_together() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/documents/paths?prefix=/agents/&prefixes=/repos/",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_document_paths_empty_query_returns_root_listing() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    create_doc_at(&client, &base, "Readme", "repos/hydra/README.md").await?;
+
+    let response: ListDocumentPathsResponse = client
+        .get(format!("{base}/v1/documents/paths"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // `spawn_test_server` seeds /agents/default-test-agent/prompt.md, so root
+    // listing always contains at least /agents.
+    let segments: std::collections::HashSet<&str> =
+        response.children.iter().map(|e| e.name.as_str()).collect();
+    assert!(segments.contains("agents"));
+    assert!(segments.contains("repos"));
+
+    // Top-level folders should never carry a document ref because they are not
+    // themselves direct documents in this fixture.
+    for entry in &response.children {
+        if !entry.is_document {
+            assert!(entry.document.is_none());
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_document_paths_omits_document_ref_when_doc_is_deleted() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // /agents/swe is itself a document AND a folder for /agents/swe/memory.md.
+    let swe_doc = create_doc_at(&client, &base, "SWE Root", "agents/swe").await?;
+    create_doc_at(&client, &base, "SWE Memory", "agents/swe/memory.md").await?;
+
+    // Sanity: before deletion the entry has both is_document=true and an
+    // inline document ref.
+    let before: ListDocumentPathsResponse = client
+        .get(format!("{base}/v1/documents/paths?prefix=/agents/"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let swe_before = before
+        .children
+        .iter()
+        .find(|e| e.full_path == "/agents/swe")
+        .expect("/agents/swe entry");
+    assert!(swe_before.is_document);
+    let swe_ref = swe_before.document.as_ref().unwrap();
+    assert_eq!(swe_ref.document_id, swe_doc);
+
+    // Delete the /agents/swe document. The folder still has a child
+    // (/agents/swe/memory.md), so the entry should become is_document=false
+    // with no inline document ref.
+    client
+        .delete(format!("{base}/v1/documents/{swe_doc}"))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let after: ListDocumentPathsResponse = client
+        .get(format!("{base}/v1/documents/paths?prefix=/agents/"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let swe_after = after
+        .children
+        .iter()
+        .find(|e| e.full_path == "/agents/swe")
+        .expect("/agents/swe entry still exists due to children");
+    assert!(!swe_after.is_document);
+    assert!(swe_after.document.is_none());
 
     Ok(())
 }

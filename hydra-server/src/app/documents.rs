@@ -207,6 +207,14 @@ impl AppState {
         let store = self.store.as_ref();
         store.get_documents_by_path(path_prefix).await
     }
+
+    pub async fn get_documents_by_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<(String, DocumentId, String)>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_documents_by_paths(paths).await
+    }
 }
 
 #[cfg(test)]
