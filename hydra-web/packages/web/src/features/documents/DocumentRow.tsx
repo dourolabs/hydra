@@ -26,6 +26,7 @@ export function DocumentRow({ doc, depth }: DocumentRowProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       queryClient.invalidateQueries({ queryKey: ["documentPaths"] });
+      queryClient.invalidateQueries({ queryKey: ["documentPathsBatch"] });
       queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
       queryClient.invalidateQueries({ queryKey: ["uncategorizedDocuments"] });
       addToast("Document deleted", "success");

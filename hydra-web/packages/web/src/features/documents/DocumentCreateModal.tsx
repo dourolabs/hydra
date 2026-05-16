@@ -37,6 +37,7 @@ export function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps)
       resetForm();
       queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       queryClient.invalidateQueries({ queryKey: ["documentPaths"] });
+      queryClient.invalidateQueries({ queryKey: ["documentPathsBatch"] });
       queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
       queryClient.invalidateQueries({ queryKey: ["uncategorizedDocuments"] });
       addToast(`Document ${data.document_id} created`, "success");
