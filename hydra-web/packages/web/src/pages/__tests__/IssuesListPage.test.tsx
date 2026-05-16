@@ -3,9 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
-import type {
-  ChildStatus,
-} from "../../features/dashboard/computeIssueProgress";
+import type { ChildStatus } from "../../features/dashboard/computeIssueProgress";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
@@ -125,12 +123,8 @@ vi.mock("../../features/issues/view/IssuesTable.module.css", () => ({
 
 vi.mock("@hydra/ui", () => ({
   Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
-  Badge: ({ status }: { status: string }) => (
-    <span data-testid="badge">{status}</span>
-  ),
-  TypeChip: ({ type }: { type: string }) => (
-    <span data-testid="type-chip">{type}</span>
-  ),
+  Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
+  TypeChip: ({ type }: { type: string }) => <span data-testid="type-chip">{type}</span>,
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
   Icons: new Proxy(
     {},
@@ -234,10 +228,7 @@ describe("IssuesListPage Issue Create modal", () => {
 describe("IssuesListPage breadcrumb label", () => {
   it("publishes Workspace / Issues breadcrumb on the default view", () => {
     renderIssuesList("/");
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
-      [{ label: "Workspace", to: "/" }],
-      "Issues",
-    );
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Workspace", to: "/" }], "Issues");
   });
 
   it("publishes Workspace / Assigned to me when ?selected=assigned", () => {
@@ -251,10 +242,7 @@ describe("IssuesListPage breadcrumb label", () => {
   it("normalises legacy ?selected=patches back to the default Issues view", () => {
     renderIssuesList("/?selected=patches");
     // patches is no longer a dashboard tab — fall back to Issues
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
-      [{ label: "Workspace", to: "/" }],
-      "Issues",
-    );
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Workspace", to: "/" }], "Issues");
   });
 });
 
@@ -305,7 +293,7 @@ describe("IssuesListPage IssuesTable rendering", () => {
     expect(cell.textContent).toBe("42s");
   });
 
-  it("applies the progressActive class when any child has hasActiveTask", () => {
+  it("applies the active glow class to the fill span when any child has hasActiveTask", () => {
     const issue = makeIssue("i-parent", { title: "parent row" });
     paginatedState.issues = [issue];
     treesState.childStatusMap = new Map([
@@ -332,6 +320,69 @@ describe("IssuesListPage IssuesTable rendering", () => {
 
     const progress = container.querySelector(".progress");
     expect(progress).not.toBeNull();
+    // Container keeps progressActive so it can switch overflow to visible
+    // and let the fill's outer shadow escape.
     expect(progress!.className).toContain("progressActive");
+
+    const fill = progress!.querySelector(".progressFill");
+    expect(fill).not.toBeNull();
+    // The glow visual treatment now lives on the fill, not the container.
+    expect(fill!.className).toContain("progressFillActive");
+    // Projected fill = (closed + in-progress) / total = 2 / 2 = 100%.
+    expect((fill as HTMLElement).style.width).toBe("100%");
+  });
+
+  it("sets the fill width to (closed + in-progress) / total", () => {
+    const issue50 = makeIssue("i-half", { title: "half row" });
+    const issue50b = makeIssue("i-half2", { title: "half row b" });
+    paginatedState.issues = [issue50, issue50b];
+    treesState.childStatusMap = new Map([
+      [
+        issue50.issue_id,
+        [
+          {
+            id: "c1",
+            status: "in-progress",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+          {
+            id: "c2",
+            status: "open",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+        ],
+      ],
+      [
+        issue50b.issue_id,
+        [
+          {
+            id: "c3",
+            status: "closed",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+          {
+            id: "c4",
+            status: "open",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+        ],
+      ],
+    ]);
+
+    const { container } = renderIssuesList("/");
+
+    const fills = container.querySelectorAll(".progressFill");
+    expect(fills.length).toBe(2);
+    // [in-progress, open] → 1/2 = 50%
+    expect((fills[0] as HTMLElement).style.width).toBe("50%");
+    // [closed, open] → 1/2 = 50%
+    expect((fills[1] as HTMLElement).style.width).toBe("50%");
+    // No active child → fill should not carry the active class.
+    expect(fills[0]!.className).not.toContain("progressFillActive");
+    expect(fills[1]!.className).not.toContain("progressFillActive");
   });
 });
