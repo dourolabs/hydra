@@ -287,9 +287,123 @@
   flex: 1;
 }
 
-/* ── Label picker wrapper ── */
-.labelRow {
-  padding-top: 10px;
+/* ── Labels picker — pill chips ── */
+.pillLabelChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  max-width: 120px;
+}
+
+.pillLabelDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.pillLabelName {
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pillLabelMore {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  padding: 0 2px;
+}
+
+/* ── Labels picker — popover ── */
+.popSearchWrap {
+  padding: 4px 4px 6px;
+  border-bottom: 1px solid var(--line);
+  margin: -4px -4px 4px;
+}
+
+.popSearch {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  outline: 0;
+  transition: border-color var(--tx-fast);
+}
+
+.popSearch::placeholder {
+  color: var(--fg-3);
+}
+
+.popSearch:focus {
+  border-color: var(--acc);
+}
+
+.popLabelDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.popDivider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 4px;
+}
+
+.popEmpty {
+  padding: 8px 10px;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+.popCreateText {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--acc);
+  font-style: italic;
+}
+
+.popPalette {
+  display: flex;
+  gap: 6px;
+  padding: 4px 10px 8px;
+  flex-wrap: wrap;
+}
+
+.popSwatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  outline: 0;
+  transition: transform var(--tx-fast);
+}
+
+.popSwatch:hover {
+  transform: scale(1.1);
+}
+
+.popSwatchActive {
+  border-color: var(--fg-0);
 }
 
 /* ── Foot ── */

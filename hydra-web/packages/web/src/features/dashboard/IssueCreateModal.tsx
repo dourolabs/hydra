@@ -1,25 +1,28 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { Avatar, Button, Icons, Kbd, TypeChip } from "@hydra/ui";
-import type { IssueType } from "@hydra/api";
+import type { IssueType, LabelRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
 import { useFormModal } from "../../hooks/useFormModal";
 import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
-import { LabelPicker } from "../labels/LabelPicker";
+import { useLabels } from "../labels/useLabels";
+import { LABEL_COLOR_PALETTE } from "../labels/LabelPicker";
 import styles from "./IssueCreateModal.module.css";
 
-type PickerKey = "type" | "assignee" | "repo" | null;
+type PickerKey = "type" | "assignee" | "repo" | "labels" | null;
 
 const ISSUE_TYPES: IssueType[] = ["task", "bug", "feature", "chore"];
+const LABEL_PILL_MAX_INLINE = 2;
 
 interface IssueCreateModalProps {
   open: boolean;
@@ -30,6 +33,7 @@ interface IssueCreateModalProps {
 export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
   const { user } = useAuth();
   const { data: repos } = useRepositories();
+  const { data: labels } = useLabels();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
   const [title, setTitle, clearTitleDraft] = useFormDraft(
@@ -194,6 +198,23 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
 
   const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 
+  const labelColorByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of labels ?? []) map.set(l.name, l.color);
+    return map;
+  }, [labels]);
+
+  const toggleLabel = useCallback(
+    (name: string) => {
+      if (labelNames.includes(name)) {
+        setLabelNames(labelNames.filter((n) => n !== name));
+      } else {
+        setLabelNames([...labelNames, name]);
+      }
+    },
+    [labelNames, setLabelNames],
+  );
+
   if (!open) return null;
 
   const repoEntries = repos ?? [];
@@ -357,10 +378,15 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                 </PickerRow>
               ))}
             </Picker>
-          </div>
 
-          <div className={styles.labelRow}>
-            <LabelPicker selectedNames={labelNames} onChange={setLabelNames} />
+            <LabelsPicker
+              open={picker === "labels"}
+              onToggle={() => setPicker(picker === "labels" ? null : "labels")}
+              selectedNames={labelNames}
+              onToggleLabel={toggleLabel}
+              labels={labels ?? []}
+              labelColorByName={labelColorByName}
+            />
           </div>
         </div>
 
@@ -454,5 +480,176 @@ function PickerRow({ active, onClick, children }: PickerRowProps) {
         <Icons.IconCheck size={12} />
       </span>
     </button>
+  );
+}
+
+/** ── Labels Picker ── */
+
+interface LabelsPickerProps {
+  open: boolean;
+  onToggle: () => void;
+  selectedNames: string[];
+  onToggleLabel: (name: string) => void;
+  labels: LabelRecord[];
+  labelColorByName: Map<string, string>;
+}
+
+function LabelsPicker({
+  open,
+  onToggle,
+  selectedNames,
+  onToggleLabel,
+  labels,
+  labelColorByName,
+}: LabelsPickerProps) {
+  const [search, setSearch] = useState("");
+  const [newLabelColor, setNewLabelColor] = useState(LABEL_COLOR_PALETTE[0]);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reset search and focus input when opening; reset color choice when closing.
+  useEffect(() => {
+    if (open) {
+      const t = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return () => window.clearTimeout(t);
+    }
+    setSearch("");
+    setNewLabelColor(LABEL_COLOR_PALETTE[0]);
+  }, [open]);
+
+  const trimmed = search.trim();
+  const filteredLabels = labels.filter((l) =>
+    l.name.toLowerCase().includes(trimmed.toLowerCase()),
+  );
+  const showCreateOption =
+    trimmed.length > 0 &&
+    !labels.some((l) => l.name.toLowerCase() === trimmed.toLowerCase()) &&
+    !selectedNames.includes(trimmed);
+
+  const handleCreate = () => {
+    if (!trimmed) return;
+    onToggleLabel(trimmed);
+    setSearch("");
+    setNewLabelColor(LABEL_COLOR_PALETTE[0]);
+  };
+
+  const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (showCreateOption) {
+        handleCreate();
+        return;
+      }
+      const exact = labels.find(
+        (l) => l.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (exact) {
+        onToggleLabel(exact.name);
+        setSearch("");
+      }
+    }
+  };
+
+  const inlineNames = selectedNames.slice(0, LABEL_PILL_MAX_INLINE);
+  const overflowCount = Math.max(0, selectedNames.length - LABEL_PILL_MAX_INLINE);
+
+  const colorFor = (name: string) =>
+    labelColorByName.get(name) ?? newLabelColor;
+
+  return (
+    <Picker
+      label="Labels"
+      open={open}
+      onToggle={onToggle}
+      wide
+      value={
+        selectedNames.length === 0 ? (
+          <span className={styles.pillEmpty}>No labels</span>
+        ) : (
+          <span className={styles.pillContent}>
+            {inlineNames.map((name) => (
+              <span key={name} className={styles.pillLabelChip}>
+                <span
+                  className={styles.pillLabelDot}
+                  style={{ backgroundColor: colorFor(name) }}
+                />
+                <span className={styles.pillLabelName}>{name}</span>
+              </span>
+            ))}
+            {overflowCount > 0 && (
+              <span className={styles.pillLabelMore}>+{overflowCount}</span>
+            )}
+          </span>
+        )
+      }
+    >
+      <div className={styles.popSearchWrap}>
+        <input
+          ref={searchInputRef}
+          className={styles.popSearch}
+          type="text"
+          placeholder="Search or create…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={onSearchKeyDown}
+          aria-label="Search labels"
+        />
+      </div>
+      {filteredLabels.length === 0 && !showCreateOption && (
+        <div className={styles.popEmpty}>No matching labels</div>
+      )}
+      {filteredLabels.map((label) => (
+        <PickerRow
+          key={label.label_id}
+          active={selectedNames.includes(label.name)}
+          onClick={() => onToggleLabel(label.name)}
+        >
+          <span
+            className={styles.popLabelDot}
+            style={{ backgroundColor: label.color }}
+          />
+          <span>{label.name}</span>
+          <span className={styles.popSpacer} />
+        </PickerRow>
+      ))}
+      {showCreateOption && (
+        <>
+          {filteredLabels.length > 0 && (
+            <div className={styles.popDivider} role="separator" />
+          )}
+          <div className={styles.popSection}>Create new</div>
+          <button
+            type="button"
+            className={styles.popRow}
+            onClick={handleCreate}
+          >
+            <span
+              className={styles.popLabelDot}
+              style={{ backgroundColor: newLabelColor }}
+            />
+            <span className={styles.popCreateText}>
+              Create &ldquo;{trimmed}&rdquo;
+            </span>
+            <span className={styles.popSpacer} />
+          </button>
+          <div className={styles.popPalette} role="radiogroup" aria-label="Label color">
+            {LABEL_COLOR_PALETTE.map((color) => (
+              <button
+                key={color}
+                type="button"
+                role="radio"
+                aria-checked={color === newLabelColor}
+                aria-label={`Color ${color}`}
+                className={`${styles.popSwatch}${
+                  color === newLabelColor ? ` ${styles.popSwatchActive}` : ""
+                }`}
+                style={{ backgroundColor: color }}
+                onClick={() => setNewLabelColor(color)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </Picker>
   );
 }

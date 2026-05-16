@@ -43,47 +43,49 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByRole("button", { name: "New issue", exact: true }).click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
     // Fill in required fields
+    await modal.getByPlaceholder("Issue title…").fill("Test issue with labels");
     await modal
-      .getByPlaceholder("Short summary (optional)")
-      .fill("Test issue with labels");
-    await modal
-      .getByPlaceholder("Describe the issue...")
+      .getByPlaceholder(/^Describe the issue/)
       .fill("E2E test for label creation workflow");
 
+    // Open the labels picker (pill next to the "Labels" picker label)
+    const labelsPill = modal
+      .getByText("Labels", { exact: true })
+      .locator("..")
+      .locator("button[aria-expanded]")
+      .first();
+    await labelsPill.click();
+
     // Select an existing label by typing to filter
-    const labelInput = modal.getByPlaceholder("Add labels...");
-    await labelInput.click();
-    await labelInput.fill("plat");
-    const existingOption = modal.locator("li").filter({ hasText: "platform-v2" });
+    const search = modal.getByPlaceholder("Search or create…");
+    await search.fill("plat");
+    const existingOption = modal
+      .getByRole("button", { name: "platform-v2", exact: true });
     await expect(existingOption).toBeVisible();
     await existingOption.click();
 
     // Create a new label by typing a name that doesn't exist
-    // After selecting a label the placeholder is empty, so locate the input
-    // relative to the "Labels" heading
-    const pickerInput = modal
-      .getByText("Labels", { exact: true })
-      .locator("..")
-      .locator("input");
-    await pickerInput.fill("e2e-test-label");
-    const createOption = modal.locator("li").filter({ hasText: /Create/ });
+    await search.fill("e2e-test-label");
+    const createOption = modal.getByRole("button", {
+      name: /Create.*e2e-test-label/,
+    });
     await expect(createOption).toBeVisible();
     await createOption.click();
 
-    // Verify both labels appear as chips in the modal
-    await expect(modal.getByText("platform-v2")).toBeVisible();
-    await expect(modal.getByText("e2e-test-label")).toBeVisible();
+    // Close the popover by clicking the title field (away from the picker)
+    await modal.getByPlaceholder("Issue title…").click();
 
-    // Close the dropdown by clicking the title field (away from the picker)
-    await modal.getByPlaceholder("Short summary (optional)").click();
+    // Verify both labels appear as chips in the pill summary
+    await expect(labelsPill.getByText("platform-v2", { exact: true })).toBeVisible();
+    await expect(labelsPill.getByText("e2e-test-label", { exact: true })).toBeVisible();
 
     // Submit the form
-    await modal.getByRole("button", { name: "Create Issue" }).click();
+    await modal.getByRole("button", { name: "Create issue" }).click();
 
     // Modal should close
     await expect(modal).not.toBeVisible();
@@ -174,17 +176,23 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByRole("button", { name: "New issue", exact: true }).click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
-    // Open the label picker and search for "inbox"
-    const labelInput = modal.getByPlaceholder("Add labels...");
-    await labelInput.click();
-    await labelInput.fill("inbox");
+    // Open the labels picker pill
+    const labelsPill = modal
+      .getByText("Labels", { exact: true })
+      .locator("..")
+      .locator("button[aria-expanded]")
+      .first();
+    await labelsPill.click();
 
-    // Should show "Create" option but not an existing "inbox" label
-    const inboxOption = modal.locator("li").filter({ hasText: /^inbox$/ });
+    // Search for "inbox"
+    await modal.getByPlaceholder("Search or create…").fill("inbox");
+
+    // Should show "Create" option but not an existing "inbox" label row
+    const inboxOption = modal.getByRole("button", { name: "inbox", exact: true });
     await expect(inboxOption).not.toBeVisible();
   });
 
@@ -212,34 +220,42 @@ test.describe("Newly created label appears in filter bar @labels:filter-bar-crea
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByRole("button", { name: "New issue", exact: true }).click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
     // Fill in required fields
     await modal
-      .getByPlaceholder("Short summary (optional)")
+      .getByPlaceholder("Issue title…")
       .fill("Filter bar label test issue");
     await modal
-      .getByPlaceholder("Describe the issue...")
+      .getByPlaceholder(/^Describe the issue/)
       .fill("Testing that new labels appear in filter bar");
 
-    // Create a new label via the LabelPicker
-    const labelInput = modal.getByPlaceholder("Add labels...");
-    await labelInput.click();
-    await labelInput.fill("filter-bar-test-label");
-    const createOption = modal.locator("li").filter({ hasText: /Create/ });
+    // Open the labels picker pill and create a new label
+    const labelsPill = modal
+      .getByText("Labels", { exact: true })
+      .locator("..")
+      .locator("button[aria-expanded]")
+      .first();
+    await labelsPill.click();
+    await modal.getByPlaceholder("Search or create…").fill("filter-bar-test-label");
+    const createOption = modal.getByRole("button", {
+      name: /Create.*filter-bar-test-label/,
+    });
     await expect(createOption).toBeVisible();
     await createOption.click();
 
-    // Verify label chip appears in modal
-    await expect(modal.getByText("filter-bar-test-label")).toBeVisible();
+    // Close popover by clicking title field
+    await modal.getByPlaceholder("Issue title…").click();
 
-    // Close dropdown by clicking title field
-    await modal.getByPlaceholder("Short summary (optional)").click();
+    // Verify label chip appears in modal pill summary
+    await expect(
+      labelsPill.getByText("filter-bar-test-label", { exact: true }),
+    ).toBeVisible();
 
     // Submit the form
-    await modal.getByRole("button", { name: "Create Issue" }).click();
+    await modal.getByRole("button", { name: "Create issue" }).click();
     await expect(modal).not.toBeVisible();
     await expect(page.getByText(/Issue .+ created/)).toBeVisible();
 
