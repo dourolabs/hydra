@@ -263,6 +263,8 @@ export function useSSE(): SSEConnectionState {
         }
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
         queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
+        // DocumentsPage tree: a doc mutation can add/remove path segments.
+        queryClient.invalidateQueries({ queryKey: ["documentPathsBatch"] });
         // Invalidate has-document relation caches so dashboard artifact lists refresh
         queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
         // Chat Related tab: prefix-match invalidates all referenced-artifact caches
