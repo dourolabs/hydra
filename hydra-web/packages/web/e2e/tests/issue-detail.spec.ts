@@ -33,11 +33,15 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
 
   test("displays tabbed sections @issues:navigate-tabs", async ({ authenticatedPage: page }) => {
     await page.goto("/issues/i-seed00001");
-    // IssueDetail has tabs: Related Issues, Sessions, Patches, Activity, Metadata
-    await expect(page.getByRole("tab", { name: "Related Issues" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Sessions" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Patches" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Metadata" })).toBeVisible();
+    // The right-rail panel exposes three tabs: Related | Activity | Details.
+    await expect(page.getByTestId("issue-rail-tab-related")).toBeVisible();
+    await expect(page.getByTestId("issue-rail-tab-activity")).toBeVisible();
+    await expect(page.getByTestId("issue-rail-tab-details")).toBeVisible();
+
+    // Related is the default active tab; at least one section heading should
+    // render (Parents/Children/Patches/Documents — empty states still show heads).
+    await expect(page.getByRole("heading", { name: /Parents|Children|Patches|Documents/ }).first())
+      .toBeVisible();
   });
 
   test("shows 404 for non-existent issue @errors:404", async ({
@@ -52,6 +56,9 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
   }) => {
     // Use i-seed00005 (closed) which is not referenced by badge tests
     await page.goto("/issues/i-seed00005");
+
+    // Status chip lives in the Details tab — activate it first.
+    await page.getByTestId("issue-rail-tab-details").click();
 
     // Click the status chip to open the update modal
     const statusChip = page.getByTestId("status-chip");

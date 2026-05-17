@@ -1,0 +1,72 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-left: 1px solid var(--line);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 18px;
+  flex-shrink: 0;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.tab:hover {
+  color: var(--fg-0);
+}
+
+.tabActive {
+  color: var(--fg-0);
+}
+
+.tabActive::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--acc);
+  border-radius: 1px;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 16px 18px 24px;
+}
+
+@media (max-width: 1024px) {
+  .wrapper {
+    border-left: 0;
+  }
+  /* On mobile, the unified MobileTabBar at the top of the page drives the
+     active tab; hide the panel's own sub-tab bar to avoid duplication. */
+  .tabs {
+    display: none;
+  }
+}
