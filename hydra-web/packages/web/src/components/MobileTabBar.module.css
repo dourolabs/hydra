@@ -1,20 +1,11 @@
-.wrapper {
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-1);
-  border-left: 1px solid var(--line);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.tabs {
+.bar {
   display: flex;
   align-items: center;
   gap: 0;
   border-bottom: 1px solid var(--line);
   padding: 0 18px;
   flex-shrink: 0;
+  background: var(--bg-1);
 }
 
 .tab {
@@ -51,22 +42,4 @@
   height: 2px;
   background: var(--acc);
   border-radius: 1px;
-}
-
-.body {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-  padding: 16px 18px 24px;
-}
-
-@media (max-width: 1024px) {
-  .wrapper {
-    border-left: 0;
-  }
-  /* On mobile, the unified MobileTabBar at the top of the page drives the
-     active tab; hide the panel's own sub-tab bar to avoid duplication. */
-  .tabs {
-    display: none;
-  }
 }

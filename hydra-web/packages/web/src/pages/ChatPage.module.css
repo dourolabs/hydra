@@ -1,10 +1,15 @@
 .chatLayout {
   display: grid;
   grid-template-columns: 1fr 400px;
+  grid-template-rows: 1fr;
   height: 100%;
   min-height: 0;
   width: 100%;
   background: var(--bg-0);
+}
+
+.mobileTabBar {
+  display: none;
 }
 
 .chatPane {
@@ -44,6 +49,22 @@
 @media (max-width: 1024px) {
   .chatLayout {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .mobileTabBar {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+  }
+  /* Both panes share the same grid cell on mobile; whichever is the active
+     mobile tab fills the row, the other is removed from layout via display: none.
+     Keeping it as display: none (not unmount) preserves the ChatMessageList's
+     scroll position across tab switches (see p-ufesgw). */
+  .chatLayout > [data-mobile-active] {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .chatLayout > [data-mobile-active="false"] {
+    display: none;
   }
 }

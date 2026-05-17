@@ -129,6 +129,7 @@ vi.mock("../../features/chat/ChatRightPanel.module.css", () => ({ default: cssPr
 vi.mock("../../features/chat/ChatMetadataTab.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatRelatedTab.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/issues/IssueSettings.module.css", () => ({ default: cssProxy }));
+vi.mock("../../components/MobileTabBar.module.css", () => ({ default: cssProxy }));
 
 vi.mock("../../utils/time", () => ({
   formatTimestamp: (s: string) => s,
@@ -175,8 +176,8 @@ describe("ChatPage 2-pane layout", () => {
   it("renders Related and Settings tabs in the right panel", () => {
     render(<ChatPage />);
 
-    expect(screen.getByRole("tab", { name: "Related" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "Settings" })).toBeDefined();
+    expect(screen.getByTestId("chat-rail-tab-related")).toBeDefined();
+    expect(screen.getByTestId("chat-rail-tab-settings")).toBeDefined();
 
     cleanup();
   });
@@ -188,7 +189,7 @@ describe("ChatPage 2-pane layout", () => {
     expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
 
     // Switch to Settings.
-    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    fireEvent.click(screen.getByTestId("chat-rail-tab-settings"));
 
     // Chat input is still visible.
     expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
@@ -202,7 +203,7 @@ describe("ChatPage 2-pane layout", () => {
     // Settings content is not visible on the Related tab.
     expect(screen.queryByText("c-test123")).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    fireEvent.click(screen.getByTestId("chat-rail-tab-settings"));
 
     expect(screen.getByText("Conversation ID")).toBeDefined();
     expect(screen.getByText("c-test123")).toBeDefined();
@@ -231,7 +232,7 @@ describe("ChatPage 2-pane layout", () => {
     render(<ChatPage />);
 
     expect(screen.getByTestId("spinner")).toBeDefined();
-    expect(screen.queryByRole("tab", { name: "Related" })).toBeNull();
+    expect(screen.queryByTestId("chat-rail-tab-related")).toBeNull();
 
     cleanup();
   });
