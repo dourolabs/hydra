@@ -71,7 +71,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@mobile:nav` — Navigation works correctly on mobile viewport
 - `@mobile:dashboard` — Dashboard is usable on mobile viewport
-- `@mobile:issue-detail` — Issue detail page is usable on mobile viewport
+- `@mobile:issue-detail` — Issue detail page shows Overview/Details top tabs on mobile; Overview is default, Details surfaces rail content (Status, Created, Labels, etc.); desktop unchanged
 - `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)

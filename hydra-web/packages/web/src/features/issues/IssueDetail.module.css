@@ -8,6 +8,10 @@
   background: var(--bg-0);
 }
 
+.mobileTabBar {
+  display: none;
+}
+
 /* ── Left column ── */
 .main {
   display: flex;
@@ -388,13 +392,27 @@
 @media (max-width: 1024px) {
   .detail {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr auto;
-    overflow: auto;
+    grid-template-rows: auto minmax(0, 1fr);
   }
-
+  .mobileTabBar {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+  }
+  /* Both panes share the same grid cell on mobile; the active mobile tab
+     fills the row, the other is removed from layout via display: none.
+     Keeping it as display: none (not unmount) preserves scroll position
+     and form state across tab switches. */
+  .detail > [data-mobile-active] {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+  }
+  .detail > [data-mobile-active="false"] {
+    display: none;
+  }
   .side {
     border-left: 0;
-    border-top: 1px solid var(--line);
   }
 }
 

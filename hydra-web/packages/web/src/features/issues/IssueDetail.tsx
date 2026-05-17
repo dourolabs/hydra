@@ -14,7 +14,15 @@ import { PatchList } from "../patches/PatchList";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
+import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
 import styles from "./IssueDetail.module.css";
+
+type MobileTabKey = "overview" | "details";
+
+const MOBILE_TABS: MobileTabBarItem[] = [
+  { key: "overview", label: "Overview" },
+  { key: "details", label: "Details" },
+];
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -73,6 +81,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const issueId = record.issue_id;
 
   const [activeTab, setActiveTab] = useState<TabKey>("sessions");
+  const [mobileTab, setMobileTab] = useState<MobileTabKey>("overview");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
 
@@ -80,28 +89,30 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const { durationText, isRunning } = useSessionDuration(sessions);
 
   const blockedOnIds = useMemo(
-    () =>
-      issue.dependencies
-        .filter((d) => d.type === "blocked-on")
-        .map((d) => d.issue_id),
+    () => issue.dependencies.filter((d) => d.type === "blocked-on").map((d) => d.issue_id),
     [issue.dependencies],
   );
 
   const parentIds = useMemo(
-    () =>
-      issue.dependencies
-        .filter((d) => d.type === "child-of")
-        .map((d) => d.issue_id),
+    () => issue.dependencies.filter((d) => d.type === "child-of").map((d) => d.issue_id),
     [issue.dependencies],
   );
 
   const status = normalizeIssueStatus(issue.status);
   const settings = issue.session_settings;
+  const overviewActive = mobileTab === "overview";
 
   return (
     <div className={styles.detail}>
+      <MobileTabBar
+        className={styles.mobileTabBar}
+        tabs={MOBILE_TABS}
+        activeKey={mobileTab}
+        onChange={(key) => setMobileTab(key as MobileTabKey)}
+        testIdPrefix="issue-mobile-tab-"
+      />
       {/* ── Left column ── */}
-      <div className={styles.main}>
+      <div className={styles.main} data-mobile-active={overviewActive ? "true" : "false"}>
         <div className={styles.mainInner}>
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>
@@ -200,7 +211,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       </div>
 
       {/* ── Right rail ── */}
-      <aside className={styles.side}>
+      <aside className={styles.side} data-mobile-active={overviewActive ? "false" : "true"}>
         <div className={styles.block}>
           <span className={styles.blockLabel}>Status</span>
           <button
