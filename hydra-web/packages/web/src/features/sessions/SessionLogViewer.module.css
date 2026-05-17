@@ -1,7 +1,7 @@
 .viewer {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 .logViewer {
@@ -13,25 +13,25 @@
 .center {
   display: flex;
   justify-content: center;
-  padding: var(--space-8);
+  padding: 32px;
 }
 
 .errorContainer {
-  padding: var(--space-4);
+  padding: 16px;
 }
 
 .error {
-  color: var(--color-status-failed);
+  color: var(--s-failed);
   margin: 0;
 }
 
 .streamingIndicator {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-accent-dim);
-  padding: var(--space-1) 0;
+  gap: 8px;
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  padding: 4px 0;
 }
 
 .dot {
@@ -39,18 +39,18 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: var(--color-status-in-progress);
+  background-color: var(--s-progress);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
 .followToggle {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 4px;
   margin-left: auto;
   cursor: pointer;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
   user-select: none;
 }
 
