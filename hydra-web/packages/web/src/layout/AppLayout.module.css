@@ -63,7 +63,11 @@
   }
 
   .main {
-    padding-bottom: 56px;
+    /* 56px buffer for browser chrome + safe-area-inset-bottom for the
+       iOS Safari home indicator. On platforms without a home indicator
+       (Android, desktop) --safe-area-bottom resolves to 0 and this is a
+       no-op. */
+    padding-bottom: calc(56px + var(--safe-area-bottom));
   }
 }
 
