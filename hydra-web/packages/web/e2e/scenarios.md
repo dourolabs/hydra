@@ -76,6 +76,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)
 - `@mobile:chat-tabs` — Right-panel content (Related, Details) is reachable via top tabs on the chat page mobile viewport; the Chat tab is default and the message-list scroll is not regressed
+- `@mobile:breadcrumbs` — At ≤768px the breadcrumb trail collapses to only the trailing (current) crumb; at desktop widths the full trail (ancestors + current) remains visible
 
 ## Responsive Layout
 
