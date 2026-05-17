@@ -308,9 +308,76 @@
 }
 
 @media (max-width: 768px) {
-  .colAuthor,
-  .colRepo,
-  .colReviews {
+  .table,
+  .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table thead {
     display: none;
+  }
+
+  .table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title  status"
+      "repo   reviews";
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: center;
+    padding: 12px var(--pad-x);
+    height: auto;
+  }
+
+  .table tbody td {
+    display: block;
+    padding: 0;
+    height: auto;
+    overflow: visible;
+    white-space: normal;
+    width: auto;
+  }
+
+  .table tbody td.colAuthor,
+  .table tbody td.colUpdated {
+    display: none;
+  }
+
+  .colStatus {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .colTitle {
+    grid-area: title;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .titleCell {
+    overflow: hidden;
+  }
+
+  .titleText {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .colRepo {
+    grid-area: repo;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .colReviews {
+    grid-area: reviews;
+    justify-self: end;
   }
 }

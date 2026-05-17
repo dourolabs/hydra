@@ -274,8 +274,73 @@
 }
 
 @media (max-width: 768px) {
-  .colAgent,
-  .colStarted {
+  .table,
+  .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table thead {
     display: none;
+  }
+
+  .table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title  status"
+      "linked runtime";
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: center;
+    padding: 12px var(--pad-x);
+    height: auto;
+  }
+
+  .table tbody td {
+    display: block;
+    padding: 0;
+    height: auto;
+    overflow: visible;
+    white-space: normal;
+    width: auto;
+  }
+
+  .table tbody td.colAgent,
+  .table tbody td.colStarted {
+    display: none;
+  }
+
+  .table tbody td.colLinked {
+    display: contents;
+  }
+
+  .linkedCell {
+    display: contents;
+  }
+
+  .linkedText {
+    grid-area: title;
+    min-width: 0;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .linkedIssueLink {
+    grid-area: linked;
+    justify-self: start;
+  }
+
+  .colStatus {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .colDuration {
+    grid-area: runtime;
+    justify-self: end;
   }
 }
