@@ -25,7 +25,7 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     ).toBeVisible();
   });
 
-  test("can navigate to a patch from an issue's Patches tab @patches:navigate", async ({
+  test("can navigate to a patch from an issue's Related tab @patches:navigate", async ({
     authenticatedPage: page,
   }) => {
     // i-seed00002 has patch p-seed00001
@@ -34,12 +34,17 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
       page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
     ).toBeVisible();
 
-    // Click on the Patches tab
-    await page.getByRole("tab", { name: "Patches" }).click();
+    // Patches are now listed in the right-rail Related tab (default active).
+    await expect(page.getByTestId("issue-rail-tab-related")).toBeVisible();
+    await page.getByTestId("issue-rail-tab-related").click();
 
-    // Click the patch link to navigate to it (use first() since the patch
-    // appears in both PatchPreview and the Patches tab list)
-    await page.getByText("p-seed00001").first().click();
+    // The patch row in the Related tab is an ItemRow showing the patch title;
+    // clicking it navigates to /patches/<id>.
+    await expect(page.getByRole("heading", { name: "Patches" })).toBeVisible();
+    await page
+      .getByText("Add OAuth2 provider integration")
+      .last()
+      .click();
     await expect(page).toHaveURL(/\/patches\/p-seed00001/);
     await expect(
       page.getByRole("heading", { name: "Add OAuth2 provider integration" })

@@ -1,26 +1,24 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Button, Icons, MarkdownViewer, TypeChip } from "@hydra/ui";
+import { Badge, Button, MarkdownViewer, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
-import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
-import { IssueRelatedIssues } from "./IssueRelatedIssues";
-import { IssueActivity } from "./IssueActivity";
+import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
 import { SessionList } from "../sessions/SessionList";
-import { PatchList } from "../patches/PatchList";
-import { IssueLabelEditor } from "./IssueLabelEditor";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
 import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
 import styles from "./IssueDetail.module.css";
 
-type MobileTabKey = "overview" | "details";
+type MobileTabKey = "overview" | IssueRightPanelTabKey;
 
 const MOBILE_TABS: MobileTabBarItem[] = [
   { key: "overview", label: "Overview" },
+  { key: "related", label: "Related" },
+  { key: "activity", label: "Activity" },
   { key: "details", label: "Details" },
 ];
 
@@ -52,36 +50,16 @@ function BlockedItemLink({ issueId }: { issueId: string }) {
   );
 }
 
-function DepRow({ issueId }: { issueId: string }) {
-  const { data: record } = useIssue(issueId);
-  const title = record?.issue.title || issueId;
-  return (
-    <Link to={`/issues/${issueId}`} className={styles.depRow} title={title}>
-      {record && <Badge status={normalizeIssueStatus(record.issue.status)} />}
-      <span className={styles.depRowTitle}>{title}</span>
-    </Link>
-  );
-}
-
 interface IssueDetailProps {
   record: IssueVersionRecord;
 }
-
-type TabKey = "sessions" | "patches" | "activity" | "sub-issues";
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "sessions", label: "Sessions" },
-  { key: "patches", label: "Patches" },
-  { key: "activity", label: "Activity" },
-  { key: "sub-issues", label: "Sub-issues" },
-];
 
 export function IssueDetail({ record }: IssueDetailProps) {
   const { issue } = record;
   const issueId = record.issue_id;
 
-  const [activeTab, setActiveTab] = useState<TabKey>("sessions");
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("overview");
+  const [rightPanelTab, setRightPanelTab] = useState<IssueRightPanelTabKey>("related");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
 
@@ -93,10 +71,23 @@ export function IssueDetail({ record }: IssueDetailProps) {
     [issue.dependencies],
   );
 
-  const parentIds = useMemo(
-    () => issue.dependencies.filter((d) => d.type === "child-of").map((d) => d.issue_id),
-    [issue.dependencies],
-  );
+  const handleMobileTabChange = useCallback((key: string) => {
+    switch (key) {
+      case "overview":
+        setMobileTab("overview");
+        return;
+      case "related":
+      case "activity":
+      case "details":
+        setMobileTab(key);
+        setRightPanelTab(key);
+        return;
+    }
+  }, []);
+
+  const handleRightPanelChange = useCallback((key: IssueRightPanelTabKey) => {
+    setRightPanelTab(key);
+  }, []);
 
   const status = normalizeIssueStatus(issue.status);
   const settings = issue.session_settings;
@@ -108,7 +99,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         className={styles.mobileTabBar}
         tabs={MOBILE_TABS}
         activeKey={mobileTab}
-        onChange={(key) => setMobileTab(key as MobileTabKey)}
+        onChange={handleMobileTabChange}
         testIdPrefix="issue-mobile-tab-"
       />
       {/* ── Left column ── */}
@@ -185,132 +176,18 @@ export function IssueDetail({ record }: IssueDetailProps) {
             </div>
           )}
 
-          <div className={styles.tabs} role="tablist">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                className={`${styles.tab}${activeTab === t.key ? ` ${styles.tabActive}` : ""}`}
-                aria-selected={activeTab === t.key}
-                onClick={() => setActiveTab(t.key)}
-                data-testid={`issue-tab-${t.key}`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className={styles.tabContent}>
-            {activeTab === "sessions" && <SessionList issueId={issueId} />}
-            {activeTab === "patches" && <PatchList issueId={issueId} />}
-            {activeTab === "activity" && <IssueActivity issueId={issueId} />}
-            {activeTab === "sub-issues" && <IssueRelatedIssues issueId={issueId} />}
-          </div>
+          <SessionList issueId={issueId} />
         </div>
       </div>
 
       {/* ── Right rail ── */}
-      <aside className={styles.side} data-mobile-active={overviewActive ? "false" : "true"}>
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Status</span>
-          <button
-            type="button"
-            className={styles.statusButton}
-            onClick={() => setUpdateModalOpen(true)}
-            data-testid="status-chip"
-          >
-            <Badge status={status} />
-            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path
-                fillRule="evenodd"
-                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Assignee</span>
-          {issue.assignee ? (
-            <span className={styles.blockValue}>
-              <Icons.IconAgent size={12} />
-              {issue.assignee}
-            </span>
-          ) : (
-            <span className={`${styles.blockValue} ${styles.blockEmpty}`}>Unassigned</span>
-          )}
-        </div>
-
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Type</span>
-          {issue.type && issue.type !== "unknown" ? (
-            <TypeChip type={issue.type} />
-          ) : (
-            <span className={`${styles.blockValue} ${styles.blockEmpty}`}>—</span>
-          )}
-        </div>
-
-        {settings?.repo_name && (
-          <div className={styles.block}>
-            <span className={styles.blockLabel}>Repository</span>
-            <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-              {settings.repo_name}
-            </span>
-          </div>
-        )}
-
-        {settings?.branch && (
-          <div className={styles.block}>
-            <span className={styles.blockLabel}>Branch</span>
-            <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-              {settings.branch}
-            </span>
-          </div>
-        )}
-
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Created</span>
-          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-            {formatTimestamp(record.creation_time)}
-          </span>
-        </div>
-
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Updated</span>
-          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-            {formatTimestamp(record.timestamp)}
-          </span>
-        </div>
-
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Labels</span>
-          <IssueLabelEditor issueId={issueId} labels={record.labels ?? []} />
-        </div>
-
-        {blockedOnIds.length > 0 && (
-          <div className={styles.block}>
-            <span className={styles.blockLabel}>Blocked on</span>
-            <div className={styles.depList}>
-              {blockedOnIds.map((id) => (
-                <DepRow key={id} issueId={id} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {parentIds.length > 0 && (
-          <div className={styles.block}>
-            <span className={styles.blockLabel}>Parent</span>
-            <div className={styles.depList}>
-              {parentIds.map((id) => (
-                <DepRow key={id} issueId={id} />
-              ))}
-            </div>
-          </div>
-        )}
-      </aside>
+      <IssueRightPanel
+        record={record}
+        onOpenStatusModal={() => setUpdateModalOpen(true)}
+        activeTabKey={rightPanelTab}
+        onTabChange={handleRightPanelChange}
+        data-mobile-active={overviewActive ? "false" : "true"}
+      />
 
       <IssueUpdateModal
         open={updateModalOpen}

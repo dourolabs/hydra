@@ -1,0 +1,103 @@
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.blockLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.blockValue {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.blockValueMono {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.blockEmpty {
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+.statusButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast);
+  align-self: flex-start;
+}
+
+.statusButton:hover {
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+}
+
+.statusButton svg {
+  width: 12px;
+  height: 12px;
+  color: var(--fg-2);
+}
+
+.depList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.depRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  text-decoration: none;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast);
+}
+
+.depRow:hover {
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.depRowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
