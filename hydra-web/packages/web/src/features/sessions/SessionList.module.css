@@ -1,3 +1,9 @@
+.tableWrapper {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -53,6 +59,7 @@
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-1);
+  white-space: nowrap;
 }
 
 .logLink {

@@ -72,6 +72,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:nav` — Navigation works correctly on mobile viewport
 - `@mobile:dashboard` — Dashboard is usable on mobile viewport
 - `@mobile:issue-detail` — Issue detail page shows Overview / Related / Activity / Details top tabs on mobile; Overview is default; Related surfaces parents/children/patches/documents; Activity surfaces the timeline; Details surfaces rail content (Status, Created, Labels, etc.). Desktop hides the mobile bar and uses the right-rail sub-tabs.
+- `@mobile:issue-detail-overflow` — Issue detail page fits the 375px viewport (no document-level horizontal overflow) and the SessionList at the bottom of Overview is reachable via vertical scroll.
 - `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)

@@ -33,53 +33,55 @@ export function SessionList({ issueId }: SessionListProps) {
   }
 
   return (
-    <table className={styles.table}>
-      <thead>
-        <tr>
-          <th className={styles.th}>Status</th>
-          <th className={styles.th}>Session ID</th>
-          <th className={styles.th}>Created</th>
-          <th className={styles.th}>Runtime</th>
-          <th className={styles.th}>Logs</th>
-        </tr>
-      </thead>
-      <tbody>
-        {sessions.map((record) => (
-          <tr key={record.session_id} className={styles.row}>
-            <td className={styles.td}>
-              <Badge status={normalizeSessionStatus(record.session.status)} />
-            </td>
-            <td className={styles.td}>
-              <Link
-                to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
-                className={styles.sessionId}
-              >
-                {record.session_id}
-              </Link>
-            </td>
-            <td className={styles.td}>
-              <span className={styles.time}>
-                {record.session.creation_time
-                  ? new Date(record.session.creation_time).toLocaleString()
-                  : "\u2014"}
-              </span>
-            </td>
-            <td className={styles.td}>
-              <span className={styles.time}>
-                {getRuntime(record.session.start_time, record.session.end_time)}
-              </span>
-            </td>
-            <td className={styles.td}>
-              <Link
-                to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
-                className={styles.logLink}
-              >
-                View Logs
-              </Link>
-            </td>
+    <div className={styles.tableWrapper} data-testid="session-list">
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th className={styles.th}>Status</th>
+            <th className={styles.th}>Session ID</th>
+            <th className={styles.th}>Created</th>
+            <th className={styles.th}>Runtime</th>
+            <th className={styles.th}>Logs</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {sessions.map((record) => (
+            <tr key={record.session_id} className={styles.row}>
+              <td className={styles.td}>
+                <Badge status={normalizeSessionStatus(record.session.status)} />
+              </td>
+              <td className={styles.td}>
+                <Link
+                  to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
+                  className={styles.sessionId}
+                >
+                  {record.session_id}
+                </Link>
+              </td>
+              <td className={styles.td}>
+                <span className={styles.time}>
+                  {record.session.creation_time
+                    ? new Date(record.session.creation_time).toLocaleString()
+                    : "—"}
+                </span>
+              </td>
+              <td className={styles.td}>
+                <span className={styles.time}>
+                  {getRuntime(record.session.start_time, record.session.end_time)}
+                </span>
+              </td>
+              <td className={styles.td}>
+                <Link
+                  to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
+                  className={styles.logLink}
+                >
+                  View Logs
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
