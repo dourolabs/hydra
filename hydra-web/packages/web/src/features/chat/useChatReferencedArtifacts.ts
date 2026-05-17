@@ -4,6 +4,7 @@ import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
+  SessionSummaryRecord,
 } from "@hydra/api";
 import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -12,6 +13,7 @@ export interface ReferencedArtifactsResult {
   issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
   documents: DocumentSummaryRecord[];
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   error: unknown;
 }
@@ -78,6 +80,17 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     enabled: issueIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.issues,
+  });
+
+  // Mirror IssueRelatedIssues: use queryKey shape ["sessions", "batch", ids]
+  // so useSSE's broad invalidation on session_* events gives us live updates
+  // for free.
+  const sessionsQuery = useQuery({
+    queryKey: ["sessions", "batch", issueIdsParam],
+    queryFn: () => apiClient.listSessions({ spawned_from_ids: issueIdsParam }),
+    enabled: issueIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.sessions,
   });
 
   const patchIdsParam = patchIds.join(",");
@@ -150,15 +163,29 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     return out;
   }, [documentIds, documentsMap]);
 
+  const sessionsByIssue = useMemo(() => {
+    const map = new Map<string, SessionSummaryRecord[]>();
+    for (const session of sessionsQuery.data ?? []) {
+      const sid = session.session.spawned_from;
+      if (!sid) continue;
+      const list = map.get(sid) ?? [];
+      list.push(session);
+      map.set(sid, list);
+    }
+    return map;
+  }, [sessionsQuery.data]);
+
   const isLoading =
     relationsQuery.isLoading ||
     (issueIds.length > 0 && issuesQuery.isLoading) ||
+    (issueIds.length > 0 && sessionsQuery.isLoading) ||
     (patchIds.length > 0 && patchesQuery.isLoading) ||
     (documentIds.length > 0 && documentsQuery.isLoading);
 
   const error =
     relationsQuery.error ??
     issuesQuery.error ??
+    sessionsQuery.error ??
     patchesQuery.error ??
     documentsQuery.error ??
     null;
@@ -167,6 +194,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     issues: orderedIssues,
     patches: orderedPatches,
     documents: orderedDocuments,
+    sessionsByIssue,
     isLoading,
     error,
   };

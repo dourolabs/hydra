@@ -5,6 +5,7 @@ import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
+  SessionSummaryRecord,
 } from "@hydra/api";
 
 // --- Mocks ---
@@ -13,15 +14,22 @@ const mockState: {
   issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
   documents: DocumentSummaryRecord[];
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   error: unknown;
 } = {
   issues: [],
   patches: [],
   documents: [],
+  sessionsByIssue: new Map(),
   isLoading: false,
   error: null,
 };
+
+const capturedItemRowProps: Array<{
+  itemId: string;
+  sessions: SessionSummaryRecord[] | undefined;
+}> = [];
 
 let lastConversationIdArg: string | null = null;
 
@@ -35,9 +43,12 @@ vi.mock("../useChatReferencedArtifacts", () => ({
 vi.mock("../../dashboard/ItemRow", () => ({
   ItemRow: ({
     item,
+    sessions,
   }: {
     item: { kind: string; id: string; data: unknown };
+    sessions?: SessionSummaryRecord[];
   }) => {
+    capturedItemRowProps.push({ itemId: item.id, sessions });
     let title = "";
     if (item.kind === "issue") {
       title = (item.data as IssueSummaryRecord).issue.title;
@@ -45,7 +56,12 @@ vi.mock("../../dashboard/ItemRow", () => ({
       title = (item.data as PatchSummaryRecord).patch.title;
     }
     return (
-      <li data-testid={`item-row-${item.kind}-${item.id}`}>{title}</li>
+      <li
+        data-testid={`item-row-${item.kind}-${item.id}`}
+        data-sessions-count={sessions?.length ?? 0}
+      >
+        {title}
+      </li>
     );
   },
 }));
@@ -126,13 +142,33 @@ function makeDocument(docId: string, title = "Design Doc"): DocumentSummaryRecor
   };
 }
 
+function makeSession(
+  sessionId: string,
+  spawnedFrom: string,
+  status: "running" | "pending" | "completed" = "running",
+): SessionSummaryRecord {
+  return {
+    session_id: sessionId,
+    version: 1n,
+    timestamp: "2026-01-01T00:00:00Z",
+    session: {
+      prompt: "",
+      spawned_from: spawnedFrom,
+      creator: "alice",
+      status,
+    },
+  } as SessionSummaryRecord;
+}
+
 function resetState() {
   mockState.issues = [];
   mockState.patches = [];
   mockState.documents = [];
+  mockState.sessionsByIssue = new Map();
   mockState.isLoading = false;
   mockState.error = null;
   lastConversationIdArg = null;
+  capturedItemRowProps.length = 0;
 }
 
 // --- Import after mocks ---
@@ -226,5 +262,42 @@ describe("ChatRelatedTab", () => {
     mockState.error = new Error("boom");
     render(<ChatRelatedTab conversationId="c-abc" />);
     expect(screen.getByText("Failed to load referenced items.")).toBeDefined();
+  });
+
+  it("passes sessions from sessionsByIssue down to matching ItemRows", () => {
+    const session = makeSession("s-1", "i-1", "running");
+    mockState.issues = [makeIssue("i-1")];
+    mockState.sessionsByIssue = new Map([["i-1", [session]]]);
+
+    render(<ChatRelatedTab conversationId="c-abc" />);
+
+    const captured = capturedItemRowProps.find((p) => p.itemId === "i-1");
+    expect(captured).toBeDefined();
+    expect(captured?.sessions).toEqual([session]);
+    expect(
+      screen
+        .getByTestId("item-row-issue-i-1")
+        .getAttribute("data-sessions-count"),
+    ).toBe("1");
+  });
+
+  it("renders ItemRow with sessions=undefined when no map entry exists for the issue", () => {
+    mockState.issues = [makeIssue("i-1"), makeIssue("i-2")];
+    // Map has nothing for i-1 or i-2.
+    mockState.sessionsByIssue = new Map();
+
+    expect(() =>
+      render(<ChatRelatedTab conversationId="c-abc" />),
+    ).not.toThrow();
+
+    const i1 = capturedItemRowProps.find((p) => p.itemId === "i-1");
+    const i2 = capturedItemRowProps.find((p) => p.itemId === "i-2");
+    expect(i1?.sessions).toBeUndefined();
+    expect(i2?.sessions).toBeUndefined();
+    expect(
+      screen
+        .getByTestId("item-row-issue-i-1")
+        .getAttribute("data-sessions-count"),
+    ).toBe("0");
   });
 });
