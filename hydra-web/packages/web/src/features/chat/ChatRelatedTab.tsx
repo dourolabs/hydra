@@ -63,7 +63,7 @@ interface ChatRelatedTabProps {
 }
 
 export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
-  const { issues, patches, documents, isLoading, error } =
+  const { issues, patches, documents, sessionsByIssue, isLoading, error } =
     useChatReferencedArtifacts(conversationId);
 
   if (isLoading) {
@@ -95,6 +95,7 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
               <ItemRow
                 key={record.issue_id}
                 item={issueToWorkItem(record)}
+                sessions={sessionsByIssue.get(record.issue_id)}
                 filterRootId={null}
               />
             ))}

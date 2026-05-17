@@ -6,6 +6,7 @@ import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
+  SessionSummaryRecord,
 } from "@hydra/api";
 
 // --- Mocks ---
@@ -14,6 +15,7 @@ const mockListRelations = vi.fn();
 const mockListIssues = vi.fn();
 const mockListPatches = vi.fn();
 const mockListDocuments = vi.fn();
+const mockListSessions = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   apiClient: {
@@ -21,6 +23,7 @@ vi.mock("../../../api/client", () => ({
     listIssues: (...args: unknown[]) => mockListIssues(...args),
     listPatches: (...args: unknown[]) => mockListPatches(...args),
     listDocuments: (...args: unknown[]) => mockListDocuments(...args),
+    listSessions: (...args: unknown[]) => mockListSessions(...args),
   },
 }));
 
@@ -89,6 +92,24 @@ function makeDocument(id: string, title = `Doc ${id}`): DocumentSummaryRecord {
   } as DocumentSummaryRecord;
 }
 
+function makeSession(
+  sessionId: string,
+  spawnedFrom: string | null,
+  status: "running" | "pending" | "completed" = "running",
+): SessionSummaryRecord {
+  return {
+    session_id: sessionId,
+    version: 1n,
+    timestamp: "2026-01-01T00:00:00Z",
+    session: {
+      prompt: "",
+      spawned_from: spawnedFrom ?? null,
+      creator: "alice",
+      status,
+    },
+  } as SessionSummaryRecord;
+}
+
 // --- Import after mocks ---
 const { useChatReferencedArtifacts } = await import(
   "../useChatReferencedArtifacts"
@@ -99,6 +120,8 @@ const { useChatReferencedArtifacts } = await import(
 describe("useChatReferencedArtifacts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no sessions for issue ids — individual tests override.
+    mockListSessions.mockResolvedValue({ sessions: [] });
   });
 
   it("buckets target ids by prefix and drops unknown prefixes", async () => {
@@ -364,9 +387,117 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.issues).toEqual([]);
     expect(result.current.patches).toEqual([]);
     expect(result.current.documents).toEqual([]);
+    expect(result.current.sessionsByIssue.size).toBe(0);
     expect(result.current.error).toBeNull();
     expect(mockListIssues).not.toHaveBeenCalled();
     expect(mockListPatches).not.toHaveBeenCalled();
     expect(mockListDocuments).not.toHaveBeenCalled();
+    expect(mockListSessions).not.toHaveBeenCalled();
+  });
+
+  it("calls listSessions once with the comma-joined issue ids", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("i-1"), makeRelation("i-2")],
+    });
+    mockListIssues.mockResolvedValue({
+      issues: [makeIssue("i-1"), makeIssue("i-2")],
+    });
+    mockListSessions.mockResolvedValue({ sessions: [] });
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockListSessions).toHaveBeenCalledTimes(1);
+    expect(mockListSessions).toHaveBeenCalledWith({
+      spawned_from_ids: "i-1,i-2",
+    });
+  });
+
+  it("groups sessions by spawned_from into sessionsByIssue", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("i-1"), makeRelation("i-2")],
+    });
+    mockListIssues.mockResolvedValue({
+      issues: [makeIssue("i-1"), makeIssue("i-2")],
+    });
+    mockListSessions.mockResolvedValue({
+      sessions: [
+        makeSession("s-a", "i-1", "running"),
+        makeSession("s-b", "i-1", "pending"),
+        makeSession("s-c", "i-2", "running"),
+        // Session not tied to any issue — must be filtered out.
+        makeSession("s-d", null, "running"),
+      ],
+    });
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const map = result.current.sessionsByIssue;
+    expect(map).toBeInstanceOf(Map);
+    expect(map.size).toBe(2);
+    expect(map.get("i-1")?.map((s) => s.session_id)).toEqual(["s-a", "s-b"]);
+    expect(map.get("i-2")?.map((s) => s.session_id)).toEqual(["s-c"]);
+  });
+
+  it("does not call listSessions when there are no issue ids", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("p-1"), makeRelation("d-1")],
+    });
+    mockListPatches.mockResolvedValue({ patches: [makePatch("p-1")] });
+    mockListDocuments.mockResolvedValue({ documents: [makeDocument("d-1")] });
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockListSessions).not.toHaveBeenCalled();
+    expect(result.current.sessionsByIssue.size).toBe(0);
+  });
+
+  it("applies the 33-id cap to listSessions in lock-step with listIssues", async () => {
+    const relations = Array.from({ length: 40 }, (_, i) =>
+      makeRelation(`i-${i}`),
+    );
+    mockListRelations.mockResolvedValue({ relations });
+
+    const expectedIds = Array.from({ length: 33 }, (_, i) => `i-${i}`);
+    mockListIssues.mockResolvedValue({
+      issues: expectedIds.map((id) => makeIssue(id)),
+    });
+    mockListSessions.mockResolvedValue({ sessions: [] });
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockListSessions).toHaveBeenCalledWith({
+      spawned_from_ids: expectedIds.join(","),
+    });
+  });
+
+  it("aggregates error from listSessions", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("i-1")],
+    });
+    mockListIssues.mockResolvedValue({ issues: [makeIssue("i-1")] });
+    mockListSessions.mockRejectedValue(new Error("sessions failed"));
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.error).toBeInstanceOf(Error);
   });
 });
