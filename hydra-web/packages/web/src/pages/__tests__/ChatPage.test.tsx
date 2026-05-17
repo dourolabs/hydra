@@ -173,11 +173,11 @@ describe("ChatPage 2-pane layout", () => {
     Element.prototype.scrollTo = vi.fn() as unknown as typeof Element.prototype.scrollTo;
   });
 
-  it("renders Related and Settings tabs in the right panel", () => {
+  it("renders Related and Details tabs in the right panel", () => {
     render(<ChatPage />);
 
     expect(screen.getByTestId("chat-rail-tab-related")).toBeDefined();
-    expect(screen.getByTestId("chat-rail-tab-settings")).toBeDefined();
+    expect(screen.getByTestId("chat-rail-tab-details")).toBeDefined();
 
     cleanup();
   });
@@ -188,8 +188,8 @@ describe("ChatPage 2-pane layout", () => {
     // Chat input is visible by default (Related tab is active).
     expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
 
-    // Switch to Settings.
-    fireEvent.click(screen.getByTestId("chat-rail-tab-settings"));
+    // Switch to Details.
+    fireEvent.click(screen.getByTestId("chat-rail-tab-details"));
 
     // Chat input is still visible.
     expect(screen.getByPlaceholderText("Type a message…")).toBeDefined();
@@ -197,13 +197,13 @@ describe("ChatPage 2-pane layout", () => {
     cleanup();
   });
 
-  it("reveals Conversation ID when switching to the Settings tab", () => {
+  it("reveals Conversation ID when switching to the Details tab", () => {
     render(<ChatPage />);
 
-    // Settings content is not visible on the Related tab.
+    // Details content is not visible on the Related tab.
     expect(screen.queryByText("c-test123")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("chat-rail-tab-settings"));
+    fireEvent.click(screen.getByTestId("chat-rail-tab-details"));
 
     expect(screen.getByText("Conversation ID")).toBeDefined();
     expect(screen.getByText("c-test123")).toBeDefined();

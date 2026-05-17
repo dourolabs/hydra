@@ -75,7 +75,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)
-- `@mobile:chat-tabs` — Right-panel content (Related, Settings) is reachable via top tabs on the chat page mobile viewport; the Chat tab is default and the message-list scroll is not regressed
+- `@mobile:chat-tabs` — Right-panel content (Related, Details) is reachable via top tabs on the chat page mobile viewport; the Chat tab is default and the message-list scroll is not regressed
 
 ## Responsive Layout
 
