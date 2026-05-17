@@ -32,14 +32,14 @@ export default defineConfig({
     {
       command: "pnpm --filter @hydra/mock-server dev",
       port: 8080,
-      reuseExistingServer: true,
+      reuseExistingServer: !process.env.CI,
       cwd: "../..",
     },
     {
       command:
         "pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build && pnpm --filter @hydra/web dev",
       port: 3000,
-      reuseExistingServer: true,
+      reuseExistingServer: !process.env.CI,
       cwd: "../..",
       timeout: 120000,
     },
