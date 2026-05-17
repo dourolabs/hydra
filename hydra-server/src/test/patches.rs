@@ -288,6 +288,70 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn list_patches_filters_by_ids() -> anyhow::Result<()> {
+    use std::collections::HashSet;
+
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let mut created_ids = Vec::new();
+    for title in ["alpha", "beta", "gamma"] {
+        let patch = Patch::new(
+            title.to_string(),
+            format!("{title} description"),
+            patch_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            service_repo_name(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let created: UpsertPatchResponse = client
+            .post(format!("{}/v1/patches", server.base_url()))
+            .json(&UpsertPatchRequest::new(patch.into()))
+            .send()
+            .await?
+            .json()
+            .await?;
+        created_ids.push(created.patch_id);
+    }
+
+    let mut single_query = SearchPatchesQuery::new(None, None, vec![], None);
+    single_query.ids = vec![created_ids[0].clone()];
+    let single: ListPatchesResponse = client
+        .get(format!("{}/v1/patches", server.base_url()))
+        .query(&single_query)
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(single.patches.len(), 1);
+    assert_eq!(single.patches[0].patch_id, created_ids[0]);
+
+    let mut pair_query = SearchPatchesQuery::new(None, None, vec![], None);
+    pair_query.ids = vec![created_ids[0].clone(), created_ids[2].clone()];
+    let pair: ListPatchesResponse = client
+        .get(format!("{}/v1/patches", server.base_url()))
+        .query(&pair_query)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let returned: HashSet<PatchId> = pair.patches.iter().map(|p| p.patch_id.clone()).collect();
+    let expected: HashSet<PatchId> = [created_ids[0].clone(), created_ids[2].clone()]
+        .into_iter()
+        .collect();
+    assert_eq!(returned, expected);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
     let github_server = MockServer::start_async().await;
     let _user_mock = github_server.mock(|when, then| {
