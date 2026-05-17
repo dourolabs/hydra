@@ -2,11 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Icons, Spinner } from "@hydra/ui";
-import type {
-  DocumentSummaryRecord,
-  ListDocumentsResponse,
-  PathChildEntry,
-} from "@hydra/api";
+import type { DocumentSummaryRecord, ListDocumentsResponse, PathChildEntry } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
@@ -221,11 +217,13 @@ function ReaderPane({ activePath, onSelectFolder, getChildren, pathsLoading }: R
   const subfolders = useMemo(() => children.filter(isFolderEntry), [children]);
   const leafDocChildren = useMemo(() => children.filter(isLeafDocumentEntry), [children]);
 
+  const breadcrumbsForUp = useMemo(() => pathBreadcrumbs(activePath), [activePath]);
+  const parentCrumb = breadcrumbsForUp[breadcrumbsForUp.length - 2];
+  const parentPath = parentCrumb?.path ?? ROOT_PATH;
+  const parentLabel = parentCrumb?.name ?? "/";
+
   const leafDocIds = useMemo(
-    () =>
-      leafDocChildren
-        .map((c) => c.document?.document_id)
-        .filter((id): id is string => !!id),
+    () => leafDocChildren.map((c) => c.document?.document_id).filter((id): id is string => !!id),
     [leafDocChildren],
   );
   const { data: leafDocs, isLoading: leafDocsLoading } = useDocumentsByIds(leafDocIds);
@@ -271,6 +269,27 @@ function ReaderPane({ activePath, onSelectFolder, getChildren, pathsLoading }: R
         {isLoading && totalFiles === 0 && totalFolders === 0 && (
           <div className={styles.center}>
             <Spinner size="md" />
+          </div>
+        )}
+
+        {!isRoot && (
+          <div
+            className={`${styles.docRow} ${styles.docRowUp}`}
+            data-testid="documents-up-one-level"
+            onClick={() => onSelectFolder(parentPath)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelectFolder(parentPath);
+              }
+            }}
+          >
+            <span className={`${styles.docRowIcon} ${styles.docRowUpIcon}`}>
+              <Icons.IconChevronRight size={14} />
+            </span>
+            <span className={styles.docRowTitle}>Up to {parentLabel}</span>
           </div>
         )}
 
@@ -335,28 +354,14 @@ export function DocumentsPage() {
     return [...set];
   }, [expandedPaths, activePath]);
 
-  const {
-    childrenMap,
-    getChildren,
-    isLoading,
-    isFetching,
-    error,
-  } = useBatchedDocumentPaths(prefixes);
+  const { childrenMap, getChildren, isLoading, isFetching, error } =
+    useBatchedDocumentPaths(prefixes);
 
   const { data: uncategorized } = useUncategorizedDocuments(true);
 
-  const topLevelEntries = useMemo(
-    () => childrenMap.get(ROOT_PATH) ?? [],
-    [childrenMap],
-  );
-  const topLevelFolders = useMemo(
-    () => topLevelEntries.filter(isFolderEntry),
-    [topLevelEntries],
-  );
-  const topLevelPaths = useMemo(
-    () => topLevelFolders.map((c) => c.full_path),
-    [topLevelFolders],
-  );
+  const topLevelEntries = useMemo(() => childrenMap.get(ROOT_PATH) ?? [], [childrenMap]);
+  const topLevelFolders = useMemo(() => topLevelEntries.filter(isFolderEntry), [topLevelEntries]);
+  const topLevelPaths = useMemo(() => topLevelFolders.map((c) => c.full_path), [topLevelFolders]);
 
   useEffect(() => {
     autoExpand(topLevelPaths);

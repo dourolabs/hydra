@@ -98,4 +98,63 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await breadcrumb.getByText("Documents").click();
     await expect(page).toHaveURL(/\/documents$/);
   });
+
+  test("mobile viewport hides the left tree and shows only the reader pane @mobile:documents-single-pane", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    // The mobile sidebar drawer is open by default and intercepts pointer
+    // events on the page content. Persist "hidden" before navigation so the
+    // drawer stays closed for the in-pane click below.
+    await page.addInitScript(() => {
+      window.localStorage.setItem("hydra-sidebar-hidden", "1");
+    });
+    await page.goto("/documents");
+
+    const main = page.locator("main");
+    const tree = main.locator('aside[aria-label="Document tree"]');
+    const reader = main.getByTestId("documents-reader-pane");
+
+    // Reader pane must be visible on mobile.
+    await expect(reader).toBeVisible();
+
+    // Left tree must not be visible on mobile (CSS display:none collapses it).
+    await expect(tree).toHaveCSS("display", "none");
+
+    // Navigation up/down still works inside the reader pane: click a
+    // subfolder row to navigate into it.
+    const researchRow = reader.getByRole("button", { name: /research/ });
+    await researchRow.click();
+    await expect(reader.getByText(/3 files · 0 folders/)).toBeVisible();
+  });
+
+  test("reader pane shows an up-one-level entry that navigates to the parent folder @documents:up-one-level", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/documents");
+
+    const main = page.locator("main");
+    const reader = main.getByTestId("documents-reader-pane");
+
+    // At root, the up-one-level entry must NOT be rendered.
+    await expect(reader.getByTestId("documents-up-one-level")).toHaveCount(0);
+
+    // Navigate into /research via the left tree.
+    const researchFolder = main.getByRole("treeitem", { name: /research/ }).first();
+    await researchFolder.click({ position: { x: 80, y: 14 } });
+    await expect(reader.getByText(/3 files · 0 folders/)).toBeVisible();
+
+    // The up-one-level entry is now visible and labelled with the parent name.
+    // Parent of /research is the root, so the label is "Up to /".
+    const upEntry = reader.getByTestId("documents-up-one-level");
+    await expect(upEntry).toBeVisible();
+    await expect(upEntry).toContainText(/Up to \//);
+
+    // Clicking it returns to the root path: the breadcrumb trail is empty
+    // (no `.crumbCurrent` element rendered) and the file/folder counts reflect
+    // the root listing.
+    await upEntry.click();
+    await expect(reader.getByText(/\d+ files? · \d+ folders?/)).toBeVisible();
+    await expect(reader.getByTestId("documents-up-one-level")).toHaveCount(0);
+  });
 });
