@@ -106,28 +106,6 @@
   color: var(--fg-0);
 }
 
-.newIssueButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 24px;
-  padding: 0 8px;
-  background: var(--acc);
-  border: 1px solid var(--acc);
-  border-radius: var(--radius-md);
-  color: var(--acc-fg-on);
-  font-family: var(--f-sans);
-  font-size: var(--t-xs);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--tx-fast), border-color var(--tx-fast);
-}
-
-.newIssueButton:hover {
-  background: var(--acc-bright);
-  border-color: var(--acc-bright);
-}
-
 @media (max-width: 768px) {
   .hamburger {
     order: -1;
@@ -142,18 +120,4 @@
   .searchButton kbd {
     display: none;
   }
-
-  .newIssueButton {
-    padding: 0;
-    width: 28px;
-    justify-content: center;
-  }
-
-  .newIssueButton .label {
-    display: none;
-  }
-}
-
-.label {
-  white-space: nowrap;
 }

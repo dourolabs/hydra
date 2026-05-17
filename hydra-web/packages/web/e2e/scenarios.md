@@ -24,6 +24,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@nav:back-button` — Browser back button works correctly
 - `@nav:sidebar-toggle` — User can hide and restore the sidebar; state persists across reloads
 - `@nav:tooltip-viewport` — Header tooltips stay within viewport at desktop and mobile sizes
+- `@nav:header-create-menu` — Header `+` button opens a menu with New issue / New conversation; selection invokes the matching action and closes the menu
 
 ## Issues
 

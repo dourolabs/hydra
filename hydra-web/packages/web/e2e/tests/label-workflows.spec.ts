@@ -42,8 +42,9 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "New issue", exact: true }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -175,8 +176,9 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "New issue", exact: true }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -219,8 +221,9 @@ test.describe("Newly created label appears in filter bar @labels:filter-bar-crea
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "New issue", exact: true }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 

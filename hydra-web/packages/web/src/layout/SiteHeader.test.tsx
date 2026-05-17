@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 
@@ -29,7 +29,39 @@ vi.mock("../features/dashboard/useIssueCreateModal", () => ({
   }),
 }));
 
+const mockCreateConversation = vi.fn();
+vi.mock("../api/client", () => ({
+  apiClient: {
+    createConversation: (...args: unknown[]) => mockCreateConversation(...args),
+  },
+}));
+
+const mockInvalidateQueries = vi.fn();
+vi.mock("@tanstack/react-query", () => ({
+  useMutation: ({
+    mutationFn,
+    onSuccess,
+  }: {
+    mutationFn: () => Promise<unknown>;
+    onSuccess?: (data: unknown) => void;
+  }) => ({
+    mutate: () => {
+      mutationFn().then((data) => {
+        onSuccess?.(data);
+      });
+    },
+    isPending: false,
+  }),
+  useQueryClient: () => ({
+    invalidateQueries: mockInvalidateQueries,
+  }),
+}));
+
 vi.mock("./SiteHeader.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("./HeaderActionMenu.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
@@ -120,10 +152,12 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   openIssueCreateModalMock.mockReset();
+  mockCreateConversation.mockReset();
+  mockInvalidateQueries.mockReset();
 });
 
 describe("SiteHeader", () => {
-  it("renders breadcrumbs, search, sessions pill, and new-issue button", () => {
+  it("renders breadcrumbs, search, sessions pill, and create trigger", () => {
     renderHeader({
       breadcrumbs: { items: [], current: "Issues" },
     });
@@ -131,7 +165,7 @@ describe("SiteHeader", () => {
     expect(screen.getByTestId("site-header-breadcrumbs")).toBeTruthy();
     expect(screen.getByTestId("site-header-search")).toBeTruthy();
     expect(screen.getByTestId("site-header-sessions")).toBeTruthy();
-    expect(screen.getByTestId("site-header-new-issue")).toBeTruthy();
+    expect(screen.getByTestId("site-header-create")).toBeTruthy();
   });
 
   it("hamburger toggles sidebar state on click", () => {
@@ -154,10 +188,60 @@ describe("SiteHeader", () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the create-issue modal when New issue is clicked", () => {
+  it("create trigger opens a menu with New issue and New conversation", () => {
     renderHeader();
+    const trigger = screen.getByTestId("site-header-create");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("site-header-create-menu")).toBeTruthy();
+    expect(screen.getByTestId("site-header-new-issue")).toBeTruthy();
+    expect(screen.getByTestId("site-header-new-conversation")).toBeTruthy();
+  });
+
+  it("selecting New issue opens the create-issue modal and closes the menu", () => {
+    renderHeader();
+    fireEvent.click(screen.getByTestId("site-header-create"));
     fireEvent.click(screen.getByTestId("site-header-new-issue"));
     expect(openIssueCreateModalMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
+  });
+
+  it("selecting New conversation creates a conversation and navigates", async () => {
+    mockCreateConversation.mockResolvedValue({ conversation_id: "c-abc" });
+    renderHeader();
+    fireEvent.click(screen.getByTestId("site-header-create"));
+    fireEvent.click(screen.getByTestId("site-header-new-conversation"));
+
+    await waitFor(() => {
+      expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversations"] });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-pathname").textContent).toBe("/chat/c-abc");
+    });
+    expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
+  });
+
+  it("closes the menu on Escape", () => {
+    renderHeader();
+    fireEvent.click(screen.getByTestId("site-header-create"));
+    const menu = screen.getByTestId("site-header-create-menu");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
+  });
+
+  it("closes the menu on outside click", () => {
+    renderHeader();
+    fireEvent.click(screen.getByTestId("site-header-create"));
+    expect(screen.getByTestId("site-header-create-menu")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
   });
 
   it("renders the sessions pill as a link to /sessions", () => {
