@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
@@ -7,16 +7,28 @@ import { useConversation, useConversationEvents } from "../features/chat/useConv
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
 import { ChatInput } from "../features/chat/ChatInput";
-import { ChatRightPanel } from "../features/chat/ChatRightPanel";
+import { ChatRightPanel, type ChatRightPanelTabKey } from "../features/chat/ChatRightPanel";
+import { MobileTabBar, type MobileTabBarItem } from "../components/MobileTabBar";
 import { ApiError, apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatPage.module.css";
+
+type MobileTabKey = "chat" | ChatRightPanelTabKey;
+
+const MOBILE_TABS: MobileTabBarItem[] = [
+  { key: "chat", label: "Chat" },
+  { key: "related", label: "Related" },
+  { key: "settings", label: "Settings" },
+];
 
 function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: conversation, isLoading, error } = useConversation(conversationId);
   const { data: events } = useConversationEvents(conversationId);
+
+  const [mobileTab, setMobileTab] = useState<MobileTabKey>("chat");
+  const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTabKey>("related");
 
   useBreadcrumbs(
     [
@@ -27,11 +39,13 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   );
 
   const sendMutation = useMutation({
-    mutationFn: (content: string) =>
-      apiClient.sendMessage(conversationId, { content }),
+    mutationFn: (content: string) => apiClient.sendMessage(conversationId, { content }),
     onMutate: async (content) => {
       await queryClient.cancelQueries({ queryKey: ["conversationEvents", conversationId] });
-      const previous = queryClient.getQueryData<ConversationEvent[]>(["conversationEvents", conversationId]);
+      const previous = queryClient.getQueryData<ConversationEvent[]>([
+        "conversationEvents",
+        conversationId,
+      ]);
       const optimisticEvent: ConversationEvent = {
         type: "user_message",
         content,
@@ -59,9 +73,8 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ["conversation", conversationId] });
       const previous = queryClient.getQueryData<Conversation>(["conversation", conversationId]);
-      queryClient.setQueryData<Conversation>(
-        ["conversation", conversationId],
-        (old) => old ? { ...old, status: "closed" as const } : old,
+      queryClient.setQueryData<Conversation>(["conversation", conversationId], (old) =>
+        old ? { ...old, status: "closed" as const } : old,
       );
       return { previous };
     },
@@ -87,6 +100,18 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const handleEndChat = useCallback(() => {
     closeMutation.mutate();
   }, [closeMutation]);
+
+  const handleMobileTabChange = useCallback((key: string) => {
+    const k = key as MobileTabKey;
+    setMobileTab(k);
+    if (k === "related" || k === "settings") {
+      setRightPanelTab(k);
+    }
+  }, []);
+
+  const handleRightPanelChange = useCallback((key: ChatRightPanelTabKey) => {
+    setRightPanelTab(key);
+  }, []);
 
   if (isLoading) {
     return (
@@ -116,10 +141,19 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   if (!conversation) return null;
 
   const canClose = conversation.status !== "closed";
+  const chatActive = mobileTab === "chat" ? "true" : "false";
+  const rightPanelActive = mobileTab === "chat" ? "false" : "true";
 
   return (
     <div className={styles.chatLayout}>
-      <div className={styles.chatPane}>
+      <MobileTabBar
+        className={styles.mobileTabBar}
+        tabs={MOBILE_TABS}
+        activeKey={mobileTab}
+        onChange={handleMobileTabChange}
+        testIdPrefix="chat-mobile-tab-"
+      />
+      <div className={styles.chatPane} data-mobile-active={chatActive}>
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
@@ -129,7 +163,12 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
           endChatDisabled={closeMutation.isPending}
         />
       </div>
-      <ChatRightPanel conversation={conversation} />
+      <ChatRightPanel
+        conversation={conversation}
+        activeTabKey={rightPanelTab}
+        onTabChange={handleRightPanelChange}
+        data-mobile-active={rightPanelActive}
+      />
     </div>
   );
 }
