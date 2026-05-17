@@ -102,10 +102,15 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   }, [closeMutation]);
 
   const handleMobileTabChange = useCallback((key: string) => {
-    const k = key as MobileTabKey;
-    setMobileTab(k);
-    if (k === "related" || k === "settings") {
-      setRightPanelTab(k);
+    switch (key) {
+      case "chat":
+        setMobileTab("chat");
+        return;
+      case "related":
+      case "settings":
+        setMobileTab(key);
+        setRightPanelTab(key);
+        return;
     }
   }, []);
 
@@ -141,8 +146,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   if (!conversation) return null;
 
   const canClose = conversation.status !== "closed";
-  const chatActive = mobileTab === "chat" ? "true" : "false";
-  const rightPanelActive = mobileTab === "chat" ? "false" : "true";
+  const chatPaneActive = mobileTab === "chat";
 
   return (
     <div className={styles.chatLayout}>
@@ -153,7 +157,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         onChange={handleMobileTabChange}
         testIdPrefix="chat-mobile-tab-"
       />
-      <div className={styles.chatPane} data-mobile-active={chatActive}>
+      <div className={styles.chatPane} data-mobile-active={chatPaneActive ? "true" : "false"}>
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
@@ -167,7 +171,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         conversation={conversation}
         activeTabKey={rightPanelTab}
         onTabChange={handleRightPanelChange}
-        data-mobile-active={rightPanelActive}
+        data-mobile-active={chatPaneActive ? "false" : "true"}
       />
     </div>
   );

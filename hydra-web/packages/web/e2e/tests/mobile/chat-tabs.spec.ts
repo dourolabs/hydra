@@ -149,10 +149,19 @@ test.describe("Mobile chat tabs @mobile:chat-tabs", () => {
       const messageList = page.getByTestId("chat-message-list");
       await expect(messageList).toBeVisible();
 
-      // Wait for the auto-scroll-to-bottom effect to finish.
+      // Wait for the auto-scroll-to-bottom smooth animation to SETTLE (not just
+      // start). ChatMessageList.tsx:70 uses `scrollTo({ behavior: "smooth" })`,
+      // so `scrollTop > 0` flips true the moment the animation begins. If we
+      // proceed at that point, setting `scrollTop = target` below races the
+      // in-flight smooth scroll and produces drift. Waiting until scrollTop has
+      // reached the bottom (within 1px) guarantees the animation has finished.
       await expect
         .poll(async () =>
-          messageList.evaluate((el) => el.scrollHeight > el.clientHeight && el.scrollTop > 0),
+          messageList.evaluate(
+            (el) =>
+              el.scrollHeight > el.clientHeight &&
+              el.scrollTop >= el.scrollHeight - el.clientHeight - 1,
+          ),
         )
         .toBe(true);
 
