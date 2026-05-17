@@ -4,11 +4,7 @@ import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import React from "react";
-import type {
-  ListDocumentPathsResponse,
-  ListDocumentsResponse,
-  PathChildEntry,
-} from "@hydra/api";
+import type { ListDocumentPathsResponse, ListDocumentsResponse, PathChildEntry } from "@hydra/api";
 
 // --- Mocks ---
 
@@ -35,13 +31,9 @@ vi.mock("../DocumentsPage.module.css", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
-  Button: ({
-    children,
-    onClick,
-  }: {
-    children: React.ReactNode;
-    onClick?: () => void;
-  }) => <button onClick={onClick}>{children}</button>,
+  Button: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+    <button onClick={onClick}>{children}</button>
+  ),
   Spinner: () => <span data-testid="spinner" />,
   Icons: new Proxy(
     {},
@@ -164,6 +156,40 @@ describe("DocumentsPage batched paths fetch", () => {
         }),
       ],
     });
+  });
+
+  it("renders an up-one-level entry in the reader pane for a non-root folder and hides it at root", async () => {
+    mockListDocumentPaths.mockResolvedValue({
+      children: [
+        pathEntry("/research", { child_count: 2 }),
+        pathEntry("/research/notes", {
+          is_document: true,
+          document_id: "d-1",
+          title: "Notes",
+        }),
+      ],
+    } satisfies ListDocumentPathsResponse);
+
+    renderPage();
+
+    // At root, the up-one-level entry is not rendered.
+    await waitFor(() => {
+      expect(screen.queryAllByRole("button", { name: /research/ }).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("documents-up-one-level")).toBeNull();
+
+    // Click the `/research` folder row in the reader pane to make it active.
+    // Two matching elements render (the left tree's treeitem + the reader
+    // pane's docRow button); the docRow button is the second one.
+    const researchRows = screen.getAllByRole("button", { name: /research/ });
+    const readerRow = researchRows[researchRows.length - 1];
+    readerRow.click();
+
+    // The up-one-level entry now appears, labelled with the parent name.
+    await waitFor(() => {
+      expect(screen.getByTestId("documents-up-one-level")).toBeDefined();
+    });
+    expect(screen.getByTestId("documents-up-one-level").textContent).toContain("Up to /");
   });
 
   it("renders leaf documents inline using PathChildDocumentRef without per-folder document lookups", async () => {
