@@ -274,6 +274,9 @@ impl MemoryStore {
 
         self.patches.iter().filter_map(move |entry| {
             let latest = Self::latest_versioned(entry.value())?;
+            if !query.ids.is_empty() && !query.ids.contains(entry.key()) {
+                return None;
+            }
             if !include_deleted && latest.item.deleted {
                 return None;
             }

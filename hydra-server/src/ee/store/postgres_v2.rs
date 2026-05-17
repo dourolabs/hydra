@@ -1680,6 +1680,19 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
     let mut predicates = Vec::new();
     let mut bindings = Vec::new();
 
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if !query.include_deleted.unwrap_or(false) {
         predicates.push("deleted = false".to_string());
     }
@@ -6425,6 +6438,33 @@ mod tests {
             new_results[0].1.item.title,
             "changed_unique_patch_title_xyz789"
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_patches_filters_by_ids_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let mut ids = Vec::new();
+        for title in ["alpha", "beta", "gamma"] {
+            let mut patch = sample_patch();
+            patch.title = title.to_string();
+            let (id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
+            ids.push(id);
+        }
+
+        let mut single_query = SearchPatchesQuery::new(None, None, vec![], None);
+        single_query.ids = vec![ids[0].clone()];
+        let single = store.list_patches(&single_query).await.unwrap();
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].0, ids[0]);
+
+        let mut pair_query = SearchPatchesQuery::new(None, None, vec![], None);
+        pair_query.ids = vec![ids[2].clone(), ids[0].clone()];
+        let pair = store.list_patches(&pair_query).await.unwrap();
+        let returned: HashSet<PatchId> = pair.into_iter().map(|(id, _)| id).collect();
+        let expected: HashSet<PatchId> = [ids[0].clone(), ids[2].clone()].into_iter().collect();
+        assert_eq!(returned, expected);
     }
 
     // ---- Notification tests ----
