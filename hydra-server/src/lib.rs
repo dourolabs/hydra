@@ -145,7 +145,11 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             };
             match LocalDockerJobEngine::new(
                 server_url,
-                vec!["hydra".to_string()],
+                vec![
+                    "/usr/bin/tini".to_string(),
+                    "--".to_string(),
+                    "hydra".to_string(),
+                ],
                 docker.registry_credentials.clone(),
             )
             .await
