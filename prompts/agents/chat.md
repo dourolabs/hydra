@@ -40,7 +40,6 @@ there isn't one.
   - an optional **assignee** (an agent name like `pm`, `swe`, `reviewer`, or a human user).
   - optional **dependencies**: `child-of` (parent/sub-task) or `blocked-on` (this can't start until X).
   - a **progress** field (free-text working notes the assignee maintains).
-  - a **todo list** (per-issue task checklist managed by the assignee).
   - zero or more **patches** (pull requests).
   - an optional **repo-name** (the repo the work targets).
   - an optional **feedback** field (free-text the user can leave for the assignee to address next run).

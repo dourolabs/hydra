@@ -1,6 +1,6 @@
 # `hydra issues`
 
-The `hydra issues` command drives the complete lifecycle of Hydra tasks: listing backlogs, creating and updating work items, inspecting dependencies, and managing per-issue todo lists. Use it any time you need to coordinate with agents or automate project tracking.
+The `hydra issues` command drives the complete lifecycle of Hydra tasks: listing backlogs, creating and updating work items, and inspecting dependencies. Use it any time you need to coordinate with agents or automate project tracking.
 
 ## Authentication & output
 
@@ -57,14 +57,6 @@ hydra issues update <ISSUE_ID> \
 
 Use `hydra issues update` to change status, hand off work, refresh descriptions, or rewrite the dependency graph. Each field has a corresponding `--clear-*` flag so you can remove values explicitly (e.g., `--clear-progress` when you wrap up a note). Job settings behave like `create`: provide any subset of overrides or call `--clear-job-settings` to drop inherited execution context.
 
-### Todo
-
-```bash
-hydra issues todo <ISSUE_ID> [--add "text" | --done N | --undone N | --replace ITEM[,ITEM...]]
-```
-
-Append todos with `--add`; prefix the text with `[x]` to mark the entry complete immediately. Use `--done` / `--undone` with 1-based indexes to toggle status, or `--replace` to rewrite the entire ordered list (commas separate items). Pretty output mirrors the dashboard checklist, while `--output-format jsonl` returns `{ issue_id, todo_list }` for scripts.
-
 ## Examples
 
 ```bash
@@ -81,12 +73,8 @@ hydra --output-format jsonl issues list --graph "**:blocked-on:i-flaky"
 # Move work in progress forward and capture notes
 hydra issues update i-1234 --status closed --progress "Tests green, patch merged"
 
-# Add a follow-up dependency and a todo item
+# Add follow-up dependencies
 hydra issues update i-1234 \
   --deps child-of:i-parent \
   --deps blocked-on:i-migration
-hydra issues todo i-1234 --add "[x] Document migration steps"
-
-# Replace todos after a grooming session
-hydra issues todo i-1234 --replace "Cut RC branch","Invite QA","Prep launch blog"
 ```
