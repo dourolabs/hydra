@@ -75,7 +75,6 @@ RUN apt-get update \
         fonts-liberation \
         fonts-noto-color-emoji \
         ripgrep \
-        tini \
         wget \
         xdg-utils \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
