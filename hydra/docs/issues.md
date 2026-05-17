@@ -25,14 +25,6 @@ hydra issues list \
   * `<DEPENDENCY>` is any supported relationship such as `child-of` or `blocked-on`.
   * Examples: `*:child-of:i-root` lists issues whose parent is `i-root`, while `i-leaf:blocked-on:**` finds everything the leaf depends on (recursively).
 
-### Describe
-
-```bash
-hydra issues describe <ISSUE_ID> [--verbose]
-```
-
-Summarizes an issue along with its immediate parents, transitive children, todo list, linked patches, and the complete activity log. Use `--verbose` to emit the full JSONL payload (including expanded parent/child records and raw activity entries) for automation or auditing.
-
 ### Create
 
 ```bash
@@ -97,7 +89,4 @@ hydra issues todo i-1234 --add "[x] Document migration steps"
 
 # Replace todos after a grooming session
 hydra issues todo i-1234 --replace "Cut RC branch","Invite QA","Prep launch blog"
-
-# Inspect an issue’s relationships and activity log verbosely
-hydra issues describe i-1234 --verbose
 ```
