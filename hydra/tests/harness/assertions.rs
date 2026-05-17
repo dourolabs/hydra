@@ -20,7 +20,6 @@ use hydra_common::{
 /// ```ignore
 /// let issue = user.get_issue(&id).await?;
 /// issue.assert_status(IssueStatus::Closed);
-/// issue.assert_todo_count(3);
 /// ```
 pub trait IssueAssertions {
     /// Assert the issue has the expected status.
@@ -47,9 +46,6 @@ pub trait IssueAssertions {
         desc_contains: &str,
         status: IssueStatus,
     );
-
-    /// Assert the issue's todo list has exactly `expected` items.
-    fn assert_todo_count(&self, expected: usize);
 
     /// Assert the issue has at least one patch attached.
     fn assert_has_patch(&self);
@@ -154,15 +150,6 @@ impl IssueAssertions for IssueVersionRecord {
         }
     }
 
-    fn assert_todo_count(&self, expected: usize) {
-        let actual = self.issue.todo_list.len();
-        assert_eq!(
-            actual, expected,
-            "issue {}: expected {} todo items, got {}",
-            self.issue_id, expected, actual
-        );
-    }
-
     fn assert_has_patch(&self) {
         assert!(
             !self.issue.patches.is_empty(),
@@ -190,9 +177,6 @@ pub trait IssueSummaryAssertions {
         desc_contains: &str,
         status: IssueStatus,
     );
-
-    /// Assert the issue's todo list has exactly `expected` items.
-    fn assert_todo_count(&self, expected: usize);
 
     /// Assert the issue has at least one patch attached.
     fn assert_has_patch(&self);
@@ -250,15 +234,6 @@ impl IssueSummaryAssertions for IssueSummaryRecord {
                 }
             );
         }
-    }
-
-    fn assert_todo_count(&self, expected: usize) {
-        let actual = self.issue.todo_list.len();
-        assert_eq!(
-            actual, expected,
-            "issue {}: expected {} todo items, got {}",
-            self.issue_id, expected, actual
-        );
     }
 
     fn assert_has_patch(&self) {

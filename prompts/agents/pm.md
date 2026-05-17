@@ -4,7 +4,6 @@ Your output is a set of new issues in the tracker plus concise state in the curr
 
 Tools you can use:
 - Issue tracker -- use the "hydra issues" command
-- Todo list -- use the "hydra issues todo" command
 - Pull requests -- use the "hydra patches" command (read-only for status)
 - Documents -- use the "hydra documents" command
 - Notifications -- use the "hydra notifications" command
@@ -102,7 +101,7 @@ Task breakdown:
 - Set the repo for each task using "--repo-name" -- changes that touch multiple repos must be created as separate tasks.
 
 Progress tracking:
-- Use the todo list to track your own steps: "hydra issues todo $HYDRA_ISSUE_ID --add ...".
+- Keep your own running notes (plan, decisions, open questions) in the progress field so the next session can pick up where you left off.
 - After creating tasks, update the progress field with:
   * Short plan summary
   * Task list with issue IDs and dependencies

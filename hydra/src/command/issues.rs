@@ -20,15 +20,13 @@ use hydra_common::{
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus,
-        IssueSummaryRecord, IssueType, IssueVersionRecord, ReplaceTodoListRequest,
-        SearchIssuesQuery, SessionSettings, SetTodoItemStatusRequest, SubmitFormRequest, TodoItem,
+        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueSummaryRecord,
+        IssueType, IssueVersionRecord, SearchIssuesQuery, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
     },
     users::Username,
     HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName, Versioned,
 };
-use serde::Serialize;
 use std::{
     io::{self, Write},
     str::FromStr,
@@ -300,44 +298,6 @@ pub enum IssueCommands {
         #[arg(long)]
         clear_feedback: bool,
     },
-    /// Inspect or update an issue's todo list.
-    Todo {
-        /// Issue ID to operate on.
-        #[arg(value_name = "ISSUE_ID")]
-        id: IssueId,
-
-        /// Append a new todo item (prefix with '[x]' to mark done immediately).
-        #[arg(long, value_name = "TEXT", conflicts_with_all = ["done", "undone", "replace"])]
-        add: Option<String>,
-
-        /// Mark a todo item as done (1-indexed).
-        #[arg(
-            long,
-            value_name = "ITEM_NUMBER",
-            value_parser = clap::value_parser!(usize),
-            conflicts_with_all = ["add", "undone", "replace"]
-        )]
-        done: Option<usize>,
-
-        /// Mark a todo item as not done (1-indexed).
-        #[arg(
-            long,
-            value_name = "ITEM_NUMBER",
-            value_parser = clap::value_parser!(usize),
-            conflicts_with_all = ["add", "done", "replace"]
-        )]
-        undone: Option<usize>,
-
-        /// Replace the entire todo list with the provided ordered items.
-        #[arg(
-            long,
-            value_name = "ITEM",
-            num_args = 1..,
-            value_delimiter = ',',
-            conflicts_with_all = ["add", "done", "undone"]
-        )]
-        replace: Option<Vec<String>>,
-    },
     /// Delete an issue.
     Delete {
         /// Issue ID to delete.
@@ -530,24 +490,6 @@ pub async fn run(
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
         }
-        IssueCommands::Todo {
-            id,
-            add,
-            done,
-            undone,
-            replace,
-        } => {
-            manage_todo_list(
-                client,
-                id,
-                add,
-                done,
-                undone,
-                replace,
-                context.output_format,
-            )
-            .await
-        }
         IssueCommands::Delete { id } => {
             let deleted = client
                 .delete_issue(&id)
@@ -572,12 +514,6 @@ pub async fn run(
             changelog_issue(client, id, context.output_format, limit).await
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-struct TodoListOutput<'a> {
-    issue_id: &'a IssueId,
-    todo_list: &'a [TodoItem],
 }
 
 async fn changelog_issue(
@@ -1262,173 +1198,6 @@ async fn update_issue(
     Ok(result)
 }
 
-async fn manage_todo_list(
-    client: &dyn HydraClientInterface,
-    issue_id: IssueId,
-    add: Option<String>,
-    done: Option<usize>,
-    undone: Option<usize>,
-    replace: Option<Vec<String>>,
-    output_format: ResolvedOutputFormat,
-) -> Result<()> {
-    let todo_list = resolve_todo_list(client, &issue_id, add, done, undone, replace).await?;
-    print_todo_list(output_format, &issue_id, &todo_list)?;
-    Ok(())
-}
-
-async fn resolve_todo_list(
-    client: &dyn HydraClientInterface,
-    issue_id: &IssueId,
-    add: Option<String>,
-    done: Option<usize>,
-    undone: Option<usize>,
-    replace: Option<Vec<String>>,
-) -> Result<Vec<TodoItem>> {
-    if let Some(items) = replace {
-        let todo_list = parse_todo_items(items)?;
-        let response = client
-            .replace_todo_list(issue_id, &ReplaceTodoListRequest::new(todo_list))
-            .await
-            .with_context(|| format!("failed to replace todo list for issue '{issue_id}'"))?;
-        return Ok(response.todo_list);
-    }
-
-    if let Some(text) = add {
-        let item = parse_todo_item_input(&text)?;
-        let response = client
-            .add_todo_item(
-                issue_id,
-                &AddTodoItemRequest::new(item.description, item.is_done),
-            )
-            .await
-            .with_context(|| format!("failed to add todo item for issue '{issue_id}'"))?;
-        return Ok(response.todo_list);
-    }
-
-    if let Some(item_number) = done {
-        let item_number = validate_item_number(item_number)?;
-        let response = client
-            .set_todo_item_status(issue_id, item_number, &SetTodoItemStatusRequest::new(true))
-            .await
-            .with_context(|| {
-                format!("failed to mark todo item {item_number} done for issue '{issue_id}'")
-            })?;
-        return Ok(response.todo_list);
-    }
-
-    if let Some(item_number) = undone {
-        let item_number = validate_item_number(item_number)?;
-        let response = client
-            .set_todo_item_status(issue_id, item_number, &SetTodoItemStatusRequest::new(false))
-            .await
-            .with_context(|| {
-                format!("failed to mark todo item {item_number} undone for issue '{issue_id}'")
-            })?;
-        return Ok(response.todo_list);
-    }
-
-    let issue = client
-        .get_issue(issue_id, false)
-        .await
-        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
-    Ok(issue.issue.todo_list)
-}
-
-fn parse_todo_items(raw_items: Vec<String>) -> Result<Vec<TodoItem>> {
-    raw_items
-        .into_iter()
-        .map(|value| parse_todo_item_input(&value))
-        .collect()
-}
-
-fn validate_item_number(item_number: usize) -> Result<usize> {
-    if item_number == 0 {
-        bail!("Todo item number must be at least 1.");
-    }
-    Ok(item_number)
-}
-
-fn parse_todo_item_input(raw: &str) -> Result<TodoItem> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        bail!("Todo item description must not be empty.");
-    }
-
-    let (is_done, description) = if let Some(rest) = trimmed.strip_prefix("[x]") {
-        (true, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("[X]") {
-        (true, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("[ ]") {
-        (false, rest)
-    } else {
-        (false, trimmed)
-    };
-
-    let description = description.trim().to_string();
-    if description.is_empty() {
-        bail!("Todo item description must not be empty.");
-    }
-
-    Ok(TodoItem::new(description, is_done))
-}
-
-fn print_todo_list(
-    output_format: ResolvedOutputFormat,
-    issue_id: &IssueId,
-    todo_list: &[TodoItem],
-) -> Result<()> {
-    let mut buffer = Vec::new();
-    render_todo_list(output_format, issue_id, todo_list, &mut buffer)?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
-    Ok(())
-}
-
-fn render_todo_list(
-    output_format: ResolvedOutputFormat,
-    issue_id: &IssueId,
-    todo_list: &[TodoItem],
-    writer: &mut impl Write,
-) -> Result<()> {
-    if output_format == ResolvedOutputFormat::Jsonl {
-        let output = TodoListOutput {
-            issue_id,
-            todo_list,
-        };
-        serde_json::to_writer(&mut *writer, &output)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    writeln!(writer, "Todos for issue {issue_id}:")?;
-    if todo_list.is_empty() {
-        writeln!(writer, "  none")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    for (index, item) in todo_list.iter().enumerate() {
-        let status = if item.is_done { "[x]" } else { "[ ]" };
-        let prefix = format!("  {}. {status} ", index + 1);
-        let continuation_indent = " ".repeat(prefix.len());
-        let mut lines = item.description.lines();
-
-        if let Some(first_line) = lines.next() {
-            writeln!(writer, "{prefix}{first_line}")?;
-        } else {
-            writeln!(writer, "{prefix}-")?;
-        }
-
-        for line in lines {
-            writeln!(writer, "{continuation_indent}{line}")?;
-        }
-    }
-
-    writer.flush()?;
-    Ok(())
-}
-
 fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueVersionRecord]) -> Result<()> {
     let mut buffer = Vec::new();
     render_issue_records(format, issues, &mut buffer)?;
@@ -1570,9 +1339,8 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use hydra_common::issues::{
-        AddTodoItemRequest, Issue, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse,
-        ReplaceTodoListRequest, SessionSettings, SetTodoItemStatusRequest, TodoItem,
-        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        Issue, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse, SessionSettings,
+        UpsertIssueRequest, UpsertIssueResponse,
     };
     use hydra_common::{users::Username, PatchId, RepoName};
     use reqwest::Client as HttpClient;
@@ -2993,184 +2761,6 @@ mod tests {
         assert!(rendered.contains("Progress:\n  -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
-    }
-
-    #[tokio::test]
-    async fn todo_command_fetches_existing_list() {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let issue_id = issue_id("i-todo");
-        let todo_list = vec![
-            TodoItem::new("write docs".into(), false),
-            TodoItem::new("add tests".into(), true),
-        ];
-        let get_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{issue_id}").as_str());
-            then.status(200).json_body_obj(&IssueVersionRecord::new(
-                issue_id.clone(),
-                0,
-                Utc::now(),
-                Issue::new(
-                    IssueType::Task,
-                    "Test Title".to_string(),
-                    "has todos".into(),
-                    empty_user(),
-                    String::new(),
-                    IssueStatus::Open,
-                    None,
-                    None,
-                    todo_list.clone(),
-                    vec![],
-                    Vec::new(),
-                    false,
-                    None,
-                    None,
-                    None,
-                ),
-                None,
-                Utc::now(),
-                Vec::new(),
-            ));
-        });
-
-        let resolved = resolve_todo_list(&client, &issue_id, None, None, None, None)
-            .await
-            .unwrap();
-
-        get_mock.assert();
-        assert_eq!(get_mock.hits(), 1);
-        assert_eq!(resolved, todo_list);
-    }
-
-    #[tokio::test]
-    async fn todo_command_adds_item_and_parses_done_prefix() {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let issue_id = issue_id("i-add");
-        let add_request = AddTodoItemRequest::new("finish docs".into(), true);
-        let add_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/v1/issues/{issue_id}/todo-items").as_str())
-                .json_body_obj(&add_request);
-            then.status(200)
-                .json_body_obj(&TodoListResponse::new(issue_id.clone(), Vec::new()));
-        });
-
-        let updated = resolve_todo_list(
-            &client,
-            &issue_id,
-            Some("[x] finish docs".into()),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        add_mock.assert();
-        assert_eq!(add_mock.hits(), 1);
-        assert!(updated.is_empty());
-    }
-
-    #[tokio::test]
-    async fn todo_command_marks_item_done_and_undone() {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let issue_id = issue_id("i-done");
-        let mark_done_request = SetTodoItemStatusRequest::new(true);
-        let mark_done_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/v1/issues/{issue_id}/todo-items/1").as_str())
-                .json_body_obj(&mark_done_request);
-            then.status(200).json_body_obj(&TodoListResponse::new(
-                issue_id.clone(),
-                vec![TodoItem::new("first".into(), true)],
-            ));
-        });
-
-        let done_list = resolve_todo_list(&client, &issue_id, None, Some(1), None, None)
-            .await
-            .unwrap();
-        mark_done_mock.assert();
-        assert_eq!(mark_done_mock.hits(), 1);
-        assert!(done_list[0].is_done);
-
-        let mark_undone_request = SetTodoItemStatusRequest::new(false);
-        let mark_undone_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/v1/issues/{issue_id}/todo-items/1").as_str())
-                .json_body_obj(&mark_undone_request);
-            then.status(200).json_body_obj(&TodoListResponse::new(
-                issue_id.clone(),
-                vec![TodoItem::new("first".into(), false)],
-            ));
-        });
-
-        let undone_list = resolve_todo_list(&client, &issue_id, None, None, Some(1), None)
-            .await
-            .unwrap();
-        mark_undone_mock.assert();
-        assert_eq!(mark_undone_mock.hits(), 1);
-        assert!(!undone_list[0].is_done);
-    }
-
-    #[tokio::test]
-    async fn todo_command_replaces_list_with_parsed_items() {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let issue_id = issue_id("i-replace");
-        let parsed = vec![
-            TodoItem::new("first item".into(), false),
-            TodoItem::new("second".into(), true),
-        ];
-        let replace_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path(format!("/v1/issues/{issue_id}/todo-items").as_str())
-                .json_body_obj(&ReplaceTodoListRequest::new(parsed.clone()));
-            then.status(200)
-                .json_body_obj(&TodoListResponse::new(issue_id.clone(), parsed.clone()));
-        });
-
-        let resolved = resolve_todo_list(
-            &client,
-            &issue_id,
-            None,
-            None,
-            None,
-            Some(vec!["first item".into(), "[x] second".into()]),
-        )
-        .await
-        .unwrap();
-
-        replace_mock.assert();
-        assert_eq!(replace_mock.hits(), 1);
-        assert_eq!(resolved, parsed);
-    }
-
-    #[test]
-    fn render_todo_list_formats_output() {
-        let todo_list = vec![
-            TodoItem::new("write docs".into(), false),
-            TodoItem::new("add tests\nwith details".into(), true),
-        ];
-        let mut output = Vec::new();
-        render_todo_list(
-            ResolvedOutputFormat::Pretty,
-            &issue_id("i-render"),
-            &todo_list,
-            &mut output,
-        )
-        .unwrap();
-        let rendered = String::from_utf8(output).unwrap();
-
-        assert!(rendered.contains("Todos for issue i-render:"));
-        assert!(rendered.contains("1. [ ] write docs"));
-        assert!(rendered.contains("2. [x] add tests"));
-        assert!(
-            rendered.contains("         with details"),
-            "continuation lines should be indented"
-        );
     }
 
     // ---- Label helper tests ----

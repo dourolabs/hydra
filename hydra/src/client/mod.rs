@@ -30,9 +30,8 @@ use hydra_common::{
     },
     github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
-        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, SubmitFormRequest,
-        SubmitFormResponse, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse, SearchIssuesQuery,
+        SubmitFormRequest, SubmitFormResponse, UpsertIssueRequest, UpsertIssueResponse,
     },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
@@ -233,22 +232,6 @@ pub trait HydraClientInterface: Send + Sync {
         issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse>;
-    async fn add_todo_item(
-        &self,
-        issue_id: &IssueId,
-        request: &AddTodoItemRequest,
-    ) -> Result<TodoListResponse>;
-    async fn replace_todo_list(
-        &self,
-        issue_id: &IssueId,
-        request: &ReplaceTodoListRequest,
-    ) -> Result<TodoListResponse>;
-    async fn set_todo_item_status(
-        &self,
-        issue_id: &IssueId,
-        item_number: usize,
-        request: &SetTodoItemStatusRequest,
-    ) -> Result<TodoListResponse>;
     async fn get_issue(
         &self,
         issue_id: &IssueId,
@@ -995,78 +978,6 @@ impl HydraClient {
             .json::<ListIssueVersionsResponse>()
             .await
             .context("failed to decode list issue versions response")
-    }
-
-    /// Call `POST /v1/issues/:issue_id/todo-items` to append a todo item.
-    pub async fn add_todo_item(
-        &self,
-        issue_id: &IssueId,
-        request: &AddTodoItemRequest,
-    ) -> Result<TodoListResponse> {
-        let path = format!("/v1/issues/{issue_id}/todo-items");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.post(url))
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit add todo item request")?
-            .error_for_status_with_body("hydra-server rejected add todo item request")
-            .await?;
-
-        response
-            .json::<TodoListResponse>()
-            .await
-            .context("failed to decode add todo item response")
-    }
-
-    /// Call `PUT /v1/issues/:issue_id/todo-items` to replace the todo list.
-    pub async fn replace_todo_list(
-        &self,
-        issue_id: &IssueId,
-        request: &ReplaceTodoListRequest,
-    ) -> Result<TodoListResponse> {
-        let path = format!("/v1/issues/{issue_id}/todo-items");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.put(url))
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit replace todo list request")?
-            .error_for_status_with_body("hydra-server returned an error while replacing todo list")
-            .await?;
-
-        response
-            .json::<TodoListResponse>()
-            .await
-            .context("failed to decode replace todo list response")
-    }
-
-    /// Call `POST /v1/issues/:issue_id/todo-items/:item_number` to update an item's status.
-    pub async fn set_todo_item_status(
-        &self,
-        issue_id: &IssueId,
-        item_number: usize,
-        request: &SetTodoItemStatusRequest,
-    ) -> Result<TodoListResponse> {
-        let path = format!("/v1/issues/{issue_id}/todo-items/{item_number}");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.post(url))
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit todo status update request")?
-            .error_for_status_with_body(
-                "hydra-server returned an error while updating todo item status",
-            )
-            .await?;
-
-        response
-            .json::<TodoListResponse>()
-            .await
-            .context("failed to decode todo status update response")
     }
 
     /// Call `POST /v1/patches` to create a new patch.
@@ -2424,31 +2335,6 @@ impl HydraClientInterface for HydraClient {
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse> {
         HydraClient::update_issue(self, issue_id, request).await
-    }
-
-    async fn add_todo_item(
-        &self,
-        issue_id: &IssueId,
-        request: &AddTodoItemRequest,
-    ) -> Result<TodoListResponse> {
-        HydraClient::add_todo_item(self, issue_id, request).await
-    }
-
-    async fn replace_todo_list(
-        &self,
-        issue_id: &IssueId,
-        request: &ReplaceTodoListRequest,
-    ) -> Result<TodoListResponse> {
-        HydraClient::replace_todo_list(self, issue_id, request).await
-    }
-
-    async fn set_todo_item_status(
-        &self,
-        issue_id: &IssueId,
-        item_number: usize,
-        request: &SetTodoItemStatusRequest,
-    ) -> Result<TodoListResponse> {
-        HydraClient::set_todo_item_status(self, issue_id, item_number, request).await
     }
 
     async fn get_issue(
