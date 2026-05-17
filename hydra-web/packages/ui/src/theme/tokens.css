@@ -75,13 +75,13 @@
   --acc-fg-on: oklch(0.13 0.01 var(--acc-h));
 
   /* ----- Status tones (fixed band, hue varies) ----- */
-  --s-open: oklch(0.78 0.12 240);       /* blue */
-  --s-progress: oklch(0.82 0.13 90);    /* amber */
-  --s-closed: oklch(0.78 0.13 150);     /* green */
-  --s-failed: oklch(0.72 0.16 28);      /* red */
-  --s-dropped: oklch(0.62 0.05 28);     /* dim red-brown */
-  --s-blocked: oklch(0.78 0.13 50);     /* orange */
-  --s-rejected: oklch(0.72 0.13 350);   /* magenta */
+  --s-open: oklch(0.78 0.12 240); /* blue */
+  --s-progress: oklch(0.82 0.13 90); /* amber */
+  --s-closed: oklch(0.78 0.13 150); /* green */
+  --s-failed: oklch(0.72 0.16 28); /* red */
+  --s-dropped: oklch(0.62 0.05 28); /* dim red-brown */
+  --s-blocked: oklch(0.78 0.13 50); /* orange */
+  --s-rejected: oklch(0.72 0.13 350); /* magenta */
   --s-neutral: oklch(0.62 0.005 80);
 
   /* Violet — used for human avatars, IDs in mono spans, agent chips */
@@ -110,7 +110,7 @@
   /* Status color aliases (legacy keys) */
   --color-status-open: var(--s-open);
   --color-status-in-progress: var(--s-progress);
-  --color-status-closed: var(--s-failed);          /* legacy "closed" was red */
+  --color-status-closed: var(--s-failed); /* legacy "closed" was red */
   --color-status-issue-closed: var(--s-closed);
   --color-status-approved: var(--s-closed);
   --color-status-failed: var(--s-failed);
@@ -169,6 +169,14 @@
   --sidebar-width: var(--sidebar-w);
   --site-header-height: var(--topbar-h);
   --mobile-nav-height: 56px;
+
+  /* ----- Safe-area insets -----
+     Wraps env(safe-area-inset-bottom) in a CSS variable so layout rules can
+     reference it via var() (which composes with calc() and is overridable in
+     tests, unlike env() which is read-only). On devices without a bottom
+     safe area (Android Chrome, desktop) env() resolves to 0 and this is a
+     no-op. */
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ============================================================
@@ -178,13 +186,13 @@
 /* Pure black */
 :root[data-theme="black"] {
   --bg-0: #000;
-  --bg-1: oklch(0.10 0 0);
+  --bg-1: oklch(0.1 0 0);
   --bg-2: oklch(0.145 0 0);
   --bg-3: oklch(0.19 0 0);
   --bg-input: oklch(0.06 0 0);
   --fg-0: oklch(0.96 0 0);
   --fg-1: oklch(0.72 0 0);
-  --fg-2: oklch(0.50 0 0);
+  --fg-2: oklch(0.5 0 0);
   --fg-3: oklch(0.34 0 0);
   --line: oklch(0.19 0 0);
   --line-strong: oklch(0.28 0 0);
@@ -195,7 +203,7 @@
   --bg-0: oklch(0.985 0.003 80);
   --bg-1: oklch(0.97 0.003 80);
   --bg-2: oklch(0.94 0.003 80);
-  --bg-3: oklch(0.90 0.003 80);
+  --bg-3: oklch(0.9 0.003 80);
   --bg-input: oklch(1 0 0);
   --bg-overlay: oklch(0 0 0 / 0.3);
   --fg-0: oklch(0.18 0.005 80);
@@ -204,10 +212,10 @@
   --fg-3: oklch(0.68 0.005 80);
   --line: oklch(0.88 0.003 80);
   --line-strong: oklch(0.78 0.003 80);
-  --acc: oklch(0.50 0.14 var(--acc-h));
-  --acc-dim: oklch(0.40 0.13 var(--acc-h));
+  --acc: oklch(0.5 0.14 var(--acc-h));
+  --acc-dim: oklch(0.4 0.13 var(--acc-h));
   --acc-bright: oklch(0.42 0.16 var(--acc-h));
-  --acc-soft: oklch(0.50 0.14 var(--acc-h) / 0.12);
+  --acc-soft: oklch(0.5 0.14 var(--acc-h) / 0.12);
   --acc-fg-on: oklch(1 0 0);
 }
 
@@ -233,6 +241,12 @@
    Accent presets
    ============================================================ */
 
-:root[data-accent="amber"]   { --acc-h: 75; }
-:root[data-accent="violet"]  { --acc-h: 290; }
-:root[data-accent="cyan"]    { --acc-h: 220; }
+:root[data-accent="amber"] {
+  --acc-h: 75;
+}
+:root[data-accent="violet"] {
+  --acc-h: 290;
+}
+:root[data-accent="cyan"] {
+  --acc-h: 220;
+}
