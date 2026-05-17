@@ -508,11 +508,7 @@ impl JobEngine for KubernetesJobEngine {
             name: "hydra-worker".to_string(),
             image: Some(image.to_string()),
             image_pull_policy: Some("Always".into()),
-            command: Some(vec![
-                "/usr/bin/tini".to_string(),
-                "--".to_string(),
-                "hydra".to_string(),
-            ]),
+            command: Some(vec!["hydra".to_string()]),
             args: Some(vec![
                 "sessions".to_string(),
                 "worker-run".to_string(),
