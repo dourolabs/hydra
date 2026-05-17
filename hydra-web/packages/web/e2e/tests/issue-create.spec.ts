@@ -7,8 +7,9 @@ test.describe("Issue Create @issues:create", () => {
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -38,8 +39,9 @@ test.describe("Issue Create @issues:create", () => {
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -65,8 +67,9 @@ test.describe("Issue Create @issues:create", () => {
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Open the create issue modal
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    // Open the create issue modal via the header dropdown
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -81,7 +84,8 @@ test.describe("Issue Create @issues:create", () => {
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -96,7 +100,8 @@ test.describe("Issue Create @issues:create", () => {
     await expect(modal).not.toBeVisible();
 
     // Reopen — fields should be empty.
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     await expect(modal).toBeVisible();
     await expect(
       modal.getByPlaceholder("Short summary (optional)"),
@@ -112,7 +117,8 @@ test.describe("Issue Create @issues:create", () => {
     await page.goto("/?selected=all");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
@@ -128,7 +134,8 @@ test.describe("Issue Create @issues:create", () => {
     await expect(modal).not.toBeVisible();
 
     // Reopen — draft values should still be there.
-    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    await page.getByTestId("site-header-create").click();
+    await page.getByTestId("site-header-new-issue").click();
     await expect(modal).toBeVisible();
     await expect(
       modal.getByPlaceholder("Short summary (optional)"),

@@ -1,10 +1,14 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Conversation } from "@hydra/api";
 import { Icons, Kbd, Tooltip } from "@hydra/ui";
+import { apiClient } from "../api/client";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
+import { HeaderActionMenu } from "./HeaderActionMenu";
 import styles from "./SiteHeader.module.css";
 
 const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
@@ -21,6 +25,16 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
   const { open: openIssueCreate } = useIssueCreateModal();
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const createConversation = useMutation({
+    mutationFn: () => apiClient.createConversation({}),
+    onSuccess: (conversation: Conversation) => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      navigate(`/chat/${conversation.conversation_id}`);
+    },
+  });
 
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
@@ -81,16 +95,28 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
           <Kbd>⌘K</Kbd>
         </button>
 
-        <button
-          type="button"
-          className={styles.newIssueButton}
-          onClick={openIssueCreate}
-          aria-label="New issue"
-          data-testid="site-header-new-issue"
-        >
-          <Icons.IconPlus />
-          <span className={styles.label}>New issue</span>
-        </button>
+        <HeaderActionMenu
+          triggerLabel="Create new"
+          triggerTestId="site-header-create"
+          menuTestId="site-header-create-menu"
+          items={[
+            {
+              key: "new-issue",
+              label: "New issue",
+              icon: <Icons.IconIssue size={14} />,
+              onSelect: openIssueCreate,
+              testId: "site-header-new-issue",
+            },
+            {
+              key: "new-conversation",
+              label: "New conversation",
+              icon: <Icons.IconChat size={14} />,
+              onSelect: () => createConversation.mutate(),
+              testId: "site-header-new-conversation",
+              disabled: createConversation.isPending,
+            },
+          ]}
+        />
       </div>
     </header>
   );
