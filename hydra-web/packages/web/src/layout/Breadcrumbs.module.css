@@ -58,3 +58,12 @@
   padding: 1px 5px;
   border-radius: 3px;
 }
+
+/* On mobile, collapse to the trailing (current) crumb only. The current span
+   is always the last child of .breadcrumbs, regardless of how many ancestor
+   items were passed in, so a single rule covers every shape. */
+@media (max-width: 768px) {
+  .breadcrumbs > :not(:last-child) {
+    display: none;
+  }
+}
