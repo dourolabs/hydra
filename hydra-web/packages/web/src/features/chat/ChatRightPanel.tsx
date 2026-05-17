@@ -4,11 +4,11 @@ import { ChatMetadataTab } from "./ChatMetadataTab";
 import { ChatRelatedTab } from "./ChatRelatedTab";
 import styles from "./ChatRightPanel.module.css";
 
-export type ChatRightPanelTabKey = "related" | "settings";
+export type ChatRightPanelTabKey = "related" | "details";
 
 const TABS: { key: ChatRightPanelTabKey; label: string }[] = [
   { key: "related", label: "Related" },
-  { key: "settings", label: "Settings" },
+  { key: "details", label: "Details" },
 ];
 
 interface ChatRightPanelProps {
@@ -54,7 +54,7 @@ export function ChatRightPanel({
         {activeTab === "related" && (
           <ChatRelatedTab conversationId={conversation.conversation_id} />
         )}
-        {activeTab === "settings" && <ChatMetadataTab conversation={conversation} />}
+        {activeTab === "details" && <ChatMetadataTab conversation={conversation} />}
       </div>
     </aside>
   );

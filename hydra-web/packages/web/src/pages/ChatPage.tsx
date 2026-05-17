@@ -18,7 +18,7 @@ type MobileTabKey = "chat" | ChatRightPanelTabKey;
 const MOBILE_TABS: MobileTabBarItem[] = [
   { key: "chat", label: "Chat" },
   { key: "related", label: "Related" },
-  { key: "settings", label: "Settings" },
+  { key: "details", label: "Details" },
 ];
 
 function ExistingChatPage({ conversationId }: { conversationId: string }) {
@@ -107,7 +107,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         setMobileTab("chat");
         return;
       case "related":
-      case "settings":
+      case "details":
         setMobileTab(key);
         setRightPanelTab(key);
         return;

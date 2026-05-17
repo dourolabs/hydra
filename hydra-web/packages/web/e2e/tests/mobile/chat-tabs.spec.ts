@@ -97,14 +97,14 @@ test.describe("Mobile chat tabs @mobile:chat-tabs", () => {
 
       const chatTab = page.getByTestId("chat-mobile-tab-chat");
       const relatedTab = page.getByTestId("chat-mobile-tab-related");
-      const settingsTab = page.getByTestId("chat-mobile-tab-settings");
+      const detailsTab = page.getByTestId("chat-mobile-tab-details");
 
       await expect(chatTab).toBeVisible();
       await expect(relatedTab).toBeVisible();
-      await expect(settingsTab).toBeVisible();
+      await expect(detailsTab).toBeVisible();
       await expect(chatTab).toHaveAttribute("aria-selected", "true");
       await expect(relatedTab).toHaveAttribute("aria-selected", "false");
-      await expect(settingsTab).toHaveAttribute("aria-selected", "false");
+      await expect(detailsTab).toHaveAttribute("aria-selected", "false");
 
       const title = page.getByRole("heading", { name: "Long conversation" });
       await expect(title).toBeVisible();
@@ -125,9 +125,9 @@ test.describe("Mobile chat tabs @mobile:chat-tabs", () => {
       await expect(messageList).toBeHidden();
       await expect(page.getByText("No issues referenced by this chat yet.")).toBeVisible();
 
-      // Switch to Settings — related hides, settings visible.
-      await settingsTab.click();
-      await expect(settingsTab).toHaveAttribute("aria-selected", "true");
+      // Switch to Details — related hides, details visible.
+      await detailsTab.click();
+      await expect(detailsTab).toHaveAttribute("aria-selected", "true");
       await expect(page.getByText("No issues referenced by this chat yet.")).toBeHidden();
       await expect(page.getByText("Conversation ID")).toBeVisible();
       await expect(page.getByText(CONVERSATION_ID).first()).toBeVisible();
@@ -210,11 +210,11 @@ test.describe("Mobile chat tabs @mobile:chat-tabs", () => {
       // MobileTabBar is rendered but hidden via CSS at desktop widths.
       await expect(page.getByTestId("chat-mobile-tab-chat")).toBeHidden();
       await expect(page.getByTestId("chat-mobile-tab-related")).toBeHidden();
-      await expect(page.getByTestId("chat-mobile-tab-settings")).toBeHidden();
+      await expect(page.getByTestId("chat-mobile-tab-details")).toBeHidden();
 
-      // The right-panel's own Related/Settings tabs are visible.
+      // The right-panel's own Related/Details tabs are visible.
       await expect(page.getByTestId("chat-rail-tab-related")).toBeVisible();
-      await expect(page.getByTestId("chat-rail-tab-settings")).toBeVisible();
+      await expect(page.getByTestId("chat-rail-tab-details")).toBeVisible();
 
       // Message list and right panel both visible side-by-side.
       await expect(page.getByTestId("chat-message-list")).toBeVisible();
