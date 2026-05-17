@@ -8,9 +8,7 @@ use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{
-        AddTodoItemRequest, Issue, IssueDependencyType, IssueStatus, IssueType,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
-        UpsertIssueRequest,
+        Issue, IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest,
     },
     login::LoginRequest,
     logs::LogsQuery,
@@ -62,17 +60,12 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let document_record_for_list = document_record_body.clone();
     let document_version_body = forward_document_version_json(&document_id, 2, now, &job_id);
     let repository_body = forward_repo_info(&repo_name);
-    let todo_response = forward_todo_response(&issue_id);
-    let todo_response_for_replace = todo_response.clone();
-    let todo_response_for_status = todo_response.clone();
 
     let job_path = format!("/v1/sessions/{job_id}");
     let job_logs_path = format!("/v1/sessions/{job_id}/logs");
     let job_status_path = format!("/v1/sessions/{job_id}/status");
     let job_context_path = format!("/v1/sessions/{job_id}/context");
     let issue_path = format!("/v1/issues/{issue_id}");
-    let todo_path = format!("/v1/issues/{issue_id}/todo-items");
-    let todo_item_path = format!("{todo_path}/1");
     let patch_path = format!("/v1/patches/{patch_id}");
     let document_path = format!("/v1/documents/{document_id}");
     let document_versions_path = format!("{document_path}/versions");
@@ -211,26 +204,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             "issues": [issue_record_for_list_clone],
             "note": "list issues"
         }));
-    });
-
-    let todo_path_clone = todo_path.clone();
-    let todo_response_for_add = todo_response.clone();
-    server.mock(move |when, then| {
-        when.method(POST).path(todo_path_clone.as_str());
-        then.status(200).json_body(todo_response_for_add.clone());
-    });
-
-    let todo_replace_path = todo_path.clone();
-    server.mock(move |when, then| {
-        when.method(PUT).path(todo_replace_path.as_str());
-        then.status(200)
-            .json_body(todo_response_for_replace.clone());
-    });
-
-    let todo_item_path_clone = todo_item_path.clone();
-    server.mock(move |when, then| {
-        when.method(POST).path(todo_item_path_clone.as_str());
-        then.status(200).json_body(todo_response_for_status.clone());
     });
 
     let patch_id_for_create_clone = patch_id_for_create.clone();
@@ -458,7 +431,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let context = client.get_session_context(&job_id).await?;
     assert!(matches!(context.request_context, Bundle::Unknown));
 
-    // Issues and todos
+    // Issues
     let issue = Issue::new(
         IssueType::Bug,
         "Test Title".to_string(),
@@ -468,7 +441,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         IssueStatus::Open,
         Some("assignee".to_string()),
         None,
-        vec![TodoItem::new("existing".to_string(), false)],
+        vec![],
         vec![],
         vec![],
         false,
@@ -498,27 +471,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let list_issues = client.list_issues(&SearchIssuesQuery::default()).await?;
     assert_eq!(list_issues.issues.len(), 1);
-
-    let todo_added = client
-        .add_todo_item(
-            &issue_id,
-            &AddTodoItemRequest::new("new item".to_string(), true),
-        )
-        .await?;
-    assert_eq!(todo_added.todo_list.len(), 1);
-
-    let todo_replaced = client
-        .replace_todo_list(
-            &issue_id,
-            &ReplaceTodoListRequest::new(vec![TodoItem::new("replacement".to_string(), false)]),
-        )
-        .await?;
-    assert_eq!(todo_replaced.todo_list.len(), 1);
-
-    let todo_status = client
-        .set_todo_item_status(&issue_id, 1, &SetTodoItemStatusRequest::new(false))
-        .await?;
-    assert_eq!(todo_status.todo_list.len(), 1);
 
     // Patches
     let patch = Patch::new(
@@ -862,15 +814,5 @@ fn forward_worker_context_json() -> Value {
         "prompt": "worker prompt",
         "variables": { "foo": "bar" },
         "note": "context"
-    })
-}
-
-fn forward_todo_response(issue_id: &IssueId) -> Value {
-    json!({
-        "issue_id": issue_id,
-        "todo_list": [
-            { "description": "forward compatible", "is_done": false, "priority": "high" }
-        ],
-        "note": "todos"
     })
 }

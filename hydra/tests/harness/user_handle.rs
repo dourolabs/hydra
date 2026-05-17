@@ -321,7 +321,7 @@ impl UserHandle {
     ///
     /// This is the most flexible variant, exposing every field of the
     /// `Issue` type for tests that need complete control (e.g. setting
-    /// dependencies, patches, or todo items at creation time).
+    /// dependencies or patches at creation time).
     #[allow(clippy::too_many_arguments)]
     pub async fn create_issue_full(
         &self,
