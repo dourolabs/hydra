@@ -12,14 +12,13 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::{
     activity_log_for_document_versions,
-    api::v1::relations::CreateRelationRequest,
-    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
+    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ID},
     documents::{
         Document as DocumentPayload, DocumentSummaryRecord, DocumentVersionRecord,
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, IssueId, RelativeVersionNumber, SessionId, Versioned,
+    DocumentId, RelativeVersionNumber, SessionId, Versioned,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -112,10 +111,6 @@ pub struct CreateDocumentArgs {
     #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_HYDRA_ID)]
     pub created_by: Option<SessionId>,
 
-    /// Associate the document with an existing issue id.
-    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_HYDRA_ISSUE_ID)]
-    pub issue_id: Option<IssueId>,
-
     #[command(flatten)]
     pub body: DocumentBodyInput,
 }
@@ -137,10 +132,6 @@ pub struct UpdateDocumentArgs {
     /// Remove the existing path value.
     #[arg(long = "clear-path")]
     pub clear_path: bool,
-
-    /// Associate the document with an existing issue id.
-    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_HYDRA_ISSUE_ID)]
-    pub issue_id: Option<IssueId>,
 
     #[command(flatten)]
     pub body: DocumentBodyInput,
@@ -174,10 +165,6 @@ pub struct PushArgs {
     /// Only push documents whose path starts with this prefix.
     #[arg(long = "path-prefix", value_name = "PREFIX")]
     pub path_prefix: Option<String>,
-
-    /// Associate pushed documents with an existing issue id.
-    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_HYDRA_ISSUE_ID)]
-    pub issue_id: Option<IssueId>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -215,16 +202,11 @@ pub async fn run(
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Create(args) => {
-            let issue_id = args.issue_id.clone();
             let document = create_document(client, args).await?;
-            maybe_link_document(client, issue_id.as_ref(), &document.document_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Update(args) => {
-            let issue_id = args.issue_id.clone();
-            let doc_id = args.id.clone();
             let document = update_document(client, args).await?;
-            maybe_link_document(client, issue_id.as_ref(), &doc_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Delete { id_or_path } => {
@@ -418,30 +400,6 @@ async fn list_documents(
         .await
         .context("failed to list documents")?;
     Ok(response.documents)
-}
-
-/// If an issue ID is provided, create a `has-document` relation linking the
-/// issue to the given document. Failures are logged as warnings but never
-/// propagate — the document operation already succeeded.
-async fn maybe_link_document(
-    client: &dyn HydraClientInterface,
-    issue_id: Option<&IssueId>,
-    document_id: &DocumentId,
-) {
-    let issue_id = match issue_id {
-        Some(id) => id,
-        None => return,
-    };
-    let request = CreateRelationRequest {
-        source_id: issue_id.clone().into(),
-        target_id: document_id.clone().into(),
-        rel_type: "has-document".to_string(),
-    };
-    if let Err(e) = client.create_relation(&request).await {
-        eprintln!(
-            "Warning: failed to create has-document relation from '{issue_id}' to '{document_id}': {e}"
-        );
-    }
 }
 
 async fn create_document(
@@ -927,7 +885,6 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                     },
                 );
                 let doc_id = &entry.document_id;
-                maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
                 println!("Updated: {relative_path} ({doc_id})");
             }
             updated_count += 1;
@@ -962,7 +919,6 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                             },
                         );
                         let doc_id = &response.document_id;
-                        maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
                         println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
                     }
                     Err(e) if e.downcast_ref::<ConflictError>().is_some() => {
@@ -1008,8 +964,6 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                                 version: update_response.version,
                             },
                         );
-                        maybe_link_document(client, args.issue_id.as_ref(), existing_document_id)
-                            .await;
                         println!(
                             "Updated (conflict): {relative_path} ({existing_document_id}, title: \"{title}\")"
                         );
@@ -1268,7 +1222,6 @@ mod tests {
                 title: "Release notes".to_string(),
                 path: Some("docs/release.md".to_string()),
                 created_by: Some(created_by),
-                issue_id: None,
                 body: DocumentBodyInput {
                     body: None,
                     body_file: Some(file.path().to_path_buf()),
@@ -1313,7 +1266,6 @@ mod tests {
                 title: Some("Updated".to_string()),
                 path: None,
                 clear_path: true,
-                issue_id: None,
                 body: DocumentBodyInput {
                     body: Some("new body".to_string()),
                     body_file: None,
@@ -1351,7 +1303,6 @@ mod tests {
                 title: None,
                 path: None,
                 clear_path: false,
-                issue_id: None,
                 body: DocumentBodyInput::default(),
             },
         )
@@ -2008,7 +1959,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2090,7 +2040,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2166,7 +2115,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2219,7 +2167,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2309,7 +2256,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2396,7 +2342,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2472,7 +2417,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2598,7 +2542,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
-                issue_id: None,
             },
         )
         .await
@@ -2719,7 +2662,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2771,7 +2713,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await
@@ -2856,7 +2797,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
-                issue_id: None,
             },
         )
         .await
@@ -2948,7 +2888,6 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
-                issue_id: None,
             },
         )
         .await

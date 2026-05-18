@@ -266,10 +266,17 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &SessionId) -> Re
         changed = true;
     }
     if !task.env_vars.contains_key(ENV_HYDRA_TOKEN) {
-        task.env_vars.insert(
-            ENV_HYDRA_TOKEN.to_string(),
-            harness.default_user_token().to_string(),
-        );
+        // Mint a job-scoped auth token so subprocess CLI calls present as a
+        // session/issue actor, matching production. This is required for
+        // server-side automations (e.g. LinkArtifactsToIssueAutomation) that
+        // only fire for Session/Issue actors.
+        let (_actor, auth_token) = harness
+            .state()
+            .create_actor_for_job(job_id.clone(), ActorRef::test())
+            .await
+            .context("failed to mint job-scoped auth token for worker subprocess")?;
+        task.env_vars
+            .insert(ENV_HYDRA_TOKEN.to_string(), auth_token);
         changed = true;
     }
     if !task.env_vars.contains_key(ENV_HYDRA_ISSUE_ID) {
