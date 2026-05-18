@@ -385,8 +385,10 @@ pub(super) async fn run_worker_impl(
     let worker_dir = temp_dir.path().to_path_buf();
 
     let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+    let client: Arc<dyn hydra::client::HydraClientInterface> =
+        Arc::new(harness.default_user().client().clone());
     let run_result = hydra::command::sessions::worker_run::run(
-        harness.default_user().client(),
+        client,
         job_id.clone(),
         worker_dir,
         None,
@@ -435,8 +437,10 @@ pub(super) async fn run_worker_expect_failure_impl(
     let worker_dir = temp_dir.path().to_path_buf();
 
     let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+    let client: Arc<dyn hydra::client::HydraClientInterface> =
+        Arc::new(harness.default_user().client().clone());
     let run_result = hydra::command::sessions::worker_run::run(
-        harness.default_user().client(),
+        client,
         job_id.clone(),
         worker_dir,
         None,

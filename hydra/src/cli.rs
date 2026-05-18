@@ -1,6 +1,7 @@
 use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Result;
@@ -216,7 +217,8 @@ pub async fn run(cli: Cli) -> Result<()> {
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
-    let result = dispatch(cli, &client, &context).await;
+    let client: Arc<dyn HydraClientInterface> = Arc::new(client);
+    let result = dispatch(cli, client, &context).await;
     if let Err(ref err) = result {
         if is_broken_pipe(err) {
             std::process::exit(0);
@@ -271,7 +273,7 @@ pub async fn resolve_client(
 
 pub async fn dispatch(
     cli: Cli,
-    client: &dyn HydraClientInterface,
+    client: Arc<dyn HydraClientInterface>,
     context: &CommandContext,
 ) -> Result<()> {
     let command = match cli.command {
@@ -283,26 +285,34 @@ pub async fn dispatch(
     };
     match command {
         Commands::Sessions { command } => command::sessions::run(client, command, context).await?,
-        Commands::Agents { command } => command::agents::run(client, command, context).await?,
-        Commands::Patches { command } => command::patches::run(client, command, context).await?,
+        Commands::Agents { command } => {
+            command::agents::run(client.as_ref(), command, context).await?
+        }
+        Commands::Patches { command } => {
+            command::patches::run(client.as_ref(), command, context).await?
+        }
         Commands::Documents { command } => {
-            command::documents::run(client, command, context).await?
+            command::documents::run(client.as_ref(), command, context).await?
         }
         Commands::Caches { command } => command::caches::run(command, context).await?,
-        Commands::Issues { command } => command::issues::run(client, command, context).await?,
+        Commands::Issues { command } => {
+            command::issues::run(client.as_ref(), command, context).await?
+        }
         Commands::Notifications { command } => {
-            command::notifications::run(client, command, context).await?
+            command::notifications::run(client.as_ref(), command, context).await?
         }
         Commands::Relations { command } => {
-            command::relations::run(client, command, context).await?
+            command::relations::run(client.as_ref(), command, context).await?
         }
-        Commands::Repos { command } => command::repos::run(client, command, context).await?,
-        Commands::Users { command } => command::users::run(client, command).await?,
+        Commands::Repos { command } => {
+            command::repos::run(client.as_ref(), command, context).await?
+        }
+        Commands::Users { command } => command::users::run(client.as_ref(), command).await?,
         Commands::Conversations { command } => {
-            command::conversations::run(client, command, context).await?
+            command::conversations::run(client.as_ref(), command, context).await?
         }
         Commands::Chat { prompt, agent } => {
-            command::chat::run(client, prompt, agent, context).await?
+            command::chat::run(client.as_ref(), prompt, agent, context).await?
         }
     }
 

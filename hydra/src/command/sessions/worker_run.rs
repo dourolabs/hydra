@@ -3,6 +3,7 @@ use std::{
     fs,
     future::Future,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -16,10 +17,9 @@ use hydra_common::{
 };
 use tempfile::Builder;
 
-use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
 use crate::command::patches::resolve_service_repo_name;
 use crate::command::sessions::mounts::{
-    build_cache::build_cache_mount, orchestrator::run_phase, BuildCacheMount, Mount,
+    build_cache::build_cache_mount, orchestrator::run_phase, BuildCacheMount, DocumentsMount, Mount,
 };
 use crate::git::{
     clone_repo, commit_changes, configure_repo, fetch_remote, push_branch, resolve_head_oid,
@@ -32,19 +32,15 @@ use crate::{
     command::output::CommandContext,
 };
 
-/// Per-phase timeout for the pre-agent document sync.
-const SYNC_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(60);
 /// Per-phase timeout for the post-agent git finalize step.
 const FINALIZE_TASK_RUN_TIMEOUT: Duration = Duration::from_secs(120);
-/// Per-phase timeout for pushing documents back to hydra-server.
-const PUSH_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(120);
 /// Per-attempt timeout for submitting the final session status.
 const SUBMIT_SESSION_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum number of attempts when submitting the final session status.
 const SUBMIT_SESSION_STATUS_MAX_ATTEMPTS: u32 = 3;
 
 pub async fn run(
-    client: &dyn HydraClientInterface,
+    client: Arc<dyn HydraClientInterface>,
     session: SessionId,
     dest: PathBuf,
     issue_id: Option<IssueId>,
@@ -83,7 +79,7 @@ pub async fn run(
         .map(|c| serde_json::to_string(&c))
         .transpose()
         .context("failed to serialize MCP config")?;
-    let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
+    let service_repo_name = resolve_service_repo_name(client.as_ref(), Some(&job)).await?;
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
         let tmp_path = tmp.keep();
@@ -143,44 +139,22 @@ pub async fn run(
         run_phase(mount.setup_phase(), || mount.setup(), &mut errors).await?;
     }
 
-    // Sync documents to a well-known sibling directory next to the repo checkout (best-effort).
+    // The documents mount syncs `<dest>/documents` (best-effort) and later
+    // pushes the agent's edits back. The agent's `HYDRA_DOCUMENTS_DIR` is set
+    // here, before the mount runs, so it points at the path the mount targets
+    // regardless of whether the sync itself succeeded.
     let documents_path = dest.join("documents");
-    std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
-    let documents_path = documents_path
-        .canonicalize()
-        .context("failed to canonicalize documents directory path")?;
-    match tokio::time::timeout(
-        SYNC_DOCUMENTS_TIMEOUT,
-        sync_documents(
-            client,
-            SyncArgs {
-                directory: Some(documents_path.clone()),
-                path_prefix: None,
-                clean: false,
-            },
-        ),
+    execution_env.insert(
+        ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+        documents_path.to_string_lossy().into_owned(),
+    );
+    let mut documents_mount = DocumentsMount::new(documents_path, Arc::clone(&client));
+    run_phase(
+        documents_mount.setup_phase(),
+        || documents_mount.setup(),
+        &mut errors,
     )
-    .await
-    {
-        Ok(Ok(())) => {
-            execution_env.insert(
-                ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-                documents_path.to_string_lossy().to_string(),
-            );
-        }
-        Ok(Err(err)) => {
-            log_status(format!(
-                "Warning: document sync failed, continuing without HYDRA_DOCUMENTS_DIR: {err}"
-            ));
-        }
-        Err(_) => {
-            let secs = SYNC_DOCUMENTS_TIMEOUT.as_secs();
-            log_status(format!(
-                "Warning: document sync timed out after {secs}s, continuing without HYDRA_DOCUMENTS_DIR"
-            ));
-            errors.push(anyhow!("document sync timed out after {secs}s"));
-        }
-    }
+    .await?;
 
     let output_dir = Builder::new()
         .prefix("codex-output")
@@ -330,39 +304,10 @@ pub async fn run(
         }
     }
 
-    // Push document changes back to the server (best-effort).
-    if execution_env.contains_key(ENV_HYDRA_DOCUMENTS_DIR) {
-        log_status("Phase: document push — starting");
-        let doc_push_start = Instant::now();
-        match tokio::time::timeout(
-            PUSH_DOCUMENTS_TIMEOUT,
-            push_documents(
-                client,
-                PushArgs {
-                    directory: Some(documents_path.clone()),
-                    dry_run: false,
-                    path_prefix: None,
-                },
-            ),
-        )
-        .await
-        {
-            Ok(Ok(())) => {
-                let elapsed = doc_push_start.elapsed().as_secs_f64();
-                log_status(format!("Phase: document push — completed ({elapsed:.2}s)"));
-            }
-            Ok(Err(err)) => {
-                let elapsed = doc_push_start.elapsed().as_secs_f64();
-                log_status(format!(
-                    "Phase: document push — failed ({elapsed:.2}s): {err}"
-                ));
-            }
-            Err(_) => {
-                let secs = PUSH_DOCUMENTS_TIMEOUT.as_secs();
-                log_status(format!("Phase: document push — timed out after {secs}s"));
-                errors.push(anyhow!("document push timed out after {secs}s"));
-            }
-        }
+    // Push document changes back to the server. The documents mount skips
+    // this phase (returns `None`) when its setup did not successfully sync.
+    if let Some(phase) = documents_mount.save_phase() {
+        run_phase(phase, || documents_mount.save(), &mut errors).await?;
     }
 
     if let Some(mount) = cache_mount.as_mut() {
@@ -386,7 +331,7 @@ pub async fn run(
 
     log_status("Phase: status submission — starting");
     let status_start = Instant::now();
-    if let Err(err) = submit_session_status(client, &job, status_update).await {
+    if let Err(err) = submit_session_status(client.as_ref(), &job, status_update).await {
         let elapsed = status_start.elapsed().as_secs_f64();
         log_status(format!("Phase: status submission — failed ({elapsed:.2}s)"));
         errors.push(err);
@@ -1121,44 +1066,6 @@ mod tests {
                 .context("failed to push updated main branch")?;
             Ok(())
         }
-    }
-
-    #[test]
-    fn documents_path_is_absolute_after_canonicalize() -> Result<()> {
-        // Simulate the worker_run logic: start with a relative dest, create the documents
-        // directory, then canonicalize it. The resulting path must be absolute.
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let original_dir = std::env::current_dir().context("failed to get current dir")?;
-        std::env::set_current_dir(tempdir.path()).context("failed to change to temp directory")?;
-
-        let dest = PathBuf::from(".");
-        let documents_path = dest.join("documents");
-        std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
-        let documents_path = documents_path
-            .canonicalize()
-            .context("failed to canonicalize documents directory path")?;
-
-        // Restore the original working directory before assertions so test cleanup works.
-        std::env::set_current_dir(&original_dir).context("failed to restore original directory")?;
-
-        assert!(
-            documents_path.is_absolute(),
-            "documents_path should be absolute after canonicalize, got: {documents_path:?}"
-        );
-
-        // Verify the path would be correct in execution_env.
-        let mut execution_env = HashMap::new();
-        execution_env.insert(
-            ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-            documents_path.to_string_lossy().to_string(),
-        );
-        let env_value = execution_env.get(ENV_HYDRA_DOCUMENTS_DIR).unwrap();
-        assert!(
-            PathBuf::from(env_value).is_absolute(),
-            "ENV_HYDRA_DOCUMENTS_DIR should be an absolute path, got: {env_value}"
-        );
-
-        Ok(())
     }
 
     fn promote_branch_to_main(repo: &Repository) -> Result<()> {

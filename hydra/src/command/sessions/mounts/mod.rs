@@ -15,9 +15,11 @@ use anyhow::Result;
 use std::time::Duration;
 
 pub mod build_cache;
+pub mod documents;
 pub mod orchestrator;
 
 pub use build_cache::{build_cache_mount, BuildCacheMount};
+pub use documents::DocumentsMount;
 
 /// An error returned from a [`Mount::setup`] or [`Mount::save`] call.
 ///
