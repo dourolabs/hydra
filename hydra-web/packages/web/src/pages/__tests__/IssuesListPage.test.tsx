@@ -385,4 +385,59 @@ describe("IssuesListPage IssuesTable rendering", () => {
     expect(fills[0]!.className).not.toContain("progressFillActive");
     expect(fills[1]!.className).not.toContain("progressFillActive");
   });
+
+  it("differentiates idle and active fills via the progressFillActive class", () => {
+    const idleIssue = makeIssue("i-idle", { title: "idle row" });
+    const activeIssue = makeIssue("i-active", { title: "active row" });
+    paginatedState.issues = [idleIssue, activeIssue];
+    treesState.childStatusMap = new Map([
+      [
+        idleIssue.issue_id,
+        [
+          {
+            id: "i-idle-c1",
+            status: "closed",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+          {
+            id: "i-idle-c2",
+            status: "open",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+        ],
+      ],
+      [
+        activeIssue.issue_id,
+        [
+          {
+            id: "i-active-c1",
+            status: "in-progress",
+            hasActiveTask: true,
+            assignedToUser: false,
+          },
+          {
+            id: "i-active-c2",
+            status: "open",
+            hasActiveTask: false,
+            assignedToUser: false,
+          },
+        ],
+      ],
+    ]);
+
+    const { container } = renderIssuesList("/");
+
+    const fills = container.querySelectorAll(".progressFill");
+    expect(fills.length).toBe(2);
+    // Idle row carries the base progressFill but not the active variant —
+    // the active variant is what swaps the fill from green to yellow + glow.
+    expect(fills[0]!.className).toContain("progressFill");
+    expect(fills[0]!.className).not.toContain("progressFillActive");
+    // Active row carries both classes so the active variant overrides the
+    // base green background with the yellow in-progress color.
+    expect(fills[1]!.className).toContain("progressFill");
+    expect(fills[1]!.className).toContain("progressFillActive");
+  });
 });
