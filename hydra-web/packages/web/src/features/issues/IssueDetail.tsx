@@ -104,7 +104,11 @@ export function IssueDetail({ record }: IssueDetailProps) {
         testIdPrefix="issue-mobile-tab-"
       />
       {/* ── Left column ── */}
-      <div className={styles.main} data-mobile-active={overviewActive ? "true" : "false"}>
+      <div
+        className={styles.main}
+        data-mobile-active={overviewActive ? "true" : "false"}
+        data-testid="issue-detail-main"
+      >
         <div className={styles.mainInner}>
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>

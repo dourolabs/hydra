@@ -87,6 +87,14 @@ test.describe("Mobile chat bottom safe-area @mobile:chat-bottom-safe-area", () =
     // Wait for the composer to render so layout is settled.
     await expect(page.getByPlaceholder("Type a message…")).toBeVisible();
 
+    // Hard stop: env(safe-area-inset-bottom) is gated behind viewport-fit=cover
+    // on iOS Safari. Without the meta opt-in, the CSS fix is a no-op on the
+    // platform that needs it most, regardless of how the calc reads in tests.
+    const viewportMetaContent = await page
+      .locator('meta[name="viewport"]')
+      .getAttribute("content");
+    expect(viewportMetaContent ?? "").toContain("viewport-fit=cover");
+
     await injectSimulatedSafeArea(page, SIMULATED_SAFE_AREA_PX);
 
     // The AppLayout `<main>` is the scroll container whose padding-bottom
@@ -99,5 +107,15 @@ test.describe("Mobile chat bottom safe-area @mobile:chat-bottom-safe-area", () =
     });
 
     expect(paddingBottom).toBeGreaterThanOrEqual(BASE_BUFFER_PX + SIMULATED_SAFE_AREA_PX);
+
+    // User-visible geometry: nothing in the chat pane should poke past the
+    // visible viewport, even with the home-indicator inset reserved. This is
+    // the assertion the prior tautological padding check missed.
+    await page.getByTestId("chat-message-list").scrollIntoViewIfNeeded();
+    const chatPaneBox = await page.getByTestId("chat-pane").boundingBox();
+    const viewport = page.viewportSize();
+    if (!chatPaneBox) throw new Error("chat-pane bounding box not available");
+    if (!viewport) throw new Error("viewport size not available");
+    expect(chatPaneBox.y + chatPaneBox.height).toBeLessThanOrEqual(viewport.height);
   });
 });

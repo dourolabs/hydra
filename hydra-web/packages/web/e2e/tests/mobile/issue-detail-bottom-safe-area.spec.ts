@@ -37,6 +37,14 @@ test.describe("Mobile issue detail bottom safe-area @mobile:issue-detail-bottom-
       page.getByRole("heading", { name: "Migrate authentication to OAuth2" }),
     ).toBeVisible();
 
+    // Hard stop: env(safe-area-inset-bottom) is gated behind viewport-fit=cover
+    // on iOS Safari. Without the meta opt-in, the CSS fix is a no-op on the
+    // platform that needs it most, regardless of how the calc reads in tests.
+    const viewportMetaContent = await page
+      .locator('meta[name="viewport"]')
+      .getAttribute("content");
+    expect(viewportMetaContent ?? "").toContain("viewport-fit=cover");
+
     await injectSimulatedSafeArea(page, SIMULATED_SAFE_AREA_PX);
 
     // The AppLayout `<main>` is the outermost scroll container whose
@@ -57,5 +65,14 @@ test.describe("Mobile issue detail bottom safe-area @mobile:issue-detail-bottom-
     await sessionList.scrollIntoViewIfNeeded();
     await expect(sessionList).toBeVisible();
     await expect(sessionList).toBeInViewport();
+
+    // User-visible geometry: nothing in the inner issue-detail pane should
+    // poke past the visible viewport. This guards against the regression where
+    // a 100vh grid row pushes the inner scroller under the iOS toolbar.
+    const issueMainBox = await page.getByTestId("issue-detail-main").boundingBox();
+    const viewport = page.viewportSize();
+    if (!issueMainBox) throw new Error("issue-detail-main bounding box not available");
+    if (!viewport) throw new Error("viewport size not available");
+    expect(issueMainBox.y + issueMainBox.height).toBeLessThanOrEqual(viewport.height);
   });
 });

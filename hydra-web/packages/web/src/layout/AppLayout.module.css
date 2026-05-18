@@ -2,6 +2,7 @@
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   grid-template-rows: 100vh;
+  grid-template-rows: 100dvh;
   height: 100vh;
   height: 100dvh;
   background: var(--bg-0);

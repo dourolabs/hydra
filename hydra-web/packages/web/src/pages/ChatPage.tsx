@@ -157,7 +157,11 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         onChange={handleMobileTabChange}
         testIdPrefix="chat-mobile-tab-"
       />
-      <div className={styles.chatPane} data-mobile-active={chatPaneActive ? "true" : "false"}>
+      <div
+        className={styles.chatPane}
+        data-mobile-active={chatPaneActive ? "true" : "false"}
+        data-testid="chat-pane"
+      >
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
