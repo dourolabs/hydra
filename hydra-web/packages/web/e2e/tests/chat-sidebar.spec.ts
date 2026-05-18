@@ -54,7 +54,7 @@ test.describe("Sidebar Chats section @chat:sidebar", () => {
 
     const topRow = page.getByTestId("sidebar-chat-row-c-recent-a");
     await expect(topRow).toBeVisible();
-    await expect(topRow).toHaveText("Recent A");
+    await expect(topRow).toContainText("Recent A");
 
     await topRow.click();
     await expect(page).toHaveURL(/\/chat\/c-recent-a$/);

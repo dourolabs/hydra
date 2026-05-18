@@ -4,8 +4,8 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
   test("sidebar links navigate to correct pages @nav:sidebar", async ({
     authenticatedPage: page,
   }) => {
-    // Navigate to Documents via the Documents section "More" link.
-    await page.getByTestId("sidebar-section-documents-more").click();
+    // Navigate to Documents via the Documents workspace entry.
+    await page.getByTestId("sidebar-documents").click();
     await expect(page).toHaveURL(/\/documents/);
 
     // Navigate to the Agents page via the Agents sidebar entry.
@@ -37,26 +37,15 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await expect(page).toHaveURL(
       /^http:\/\/localhost:\d+\/\?selected=all$/,
     );
-
-    // Clicking a recent-label row deep-links to ?selected=all&label=<id>.
-    const labelRow = page.locator('[data-testid^="sidebar-issues-label-"]').first();
-    await expect(labelRow).toBeVisible();
-    const labelTestId = await labelRow.getAttribute("data-testid");
-    const labelId = labelTestId!.replace("sidebar-issues-label-", "");
-    await labelRow.click();
-    await expect(page).toHaveURL(
-      new RegExp(
-        `^http://localhost:\\d+/\\?selected=all&label=${labelId}$`,
-      ),
-    );
   });
 
   test("deep link to issue detail works @nav:deep-link", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00001");
+    // Breadcrumb's trailing crumb is the issue ID; the title is the page heading.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("Platform v2.0 Migration")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00001")
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Platform v2.0 Migration" })
@@ -70,10 +59,10 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await expect(
       page.getByRole("heading", { name: "Add OAuth2 provider integration" })
     ).toBeVisible();
-    // patch_id is now in the Metadata tab
-    await page.getByRole("tab", { name: "Metadata" }).click();
+    // patch_id is rendered in the title block; no Metadata tab anymore.
+    // Scope to <main> since the breadcrumb also shows the patch ID.
     await expect(
-      page.getByText("p-seed00001", { exact: true })
+      page.getByRole("main").getByText("p-seed00001", { exact: true })
     ).toBeVisible();
   });
 
@@ -138,9 +127,9 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
   });
 
   test("browser back button works @nav:back-button", async ({ authenticatedPage: page }) => {
-    // Navigate to dashboard
+    // Navigate to dashboard at root (URL is not auto-rewritten with ?selected=).
     await page.goto("/");
-    await expect(page).toHaveURL(/\/\?selected=your-issues$/);
+    await expect(page).toHaveURL(/\/$/);
 
     // Navigate to an issue detail
     await page.goto("/issues/i-seed00001");
@@ -148,6 +137,6 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
 
     // Go back
     await page.goBack();
-    await expect(page).toHaveURL(/\/\?selected=your-issues$/);
+    await expect(page).toHaveURL(/\/$/);
   });
 });

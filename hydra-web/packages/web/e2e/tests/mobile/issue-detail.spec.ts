@@ -82,10 +82,14 @@ test.describe("Mobile Issue Detail @mobile:issue-detail", () => {
       await expect(page.getByText("Issue created").first()).toBeVisible();
 
       // Switch to Details — rail content (status chip, Created label) visible.
+      // Scope to the rail (complementary landmark) since SessionList also
+      // renders a "Created" column header.
       await detailsTab.click();
       await expect(detailsTab).toHaveAttribute("aria-selected", "true");
       await expect(statusChip).toBeVisible();
-      await expect(page.getByText("Created", { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("complementary").getByText("Created", { exact: true }),
+      ).toBeVisible();
 
       // Switch back to Overview — heading is back, rail hidden.
       await overviewTab.click();
@@ -137,7 +141,10 @@ test.describe("Mobile Issue Detail @mobile:issue-detail", () => {
       ).toBeVisible();
       await page.getByTestId("issue-rail-tab-details").click();
       await expect(page.getByTestId("status-chip")).toBeVisible();
-      await expect(page.getByText("Created", { exact: true })).toBeVisible();
+      // Scope to the rail since SessionList also renders a "Created" column header.
+      await expect(
+        page.getByRole("complementary").getByText("Created", { exact: true }),
+      ).toBeVisible();
     });
   });
 });

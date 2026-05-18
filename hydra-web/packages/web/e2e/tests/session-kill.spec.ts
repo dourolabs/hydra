@@ -28,10 +28,8 @@ test.describe("Session Kill @sessions:kill", () => {
     // Success toast should appear
     await expect(page.getByText(/Session killed successfully/)).toBeVisible();
 
-    // Terminating spinner should appear while session status is still "running"
-    await expect(page.getByText("Terminating...")).toBeVisible();
-
-    // Kill Session button should not be visible while terminating
+    // Kill Session button should disappear once the optimistic status update
+    // flips the session out of "running" state.
     await expect(killButton).not.toBeVisible();
   });
 

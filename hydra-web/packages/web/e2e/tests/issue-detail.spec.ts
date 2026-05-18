@@ -6,8 +6,9 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
   }) => {
     await page.goto("/issues/i-seed00002");
     // i-seed00002: "Migrate authentication to OAuth2"
+    // Breadcrumb shows the issue ID as the trailing crumb; the title is the page heading.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("Migrate authentication to OAuth2")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00002")
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
@@ -28,7 +29,8 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     await page.goto("/issues/i-seed00002");
     const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumb).toBeVisible();
-    await expect(breadcrumb.getByText("Dashboard")).toBeVisible();
+    await expect(breadcrumb.getByText("Workspace")).toBeVisible();
+    await expect(breadcrumb.getByText("Issues")).toBeVisible();
   });
 
   test("displays tabbed sections @issues:navigate-tabs", async ({ authenticatedPage: page }) => {
@@ -79,9 +81,10 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     // Modal should close
     await expect(modal).not.toBeVisible();
 
-    // The issue detail page should still be showing
+    // The issue detail page should still be showing — breadcrumb's trailing
+    // crumb is the issue ID.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("Database schema migration for v2.0")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00005")
     ).toBeVisible();
   });
 });

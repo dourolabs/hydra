@@ -15,7 +15,6 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@dashboard:view` — User can see the issue list on the dashboard (planned)
 - `@dashboard:inbox` — User can filter dashboard to inbox items
 - `@dashboard:search` — User can search for issues by title
-- `@dashboard:child-session-indicator` — User sees a pulsing status box for a child issue with a running session
 
 ## Navigation
 
@@ -23,7 +22,6 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@nav:deep-link` — User can navigate directly to a page via URL
 - `@nav:back-button` — Browser back button works correctly
 - `@nav:sidebar-toggle` — User can hide and restore the sidebar; state persists across reloads
-- `@nav:tooltip-viewport` — Header tooltips stay within viewport at desktop and mobile sizes
 - `@nav:header-create-menu` — Header `+` button opens a menu with New issue / New conversation; selection invokes the matching action and closes the menu
 
 ## Issues
@@ -35,11 +33,9 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 ## Labels
 
-- `@labels:display` — Labels are displayed on dashboard item rows and issue detail
+- `@labels:display` — Labels are displayed on issue detail
 - `@labels:create-with` — User can create an issue with existing and new labels
 - `@labels:edit` — User can add and remove labels on an existing issue
-- `@labels:filter-bar-create` — Newly created label appears in the filter bar after issue creation
-- `@labels:filter` — Clicking a label in the sidebar filters dashboard and shows issue with label badge
 
 ## Patches
 
@@ -51,10 +47,6 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@documents:list` — User can view the documents list
 - `@documents:view-detail` — User can view a document's content
 - `@documents:up-one-level` — Reader pane shows an "Up to <parent>" entry at non-root paths that navigates to the parent folder; absent at the root
-
-## Sidebar
-
-- `@sidebar:documents` — User can browse documents via the sidebar Documents tree and navigate to a document
 
 ## Chat
 
@@ -75,7 +67,6 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:dashboard` — Dashboard is usable on mobile viewport
 - `@mobile:issue-detail` — Issue detail page shows Overview / Related / Activity / Details top tabs on mobile; Overview is default; Related surfaces parents/children/patches/documents; Activity surfaces the timeline; Details surfaces rail content (Status, Created, Labels, etc.). Desktop hides the mobile bar and uses the right-rail sub-tabs.
 - `@mobile:issue-detail-overflow` — Issue detail page fits the 375px viewport (no document-level horizontal overflow) and the SessionList at the bottom of Overview is reachable via vertical scroll.
-- `@mobile:swipe-archive` — Swiping an inbox item past threshold archives it on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)
 - `@mobile:chat-tabs` — Right-panel content (Related, Details) is reachable via top tabs on the chat page mobile viewport; the Chat tab is default and the message-list scroll is not regressed
