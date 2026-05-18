@@ -44,6 +44,16 @@
   vertical-align: middle;
 }
 
+.emptyCell {
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
+  vertical-align: middle;
+  font-style: italic;
+}
+
 .sessionId {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
