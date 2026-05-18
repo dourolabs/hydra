@@ -5,13 +5,10 @@ import { Icons, Kbd, Tooltip } from "@hydra/ui";
 import { apiClient } from "../api/client";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
-import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
 import { HeaderActionMenu } from "./HeaderActionMenu";
 import styles from "./SiteHeader.module.css";
-
-const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 interface SiteHeaderProps {
   hidden: boolean;
@@ -24,7 +21,6 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
   const { items, current, currentKind } = useBreadcrumbsState();
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
   const { open: openIssueCreate } = useIssueCreateModal();
-  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -49,7 +45,7 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
 
   return (
     <header className={styles.topbar} data-testid="site-header">
-      <Tooltip content={toggleLabel} position={isMobile ? "left" : "right"}>
+      <Tooltip content={toggleLabel} position="right">
         <button
           type="button"
           className={styles.hamburger}
