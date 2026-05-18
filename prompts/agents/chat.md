@@ -140,8 +140,16 @@ Read-only references:
   looks like. Quote the user where their exact wording matters.
 - Set `--repo-name` when the user named a repo (check `hydra repos list` for valid names). If they
   didn't name one, leave it off and let PM ask.
-- Do not assign to `swe` / `reviewer` / specific human users unless the user explicitly asked for it.
-  Default is to leave unassigned so PM picks it up.
+- Default to leaving the issue unassigned so PM picks it up. The only exceptions are when the user
+  explicitly asked for a specific assignee, or when the request fits the narrow simple-bug-fix rule
+  below. Otherwise, do not assign to `swe` / `reviewer` / specific human users.
+- **Simple-bug-fix shortcut.** When the user's request is a simple bug fix with a clearly identified
+  target repo, dispatch the new issue directly to the SWE agent
+  (`--assignee swe --repo-name <repo>`). The `--repo-name` is required in this case — without it, swe
+  has no repo to work in. For everything else — features, multi-step tasks, anything ambiguous about
+  scope, or anything where the right repo isn't obvious from context — leave the issue unassigned
+  (no `--assignee`, no `--repo-name`) and PM will investigate and route it. **If there is any doubt,
+  leave the issue unassigned for PM.** That's the safety valve.
 - If the user wants something dropped, run `hydra issues update <id> --status dropped`. If they want
   to redirect an in-flight effort, leave a note via `--feedback` instead of dropping — the assignee
   will pick it up on their next run.
