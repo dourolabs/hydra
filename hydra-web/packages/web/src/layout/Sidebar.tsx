@@ -106,7 +106,8 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   const { data: conversations } = useConversations();
   const recentChats = useMemo<ConversationSummary[]>(() => {
     if (!conversations) return [];
-    return [...conversations]
+    return conversations
+      .filter((c) => c.status !== "closed")
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .slice(0, CHATS_SECTION_LIMIT);
   }, [conversations]);

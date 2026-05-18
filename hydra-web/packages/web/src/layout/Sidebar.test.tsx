@@ -221,6 +221,52 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("sidebar-chat-row-c-1")).toBeTruthy();
   });
 
+  it("excludes closed chats and orders the rest by most-recently-updated", () => {
+    const now = Date.now();
+    mockConversations = [
+      {
+        conversation_id: "c-old-active",
+        title: "Old active",
+        agent_name: null,
+        status: "active",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: new Date(now - 60 * 60_000).toISOString(),
+        updated_at: new Date(now - 60 * 60_000).toISOString(),
+      },
+      {
+        conversation_id: "c-recent-closed",
+        title: "Recently closed",
+        agent_name: null,
+        status: "closed",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: new Date(now - 30_000).toISOString(),
+        updated_at: new Date(now - 30_000).toISOString(),
+      },
+      {
+        conversation_id: "c-recent-idle",
+        title: "Recently idle",
+        agent_name: null,
+        status: "idle",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: new Date(now - 10_000).toISOString(),
+        updated_at: new Date(now - 10_000).toISOString(),
+      },
+    ];
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-chat-row-c-recent-closed")).toBeNull();
+    const rows = screen.getAllByTestId(/^sidebar-chat-row-/);
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
+      "sidebar-chat-row-c-recent-idle",
+      "sidebar-chat-row-c-old-active",
+    ]);
+  });
+
   it("renders Active sessions section with running sessions", () => {
     activeSessionsMock.mockReturnValue({
       data: [
