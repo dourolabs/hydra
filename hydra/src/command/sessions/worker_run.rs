@@ -16,9 +16,11 @@ use hydra_common::{
 };
 use tempfile::Builder;
 
-use crate::build_cache::build_cache_client;
 use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
 use crate::command::patches::resolve_service_repo_name;
+use crate::command::sessions::mounts::{
+    build_cache::build_cache_mount, orchestrator::run_phase, BuildCacheMount, Mount,
+};
 use crate::git::{
     clone_repo, commit_changes, configure_repo, fetch_remote, push_branch, resolve_head_oid,
     stage_all_changes, workdir_diff,
@@ -36,8 +38,6 @@ const SYNC_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(60);
 const FINALIZE_TASK_RUN_TIMEOUT: Duration = Duration::from_secs(120);
 /// Per-phase timeout for pushing documents back to hydra-server.
 const PUSH_DOCUMENTS_TIMEOUT: Duration = Duration::from_secs(120);
-/// Per-attempt timeout for uploading the build cache.
-const BUILD_CACHE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Per-attempt timeout for submitting the final session status.
 const SUBMIT_SESSION_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum number of attempts when submitting the final session status.
@@ -102,14 +102,14 @@ pub async fn run(
         .or_else(|| execution_env.get(ENV_HYDRA_ISSUE_ID).cloned());
     let github_token = client.get_github_token().await.ok();
     let repo_path = dest.join("repo");
-    let base_commit = match request_context {
+    let base_commit = match &request_context {
         Bundle::None => {
             fs::create_dir_all(&repo_path)
                 .with_context(|| format!("failed to create {repo_path:?}"))?;
             None
         }
         Bundle::GitRepository { url, rev } => {
-            clone_repo(&url, &rev, &repo_path, github_token.as_deref())
+            clone_repo(url, rev, &repo_path, github_token.as_deref())
                 .context("failed to clone repository")?;
             configure_repo(&repo_path, "Hydra Worker", "hydra-worker@example.com")
                 .context("failed to configure git repository")?;
@@ -130,55 +130,18 @@ pub async fn run(
         .context("failed to initialize tracking branches")?;
     }
 
-    let mut downloaded_cache_sha: Option<String> = None;
-    if base_commit.is_some() {
-        if let (Some(build_cache), Some(service_repo_name)) =
-            (build_cache.as_ref(), service_repo_name.as_ref())
-        {
-            let cache_apply_start = Instant::now();
-            match build_cache_client(build_cache) {
-                Ok(client) => match client
-                    .apply_nearest_cache(
-                        &repo_path,
-                        worker_home_dir.as_deref(),
-                        service_repo_name.clone(),
-                    )
-                    .await
-                {
-                    Ok((Some(key), timings)) => {
-                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache download/apply completed in {elapsed:.2}s (applied entry '{}').",
-                            key.object_key()
-                        ));
-                        log_apply_cache_timings(&timings);
-                        downloaded_cache_sha = Some(key.git_sha.clone());
-                    }
-                    Ok((None, timings)) => {
-                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache download/apply completed in {elapsed:.2}s (no entry found)."
-                        ));
-                        log_apply_cache_timings(&timings);
-                    }
-                    Err(err) => {
-                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache download/apply completed in {elapsed:.2}s (skipped: {err})."
-                        ))
-                    }
-                },
-                Err(err) => {
-                    let elapsed = cache_apply_start.elapsed().as_secs_f64();
-                    log_status(format!(
-                        "Build cache download/apply completed in {elapsed:.2}s (skipped: {err})."
-                    ))
-                }
-            }
-        }
-    }
-
     let mut errors = Vec::new();
+
+    let mut cache_mount: Option<BuildCacheMount> = build_cache_mount(
+        &request_context,
+        build_cache.as_ref(),
+        service_repo_name.as_ref(),
+        repo_path.clone(),
+        worker_home_dir.clone(),
+    );
+    if let Some(mount) = cache_mount.as_mut() {
+        run_phase(mount.setup_phase(), || mount.setup(), &mut errors).await?;
+    }
 
     // Sync documents to a well-known sibling directory next to the repo checkout (best-effort).
     let documents_path = dest.join("documents");
@@ -402,107 +365,9 @@ pub async fn run(
         }
     }
 
-    if base_commit.is_some() {
-        if let (Some(build_cache), Some(service_repo_name)) =
-            (build_cache.as_ref(), service_repo_name.as_ref())
-        {
-            log_status("Phase: cache upload — starting");
-            let cache_upload_start = Instant::now();
-            match build_cache_client(build_cache) {
-                Ok(client) => match resolve_head_oid(&repo_path) {
-                    Ok(Some(head_oid)) => {
-                        let git_sha = head_oid.to_string();
-                        if downloaded_cache_sha.as_deref() == Some(git_sha.as_str()) {
-                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                            log_status(format!(
-                                "Build cache upload skipped (cache entry already up-to-date) in {elapsed:.2}s."
-                            ));
-                        } else {
-                            const MAX_ATTEMPTS: u32 = 3;
-                            let mut last_error: Option<anyhow::Error> = None;
-                            for attempt in 1..=MAX_ATTEMPTS {
-                                log_status(format!(
-                                    "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
-                                ));
-                                let upload_result = tokio::time::timeout(
-                                    BUILD_CACHE_UPLOAD_TIMEOUT,
-                                    client.build_and_upload_cache(
-                                        &repo_path,
-                                        worker_home_dir.as_deref(),
-                                        service_repo_name.clone(),
-                                        &git_sha,
-                                    ),
-                                )
-                                .await;
-                                match upload_result {
-                                    Ok(Ok((key, timings))) => {
-                                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                                        log_status(format!(
-                                            "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
-                                            key.object_key()
-                                        ));
-                                        log_upload_cache_timings(&timings);
-                                        last_error = None;
-                                        break;
-                                    }
-                                    Ok(Err(err)) => {
-                                        last_error = Some(err.into());
-                                        if attempt < MAX_ATTEMPTS {
-                                            let delay_secs = 2u64.pow(attempt);
-                                            log_status(format!(
-                                                "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
-                                            ));
-                                            tokio::time::sleep(Duration::from_secs(delay_secs))
-                                                .await;
-                                        }
-                                    }
-                                    Err(_) => {
-                                        let secs = BUILD_CACHE_UPLOAD_TIMEOUT.as_secs();
-                                        log_status(format!(
-                                            "Build cache upload attempt {attempt} timed out after {secs}s"
-                                        ));
-                                        last_error = Some(anyhow!(
-                                            "build cache upload timed out after {secs}s"
-                                        ));
-                                        if attempt < MAX_ATTEMPTS {
-                                            let delay_secs = 2u64.pow(attempt);
-                                            log_status(format!(
-                                                "Retrying build cache upload in {delay_secs}s..."
-                                            ));
-                                            tokio::time::sleep(Duration::from_secs(delay_secs))
-                                                .await;
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(err) = last_error {
-                                let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                                log_status(format!(
-                                    "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
-                                ));
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache create/upload completed in {elapsed:.2}s (skipped: HEAD is unavailable)."
-                        ))
-                    }
-                    Err(err) => {
-                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache create/upload completed in {elapsed:.2}s (skipped: failed to resolve HEAD: {err})."
-                        ))
-                    }
-                },
-                Err(err) => {
-                    let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                    log_status(format!(
-                        "Build cache create/upload completed in {elapsed:.2}s (skipped: {err})."
-                    ))
-                }
-            }
+    if let Some(mount) = cache_mount.as_mut() {
+        if let Some(phase) = mount.save_phase() {
+            run_phase(phase, || mount.save(), &mut errors).await?;
         }
     }
 
@@ -887,37 +752,6 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
 
 fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
-}
-
-fn log_apply_cache_timings(timings: &hydra_build_cache::ApplyCacheTimings) {
-    log_status(format!(
-        "  list_caches: {:.2}s",
-        timings.list_caches.as_secs_f64()
-    ));
-    log_status(format!(
-        "  find_nearest: {:.2}s",
-        timings.find_nearest.as_secs_f64()
-    ));
-    if let Some(dl) = &timings.download {
-        log_status(format!(
-            "  download: {:.2}s ({} bytes)",
-            dl.elapsed.as_secs_f64(),
-            dl.file_size_bytes
-        ));
-    }
-    if let Some(apply) = &timings.apply {
-        log_status(format!("  apply: {:.2}s", apply.as_secs_f64()));
-    }
-}
-
-fn log_upload_cache_timings(timings: &hydra_build_cache::UploadCacheTimings) {
-    log_status(format!(
-        "  build_archive: {:.2}s ({} bytes)",
-        timings.build_archive.elapsed.as_secs_f64(),
-        timings.build_archive.file_size_bytes
-    ));
-    log_status(format!("  upload: {:.2}s", timings.upload.as_secs_f64()));
-    log_status(format!("  evict: {:.2}s", timings.evict.as_secs_f64()));
 }
 
 fn resolve_worker_home_dir() -> Option<PathBuf> {

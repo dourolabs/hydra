@@ -14,7 +14,10 @@
 use anyhow::Result;
 use std::time::Duration;
 
+pub mod build_cache;
 pub mod orchestrator;
+
+pub use build_cache::{build_cache_mount, BuildCacheMount};
 
 /// An error returned from a [`Mount::setup`] or [`Mount::save`] call.
 ///
