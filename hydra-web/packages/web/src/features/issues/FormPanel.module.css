@@ -1,124 +1,133 @@
 .formPanel {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-  padding: var(--space-4);
+  background: var(--bg-1);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 16px;
 }
 
 .prompt {
-  font-size: var(--font-size-md);
-  color: var(--color-text-primary);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  color: var(--fg-1);
   line-height: 1.6;
 }
 
 .fields {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 16px;
 }
 
 .fieldGroup {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .fieldLabel {
+  font-family: var(--f-sans);
   font-weight: 600;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
 }
 
 .fieldDescription {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
   margin: 0;
 }
 
 .fieldError {
-  font-size: var(--font-size-xs);
-  color: var(--color-status-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--s-failed);
   margin: 0;
 }
 
 .checkboxRow {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 .checkbox {
-  accent-color: var(--color-accent);
+  accent-color: var(--acc);
   width: 16px;
   height: 16px;
   cursor: pointer;
 }
 
 .checkboxLabel {
+  font-family: var(--f-sans);
   font-weight: 600;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
   cursor: pointer;
 }
 
 .radioGroup {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 .radioOption {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
   cursor: pointer;
 }
 
 .radio {
-  accent-color: var(--color-accent);
+  accent-color: var(--acc);
   cursor: pointer;
 }
 
 .radioLabel {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
   cursor: pointer;
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .submitError {
-  font-size: var(--font-size-sm);
-  color: var(--color-status-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--s-failed);
   text-align: right;
   margin: 0;
 }
 
 .readOnlyValue {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-tertiary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  padding: 8px 12px;
+  background: var(--bg-2);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--line);
   white-space: pre-wrap;
 }
 
 .responseMeta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }

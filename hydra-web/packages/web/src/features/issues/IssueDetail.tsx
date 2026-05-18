@@ -7,6 +7,7 @@ import { useIssue } from "./useIssue";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
+import { FormPanel } from "./FormPanel";
 import { SessionList } from "../sessions/SessionList";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
@@ -173,6 +174,13 @@ export function IssueDetail({ record }: IssueDetailProps) {
               <div className={styles.sectionBody}>
                 <MarkdownViewer content={issue.feedback} />
               </div>
+            </div>
+          )}
+
+          {issue.form && (
+            <div className={styles.section}>
+              <span className={styles.sectionLabel}>Form</span>
+              <FormPanel issueId={issueId} form={issue.form} formResponse={issue.form_response} />
             </div>
           )}
 
