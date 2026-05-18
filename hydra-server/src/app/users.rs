@@ -141,7 +141,7 @@ impl AppState {
         Ok((user, actor, auth_token))
     }
 
-    pub(crate) async fn create_actor_for_job(
+    pub async fn create_actor_for_job(
         &self,
         task_id: SessionId,
         lifecycle_actor: ActorRef,

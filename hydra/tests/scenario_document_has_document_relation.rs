@@ -6,9 +6,10 @@ use std::str::FromStr;
 
 /// Validates the has-document relation auto-creation flow.
 ///
-/// When HYDRA_ISSUE_ID is set and documents are created, updated, or pushed
-/// via the CLI, a has-document relation should be automatically created
-/// linking the issue to the document.
+/// When documents are created, updated, or pushed via the CLI from a worker
+/// session that was spawned from an issue, the server-side
+/// `LinkArtifactsToIssueAutomation` automatically creates a has-document
+/// relation linking the session's spawned-from issue to the document.
 #[tokio::test]
 async fn has_document_relation_auto_linking() -> Result<()> {
     let harness = harness::TestHarness::builder()
@@ -127,45 +128,6 @@ async fn has_document_relation_auto_linking() -> Result<()> {
             .iter()
             .any(|r| r.target_id == pushed_doc_id.clone().into()),
         "expected has-document relation from issue3 to pushed document"
-    );
-
-    // ── Phase 4: no relation when HYDRA_ISSUE_ID is unset ───────────
-    let issue4 = user.create_issue("test no linking").await?;
-    let job4 = user
-        .create_session_for_issue(&repo, "no link doc", &issue4)
-        .await?;
-
-    // Count relations before.
-    let all_before = client
-        .list_relations(&ListRelationsRequest {
-            rel_type: Some("has-document".to_string()),
-            ..Default::default()
-        })
-        .await?;
-    let count_before = all_before.relations.len();
-
-    // Run a create without --issue-id and without HYDRA_ISSUE_ID by
-    // unsetting the env var explicitly.
-    harness
-        .run_worker(
-            &job4,
-            vec![
-                "unset HYDRA_ISSUE_ID && hydra documents create --title \"Unlinked Doc\" --path \"docs/unlinked.md\" --body \"no link\"",
-            ],
-        )
-        .await?;
-
-    // Assert: no new has-document relation was created.
-    let all_after = client
-        .list_relations(&ListRelationsRequest {
-            rel_type: Some("has-document".to_string()),
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(
-        all_after.relations.len(),
-        count_before,
-        "expected no new has-document relation when HYDRA_ISSUE_ID is unset"
     );
 
     Ok(())
