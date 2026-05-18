@@ -10,7 +10,7 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     ).toBeVisible();
   });
 
-  test("patch detail page shows metadata tab with patch ID @patches:view-detail", async ({
+  test("patch detail page shows patch ID in title block @patches:view-detail", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/patches/p-seed00001");
@@ -18,10 +18,10 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
       page.getByRole("heading", { name: "Add OAuth2 provider integration" })
     ).toBeVisible();
 
-    // Navigate to Metadata tab
-    await page.getByRole("tab", { name: "Metadata" }).click();
+    // patch_id is rendered alongside the title (no Metadata tab anymore).
+    // Scope to <main> since the breadcrumb also shows the patch ID.
     await expect(
-      page.getByText("p-seed00001", { exact: true })
+      page.getByRole("main").getByText("p-seed00001", { exact: true })
     ).toBeVisible();
   });
 

@@ -61,7 +61,8 @@ test.describe("Sessions list page @sessions:list", () => {
     // t-seed00002 is spawned_from i-seed00002 and running.
     const row = page.getByTestId("sessions-list-row-t-seed00002");
     await expect(row).toBeVisible();
-    await row.getByText("t-seed00002").click();
+    // The Agent cell is safe to click (no stopPropagation on its contents).
+    await row.locator("td").first().click();
     await expect(page).toHaveURL(/\/sessions\/t-seed00002$/);
   });
 });

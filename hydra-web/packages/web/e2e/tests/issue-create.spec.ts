@@ -15,16 +15,16 @@ test.describe("Issue Create @issues:create", () => {
 
     // Fill in the title
     await modal
-      .getByPlaceholder("Short summary (optional)")
+      .getByPlaceholder("Issue title…")
       .fill("E2E test issue creation");
 
     // Fill in the description (required)
     await modal
-      .getByPlaceholder("Describe the issue...")
+      .getByPlaceholder(/^Describe the issue/)
       .fill("This issue was created by an E2E test");
 
     // Submit the form
-    await modal.getByRole("button", { name: "Create Issue" }).click();
+    await modal.getByRole("button", { name: "Create issue" }).click();
 
     // Modal should close
     await expect(modal).not.toBeVisible();
@@ -47,17 +47,17 @@ test.describe("Issue Create @issues:create", () => {
 
     // Create button should be disabled when description is empty
     await expect(
-      modal.getByRole("button", { name: "Create Issue" })
+      modal.getByRole("button", { name: "Create issue" })
     ).toBeDisabled();
 
     // Fill only the title (description is required)
     await modal
-      .getByPlaceholder("Short summary (optional)")
+      .getByPlaceholder("Issue title…")
       .fill("Title only");
 
     // Button should still be disabled
     await expect(
-      modal.getByRole("button", { name: "Create Issue" })
+      modal.getByRole("button", { name: "Create issue" })
     ).toBeDisabled();
   });
 
@@ -90,10 +90,10 @@ test.describe("Issue Create @issues:create", () => {
     await expect(modal).toBeVisible();
 
     await modal
-      .getByPlaceholder("Short summary (optional)")
+      .getByPlaceholder("Issue title…")
       .fill("Cancel clears");
     await modal
-      .getByPlaceholder("Describe the issue...")
+      .getByPlaceholder(/^Describe the issue/)
       .fill("Should be cleared");
 
     await modal.getByRole("button", { name: "Cancel" }).click();
@@ -104,9 +104,9 @@ test.describe("Issue Create @issues:create", () => {
     await page.getByTestId("site-header-new-issue").click();
     await expect(modal).toBeVisible();
     await expect(
-      modal.getByPlaceholder("Short summary (optional)"),
+      modal.getByPlaceholder("Issue title…"),
     ).toHaveValue("");
-    await expect(modal.getByPlaceholder("Describe the issue...")).toHaveValue(
+    await expect(modal.getByPlaceholder(/^Describe the issue/)).toHaveValue(
       "",
     );
   });
@@ -123,10 +123,10 @@ test.describe("Issue Create @issues:create", () => {
     await expect(modal).toBeVisible();
 
     await modal
-      .getByPlaceholder("Short summary (optional)")
+      .getByPlaceholder("Issue title…")
       .fill("Preserved title");
     await modal
-      .getByPlaceholder("Describe the issue...")
+      .getByPlaceholder(/^Describe the issue/)
       .fill("Preserved description");
 
     // Dismiss via Escape (same path as backdrop click and header ✕).
@@ -138,9 +138,9 @@ test.describe("Issue Create @issues:create", () => {
     await page.getByTestId("site-header-new-issue").click();
     await expect(modal).toBeVisible();
     await expect(
-      modal.getByPlaceholder("Short summary (optional)"),
+      modal.getByPlaceholder("Issue title…"),
     ).toHaveValue("Preserved title");
-    await expect(modal.getByPlaceholder("Describe the issue...")).toHaveValue(
+    await expect(modal.getByPlaceholder(/^Describe the issue/)).toHaveValue(
       "Preserved description",
     );
   });

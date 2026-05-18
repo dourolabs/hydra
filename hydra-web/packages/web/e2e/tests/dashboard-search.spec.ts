@@ -7,7 +7,7 @@ test.describe("Dashboard Search @dashboard:search", () => {
     await page.goto("/?selected=your-issues");
 
     // Wait for the dashboard to fully load
-    const searchInput = page.getByPlaceholder("Search...");
+    const searchInput = page.getByTestId("issues-search");
     await expect(searchInput).toBeVisible();
 
     // Verify initial items are visible before searching
