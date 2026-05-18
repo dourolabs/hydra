@@ -21,6 +21,7 @@ pub mod create;
 pub mod kill;
 pub mod list;
 pub mod logs;
+pub mod mounts;
 pub mod worker_run;
 
 pub use list::DEFAULT_SESSION_LIMIT;
