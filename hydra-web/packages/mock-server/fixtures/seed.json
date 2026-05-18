@@ -89,9 +89,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00001"],
       "todo_list": [
         { "description": "Set up Keycloak instance", "is_done": true },
@@ -112,9 +110,7 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00001" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
               { "description": "Set up Keycloak instance", "is_done": false },
@@ -173,9 +169,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00002" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": [],
       "todo_list": [
         { "description": "Implement token refresh endpoint", "is_done": true },
@@ -195,9 +189,7 @@
             "status": "open",
             "assignee": "swe",
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00002" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
             "todo_list": [
               { "description": "Implement token refresh endpoint", "is_done": false },
@@ -234,9 +226,7 @@
       "progress": "Scope definitions finalized. Implementation merged.",
       "status": "closed",
       "assignee": "swe",
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00002" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": ["p-seed00002"],
       "todo_list": [
         { "description": "Define scope taxonomy", "is_done": true },
@@ -255,9 +245,7 @@
             "progress": "",
             "status": "open",
             "assignee": "swe",
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00002" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
             "todo_list": [
               { "description": "Define scope taxonomy", "is_done": false },
@@ -300,9 +288,7 @@
       "progress": "Migration scripts written and tested. Deployed to staging successfully.",
       "status": "closed",
       "assignee": "swe",
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": [],
       "todo_list": [],
       "last_updated_at": "2026-03-14T10:00:00.000Z",
@@ -317,9 +303,7 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00001" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": []
           }
@@ -351,9 +335,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00003"],
       "todo_list": [
         { "description": "Design rate limit tiers", "is_done": true },
@@ -373,9 +355,7 @@
             "status": "open",
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00001" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
               { "description": "Design rate limit tiers", "is_done": false },
@@ -571,9 +551,7 @@
       "progress": "",
       "status": "in-progress",
       "assignee": "swe",
-      "dependencies": [
-        { "type": "blocked-on", "issue_id": "i-seed00006" }
-      ],
+      "dependencies": [{ "type": "blocked-on", "issue_id": "i-seed00006" }],
       "patches": ["p-seed00003"]
     },
     "i-seed00013": {
@@ -587,9 +565,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00008"],
       "todo_list": [
         { "description": "Implement ConnectionManager class", "is_done": true },
@@ -610,9 +586,7 @@
             "status": "open",
             "assignee": "swe",
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00001" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
               { "description": "Implement ConnectionManager class", "is_done": false },
@@ -655,9 +629,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00005"],
       "todo_list": [
         { "description": "Set up Yjs document model", "is_done": true },
@@ -677,9 +649,7 @@
             "status": "open",
             "assignee": "swe",
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00001" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
               { "description": "Set up Yjs document model", "is_done": false },
@@ -864,9 +834,7 @@
       "session_settings": {
         "repo_name": "acme/api-gateway"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00001" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00004"],
       "todo_list": [
         { "description": "Deploy Apollo Gateway", "is_done": true },
@@ -914,9 +882,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00003" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
       "patches": ["p-seed00010"],
       "todo_list": [
         { "description": "Design per-client refresh queue API", "is_done": true },
@@ -937,9 +903,7 @@
             "status": "open",
             "assignee": "swe",
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00003" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
             "patches": [],
             "todo_list": [
               { "description": "Design per-client refresh queue API", "is_done": false },
@@ -988,9 +952,7 @@
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00020" }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
       "patches": [],
       "todo_list": [
         { "description": "Cover happy-path single refresh", "is_done": true },
@@ -1011,9 +973,7 @@
             "status": "open",
             "assignee": "swe",
             "session_settings": { "repo_name": "acme/web-app" },
-            "dependencies": [
-              { "type": "child-of", "issue_id": "i-seed00020" }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
             "patches": [],
             "todo_list": [
               { "description": "Cover happy-path single refresh", "is_done": false },
@@ -1066,6 +1026,131 @@
         { "description": "Run mutex-guarded measurements", "is_done": false },
         { "description": "Publish comparison report", "is_done": false }
       ]
+    },
+    "i-seed00023": {
+      "type": "review-request",
+      "title": "Review: OAuth2 migration ADR",
+      "description": "Review the proposed OAuth2 migration approach (see ADR-001). Please review the strategy and select whether to approve, request changes, or reject.",
+      "creator": "alice",
+      "progress": "",
+      "status": "open",
+      "assignee": "bob",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "Please review the **OAuth2 migration ADR** and respond.\n\nKey questions:\n- Is Keycloak the right provider?\n- Is the gradual rollout plan acceptable?",
+        "fields": [
+          {
+            "key": "decision",
+            "label": "Decision",
+            "input": {
+              "type": "select",
+              "radio": true,
+              "options": [
+                { "value": "approve", "label": "Approve" },
+                { "value": "changes", "label": "Request changes" },
+                { "value": "reject", "label": "Reject" }
+              ]
+            }
+          },
+          {
+            "key": "summary",
+            "label": "Summary",
+            "description": "One-line summary of your review.",
+            "input": {
+              "type": "text",
+              "placeholder": "e.g. LGTM with one concern",
+              "max_length": 200
+            }
+          },
+          {
+            "key": "details",
+            "label": "Details",
+            "description": "Optional supporting notes for the team.",
+            "input": {
+              "type": "textarea",
+              "placeholder": "Provide additional context...",
+              "rows": 4
+            }
+          },
+          {
+            "key": "notify_team",
+            "label": "Notify the platform team",
+            "input": { "type": "checkbox" }
+          }
+        ],
+        "actions": [
+          {
+            "id": "submit",
+            "label": "Submit review",
+            "style": "primary",
+            "requires": ["decision", "summary"],
+            "effect": { "type": "record_only" }
+          },
+          {
+            "id": "reject",
+            "label": "Reject without notes",
+            "style": "danger",
+            "requires": ["decision"],
+            "effect": { "type": "update_issue", "status": "closed" }
+          }
+        ]
+      }
+    },
+    "i-seed00024": {
+      "type": "review-request",
+      "title": "Review: Refresh queue mutex design",
+      "description": "Review the per-client refresh queue mutex design from i-seed00020. This response is already submitted and shown read-only.",
+      "creator": "swe",
+      "progress": "",
+      "status": "closed",
+      "assignee": "alice",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "Please review the **refresh queue mutex** design and submit your decision.",
+        "fields": [
+          {
+            "key": "decision",
+            "label": "Decision",
+            "input": {
+              "type": "select",
+              "radio": false,
+              "options": [
+                { "value": "approve", "label": "Approve" },
+                { "value": "changes", "label": "Request changes" }
+              ]
+            }
+          },
+          {
+            "key": "notes",
+            "label": "Notes",
+            "input": {
+              "type": "textarea",
+              "placeholder": "Notes...",
+              "rows": 3
+            }
+          }
+        ],
+        "actions": [
+          {
+            "id": "submit",
+            "label": "Submit review",
+            "style": "primary",
+            "requires": ["decision"],
+            "effect": { "type": "record_only" }
+          }
+        ]
+      },
+      "form_response": {
+        "action_id": "submit",
+        "actor": { "Username": "alice" },
+        "values": {
+          "decision": "approve",
+          "notes": "Looks good. The deadlock-prevention story is convincing; please add a regression test before landing."
+        },
+        "submitted_at": "2026-05-14T18:42:00.000Z"
+      }
     }
   },
   "sessions": {
@@ -1764,9 +1849,7 @@
       "default_branch": "main",
       "default_image": "node:20-slim",
       "patch_workflow": {
-        "review_requests": [
-          { "assignee": "reviewer" }
-        ],
+        "review_requests": [{ "assignee": "reviewer" }],
         "merge_request": {
           "assignee": "alice"
         }
@@ -1777,9 +1860,7 @@
       "default_branch": "main",
       "default_image": "node:20-slim",
       "patch_workflow": {
-        "review_requests": [
-          { "assignee": "reviewer" }
-        ],
+        "review_requests": [{ "assignee": "reviewer" }],
         "merge_request": {
           "assignee": "alice"
         }
