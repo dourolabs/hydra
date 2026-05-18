@@ -14,7 +14,10 @@
 use anyhow::Result;
 use std::time::Duration;
 
+pub mod documents;
 pub mod orchestrator;
+
+pub use documents::DocumentsMount;
 
 /// An error returned from a [`Mount::setup`] or [`Mount::save`] call.
 ///

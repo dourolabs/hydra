@@ -15,6 +15,7 @@ use hydra_common::{
 use std::{
     io::{self, Write},
     path::PathBuf,
+    sync::Arc,
 };
 
 pub mod create;
@@ -130,7 +131,7 @@ pub enum SessionsCommand {
 }
 
 pub async fn run(
-    client: &dyn HydraClientInterface,
+    client: Arc<dyn HydraClientInterface>,
     command: SessionsCommand,
     context: &CommandContext,
 ) -> Result<()> {
@@ -145,20 +146,32 @@ pub async fn run(
             issue_id,
         } => {
             create::run(
-                client, wait, repo, rev, image, var, prompt, issue_id, context,
+                client.as_ref(),
+                wait,
+                repo,
+                rev,
+                image,
+                var,
+                prompt,
+                issue_id,
+                context,
             )
             .await?
         }
         SessionsCommand::List {
             limit,
             spawned_from,
-        } => list::run(client, limit, spawned_from, context).await?,
-        SessionsCommand::Get { id, version } => get_session(client, &id, version, context).await?,
-        SessionsCommand::Changelog { id, limit } => {
-            changelog_session(client, id, context.output_format, limit).await?
+        } => list::run(client.as_ref(), limit, spawned_from, context).await?,
+        SessionsCommand::Get { id, version } => {
+            get_session(client.as_ref(), &id, version, context).await?
         }
-        SessionsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
-        SessionsCommand::Kill { session } => kill::run(client, session, context).await?,
+        SessionsCommand::Changelog { id, limit } => {
+            changelog_session(client.as_ref(), id, context.output_format, limit).await?
+        }
+        SessionsCommand::Logs { id, watch } => {
+            logs::run(client.as_ref(), id, watch, context).await?
+        }
+        SessionsCommand::Kill { session } => kill::run(client.as_ref(), session, context).await?,
         SessionsCommand::WorkerRun {
             session,
             path,
