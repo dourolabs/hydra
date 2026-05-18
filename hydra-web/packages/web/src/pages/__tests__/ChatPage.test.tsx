@@ -45,8 +45,16 @@ vi.mock("../../features/chat/useChatReferencedArtifacts", () => ({
     issues: [],
     patches: [],
     documents: [],
+    sessionsByIssue: new Map(),
     isLoading: false,
     error: null,
+    hasNextPage: { issues: false, patches: false, documents: false },
+    isFetchingNextPage: { issues: false, patches: false, documents: false },
+    fetchNextPage: {
+      issues: () => {},
+      patches: () => {},
+      documents: () => {},
+    },
   }),
 }));
 

@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
+  ListDocumentsResponse,
+  ListIssuesResponse,
+  ListPatchesResponse,
   PatchSummaryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
@@ -110,6 +113,27 @@ function makeSession(
   } as SessionSummaryRecord;
 }
 
+function issuesPage(
+  issues: IssueSummaryRecord[],
+  nextCursor: string | null = null,
+): ListIssuesResponse {
+  return { issues, next_cursor: nextCursor } as ListIssuesResponse;
+}
+
+function patchesPage(
+  patches: PatchSummaryRecord[],
+  nextCursor: string | null = null,
+): ListPatchesResponse {
+  return { patches, next_cursor: nextCursor } as ListPatchesResponse;
+}
+
+function documentsPage(
+  documents: DocumentSummaryRecord[],
+  nextCursor: string | null = null,
+): ListDocumentsResponse {
+  return { documents, next_cursor: nextCursor } as ListDocumentsResponse;
+}
+
 // --- Import after mocks ---
 const { useChatReferencedArtifacts } = await import(
   "../useChatReferencedArtifacts"
@@ -134,15 +158,11 @@ describe("useChatReferencedArtifacts", () => {
         makeRelation("i-2"),
       ],
     });
-    mockListIssues.mockResolvedValue({
-      issues: [makeIssue("i-1"), makeIssue("i-2")],
-    });
-    mockListPatches.mockResolvedValue({
-      patches: [makePatch("p-1")],
-    });
-    mockListDocuments.mockResolvedValue({
-      documents: [makeDocument("d-1")],
-    });
+    mockListIssues.mockResolvedValue(
+      issuesPage([makeIssue("i-1"), makeIssue("i-2")]),
+    );
+    mockListPatches.mockResolvedValue(patchesPage([makePatch("p-1")]));
+    mockListDocuments.mockResolvedValue(documentsPage([makeDocument("d-1")]));
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -164,15 +184,33 @@ describe("useChatReferencedArtifacts", () => {
       rel_type: "refers_to",
     });
     expect(mockListIssues).toHaveBeenCalledTimes(1);
-    expect(mockListIssues).toHaveBeenCalledWith({ ids: "i-1,i-2", limit: 2 });
-    expect(mockListPatches).toHaveBeenCalledWith({ ids: "p-1", limit: 1 });
+    expect(mockListIssues).toHaveBeenCalledWith({
+      ids: "i-1,i-2",
+      limit: 25,
+      cursor: null,
+    });
+    expect(mockListPatches).toHaveBeenCalledWith({
+      ids: "p-1",
+      limit: 25,
+      cursor: null,
+    });
     expect(mockListDocuments).toHaveBeenCalledTimes(1);
-    expect(mockListDocuments).toHaveBeenCalledWith({ ids: "d-1", limit: 1 });
+    expect(mockListDocuments).toHaveBeenCalledWith({
+      ids: "d-1",
+      limit: 25,
+      cursor: null,
+    });
     expect(result.current.error).toBeNull();
+    expect(result.current.hasNextPage).toEqual({
+      issues: false,
+      patches: false,
+      documents: false,
+    });
   });
 
-  it("preserves the order returned by listRelations within each bucket", async () => {
-    // listRelations returns ids in non-sorted order (backend is newest-first).
+  it("renders the backend order verbatim across the flattened pages", async () => {
+    // The backend returns issues sorted by updated_at desc — the hook must
+    // render that order without re-sorting against the relation-id order.
     mockListRelations.mockResolvedValue({
       relations: [
         makeRelation("i-2"),
@@ -184,17 +222,15 @@ describe("useChatReferencedArtifacts", () => {
         makeRelation("d-x"),
       ],
     });
-    // Underlying batch fetches return rows in a different order than the
-    // relation order — the hook should re-order back to relation order.
-    mockListIssues.mockResolvedValue({
-      issues: [makeIssue("i-1"), makeIssue("i-2"), makeIssue("i-3")],
-    });
-    mockListPatches.mockResolvedValue({
-      patches: [makePatch("p-a"), makePatch("p-b")],
-    });
-    mockListDocuments.mockResolvedValue({
-      documents: [makeDocument("d-x"), makeDocument("d-y")],
-    });
+    mockListIssues.mockResolvedValue(
+      issuesPage([makeIssue("i-1"), makeIssue("i-2"), makeIssue("i-3")]),
+    );
+    mockListPatches.mockResolvedValue(
+      patchesPage([makePatch("p-a"), makePatch("p-b")]),
+    );
+    mockListDocuments.mockResolvedValue(
+      documentsPage([makeDocument("d-x"), makeDocument("d-y")]),
+    );
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -203,30 +239,30 @@ describe("useChatReferencedArtifacts", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.issues.map((i) => i.issue_id)).toEqual([
+      "i-1",
       "i-2",
       "i-3",
-      "i-1",
     ]);
     expect(result.current.patches.map((p) => p.patch_id)).toEqual([
-      "p-b",
       "p-a",
+      "p-b",
     ]);
     expect(result.current.documents.map((d) => d.document_id)).toEqual([
-      "d-y",
       "d-x",
+      "d-y",
     ]);
   });
 
-  it("caps each bucket at 33 ids", async () => {
+  it("does not cap the number of ids passed to listIssues (no 33-cap regression)", async () => {
     const relations = Array.from({ length: 40 }, (_, i) =>
       makeRelation(`i-${i}`),
     );
     mockListRelations.mockResolvedValue({ relations });
 
-    const expectedIds = Array.from({ length: 33 }, (_, i) => `i-${i}`);
-    mockListIssues.mockResolvedValue({
-      issues: expectedIds.map((id) => makeIssue(id)),
-    });
+    const allIds = Array.from({ length: 40 }, (_, i) => `i-${i}`);
+    mockListIssues.mockResolvedValue(
+      issuesPage(allIds.map((id) => makeIssue(id))),
+    );
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -235,11 +271,12 @@ describe("useChatReferencedArtifacts", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(mockListIssues).toHaveBeenCalledWith({
-      ids: expectedIds.join(","),
-      limit: 33,
+      ids: allIds.join(","),
+      limit: 25,
+      cursor: null,
     });
-    expect(result.current.issues).toHaveLength(33);
-    expect(result.current.issues.map((i) => i.issue_id)).toEqual(expectedIds);
+    expect(result.current.issues).toHaveLength(40);
+    expect(result.current.issues.map((i) => i.issue_id)).toEqual(allIds);
   });
 
   it("aggregates error from listRelations", async () => {
@@ -327,13 +364,9 @@ describe("useChatReferencedArtifacts", () => {
       ],
     });
 
-    let resolveIssues: (val: { issues: IssueSummaryRecord[] }) => void =
-      () => {};
-    let resolvePatches: (val: { patches: PatchSummaryRecord[] }) => void =
-      () => {};
-    let resolveDocuments: (val: {
-      documents: DocumentSummaryRecord[];
-    }) => void = () => {};
+    let resolveIssues: (val: ListIssuesResponse) => void = () => {};
+    let resolvePatches: (val: ListPatchesResponse) => void = () => {};
+    let resolveDocuments: (val: ListDocumentsResponse) => void = () => {};
 
     mockListIssues.mockImplementation(
       () =>
@@ -358,8 +391,6 @@ describe("useChatReferencedArtifacts", () => {
       wrapper: makeWrapper(),
     });
 
-    // Wait until listRelations has resolved and the downstream queries have
-    // been kicked off. isLoading should remain true while they are pending.
     await waitFor(() => {
       expect(mockListIssues).toHaveBeenCalled();
       expect(mockListPatches).toHaveBeenCalled();
@@ -367,9 +398,9 @@ describe("useChatReferencedArtifacts", () => {
     });
     expect(result.current.isLoading).toBe(true);
 
-    resolveIssues({ issues: [makeIssue("i-1")] });
-    resolvePatches({ patches: [makePatch("p-1")] });
-    resolveDocuments({ documents: [makeDocument("d-1")] });
+    resolveIssues(issuesPage([makeIssue("i-1")]));
+    resolvePatches(patchesPage([makePatch("p-1")]));
+    resolveDocuments(documentsPage([makeDocument("d-1")]));
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.error).toBeNull();
@@ -395,13 +426,13 @@ describe("useChatReferencedArtifacts", () => {
     expect(mockListSessions).not.toHaveBeenCalled();
   });
 
-  it("calls listSessions once with the comma-joined issue ids", async () => {
+  it("calls listSessions once with the comma-joined fetched issue ids", async () => {
     mockListRelations.mockResolvedValue({
       relations: [makeRelation("i-1"), makeRelation("i-2")],
     });
-    mockListIssues.mockResolvedValue({
-      issues: [makeIssue("i-1"), makeIssue("i-2")],
-    });
+    mockListIssues.mockResolvedValue(
+      issuesPage([makeIssue("i-1"), makeIssue("i-2")]),
+    );
     mockListSessions.mockResolvedValue({ sessions: [] });
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
@@ -420,15 +451,14 @@ describe("useChatReferencedArtifacts", () => {
     mockListRelations.mockResolvedValue({
       relations: [makeRelation("i-1"), makeRelation("i-2")],
     });
-    mockListIssues.mockResolvedValue({
-      issues: [makeIssue("i-1"), makeIssue("i-2")],
-    });
+    mockListIssues.mockResolvedValue(
+      issuesPage([makeIssue("i-1"), makeIssue("i-2")]),
+    );
     mockListSessions.mockResolvedValue({
       sessions: [
         makeSession("s-a", "i-1", "running"),
         makeSession("s-b", "i-1", "pending"),
         makeSession("s-c", "i-2", "running"),
-        // Session not tied to any issue — must be filtered out.
         makeSession("s-d", null, "running"),
       ],
     });
@@ -450,8 +480,8 @@ describe("useChatReferencedArtifacts", () => {
     mockListRelations.mockResolvedValue({
       relations: [makeRelation("p-1"), makeRelation("d-1")],
     });
-    mockListPatches.mockResolvedValue({ patches: [makePatch("p-1")] });
-    mockListDocuments.mockResolvedValue({ documents: [makeDocument("d-1")] });
+    mockListPatches.mockResolvedValue(patchesPage([makePatch("p-1")]));
+    mockListDocuments.mockResolvedValue(documentsPage([makeDocument("d-1")]));
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
       wrapper: makeWrapper(),
@@ -463,34 +493,11 @@ describe("useChatReferencedArtifacts", () => {
     expect(result.current.sessionsByIssue.size).toBe(0);
   });
 
-  it("applies the 33-id cap to listSessions in lock-step with listIssues", async () => {
-    const relations = Array.from({ length: 40 }, (_, i) =>
-      makeRelation(`i-${i}`),
-    );
-    mockListRelations.mockResolvedValue({ relations });
-
-    const expectedIds = Array.from({ length: 33 }, (_, i) => `i-${i}`);
-    mockListIssues.mockResolvedValue({
-      issues: expectedIds.map((id) => makeIssue(id)),
-    });
-    mockListSessions.mockResolvedValue({ sessions: [] });
-
-    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
-      wrapper: makeWrapper(),
-    });
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    expect(mockListSessions).toHaveBeenCalledWith({
-      spawned_from_ids: expectedIds.join(","),
-    });
-  });
-
   it("aggregates error from listSessions", async () => {
     mockListRelations.mockResolvedValue({
       relations: [makeRelation("i-1")],
     });
-    mockListIssues.mockResolvedValue({ issues: [makeIssue("i-1")] });
+    mockListIssues.mockResolvedValue(issuesPage([makeIssue("i-1")]));
     mockListSessions.mockRejectedValue(new Error("sessions failed"));
 
     const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
@@ -499,5 +506,174 @@ describe("useChatReferencedArtifacts", () => {
 
     await waitFor(() => expect(result.current.error).not.toBeNull());
     expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it("exposes hasNextPage.issues=true and fetches the next page on demand, appending results in returned order", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("i-1"), makeRelation("i-2")],
+    });
+    mockListIssues
+      .mockResolvedValueOnce(issuesPage([makeIssue("i-1")], "cursor-1"))
+      .mockResolvedValueOnce(issuesPage([makeIssue("i-2")]));
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.issues.map((i) => i.issue_id)).toEqual(["i-1"]);
+    expect(result.current.hasNextPage.issues).toBe(true);
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(mockListIssues).toHaveBeenNthCalledWith(1, {
+      ids: "i-1,i-2",
+      limit: 25,
+      cursor: null,
+    });
+
+    act(() => {
+      result.current.fetchNextPage.issues();
+    });
+
+    await waitFor(() =>
+      expect(result.current.issues.map((i) => i.issue_id)).toEqual([
+        "i-1",
+        "i-2",
+      ]),
+    );
+    expect(result.current.hasNextPage.issues).toBe(false);
+    expect(mockListIssues).toHaveBeenCalledTimes(2);
+    expect(mockListIssues).toHaveBeenNthCalledWith(2, {
+      ids: "i-1,i-2",
+      limit: 25,
+      cursor: "cursor-1",
+    });
+  });
+
+  it("paginates beyond 33 issues and returns every id after enough fetches", async () => {
+    const relations = Array.from({ length: 40 }, (_, i) =>
+      makeRelation(`i-${i}`),
+    );
+    mockListRelations.mockResolvedValue({ relations });
+
+    const firstPage = Array.from({ length: 25 }, (_, i) => makeIssue(`i-${i}`));
+    const secondPage = Array.from({ length: 15 }, (_, i) =>
+      makeIssue(`i-${i + 25}`),
+    );
+
+    mockListIssues
+      .mockResolvedValueOnce(issuesPage(firstPage, "cursor-page-2"))
+      .mockResolvedValueOnce(issuesPage(secondPage));
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.issues).toHaveLength(25);
+    expect(result.current.hasNextPage.issues).toBe(true);
+
+    act(() => {
+      result.current.fetchNextPage.issues();
+    });
+
+    await waitFor(() => expect(result.current.issues).toHaveLength(40));
+    expect(result.current.issues.map((i) => i.issue_id)).toEqual(
+      Array.from({ length: 40 }, (_, i) => `i-${i}`),
+    );
+    expect(result.current.hasNextPage.issues).toBe(false);
+  });
+
+  it("exposes hasNextPage.patches=true and fetches the next page on demand", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("p-1"), makeRelation("p-2")],
+    });
+    mockListPatches
+      .mockResolvedValueOnce(patchesPage([makePatch("p-1")], "p-cursor"))
+      .mockResolvedValueOnce(patchesPage([makePatch("p-2")]));
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.hasNextPage.patches).toBe(true);
+
+    act(() => {
+      result.current.fetchNextPage.patches();
+    });
+
+    await waitFor(() =>
+      expect(result.current.patches.map((p) => p.patch_id)).toEqual([
+        "p-1",
+        "p-2",
+      ]),
+    );
+    expect(mockListPatches).toHaveBeenNthCalledWith(2, {
+      ids: "p-1,p-2",
+      limit: 25,
+      cursor: "p-cursor",
+    });
+  });
+
+  it("exposes hasNextPage.documents=true and fetches the next page on demand", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("d-1"), makeRelation("d-2")],
+    });
+    mockListDocuments
+      .mockResolvedValueOnce(documentsPage([makeDocument("d-1")], "d-cursor"))
+      .mockResolvedValueOnce(documentsPage([makeDocument("d-2")]));
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.hasNextPage.documents).toBe(true);
+
+    act(() => {
+      result.current.fetchNextPage.documents();
+    });
+
+    await waitFor(() =>
+      expect(result.current.documents.map((d) => d.document_id)).toEqual([
+        "d-1",
+        "d-2",
+      ]),
+    );
+    expect(mockListDocuments).toHaveBeenNthCalledWith(2, {
+      ids: "d-1,d-2",
+      limit: 25,
+      cursor: "d-cursor",
+    });
+  });
+
+  it("re-fires listSessions for newly-loaded issue ids after fetchNextPage.issues", async () => {
+    mockListRelations.mockResolvedValue({
+      relations: [makeRelation("i-1"), makeRelation("i-2")],
+    });
+    mockListIssues
+      .mockResolvedValueOnce(issuesPage([makeIssue("i-1")], "cur"))
+      .mockResolvedValueOnce(issuesPage([makeIssue("i-2")]));
+    mockListSessions.mockResolvedValue({ sessions: [] });
+
+    const { result } = renderHook(() => useChatReferencedArtifacts("c-abc"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(mockListSessions).toHaveBeenLastCalledWith({
+      spawned_from_ids: "i-1",
+    });
+
+    act(() => {
+      result.current.fetchNextPage.issues();
+    });
+
+    await waitFor(() =>
+      expect(mockListSessions).toHaveBeenLastCalledWith({
+        spawned_from_ids: "i-1,i-2",
+      }),
+    );
   });
 });

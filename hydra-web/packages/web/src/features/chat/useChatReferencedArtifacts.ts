@@ -1,13 +1,28 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
+  ListDocumentsResponse,
+  ListIssuesResponse,
+  ListPatchesResponse,
   PatchSummaryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
 import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
+
+export interface ReferencedArtifactsPagination {
+  issues: boolean;
+  patches: boolean;
+  documents: boolean;
+}
+
+export interface ReferencedArtifactsFetchers {
+  issues: () => void;
+  patches: () => void;
+  documents: () => void;
+}
 
 export interface ReferencedArtifactsResult {
   issues: IssueSummaryRecord[];
@@ -16,9 +31,12 @@ export interface ReferencedArtifactsResult {
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   error: unknown;
+  hasNextPage: ReferencedArtifactsPagination;
+  isFetchingNextPage: ReferencedArtifactsPagination;
+  fetchNextPage: ReferencedArtifactsFetchers;
 }
 
-const MAX_PER_BUCKET = 33;
+const PAGE_SIZE = 25;
 
 function bucketByPrefix(ids: string[]): {
   issueIds: string[];
@@ -41,17 +59,15 @@ function bucketByPrefix(ids: string[]): {
         break;
     }
   }
-  return {
-    issueIds: issueIds.slice(0, MAX_PER_BUCKET),
-    patchIds: patchIds.slice(0, MAX_PER_BUCKET),
-    documentIds: documentIds.slice(0, MAX_PER_BUCKET),
-  };
+  return { issueIds, patchIds, documentIds };
 }
 
 /**
  * Fetch artifacts the given conversation `RefersTo` via a single backend
  * pre-filter on the relations table. Buckets relation rows by target_id prefix
- * (i-/p-/d-) and batch-fetches details for each kind.
+ * (i-/p-/d-) and batch-fetches details for each kind with cursor-paginated
+ * `useInfiniteQuery` calls so the per-section "Load more" button can extend
+ * each list lazily.
  */
 export function useChatReferencedArtifacts(conversationId: string): ReferencedArtifactsResult {
   const relationsQuery = useQuery({
@@ -74,94 +90,77 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
   const { issueIds, patchIds, documentIds } = useMemo(() => bucketByPrefix(targetIds), [targetIds]);
 
   const issueIdsParam = issueIds.join(",");
-  const issuesQuery = useQuery({
+  const issuesQuery = useInfiniteQuery<ListIssuesResponse, Error>({
     queryKey: ["chatRelated", "referencedIssues", issueIdsParam],
-    queryFn: () => apiClient.listIssues({ ids: issueIdsParam, limit: issueIds.length }),
+    queryFn: ({ pageParam }) =>
+      apiClient.listIssues({
+        ids: issueIdsParam,
+        limit: PAGE_SIZE,
+        cursor: (pageParam as string | undefined) ?? null,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: issueIds.length > 0,
     staleTime: 30_000,
-    select: (data) => data.issues,
   });
 
-  // Mirror IssueRelatedIssues: use queryKey shape ["sessions", "batch", ids]
-  // so useSSE's broad invalidation on session_* events gives us live updates
-  // for free.
+  const issues = useMemo(
+    () => issuesQuery.data?.pages.flatMap((p) => p.issues) ?? [],
+    [issuesQuery.data],
+  );
+
+  // Sessions stay in lockstep with the issues fetched so far. Keep the
+  // ["sessions", "batch", ids] queryKey shape so useSSE's broad invalidation
+  // on session_* events refreshes it.
+  const fetchedIssueIds = useMemo(() => issues.map((i) => i.issue_id), [issues]);
+  const sessionsIdsParam = fetchedIssueIds.join(",");
   const sessionsQuery = useQuery({
-    queryKey: ["sessions", "batch", issueIdsParam],
-    queryFn: () => apiClient.listSessions({ spawned_from_ids: issueIdsParam }),
-    enabled: issueIds.length > 0,
+    queryKey: ["sessions", "batch", sessionsIdsParam],
+    queryFn: () => apiClient.listSessions({ spawned_from_ids: sessionsIdsParam }),
+    enabled: fetchedIssueIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.sessions,
   });
 
   const patchIdsParam = patchIds.join(",");
-  const patchesQuery = useQuery({
+  const patchesQuery = useInfiniteQuery<ListPatchesResponse, Error>({
     queryKey: ["chatRelated", "referencedPatches", patchIdsParam],
-    queryFn: () => apiClient.listPatches({ ids: patchIdsParam, limit: patchIds.length }),
+    queryFn: ({ pageParam }) =>
+      apiClient.listPatches({
+        ids: patchIdsParam,
+        limit: PAGE_SIZE,
+        cursor: (pageParam as string | undefined) ?? null,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
-    select: (data) => data.patches,
   });
+
+  const patches = useMemo(
+    () => patchesQuery.data?.pages.flatMap((p) => p.patches) ?? [],
+    [patchesQuery.data],
+  );
 
   const documentIdsParam = documentIds.join(",");
-  const documentsQuery = useQuery({
+  const documentsQuery = useInfiniteQuery<ListDocumentsResponse, Error>({
     queryKey: ["chatRelated", "referencedDocuments", documentIdsParam],
-    queryFn: () =>
-      apiClient.listDocuments({ ids: documentIdsParam, limit: documentIds.length }),
+    queryFn: ({ pageParam }) =>
+      apiClient.listDocuments({
+        ids: documentIdsParam,
+        limit: PAGE_SIZE,
+        cursor: (pageParam as string | undefined) ?? null,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: documentIds.length > 0,
     staleTime: 30_000,
-    select: (data) => data.documents,
   });
 
-  const issuesMap = useMemo(() => {
-    const map = new Map<string, IssueSummaryRecord>();
-    for (const issue of issuesQuery.data ?? []) {
-      map.set(issue.issue_id, issue);
-    }
-    return map;
-  }, [issuesQuery.data]);
-
-  const orderedIssues = useMemo(() => {
-    const out: IssueSummaryRecord[] = [];
-    for (const id of issueIds) {
-      const issue = issuesMap.get(id);
-      if (issue) out.push(issue);
-    }
-    return out;
-  }, [issueIds, issuesMap]);
-
-  const patchesMap = useMemo(() => {
-    const map = new Map<string, PatchSummaryRecord>();
-    for (const patch of patchesQuery.data ?? []) {
-      map.set(patch.patch_id, patch);
-    }
-    return map;
-  }, [patchesQuery.data]);
-
-  const orderedPatches = useMemo(() => {
-    const out: PatchSummaryRecord[] = [];
-    for (const id of patchIds) {
-      const patch = patchesMap.get(id);
-      if (patch) out.push(patch);
-    }
-    return out;
-  }, [patchIds, patchesMap]);
-
-  const documentsMap = useMemo(() => {
-    const map = new Map<string, DocumentSummaryRecord>();
-    for (const doc of documentsQuery.data ?? []) {
-      map.set(doc.document_id, doc);
-    }
-    return map;
-  }, [documentsQuery.data]);
-
-  const orderedDocuments = useMemo(() => {
-    const out: DocumentSummaryRecord[] = [];
-    for (const id of documentIds) {
-      const doc = documentsMap.get(id);
-      if (doc) out.push(doc);
-    }
-    return out;
-  }, [documentIds, documentsMap]);
+  const documents = useMemo(
+    () => documentsQuery.data?.pages.flatMap((p) => p.documents) ?? [],
+    [documentsQuery.data],
+  );
 
   const sessionsByIssue = useMemo(() => {
     const map = new Map<string, SessionSummaryRecord[]>();
@@ -178,7 +177,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
   const isLoading =
     relationsQuery.isLoading ||
     (issueIds.length > 0 && issuesQuery.isLoading) ||
-    (issueIds.length > 0 && sessionsQuery.isLoading) ||
+    (fetchedIssueIds.length > 0 && sessionsQuery.isLoading) ||
     (patchIds.length > 0 && patchesQuery.isLoading) ||
     (documentIds.length > 0 && documentsQuery.isLoading);
 
@@ -191,11 +190,32 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     null;
 
   return {
-    issues: orderedIssues,
-    patches: orderedPatches,
-    documents: orderedDocuments,
+    issues,
+    patches,
+    documents,
     sessionsByIssue,
     isLoading,
     error,
+    hasNextPage: {
+      issues: !!issuesQuery.hasNextPage,
+      patches: !!patchesQuery.hasNextPage,
+      documents: !!documentsQuery.hasNextPage,
+    },
+    isFetchingNextPage: {
+      issues: issuesQuery.isFetchingNextPage,
+      patches: patchesQuery.isFetchingNextPage,
+      documents: documentsQuery.isFetchingNextPage,
+    },
+    fetchNextPage: {
+      issues: () => {
+        void issuesQuery.fetchNextPage();
+      },
+      patches: () => {
+        void patchesQuery.fetchNextPage();
+      },
+      documents: () => {
+        void documentsQuery.fetchNextPage();
+      },
+    },
   };
 }

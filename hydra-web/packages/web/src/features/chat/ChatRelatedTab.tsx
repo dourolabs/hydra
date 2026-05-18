@@ -58,13 +58,42 @@ function Section({ title, count, children }: SectionProps) {
   );
 }
 
+interface LoadMoreProps {
+  isFetching: boolean;
+  onClick: () => void;
+}
+
+function LoadMore({ isFetching, onClick }: LoadMoreProps) {
+  return (
+    <div className={styles.loadMore}>
+      <button
+        type="button"
+        className={styles.loadMoreButton}
+        onClick={onClick}
+        disabled={isFetching}
+      >
+        {isFetching ? "Loading..." : "Load more"}
+      </button>
+    </div>
+  );
+}
+
 interface ChatRelatedTabProps {
   conversationId: string;
 }
 
 export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
-  const { issues, patches, documents, sessionsByIssue, isLoading, error } =
-    useChatReferencedArtifacts(conversationId);
+  const {
+    issues,
+    patches,
+    documents,
+    sessionsByIssue,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useChatReferencedArtifacts(conversationId);
 
   if (isLoading) {
     return (
@@ -101,6 +130,12 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
             ))}
           </ul>
         )}
+        {hasNextPage.issues && (
+          <LoadMore
+            isFetching={isFetchingNextPage.issues}
+            onClick={fetchNextPage.issues}
+          />
+        )}
       </Section>
 
       <Section title="Patches" count={patches.length}>
@@ -116,6 +151,12 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
               />
             ))}
           </ul>
+        )}
+        {hasNextPage.patches && (
+          <LoadMore
+            isFetching={isFetchingNextPage.patches}
+            onClick={fetchNextPage.patches}
+          />
         )}
       </Section>
 
@@ -141,6 +182,12 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
               </li>
             ))}
           </ul>
+        )}
+        {hasNextPage.documents && (
+          <LoadMore
+            isFetching={isFetchingNextPage.documents}
+            onClick={fetchNextPage.documents}
+          />
         )}
       </Section>
     </div>
