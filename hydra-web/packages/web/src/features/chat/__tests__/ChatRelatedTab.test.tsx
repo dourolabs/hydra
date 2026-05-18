@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import type {
   DocumentSummaryRecord,
@@ -10,6 +10,10 @@ import type {
 
 // --- Mocks ---
 
+const fetchNextPageIssues = vi.fn();
+const fetchNextPagePatches = vi.fn();
+const fetchNextPageDocuments = vi.fn();
+
 const mockState: {
   issues: IssueSummaryRecord[];
   patches: PatchSummaryRecord[];
@@ -17,6 +21,13 @@ const mockState: {
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   error: unknown;
+  hasNextPage: { issues: boolean; patches: boolean; documents: boolean };
+  isFetchingNextPage: { issues: boolean; patches: boolean; documents: boolean };
+  fetchNextPage: {
+    issues: () => void;
+    patches: () => void;
+    documents: () => void;
+  };
 } = {
   issues: [],
   patches: [],
@@ -24,6 +35,13 @@ const mockState: {
   sessionsByIssue: new Map(),
   isLoading: false,
   error: null,
+  hasNextPage: { issues: false, patches: false, documents: false },
+  isFetchingNextPage: { issues: false, patches: false, documents: false },
+  fetchNextPage: {
+    issues: fetchNextPageIssues,
+    patches: fetchNextPagePatches,
+    documents: fetchNextPageDocuments,
+  },
 };
 
 const capturedItemRowProps: Array<{
@@ -167,8 +185,17 @@ function resetState() {
   mockState.sessionsByIssue = new Map();
   mockState.isLoading = false;
   mockState.error = null;
+  mockState.hasNextPage = { issues: false, patches: false, documents: false };
+  mockState.isFetchingNextPage = {
+    issues: false,
+    patches: false,
+    documents: false,
+  };
   lastConversationIdArg = null;
   capturedItemRowProps.length = 0;
+  fetchNextPageIssues.mockReset();
+  fetchNextPagePatches.mockReset();
+  fetchNextPageDocuments.mockReset();
 }
 
 // --- Import after mocks ---
@@ -254,7 +281,6 @@ describe("ChatRelatedTab", () => {
     mockState.isLoading = true;
     render(<ChatRelatedTab conversationId="c-abc" />);
     expect(screen.getByTestId("spinner-sm")).toBeDefined();
-    // Sections aren't rendered during loading
     expect(screen.queryByText("Issues")).toBeNull();
   });
 
@@ -283,7 +309,6 @@ describe("ChatRelatedTab", () => {
 
   it("renders ItemRow with sessions=undefined when no map entry exists for the issue", () => {
     mockState.issues = [makeIssue("i-1"), makeIssue("i-2")];
-    // Map has nothing for i-1 or i-2.
     mockState.sessionsByIssue = new Map();
 
     expect(() =>
@@ -299,5 +324,70 @@ describe("ChatRelatedTab", () => {
         .getByTestId("item-row-issue-i-1")
         .getAttribute("data-sessions-count"),
     ).toBe("0");
+  });
+
+  it("does not render Load more buttons when no section has another page", () => {
+    mockState.issues = [makeIssue("i-1")];
+    mockState.patches = [makePatch("p-1")];
+    mockState.documents = [makeDocument("d-1")];
+    render(<ChatRelatedTab conversationId="c-abc" />);
+    expect(screen.queryAllByRole("button", { name: /Load more/i })).toHaveLength(0);
+  });
+
+  it("renders a Load more button in the Issues section when hasNextPage.issues is true and wires onClick", () => {
+    mockState.issues = [makeIssue("i-1")];
+    mockState.hasNextPage = { issues: true, patches: false, documents: false };
+    render(<ChatRelatedTab conversationId="c-abc" />);
+
+    const buttons = screen.getAllByRole("button", { name: "Load more" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(fetchNextPageIssues).toHaveBeenCalledTimes(1);
+    expect(fetchNextPagePatches).not.toHaveBeenCalled();
+    expect(fetchNextPageDocuments).not.toHaveBeenCalled();
+  });
+
+  it("renders a Load more button in the Patches section when hasNextPage.patches is true and wires onClick", () => {
+    mockState.patches = [makePatch("p-1")];
+    mockState.hasNextPage = { issues: false, patches: true, documents: false };
+    render(<ChatRelatedTab conversationId="c-abc" />);
+
+    const buttons = screen.getAllByRole("button", { name: "Load more" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(fetchNextPagePatches).toHaveBeenCalledTimes(1);
+    expect(fetchNextPageIssues).not.toHaveBeenCalled();
+    expect(fetchNextPageDocuments).not.toHaveBeenCalled();
+  });
+
+  it("renders a Load more button in the Documents section when hasNextPage.documents is true and wires onClick", () => {
+    mockState.documents = [makeDocument("d-1")];
+    mockState.hasNextPage = { issues: false, patches: false, documents: true };
+    render(<ChatRelatedTab conversationId="c-abc" />);
+
+    const buttons = screen.getAllByRole("button", { name: "Load more" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(fetchNextPageDocuments).toHaveBeenCalledTimes(1);
+    expect(fetchNextPageIssues).not.toHaveBeenCalled();
+    expect(fetchNextPagePatches).not.toHaveBeenCalled();
+  });
+
+  it("shows 'Loading...' on the issues Load more button while isFetchingNextPage.issues is true and disables it", () => {
+    mockState.issues = [makeIssue("i-1")];
+    mockState.hasNextPage = { issues: true, patches: false, documents: false };
+    mockState.isFetchingNextPage = {
+      issues: true,
+      patches: false,
+      documents: false,
+    };
+
+    render(<ChatRelatedTab conversationId="c-abc" />);
+
+    const button = screen.getByRole("button", { name: "Loading..." });
+    expect(button).toBeDefined();
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(fetchNextPageIssues).not.toHaveBeenCalled();
   });
 });
