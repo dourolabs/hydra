@@ -541,7 +541,69 @@
       "status": "in-progress",
       "assignee": "reviewer",
       "dependencies": [],
-      "patches": ["p-seed00001"]
+      "patches": ["p-seed00001"],
+      "form": {
+        "prompt": "Code review for **OAuth2 provider integration** (`p-seed00001`).\n\nPlease evaluate the patch against the focus areas:\n- Token handling & secret storage\n- Error edge cases (revoked, expired, malformed)\n- Test coverage\n\nPick a verdict and leave a short rationale.",
+        "fields": [
+          {
+            "key": "verdict",
+            "label": "Verdict",
+            "description": "Pick one outcome for this review.",
+            "input": {
+              "type": "select",
+              "radio": false,
+              "options": [
+                { "value": "approve", "label": "Approve" },
+                { "value": "approve_with_nits", "label": "Approve with nits" },
+                { "value": "request_changes", "label": "Request changes" }
+              ]
+            }
+          },
+          {
+            "key": "headline",
+            "label": "Headline",
+            "description": "Short summary of the review.",
+            "input": {
+              "type": "text",
+              "placeholder": "e.g. Secure but missing refresh-token coverage",
+              "min_length": 4,
+              "max_length": 120
+            }
+          },
+          {
+            "key": "rationale",
+            "label": "Rationale",
+            "description": "Notes for the author — what landed well, what to address.",
+            "input": {
+              "type": "textarea",
+              "placeholder": "Bullet points are fine.",
+              "rows": 6
+            }
+          },
+          {
+            "key": "blocks_merge",
+            "label": "Block merge until addressed",
+            "input": { "type": "checkbox" },
+            "default": false
+          }
+        ],
+        "actions": [
+          {
+            "id": "submit_review",
+            "label": "Submit review",
+            "style": "primary",
+            "requires": ["verdict", "headline"],
+            "effect": { "type": "record_only" }
+          },
+          {
+            "id": "request_changes",
+            "label": "Request changes",
+            "style": "default",
+            "requires": ["verdict", "rationale"],
+            "effect": { "type": "update_issue", "status": "open" }
+          }
+        ]
+      }
     },
     "i-seed00012": {
       "type": "merge-request",
@@ -1150,6 +1212,310 @@
           "notes": "Looks good. The deadlock-prevention story is convincing; please add a regression test before landing."
         },
         "submitted_at": "2026-05-14T18:42:00.000Z"
+      }
+    },
+    "i-seed00025": {
+      "type": "task",
+      "title": "Survey: text inputs",
+      "description": "Survey covering every text-style input. Exercises both `text` (single line) and `textarea` (multi-line) with the full range of optional config: placeholder, min_length, max_length, pattern, rows, and prefilled defaults.",
+      "creator": "alice",
+      "progress": "",
+      "status": "open",
+      "assignee": "dev-user",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "Tell us about your team. Every text-style widget is represented below so you can see how `placeholder`, `min_length` / `max_length`, `pattern`, `rows`, and `default` render.",
+        "fields": [
+          {
+            "key": "team_name",
+            "label": "Team name",
+            "description": "1–40 characters. Letters, numbers, spaces, and dashes only.",
+            "input": {
+              "type": "text",
+              "placeholder": "e.g. Platform Foundations",
+              "min_length": 1,
+              "max_length": 40,
+              "pattern": "^[A-Za-z0-9 -]+$"
+            }
+          },
+          {
+            "key": "contact_email",
+            "label": "Primary contact email",
+            "description": "Used only for follow-up survey notifications.",
+            "input": {
+              "type": "text",
+              "placeholder": "name@company.example",
+              "max_length": 120,
+              "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+            },
+            "default": "platform@example.com"
+          },
+          {
+            "key": "elevator_pitch",
+            "label": "One-line pitch",
+            "description": "Single line. Pure `text` input with no constraints — for contrast.",
+            "input": {
+              "type": "text"
+            }
+          },
+          {
+            "key": "current_focus",
+            "label": "Current focus",
+            "description": "Compact textarea (default rows).",
+            "input": {
+              "type": "textarea",
+              "placeholder": "What is your team focused on this quarter?",
+              "max_length": 500
+            }
+          },
+          {
+            "key": "retro_notes",
+            "label": "Retrospective notes",
+            "description": "Larger textarea (8 rows) with a long-form default and a minimum length.",
+            "input": {
+              "type": "textarea",
+              "placeholder": "What's working, what isn't, and what you're trying next.",
+              "min_length": 20,
+              "rows": 8
+            },
+            "default": "Working well: <ITEMS>\nNot working: <ITEMS>\nNext experiment: <ITEM>"
+          }
+        ],
+        "actions": [
+          {
+            "id": "save",
+            "label": "Save responses",
+            "style": "primary",
+            "requires": ["team_name", "contact_email"],
+            "effect": { "type": "record_only" }
+          }
+        ]
+      }
+    },
+    "i-seed00026": {
+      "type": "task",
+      "title": "Survey: selection inputs",
+      "description": "Survey covering every selection-style input. Includes a radio `select`, a dropdown `select`, and `checkbox` (one defaulted on, one defaulted off, one unset).",
+      "creator": "alice",
+      "progress": "",
+      "status": "open",
+      "assignee": "dev-user",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "Pick your tooling preferences. This form exercises both `select` variants (radio vs. dropdown) plus `checkbox` toggles with and without defaults.",
+        "fields": [
+          {
+            "key": "primary_editor",
+            "label": "Primary editor",
+            "description": "Rendered as radio buttons (`radio: true`).",
+            "input": {
+              "type": "select",
+              "radio": true,
+              "options": [
+                { "value": "vscode", "label": "VS Code" },
+                { "value": "jetbrains", "label": "JetBrains IDE" },
+                { "value": "vim", "label": "Vim / Neovim" },
+                { "value": "emacs", "label": "Emacs" },
+                { "value": "other", "label": "Other" }
+              ]
+            },
+            "default": "vscode"
+          },
+          {
+            "key": "deploy_target",
+            "label": "Primary deploy target",
+            "description": "Rendered as a dropdown (`radio: false`).",
+            "input": {
+              "type": "select",
+              "radio": false,
+              "options": [
+                { "value": "k8s", "label": "Kubernetes" },
+                { "value": "ecs", "label": "AWS ECS" },
+                { "value": "lambda", "label": "AWS Lambda" },
+                { "value": "fly", "label": "Fly.io" },
+                { "value": "render", "label": "Render" },
+                { "value": "vercel", "label": "Vercel" },
+                { "value": "bare_metal", "label": "Bare metal" }
+              ]
+            }
+          },
+          {
+            "key": "wants_newsletter",
+            "label": "Subscribe to the platform newsletter",
+            "description": "Checkbox with `default: true`.",
+            "input": { "type": "checkbox" },
+            "default": true
+          },
+          {
+            "key": "share_publicly",
+            "label": "Allow anonymised results to be shared publicly",
+            "description": "Checkbox with `default: false`.",
+            "input": { "type": "checkbox" },
+            "default": false
+          },
+          {
+            "key": "beta_testing",
+            "label": "Available for beta testing new features",
+            "description": "Checkbox with no `default` (initially unset).",
+            "input": { "type": "checkbox" }
+          }
+        ],
+        "actions": [
+          {
+            "id": "save",
+            "label": "Save preferences",
+            "style": "primary",
+            "requires": ["primary_editor", "deploy_target"],
+            "effect": { "type": "record_only" }
+          }
+        ]
+      }
+    },
+    "i-seed00027": {
+      "type": "task",
+      "title": "Survey: numeric inputs",
+      "description": "Survey covering every flavor of `number` input: bounded with step, bounded with a `default`, and unbounded (no min/max/step) for contrast.",
+      "creator": "alice",
+      "progress": "",
+      "status": "open",
+      "assignee": "dev-user",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "Help us calibrate a load test. Every variant of the `number` input is represented: discrete bounded values, fractional defaults, and an unconstrained free-form number.",
+        "fields": [
+          {
+            "key": "team_size",
+            "label": "Team size",
+            "description": "Integer between 1 and 50. `min` / `max` / `step` all set.",
+            "input": {
+              "type": "number",
+              "min": 1,
+              "max": 50,
+              "step": 1
+            },
+            "default": 6
+          },
+          {
+            "key": "satisfaction",
+            "label": "Satisfaction score",
+            "description": "Half-point scale from 0 to 10. Fractional `step` with no default.",
+            "input": {
+              "type": "number",
+              "min": 0,
+              "max": 10,
+              "step": 0.5
+            }
+          },
+          {
+            "key": "target_rps",
+            "label": "Target requests/sec",
+            "description": "Bounded above only. `max: 100000`, no `min` or `step`.",
+            "input": {
+              "type": "number",
+              "max": 100000
+            },
+            "default": 1500
+          },
+          {
+            "key": "budget_usd",
+            "label": "Monthly budget (USD)",
+            "description": "Completely unbounded — no `min`, `max`, or `step`. For contrast.",
+            "input": {
+              "type": "number"
+            }
+          }
+        ],
+        "actions": [
+          {
+            "id": "save",
+            "label": "Save numbers",
+            "style": "primary",
+            "requires": ["team_size"],
+            "effect": { "type": "record_only" }
+          }
+        ]
+      }
+    },
+    "i-seed00028": {
+      "type": "task",
+      "title": "Survey: actions & states",
+      "description": "Already-submitted survey demonstrating the read-only `form_response` path on a non-review issue, plus a mix of action `style` (`primary` / `danger` / `default`) and `effect` (`update_issue` / `record_only`) variants.",
+      "creator": "alice",
+      "progress": "Response submitted by bob — issue closed via the `confirm_shutdown` action.",
+      "status": "closed",
+      "assignee": "bob",
+      "dependencies": [],
+      "patches": [],
+      "form": {
+        "prompt": "**Decommission legacy `auth-v1` service.**\n\nThe service has been idle for 30 days. Choose how to proceed. Each action below demonstrates a different `style` + `effect` combination.",
+        "fields": [
+          {
+            "key": "confidence",
+            "label": "Confidence level",
+            "description": "How sure are you about decommissioning?",
+            "input": {
+              "type": "select",
+              "radio": true,
+              "options": [
+                { "value": "high", "label": "High — verified no traffic" },
+                { "value": "medium", "label": "Medium — traffic but recoverable" },
+                { "value": "low", "label": "Low — need more data" }
+              ]
+            }
+          },
+          {
+            "key": "shutdown_window",
+            "label": "Proposed shutdown window",
+            "description": "Free-text rationale or a concrete window.",
+            "input": {
+              "type": "textarea",
+              "placeholder": "e.g. Sun 02:00–04:00 UTC, low-traffic window",
+              "rows": 3
+            }
+          },
+          {
+            "key": "notify_oncall",
+            "label": "Page oncall before action",
+            "input": { "type": "checkbox" },
+            "default": true
+          }
+        ],
+        "actions": [
+          {
+            "id": "confirm_shutdown",
+            "label": "Confirm shutdown",
+            "style": "danger",
+            "requires": ["confidence", "shutdown_window"],
+            "effect": { "type": "update_issue", "status": "closed" }
+          },
+          {
+            "id": "defer",
+            "label": "Defer 7 days",
+            "style": "default",
+            "requires": ["confidence"],
+            "effect": { "type": "record_only" }
+          },
+          {
+            "id": "escalate",
+            "label": "Escalate to platform lead",
+            "style": "primary",
+            "requires": [],
+            "effect": { "type": "record_only" }
+          }
+        ]
+      },
+      "form_response": {
+        "action_id": "confirm_shutdown",
+        "actor": { "Username": "bob" },
+        "values": {
+          "confidence": "high",
+          "shutdown_window": "Sun 2026-05-17 02:00–04:00 UTC. Verified zero traffic for 31 days; oncall paged ahead of cutover.",
+          "notify_oncall": true
+        },
+        "submitted_at": "2026-05-15T19:05:00.000Z"
       }
     }
   },
