@@ -154,7 +154,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  background: var(--s-progress);
+  background: var(--s-closed);
   border-radius: 4px;
   transition: width var(--tx-norm);
 }
@@ -164,6 +164,7 @@
 }
 
 .progressFillActive {
+  background: var(--s-progress);
   box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
   animation: progressGlow 1.6s ease-in-out infinite;
 }
