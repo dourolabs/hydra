@@ -279,7 +279,7 @@ impl PatchWorkflowAutomation {
                     format!("Review request for patch {}: {title}", patch_id.as_ref());
                 let issue = Issue::new(
                     IssueType::ReviewRequest,
-                    String::new(),
+                    format!("Review {}: {}", patch_id.as_ref(), title),
                     description,
                     creator.clone(),
                     String::new(),
@@ -344,7 +344,7 @@ impl PatchWorkflowAutomation {
 
             let issue = Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                format!("Merge {}: {}", patch_id.as_ref(), title),
                 description,
                 creator,
                 String::new(),
@@ -712,12 +712,17 @@ mod tests {
 
         let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
         let mut open_mr_count = 0;
+        let expected_title = format!("Merge {}: test patch", patch_id.as_ref());
         for issue_id in &issues {
             let issue = store.get_issue(issue_id, false).await.unwrap();
             if issue.item.issue_type == IssueType::MergeRequest
                 && issue.item.status == IssueStatus::Open
             {
                 assert_eq!(issue.item.assignee, None);
+                assert_eq!(
+                    issue.item.title, expected_title,
+                    "MergeRequest issue should have descriptive title"
+                );
                 open_mr_count += 1;
             }
         }
@@ -1143,6 +1148,7 @@ review_requests:
         let mut rr_count = 0;
         let mut mr_count = 0;
         let mut rr_assignees: Vec<String> = Vec::new();
+        let expected_title = format!("Review {}: test patch", patch_id.as_ref());
 
         for issue_id in &issues {
             let issue = store.get_issue(issue_id, false).await.unwrap();
@@ -1152,6 +1158,10 @@ review_requests:
                     if let Some(a) = &issue.item.assignee {
                         rr_assignees.push(a.clone());
                     }
+                    assert_eq!(
+                        issue.item.title, expected_title,
+                        "ReviewRequest issue should have descriptive title"
+                    );
                 }
                 IssueType::MergeRequest => {
                     mr_count += 1;
