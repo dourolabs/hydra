@@ -31,7 +31,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
-SERVER_URL="http://localhost:8080"
+# MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
+SERVER_URL="http://127.0.0.1:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
 HYDRA_SERVER_PID_FILE="${HYDRA_STATE_DIR}/hydra-server.pid"
 HYDRA_SP="${REPO_ROOT}/target/release/hydra-sp"
