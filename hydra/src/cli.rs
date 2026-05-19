@@ -136,6 +136,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::relations::RelationsCommand,
     },
+    /// Query the knowledge graph (nodes, with version-aware views).
+    Graph {
+        #[command(subcommand)]
+        command: command::graph::GraphCommand,
+    },
     /// Manage service repositories.
     Repos {
         #[command(subcommand)]
@@ -303,6 +308,9 @@ pub async fn dispatch(
         }
         Commands::Relations { command } => {
             command::relations::run(client.as_ref(), command, context).await?
+        }
+        Commands::Graph { command } => {
+            command::graph::run(client.as_ref(), command, context).await?
         }
         Commands::Repos { command } => {
             command::repos::run(client.as_ref(), command, context).await?
