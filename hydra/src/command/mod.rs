@@ -3,6 +3,7 @@ pub mod caches;
 pub mod chat;
 pub mod conversations;
 pub mod documents;
+pub mod graph;
 pub mod issues;
 pub mod notifications;
 pub mod output;
