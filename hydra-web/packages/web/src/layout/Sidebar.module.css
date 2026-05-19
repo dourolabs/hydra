@@ -285,13 +285,13 @@
   flex-shrink: 0;
 }
 
-.chatDotOpen { background: var(--s-open); }
-.chatDotInProgress {
+.chatDotIdle { background: var(--s-conv-idle); }
+.chatDotActive {
   background: var(--s-progress);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-progress) 18%, transparent);
   animation: hydra-pulse 1.8s ease-in-out infinite;
 }
-.chatDotClosed { background: var(--s-closed); }
+.chatDotClosed { background: var(--s-conv-closed); }
 
 .chatTitle {
   flex: 1;

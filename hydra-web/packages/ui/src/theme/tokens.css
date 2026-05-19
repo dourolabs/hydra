@@ -83,6 +83,9 @@
   --s-blocked: oklch(0.78 0.13 50); /* orange */
   --s-rejected: oklch(0.72 0.13 350); /* magenta */
   --s-neutral: oklch(0.62 0.005 80);
+  /* Conversation-lifecycle tones — used by chat status badges/dots only. */
+  --s-conv-idle: oklch(0.66 0.04 240); /* muted slate-blue: idle conversations */
+  --s-conv-closed: oklch(0.55 0.01 80); /* desaturated mid-grey: closed conversations */
 
   /* Violet — used for human avatars, IDs in mono spans, agent chips */
   --c-violet: oklch(0.74 0.16 290);

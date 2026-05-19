@@ -51,9 +51,9 @@ function formatRelativeTime(iso: string): string {
 }
 
 function chatDotClass(status: ConversationSummary["status"]): string {
-  if (status === "active") return styles.chatDotInProgress!;
+  if (status === "active") return styles.chatDotActive!;
   if (status === "closed") return styles.chatDotClosed!;
-  return styles.chatDotOpen!;
+  return styles.chatDotIdle!;
 }
 
 function sessionTitle(s: SessionSummaryRecord["session"]): string {

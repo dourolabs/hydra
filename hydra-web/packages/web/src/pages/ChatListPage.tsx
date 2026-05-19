@@ -2,25 +2,13 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Icons } from "@hydra/ui";
-import type { BadgeStatus } from "@hydra/ui";
-import type { Conversation, ConversationStatus } from "@hydra/api";
+import type { Conversation } from "@hydra/api";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { formatRelativeTime } from "../utils/time";
 import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
-
-function chatBadgeStatus(status: ConversationStatus): BadgeStatus {
-  switch (status) {
-    case "active":
-      return "in-progress";
-    case "idle":
-      return "open";
-    case "closed":
-      return "issue-closed";
-  }
-}
 
 export function ChatListPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Chats");
@@ -110,7 +98,7 @@ export function ChatListPage() {
                       </div>
                     </td>
                     <td className={styles.colStatus}>
-                      <Badge status={chatBadgeStatus(c.status)} />
+                      <Badge status={`conv-${c.status}`} />
                     </td>
                     <td className={styles.colCreator}>{c.creator}</td>
                     <td className={styles.colMessages}>{c.event_count}</td>
