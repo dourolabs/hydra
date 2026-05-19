@@ -1,0 +1,116 @@
+.picker {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pickerLabel {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  padding-left: 2px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 8px 0 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast);
+}
+
+.pill:hover {
+  border-color: var(--line-strong);
+}
+
+.pillActive {
+  border-color: var(--acc);
+  background: var(--acc-soft);
+}
+
+.pillChevron {
+  color: var(--fg-2);
+  display: inline-flex;
+  transition: transform var(--tx-fast);
+}
+
+.pillActive .pillChevron {
+  color: var(--acc);
+}
+
+/* Portaled popover. Position is computed from the trigger pill's bounding
+ * rect at open time so the menu always escapes whatever scrolling container
+ * the trigger is rendered into. */
+.pop {
+  position: fixed;
+  z-index: 1100;
+  min-width: 200px;
+  max-width: 420px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.popWide {
+  min-width: 280px;
+}
+
+.popRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.popRow:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.popRowActive {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.popRowActive .popCheck {
+  color: var(--acc);
+}
+
+.popCheck {
+  margin-left: auto;
+  color: transparent;
+  display: inline-flex;
+}
+
+.popSpacer {
+  flex: 1;
+}

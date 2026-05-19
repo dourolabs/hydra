@@ -155,10 +155,10 @@ describe("Sidebar", () => {
   it("renders the brand and workspace nav items", () => {
     renderSidebar();
     expect(screen.getByTestId("hydra-brand")).toBeTruthy();
-    // The main 'Issues' workspace link defaults to the current user's issues.
-    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
-    expect(issuesLink).toBeTruthy();
-    expect(issuesLink.getAttribute("href")).toBe("/?selected=your-issues");
+    // The Workspace > Issues link is the all-issues landing page.
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink).toBeTruthy();
+    expect(allLink.getAttribute("href")).toBe("/");
     expect(screen.getByTestId("sidebar-patches")).toBeTruthy();
     expect(screen.getByTestId("sidebar-sessions")).toBeTruthy();
     expect(screen.getByTestId("sidebar-chats")).toBeTruthy();
@@ -168,32 +168,36 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("sidebar-context-secrets")).toBeTruthy();
   });
 
-  it("exposes the All issues opt-out from the Views section", () => {
+  it("exposes the My issues view scoped to the current user", () => {
     renderSidebar();
-    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
-    expect(allLink.getAttribute("href")).toBe("/?selected=all");
+    const myLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(myLink.getAttribute("href")).toBe("/?creator=Alice");
   });
 
-  it("marks the main Issues link active at / with no selected param", () => {
+  it("marks Workspace > Issues active at / with no filter params", () => {
     renderSidebar({ initialEntry: "/" });
-    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
-    expect(issuesLink.className).toContain("itemActive");
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink.className).toContain("itemActive");
+    const myLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(myLink.className).not.toContain("itemActive");
+  });
+
+  it("marks the My issues view active at /?creator=<user>", () => {
+    renderSidebar({ initialEntry: "/?creator=Alice" });
+    const myLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(myLink.className).toContain("itemActive");
     const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
     expect(allLink.className).not.toContain("itemActive");
   });
 
-  it("marks the main Issues link active at /?selected=your-issues", () => {
-    renderSidebar({ initialEntry: "/?selected=your-issues" });
-    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
-    expect(issuesLink.className).toContain("itemActive");
-  });
-
-  it("marks the All issues link active at /?selected=all (and not the main Issues link)", () => {
-    renderSidebar({ initialEntry: "/?selected=all" });
+  it("highlights neither Issues nor My issues when an unrelated filter is active", () => {
+    // With creator=other, neither the Workspace > Issues "all" landing
+    // nor the My issues view (creator=Alice) matches — so both stay dim.
+    renderSidebar({ initialEntry: "/?creator=other" });
+    const myLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(myLink.className).not.toContain("itemActive");
     const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
-    expect(allLink.className).toContain("itemActive");
-    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
-    expect(issuesLink.className).not.toContain("itemActive");
+    expect(allLink.className).not.toContain("itemActive");
   });
 
   it("workspace items navigate to the expected routes", () => {
@@ -227,8 +231,14 @@ describe("Sidebar", () => {
     issueCountMock.mockReturnValue({ data: 4, isLoading: false, error: null });
     renderSidebar();
     const link = screen.getByTestId("sidebar-issues-assigned") as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toBe("/?selected=assigned");
+    expect(link.getAttribute("href")).toBe("/?assignee=Alice");
     expect(screen.getByTestId("sidebar-issues-assigned-badge").textContent).toBe("4");
+  });
+
+  it("links the In progress view to the explicit status filter", () => {
+    renderSidebar();
+    const link = screen.getByTestId("sidebar-issues-in-progress") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/?status=in-progress");
   });
 
   it("opens search when search button clicked", () => {

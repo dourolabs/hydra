@@ -6,6 +6,7 @@ const PAGE_SIZE = 50;
 
 export interface IssueFilters {
   status?: string | null;
+  type?: string | null;
   creator?: string | null;
   assignee?: string | null;
   labels?: string | null;
@@ -21,6 +22,7 @@ function buildQuery(
     limit: PAGE_SIZE,
   };
   if (filters.status) query.status = filters.status as SearchIssuesQuery["status"];
+  if (filters.type) query.issue_type = filters.type as SearchIssuesQuery["issue_type"];
   if (filters.creator) query.creator = filters.creator;
   if (filters.assignee) query.assignee = filters.assignee;
   if (filters.labels) query.labels = filters.labels;
@@ -59,6 +61,7 @@ export function useIssueCount(filters: IssueFilters, enabled = true) {
         count: true,
       };
       if (filters.status) query.status = filters.status as SearchIssuesQuery["status"];
+      if (filters.type) query.issue_type = filters.type as SearchIssuesQuery["issue_type"];
       if (filters.creator) query.creator = filters.creator;
       if (filters.assignee) query.assignee = filters.assignee;
       if (filters.labels) query.labels = filters.labels;

@@ -34,6 +34,9 @@ export type { TabsProps, Tab } from "./components/Tabs";
 export { Modal } from "./components/Modal";
 export type { ModalProps } from "./components/Modal";
 
+export { Picker, PickerRow } from "./components/Picker";
+export type { PickerProps, PickerRowProps } from "./components/Picker";
+
 export { Tooltip } from "./components/Tooltip";
 export type { TooltipProps, TooltipTrigger } from "./components/Tooltip";
 

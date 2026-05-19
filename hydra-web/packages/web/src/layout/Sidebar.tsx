@@ -82,7 +82,6 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
 
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
-  const selectedParam = searchParams.get("selected");
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
 
   const [version, setVersion] = useState<string | null>(null);
@@ -100,9 +99,57 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
     () => (displayName ? { assignee: displayName, status: "open" } : {}),
     [displayName],
   );
-  const inProgressFilters = useMemo<IssueFilters>(() => ({ status: "in_progress" }), []);
+  const inProgressFilters = useMemo<IssueFilters>(() => ({ status: "in-progress" }), []);
   const { data: assignedCount = 0 } = useIssueCount(assignedFilters, !!displayName);
   const { data: inProgressCount = 0 } = useIssueCount(inProgressFilters, true);
+
+  // URL params used by the Workspace sidebar's links. Encoding the username
+  // explicitly keeps the route shareable without a server-side lookup, but
+  // means the `Issues` and `Assigned to me` links are computed per-user.
+  const yourIssuesHref = displayName
+    ? `/?creator=${encodeURIComponent(displayName)}`
+    : "/";
+  const assignedHref = displayName
+    ? `/?assignee=${encodeURIComponent(displayName)}`
+    : "/";
+  const inProgressHref = "/?status=in-progress";
+
+  // Active-link logic: the link is active iff the current URL matches the
+  // single filter param it points at AND no other filter params are present,
+  // so the dropdown filters below don't keep multiple sidebar items lit.
+  const isOnlyParam = (key: string, value: string): boolean => {
+    if (pathname !== "/") return false;
+    if (searchParams.get(key) !== value) return false;
+    for (const [k] of searchParams.entries()) {
+      if (k === key) continue;
+      if (k === "selected") continue;
+      if (k === "q") continue;
+      return false;
+    }
+    return true;
+  };
+
+  const isNoFilters = (): boolean => {
+    if (pathname !== "/") return false;
+    for (const [k] of searchParams.entries()) {
+      if (k === "selected") continue;
+      if (k === "q") continue;
+      return false;
+    }
+    return true;
+  };
+
+  // A bare `/` means "all issues" (no filter applied), so the All issues
+  // link is the one that lights up there. The Issues link is active only
+  // when the URL carries the current user's creator filter.
+  const isYourIssuesActive = displayName
+    ? isOnlyParam("creator", displayName)
+    : false;
+  const isAllIssuesActive = isNoFilters();
+  const isAssignedActive = displayName
+    ? isOnlyParam("assignee", displayName)
+    : false;
+  const isInProgressActive = isOnlyParam("status", "in-progress");
 
   // ── Recent chats ──
   // Default to the logged-in user's own chats; mirrors the ChatListPage 'mine' default.
@@ -147,16 +194,12 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // ── Workspace items ── (Chats lives in its own top section)
   const workspaceItems: NavItem[] = [
     {
-      to: "/?selected=your-issues",
+      to: "/",
       end: true,
       label: "Issues",
-      testId: "sidebar-issues-your-issues",
+      testId: "sidebar-issues-all",
       icon: <Icons.IconIssue />,
-      isActive: (pathname, search) => {
-        if (pathname !== "/") return false;
-        const selected = search.get("selected");
-        return selected === null || selected === "your-issues";
-      },
+      isActive: () => isAllIssuesActive,
     },
     {
       to: "/patches",
@@ -301,24 +344,22 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               <span>Views</span>
             </div>
             <NavLink
-              to="/?selected=all"
-              className={({ isActive }) => {
-                const active = isActive && selectedParam === "all";
-                return `${styles.item}${active ? ` ${styles.itemActive}` : ""}`;
-              }}
-              data-testid="sidebar-issues-all"
+              to={yourIssuesHref}
+              className={() =>
+                `${styles.item}${isYourIssuesActive ? ` ${styles.itemActive}` : ""}`
+              }
+              data-testid="sidebar-issues-your-issues"
             >
               <span className={styles.itemIcon}>
                 <Icons.IconIssue />
               </span>
-              <span className={styles.itemLabel}>All issues</span>
+              <span className={styles.itemLabel}>My issues</span>
             </NavLink>
             <NavLink
-              to="/?selected=assigned"
-              className={({ isActive }) => {
-                const active = isActive && selectedParam === "assigned";
-                return `${styles.item}${active ? ` ${styles.itemActive}` : ""}`;
-              }}
+              to={assignedHref}
+              className={() =>
+                `${styles.item}${isAssignedActive ? ` ${styles.itemActive}` : ""}`
+              }
               data-testid="sidebar-issues-assigned"
             >
               <span className={styles.itemIcon}>
@@ -332,11 +373,10 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               )}
             </NavLink>
             <NavLink
-              to="/?selected=in_progress"
-              className={({ isActive }) => {
-                const active = isActive && selectedParam === "in_progress";
-                return `${styles.item}${active ? ` ${styles.itemActive}` : ""}`;
-              }}
+              to={inProgressHref}
+              className={() =>
+                `${styles.item}${isInProgressActive ? ` ${styles.itemActive}` : ""}`
+              }
               data-testid="sidebar-issues-in-progress"
             >
               <span className={styles.itemIcon}>

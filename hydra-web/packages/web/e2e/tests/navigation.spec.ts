@@ -16,38 +16,34 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await page.getByTestId("site-header-sessions").click();
     await expect(page).toHaveURL(/\/sessions$/);
 
-    // Main 'Issues' workspace link → dashboard scoped to the current user.
+    // Workspace > Issues link → all-issues landing page.
+    await page.getByTestId("sidebar-issues-all").click();
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
+
+    // The Views > My issues link scopes the dashboard to the current user.
     await page.getByTestId("sidebar-issues-your-issues").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
-    );
-
-    // The Views > All issues link is the explicit opt-out.
-    await page.getByTestId("sidebar-issues-all").click();
-    await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=all$/,
+      /^http:\/\/localhost:\d+\/\?creator=[^&]+$/,
     );
   });
 
   test("Issues section items deep-link to the dashboard @nav:sidebar", async ({
     authenticatedPage: page,
   }) => {
-    // Default Issues link (workspace) → your-issues.
-    await page.getByTestId("sidebar-issues-your-issues").click();
-    await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
-    );
+    // Workspace > Issues → bare dashboard with no filters.
+    await page.getByTestId("sidebar-issues-all").click();
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
 
     // Assigned to you → dashboard with Assigned filter selected.
     await page.getByTestId("sidebar-issues-assigned").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=assigned$/,
+      /^http:\/\/localhost:\d+\/\?assignee=[^&]+$/,
     );
 
-    // All issues → dashboard with All filter selected.
-    await page.getByTestId("sidebar-issues-all").click();
+    // My issues → dashboard scoped to the current user as creator.
+    await page.getByTestId("sidebar-issues-your-issues").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=all$/,
+      /^http:\/\/localhost:\d+\/\?creator=[^&]+$/,
     );
   });
 

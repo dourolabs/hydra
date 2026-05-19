@@ -33,12 +33,10 @@ test.describe("Mobile Navigation @mobile:nav", () => {
     await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/agents/);
 
-    // Navigate to the dashboard via the Views > All issues opt-out link.
+    // Navigate to the all-issues dashboard via Workspace > Issues.
     await openMobileDrawer(page);
     await page.getByTestId("sidebar-issues-all").click();
-    await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?selected=all$/,
-    );
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
   });
 
   test("deep link to issue detail renders correctly @mobile:nav", async ({

@@ -33,6 +33,39 @@ vi.mock("@hydra/ui", () => ({
   TypeChip: ({ type }: { type: string }) => (
     <span data-testid={`type-chip-${type}`}>{type}</span>
   ),
+  Picker: ({
+    label,
+    value,
+    open,
+    onToggle,
+    children,
+  }: {
+    label: string;
+    value: ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    children: ReactNode;
+  }) => (
+    <div data-testid={`picker-${label.toLowerCase()}`}>
+      <span>{label}</span>
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-label={label}>
+        {value}
+      </button>
+      {open && <div data-testid={`picker-pop-${label.toLowerCase()}`}>{children}</div>}
+    </div>
+  ),
+  PickerRow: ({
+    onClick,
+    children,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: ReactNode;
+  }) => (
+    <button type="button" onClick={onClick}>
+      {children}
+    </button>
+  ),
   Icons: new Proxy(
     {},
     {
