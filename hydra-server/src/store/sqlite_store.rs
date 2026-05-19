@@ -27,6 +27,7 @@ use hydra_common::{
     PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
+    ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use sqlx::migrate::Migrator;
@@ -390,6 +391,59 @@ impl SqliteStore {
     pub async fn run_migrations(pool: &SqlitePool) -> Result<(), anyhow::Error> {
         MIGRATOR.run(pool).await?;
         Ok(())
+    }
+
+    async fn count_latest_rows(&self, table: &str) -> Result<u64, StoreError> {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE is_latest = 1");
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(count.max(0) as u64)
+    }
+
+    async fn count_all_rows(&self, table: &str) -> Result<u64, StoreError> {
+        let sql = format!("SELECT COUNT(*) FROM {table}");
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(count.max(0) as u64)
+    }
+
+    async fn next_issue_id(&self) -> Result<IssueId, StoreError> {
+        let len = random_len_for_count(self.count_latest_rows(TABLE_ISSUES_V2).await?);
+        Ok(IssueId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_patch_id(&self) -> Result<PatchId, StoreError> {
+        let len = random_len_for_count(self.count_latest_rows(TABLE_PATCHES_V2).await?);
+        Ok(PatchId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_document_id(&self) -> Result<DocumentId, StoreError> {
+        let len = random_len_for_count(self.count_latest_rows(TABLE_DOCUMENTS_V2).await?);
+        Ok(DocumentId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_session_id(&self) -> Result<SessionId, StoreError> {
+        let len = random_len_for_count(self.count_latest_rows(TABLE_TASKS_V2).await?);
+        Ok(SessionId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_notification_id(&self) -> Result<NotificationId, StoreError> {
+        let len = random_len_for_count(self.count_all_rows(TABLE_NOTIFICATIONS).await?);
+        Ok(NotificationId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_label_id(&self) -> Result<LabelId, StoreError> {
+        let len = random_len_for_count(self.count_all_rows(TABLE_LABELS).await?);
+        Ok(LabelId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_conversation_id(&self) -> Result<ConversationId, StoreError> {
+        let len = random_len_for_count(self.count_latest_rows(TABLE_CONVERSATIONS).await?);
+        Ok(ConversationId::generate(len).expect("length within bounds"))
     }
 
     async fn fetch_latest_version_number(
@@ -4104,7 +4158,7 @@ impl Store for SqliteStore {
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
-        let id = IssueId::new();
+        let id = self.next_issue_id().await?;
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
@@ -4174,7 +4228,7 @@ impl Store for SqliteStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
+        let id = self.next_patch_id().await?;
         let actor_json = actor_to_json_string(actor);
         self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -4216,7 +4270,7 @@ impl Store for SqliteStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let id = DocumentId::new();
+        let id = self.next_document_id().await?;
         let actor_json = actor_to_json_string(actor);
         self.insert_document(&id, 1, &document, Some(&actor_json))
             .await?;
@@ -4260,7 +4314,7 @@ impl Store for SqliteStore {
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(SessionId, VersionNumber), StoreError> {
-        let id = SessionId::new();
+        let id = self.next_session_id().await?;
 
         if let Some(issue_id) = session.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
@@ -4446,7 +4500,7 @@ impl Store for SqliteStore {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let id = NotificationId::new();
+        let id = self.next_notification_id().await?;
         self.insert_notification_row(&id, &notification).await?;
         Ok(id)
     }
@@ -4694,7 +4748,7 @@ impl Store for SqliteStore {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let id = LabelId::new();
+        let id = self.next_label_id().await?;
 
         let sql = format!(
             "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
@@ -4919,7 +4973,7 @@ impl Store for SqliteStore {
         conversation: Conversation,
         actor: &ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        let id = ConversationId::new();
+        let id = self.next_conversation_id().await?;
         let actor_json = actor_to_json_string(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
@@ -9599,5 +9653,63 @@ mod tests {
         let store = create_test_store().await;
         let results = store.get_documents_by_paths(&[]).await.unwrap();
         assert!(results.is_empty());
+    }
+
+    async fn insert_dummy_latest_sessions(store: &SqliteStore, start: usize, count: usize) {
+        // Insert minimal session rows with is_latest = 1 to inflate the count
+        // cheaply without exercising the full add_session pipeline. The numeric
+        // suffix keeps each id globally unique across calls.
+        for i in start..(start + count) {
+            let id = format!("s-dummyaa{i:08}");
+            sqlx::query(&format!(
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, env_vars, status, deleted, is_latest)
+                 VALUES (?1, 1, '', '{{}}', '{{}}', 'complete', 0, 1)"
+            ))
+            .bind(&id)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn add_session_grows_id_suffix_with_table_size() {
+        let store = create_test_store().await;
+
+        // Empty table — next ID should use the default 6-char suffix.
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            6,
+            "fresh table should use default suffix length"
+        );
+
+        // 27 sessions still fit within ceil(log_26) = 2 → suffix stays at 6.
+        insert_dummy_latest_sessions(&store, 0, 26).await; // 26 dummies + 1 real = 27
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            6,
+            "27 rows should still use default 6-char suffix"
+        );
+
+        // Inflate to 677 rows: 2 real sessions + dummies. We already have 28
+        // rows; add 649 more to reach 677 total before the next call.
+        insert_dummy_latest_sessions(&store, 26, 649).await;
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            7,
+            "677 rows should bump suffix length to 7"
+        );
     }
 }

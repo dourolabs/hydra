@@ -30,6 +30,7 @@ use hydra_common::{
     PatchId, RepoName, SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
+    ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 
@@ -106,6 +107,41 @@ impl MemoryStore {
             conversation_events: DashMap::new(),
             conversation_session_state: DashMap::new(),
         }
+    }
+
+    fn next_issue_id(&self) -> IssueId {
+        let len = random_len_for_count(self.issues.len() as u64);
+        IssueId::generate(len).expect("length within bounds")
+    }
+
+    fn next_patch_id(&self) -> PatchId {
+        let len = random_len_for_count(self.patches.len() as u64);
+        PatchId::generate(len).expect("length within bounds")
+    }
+
+    fn next_document_id(&self) -> DocumentId {
+        let len = random_len_for_count(self.documents.len() as u64);
+        DocumentId::generate(len).expect("length within bounds")
+    }
+
+    fn next_session_id(&self) -> SessionId {
+        let len = random_len_for_count(self.tasks.len() as u64);
+        SessionId::generate(len).expect("length within bounds")
+    }
+
+    fn next_notification_id(&self) -> NotificationId {
+        let len = random_len_for_count(self.notifications.len() as u64);
+        NotificationId::generate(len).expect("length within bounds")
+    }
+
+    fn next_label_id(&self) -> LabelId {
+        let len = random_len_for_count(self.labels.len() as u64);
+        LabelId::generate(len).expect("length within bounds")
+    }
+
+    fn next_conversation_id(&self) -> ConversationId {
+        let len = random_len_for_count(self.conversations.len() as u64);
+        ConversationId::generate(len).expect("length within bounds")
     }
 
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
@@ -1695,7 +1731,7 @@ impl Store for MemoryStore {
         issue: Issue,
         actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
-        let id = IssueId::new();
+        let id = self.next_issue_id();
 
         self.validate_dependencies(&issue.dependencies)?;
 
@@ -1752,7 +1788,7 @@ impl Store for MemoryStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
+        let id = self.next_patch_id();
         self.patches.insert(
             id.clone(),
             vec![Self::versioned_now_with_actor(patch, 1, actor)],
@@ -1802,7 +1838,7 @@ impl Store for MemoryStore {
             }
         }
 
-        let id = DocumentId::new();
+        let id = self.next_document_id();
         let path = document.path.clone();
         self.documents.insert(
             id.clone(),
@@ -1884,7 +1920,7 @@ impl Store for MemoryStore {
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(SessionId, VersionNumber), StoreError> {
-        let id = SessionId::new();
+        let id = self.next_session_id();
         let spawned_from = session.spawned_from.clone();
 
         session.creation_time = Some(creation_time);
@@ -2034,7 +2070,7 @@ impl Store for MemoryStore {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let id = NotificationId::new();
+        let id = self.next_notification_id();
 
         self.notifications.insert(id.clone(), notification);
         Ok(id)
@@ -2157,7 +2193,7 @@ impl Store for MemoryStore {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let id = LabelId::new();
+        let id = self.next_label_id();
 
         self.labels.insert(id.clone(), label);
         Ok(id)
@@ -2306,7 +2342,7 @@ impl Store for MemoryStore {
         conversation: Conversation,
         actor: &ActorRef,
     ) -> Result<(ConversationId, VersionNumber), StoreError> {
-        let id = ConversationId::new();
+        let id = self.next_conversation_id();
         let now = Utc::now();
         let versioned = Versioned::with_actor(conversation, 1, now, actor.clone(), now);
         self.conversations.insert(id.clone(), vec![versioned]);
@@ -7932,5 +7968,60 @@ mod tests {
         let store = MemoryStore::new();
         let summaries = store.get_conversation_event_summaries(&[]).await.unwrap();
         assert!(summaries.is_empty());
+    }
+
+    fn insert_dummy_sessions(store: &MemoryStore, count: usize) {
+        for _ in 0..count {
+            // Generate at MAX_RANDOM_LEN so collisions across a 677-row test
+            // are vanishingly unlikely without falling back to retry.
+            let id = SessionId::generate(12).unwrap();
+            store.tasks.insert(
+                id,
+                vec![Versioned::with_actor(
+                    spawn_task(),
+                    1,
+                    Utc::now(),
+                    ActorRef::test(),
+                    Utc::now(),
+                )],
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn add_session_grows_id_suffix_with_table_size() {
+        let store = MemoryStore::new();
+
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            6,
+            "fresh store should use default suffix length"
+        );
+
+        insert_dummy_sessions(&store, 26); // total = 27
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            6,
+            "27 rows should still use default suffix"
+        );
+
+        insert_dummy_sessions(&store, 649); // total = 677
+        let (id, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - SessionId::prefix().len(),
+            7,
+            "677 rows should bump suffix length to 7"
+        );
     }
 }
