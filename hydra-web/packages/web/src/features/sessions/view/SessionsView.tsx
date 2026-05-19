@@ -10,7 +10,11 @@ import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
 import { getRuntime } from "../../../utils/time";
 import { descriptionSnippet } from "../../../utils/text";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
+import { SessionRailRow } from "../../related/RailRow";
 import styles from "./SessionsView.module.css";
+
+const MOBILE_QUERY = "(max-width: 768px)";
 
 interface StatusFilter {
   key: "all" | SessionStatus;
@@ -43,6 +47,7 @@ function relativeTime(iso: string | null | undefined): string {
 
 export function SessionsView() {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery(MOBILE_QUERY);
   const [selectedStatus, setSelectedStatus] = useState<SessionStatus | null>(null);
 
   const filters = useMemo(() => ({ status: selectedStatus }), [selectedStatus]);
@@ -120,7 +125,15 @@ export function SessionsView() {
           <div className={styles.empty}>No sessions match the current filters.</div>
         )}
 
-        {rows.length > 0 && (
+        {rows.length > 0 && isMobile && (
+          <div className={styles.mobileList} data-testid="sessions-list">
+            {rows.map((rec) => (
+              <SessionRailRow key={rec.session_id} record={rec} />
+            ))}
+          </div>
+        )}
+
+        {rows.length > 0 && !isMobile && (
           <div className={styles.tableWrap}>
             <table className={styles.table} data-testid="sessions-list">
               <thead>

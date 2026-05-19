@@ -12,6 +12,20 @@ interface ListRelationsResponse {
   relations: RelationResponse[];
 }
 
+// Module-local store for relations seeded from the fixture (e.g. conversation
+// `refers_to` links). Parallels `conversationEvents` in routes/conversations.ts:
+// loadSeedData clears + repopulates via the exported helpers, and the GET route
+// merges these with the dynamically-derived issue dependency relations.
+const seededRelations: RelationResponse[] = [];
+
+export function clearSeededRelations(): void {
+  seededRelations.length = 0;
+}
+
+export function addSeededRelation(rel: RelationResponse): void {
+  seededRelations.push(rel);
+}
+
 /**
  * Build relations from issue dependencies stored in the issue entities.
  * For a dependency { type: "child-of", issue_id: parentId } on issue childId,
@@ -97,7 +111,7 @@ export function createRelationRoutes(store: Store): Hono {
     const relType = c.req.query("rel_type");
     const transitive = c.req.query("transitive") === "true";
 
-    const allRelations = buildRelationsFromIssues(store);
+    const allRelations = [...buildRelationsFromIssues(store), ...seededRelations];
 
     let filtered: RelationResponse[];
 

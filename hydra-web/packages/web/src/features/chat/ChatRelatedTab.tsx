@@ -1,82 +1,16 @@
-import { Link } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
-import type {
-  DocumentSummaryRecord,
-  IssueSummaryRecord,
-  PatchSummaryRecord,
-} from "@hydra/api";
-import { ItemRow } from "../dashboard/ItemRow";
-import type { WorkItem } from "../dashboard/workItemTypes";
-import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { DocumentIcon } from "../../components/icons/DocumentIcon";
-import { formatRelativeTime } from "../../utils/time";
+import {
+  RelatedSection,
+  RelatedEmpty,
+  LoadMore,
+} from "../related/RelatedSection";
+import {
+  IssueRailRow,
+  PatchRailRow,
+  DocumentRailRow,
+} from "../related/RailRow";
 import { useChatReferencedArtifacts } from "./useChatReferencedArtifacts";
 import styles from "./ChatRelatedTab.module.css";
-
-function issueToWorkItem(record: IssueSummaryRecord): WorkItem {
-  return {
-    kind: "issue",
-    id: record.issue_id,
-    data: record,
-    lastUpdated: record.timestamp,
-    isTerminal: TERMINAL_STATUSES.has(record.issue.status),
-  };
-}
-
-function patchToWorkItem(record: PatchSummaryRecord): WorkItem {
-  return {
-    kind: "patch",
-    id: record.patch_id,
-    data: record,
-    lastUpdated: record.timestamp,
-    isTerminal: record.patch.status === "Closed" || record.patch.status === "Merged",
-    sourceIssueId: undefined,
-  };
-}
-
-function getDocumentTitle(doc: DocumentSummaryRecord): string {
-  if (doc.document.title) return doc.document.title;
-  if (doc.document.path) return doc.document.path;
-  return doc.document_id;
-}
-
-interface SectionProps {
-  title: string;
-  count: number | null;
-  children: React.ReactNode;
-}
-
-function Section({ title, count, children }: SectionProps) {
-  return (
-    <section className={styles.section}>
-      <h3 className={styles.sectionTitle}>
-        {title}
-        {count !== null && <span className={styles.sectionCount}>({count})</span>}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-interface LoadMoreProps {
-  isFetching: boolean;
-  onClick: () => void;
-}
-
-function LoadMore({ isFetching, onClick }: LoadMoreProps) {
-  return (
-    <div className={styles.loadMore}>
-      <button
-        type="button"
-        className={styles.loadMoreButton}
-        onClick={onClick}
-        disabled={isFetching}
-      >
-        {isFetching ? "Loading..." : "Load more"}
-      </button>
-    </div>
-  );
-}
 
 interface ChatRelatedTabProps {
   conversationId: string;
@@ -108,27 +42,26 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
   if (error) {
     return (
       <div className={styles.relatedTab}>
-        <p className={styles.empty}>Failed to load referenced items.</p>
+        <p className={styles.error}>Failed to load referenced items.</p>
       </div>
     );
   }
 
   return (
     <div className={styles.relatedTab}>
-      <Section title="Issues" count={issues.length}>
+      <RelatedSection title="Issues" count={issues.length}>
         {issues.length === 0 ? (
-          <p className={styles.empty}>No issues referenced by this chat yet.</p>
+          <RelatedEmpty>No issues referenced by this chat yet.</RelatedEmpty>
         ) : (
-          <ul className={styles.list}>
+          <div className={styles.list}>
             {issues.map((record) => (
-              <ItemRow
+              <IssueRailRow
                 key={record.issue_id}
-                item={issueToWorkItem(record)}
+                record={record}
                 sessions={sessionsByIssue.get(record.issue_id)}
-                filterRootId={null}
               />
             ))}
-          </ul>
+          </div>
         )}
         {hasNextPage.issues && (
           <LoadMore
@@ -136,21 +69,17 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
             onClick={fetchNextPage.issues}
           />
         )}
-      </Section>
+      </RelatedSection>
 
-      <Section title="Patches" count={patches.length}>
+      <RelatedSection title="Patches" count={patches.length}>
         {patches.length === 0 ? (
-          <p className={styles.empty}>No patches referenced by this chat yet.</p>
+          <RelatedEmpty>No patches referenced by this chat yet.</RelatedEmpty>
         ) : (
-          <ul className={styles.list}>
+          <div className={styles.list}>
             {patches.map((record) => (
-              <ItemRow
-                key={record.patch_id}
-                item={patchToWorkItem(record)}
-                filterRootId={null}
-              />
+              <PatchRailRow key={record.patch_id} record={record} />
             ))}
-          </ul>
+          </div>
         )}
         {hasNextPage.patches && (
           <LoadMore
@@ -158,30 +87,17 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
             onClick={fetchNextPage.patches}
           />
         )}
-      </Section>
+      </RelatedSection>
 
-      <Section title="Documents" count={documents.length}>
+      <RelatedSection title="Documents" count={documents.length}>
         {documents.length === 0 ? (
-          <p className={styles.empty}>No documents referenced by this chat yet.</p>
+          <RelatedEmpty>No documents referenced by this chat yet.</RelatedEmpty>
         ) : (
-          <ul className={styles.list}>
-            {documents.map((doc) => (
-              <li key={doc.document_id} className={styles.docRow}>
-                <Link to={`/documents/${doc.document_id}`} className={styles.docRowLink}>
-                  <DocumentIcon className={styles.docIcon} />
-                  <span className={styles.docTitle}>{getDocumentTitle(doc)}</span>
-                  <span className={styles.docMeta}>
-                    {doc.document.path && (
-                      <span className={styles.docPath}>{doc.document.path}</span>
-                    )}
-                    <span className={styles.docTime}>
-                      {formatRelativeTime(doc.timestamp)}
-                    </span>
-                  </span>
-                </Link>
-              </li>
+          <div className={styles.list}>
+            {documents.map((record) => (
+              <DocumentRailRow key={record.document_id} record={record} />
             ))}
-          </ul>
+          </div>
         )}
         {hasNextPage.documents && (
           <LoadMore
@@ -189,7 +105,7 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
             onClick={fetchNextPage.documents}
           />
         )}
-      </Section>
+      </RelatedSection>
     </div>
   );
 }

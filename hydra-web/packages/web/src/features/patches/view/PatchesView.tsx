@@ -4,7 +4,11 @@ import { Avatar, Badge, Icons, Kbd } from "@hydra/ui";
 import type { PatchStatus, PatchSummaryRecord } from "@hydra/api";
 import { usePaginatedPatches } from "../../dashboard/usePaginatedPatches";
 import { normalizePatchStatus } from "../../../utils/statusMapping";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
+import { PatchRailRow } from "../../related/RailRow";
 import styles from "./PatchesView.module.css";
+
+const MOBILE_QUERY = "(max-width: 768px)";
 
 interface StatusFilter {
   key: "all" | PatchStatus;
@@ -36,6 +40,7 @@ function relativeTime(iso: string): string {
 
 export function PatchesView() {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery(MOBILE_QUERY);
   const [searchValue, setSearchValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -130,7 +135,15 @@ export function PatchesView() {
           <div className={styles.empty}>No patches match the current filters.</div>
         )}
 
-        {patches.length > 0 && (
+        {patches.length > 0 && isMobile && (
+          <div className={styles.mobileList}>
+            {patches.map((rec) => (
+              <PatchRailRow key={rec.patch_id} record={rec} linkSearch="?from=dashboard" />
+            ))}
+          </div>
+        )}
+
+        {patches.length > 0 && !isMobile && (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
