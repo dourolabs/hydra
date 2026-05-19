@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import type {
   IssueStatus,
+  IssueType,
   IssueSummaryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
-import { Icons, Kbd } from "@hydra/ui";
+import { Avatar, Badge, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -14,19 +16,38 @@ const LAYOUT_STORAGE_KEY = "hydra:issues:layout";
 
 export type IssuesLayout = "table" | "board";
 
-interface IssueStatusFilter {
-  key: "all" | IssueStatus;
+type FilterPickerKey = "status" | "type" | "creator" | "assignee" | null;
+
+// Issue statuses surfaced as filter options. The empty option ("any") renders
+// as the Picker's default "Any" pill — we only iterate the real statuses
+// below to render colored Badge chips.
+const STATUS_FILTER_VALUES: IssueStatus[] = [
+  "open",
+  "in-progress",
+  "failed",
+  "closed",
+  "dropped",
+];
+
+interface TypeOption {
+  value: IssueType | "";
   label: string;
 }
 
-const STATUS_FILTERS: IssueStatusFilter[] = [
-  { key: "all", label: "All" },
-  { key: "open", label: "Open" },
-  { key: "in-progress", label: "In progress" },
-  { key: "failed", label: "Failed" },
-  { key: "closed", label: "Closed" },
-  { key: "dropped", label: "Dropped" },
+const TYPE_OPTIONS: TypeOption[] = [
+  { value: "", label: "All types" },
+  { value: "task", label: "Task" },
+  { value: "bug", label: "Bug" },
+  { value: "feature", label: "Feature" },
+  { value: "chore", label: "Chore" },
+  { value: "merge-request", label: "Merge request" },
+  { value: "review-request", label: "Review request" },
 ];
+
+function typeLabel(value: IssueType | null): string {
+  if (!value) return "Any";
+  return TYPE_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
 
 interface IssuesViewProps {
   issues: IssueSummaryRecord[];
@@ -39,11 +60,17 @@ interface IssuesViewProps {
   onLoadMore: () => void;
   searchValue: string;
   onSearchChange: (value: string) => void;
-  // Server-side status filter (optional). When set, this becomes the active chip
-  // and the chip click should propagate up so the backing query can be updated.
   selectedStatus: IssueStatus | null;
   onStatusChange: (status: IssueStatus | null) => void;
-  // Eyebrow text — e.g. "WORK · 42 ISSUES" or "ASSIGNED · 8 ISSUES"
+  selectedType: IssueType | null;
+  onTypeChange: (type: IssueType | null) => void;
+  selectedCreator: string;
+  onCreatorChange: (creator: string) => void;
+  selectedAssignee: string;
+  onAssigneeChange: (assignee: string) => void;
+  // List of selectable names for the Creator and Assignee dropdowns. The page
+  // is responsible for ensuring the current user appears here.
+  userOptions: string[];
   eyebrow: string;
   title: string;
 }
@@ -81,20 +108,25 @@ export function IssuesView({
   onSearchChange,
   selectedStatus,
   onStatusChange,
+  selectedType,
+  onTypeChange,
+  selectedCreator,
+  onCreatorChange,
+  selectedAssignee,
+  onAssigneeChange,
+  userOptions,
   eyebrow,
   title,
 }: IssuesViewProps) {
   const [layout, setLayout] = useState<IssuesLayout>(readLayout);
+  const [openPicker, setOpenPicker] = useState<FilterPickerKey>(null);
 
   useEffect(() => {
     writeLayout(layout);
   }, [layout]);
 
-  const handleStatusChip = (key: IssueStatusFilter["key"]) => {
-    onStatusChange(key === "all" ? null : key);
-  };
-
-  const activeKey: IssueStatusFilter["key"] = selectedStatus ?? "all";
+  const toggle = (key: Exclude<FilterPickerKey, null>) =>
+    setOpenPicker((prev) => (prev === key ? null : key));
 
   return (
     <div className={styles.page}>
@@ -133,17 +165,159 @@ export function IssuesView({
       </div>
 
       <div className={styles.toolbar}>
-        {STATUS_FILTERS.map((filter) => (
-          <button
-            key={filter.key}
-            type="button"
-            className={`${styles.chipFilter}${activeKey === filter.key ? ` ${styles.chipFilterActive}` : ""}`}
-            onClick={() => handleStatusChip(filter.key)}
-            data-testid={`issues-filter-${filter.key}`}
+        <div data-testid="issues-filter-status">
+          <Picker
+            label="Status"
+            open={openPicker === "status"}
+            onToggle={() => toggle("status")}
+            value={
+              selectedStatus ? (
+                <Badge status={normalizeIssueStatus(selectedStatus)} />
+              ) : (
+                <span className={styles.pillValue}>Any</span>
+              )
+            }
           >
-            <span>{filter.label}</span>
-          </button>
-        ))}
+            <PickerRow
+              active={!selectedStatus}
+              onClick={() => {
+                onStatusChange(null);
+                setOpenPicker(null);
+              }}
+            >
+              <span>Any status</span>
+            </PickerRow>
+            {STATUS_FILTER_VALUES.map((value) => (
+              <PickerRow
+                key={value}
+                active={selectedStatus === value}
+                onClick={() => {
+                  onStatusChange(value);
+                  setOpenPicker(null);
+                }}
+              >
+                <Badge status={normalizeIssueStatus(value)} />
+              </PickerRow>
+            ))}
+          </Picker>
+        </div>
+
+        <div data-testid="issues-filter-type">
+          <Picker
+            label="Type"
+            open={openPicker === "type"}
+            onToggle={() => toggle("type")}
+            value={
+              selectedType ? (
+                <TypeChip type={selectedType} />
+              ) : (
+                <span className={styles.pillValue}>{typeLabel(null)}</span>
+              )
+            }
+          >
+            {TYPE_OPTIONS.map((opt) => (
+              <PickerRow
+                key={opt.value || "any"}
+                active={(selectedType ?? "") === opt.value}
+                onClick={() => {
+                  onTypeChange(opt.value === "" ? null : opt.value);
+                  setOpenPicker(null);
+                }}
+              >
+                {opt.value ? (
+                  <TypeChip type={opt.value} />
+                ) : (
+                  <span>{opt.label}</span>
+                )}
+              </PickerRow>
+            ))}
+          </Picker>
+        </div>
+
+        <div data-testid="issues-filter-creator">
+          <Picker
+            label="Creator"
+            wide
+            open={openPicker === "creator"}
+            onToggle={() => toggle("creator")}
+            value={
+              selectedCreator ? (
+                <span className={styles.pillContent}>
+                  <Avatar name={selectedCreator} kind="agent" size="md" />
+                  <span>{selectedCreator}</span>
+                </span>
+              ) : (
+                <span className={styles.pillValue}>Any</span>
+              )
+            }
+          >
+            <PickerRow
+              active={!selectedCreator}
+              onClick={() => {
+                onCreatorChange("");
+                setOpenPicker(null);
+              }}
+            >
+              <span>Any creator</span>
+            </PickerRow>
+            {userOptions.map((name) => (
+              <PickerRow
+                key={name}
+                active={selectedCreator === name}
+                onClick={() => {
+                  onCreatorChange(name);
+                  setOpenPicker(null);
+                }}
+              >
+                <Avatar name={name} kind="agent" size="md" />
+                <span>{name}</span>
+              </PickerRow>
+            ))}
+          </Picker>
+        </div>
+
+        <div data-testid="issues-filter-assignee">
+          <Picker
+            label="Assignee"
+            wide
+            open={openPicker === "assignee"}
+            onToggle={() => toggle("assignee")}
+            value={
+              selectedAssignee ? (
+                <span className={styles.pillContent}>
+                  <Avatar name={selectedAssignee} kind="agent" size="md" />
+                  <span>{selectedAssignee}</span>
+                </span>
+              ) : (
+                <span className={styles.pillValue}>Any</span>
+              )
+            }
+          >
+            <PickerRow
+              active={!selectedAssignee}
+              onClick={() => {
+                onAssigneeChange("");
+                setOpenPicker(null);
+              }}
+            >
+              <span>Any assignee</span>
+            </PickerRow>
+            {userOptions.map((name) => (
+              <PickerRow
+                key={name}
+                active={selectedAssignee === name}
+                onClick={() => {
+                  onAssigneeChange(name);
+                  setOpenPicker(null);
+                }}
+              >
+                <Avatar name={name} kind="agent" size="md" />
+                <span>{name}</span>
+              </PickerRow>
+            ))}
+          </Picker>
+        </div>
+
         <span className={styles.toolbarSpacer} />
         <div className={styles.searchBox}>
           <Icons.IconSearch className={styles.searchIcon} size={14} />

@@ -1,16 +1,12 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
-import { Avatar, Button, Icons, Kbd, TypeChip } from "@hydra/ui";
+import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import type { IssueType, LabelRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -414,123 +410,6 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
         </div>
       </div>
     </div>
-  );
-}
-
-/** ── Internal Picker + Row ── */
-
-interface PickerProps {
-  label: string;
-  value: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  wide?: boolean;
-  children: ReactNode;
-}
-
-const POP_MAX_HEIGHT = 280;
-const POP_GAP = 4;
-
-function Picker({ label, value, open, onToggle, wide, children }: PickerProps) {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const popRef = useRef<HTMLDivElement | null>(null);
-  const [popStyle, setPopStyle] = useState<CSSProperties | null>(null);
-
-  // Outside-click handler must ignore both the trigger wrap and the portaled popover.
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (wrapRef.current?.contains(target)) return;
-      if (popRef.current?.contains(target)) return;
-      onToggle();
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open, onToggle]);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPopStyle(null);
-      return;
-    }
-    const reposition = () => {
-      const wrap = wrapRef.current;
-      if (!wrap) return;
-      const rect = wrap.getBoundingClientRect();
-      const viewportH = window.innerHeight;
-      const spaceBelow = viewportH - rect.bottom;
-      const spaceAbove = rect.top;
-      // Flip upward if there's not enough room below AND there's more room above.
-      const openUp =
-        spaceBelow < POP_MAX_HEIGHT + POP_GAP && spaceAbove > spaceBelow;
-      const next: CSSProperties = { left: rect.left };
-      if (openUp) {
-        next.bottom = viewportH - rect.top + POP_GAP;
-      } else {
-        next.top = rect.bottom + POP_GAP;
-      }
-      setPopStyle(next);
-    };
-    reposition();
-    window.addEventListener("resize", reposition);
-    // Capture-phase scroll catches ancestor scrolling (e.g. the modal body).
-    window.addEventListener("scroll", reposition, true);
-    return () => {
-      window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
-    };
-  }, [open]);
-
-  return (
-    <div className={styles.picker} ref={wrapRef}>
-      <div className={styles.pickerLabel}>{label}</div>
-      <button
-        type="button"
-        className={`${styles.pill}${open ? ` ${styles.pillActive}` : ""}`}
-        onClick={onToggle}
-        aria-expanded={open}
-      >
-        {value}
-        <span className={styles.pillChevron}>
-          <Icons.IconChevronDown size={12} />
-        </span>
-      </button>
-      {open &&
-        popStyle &&
-        createPortal(
-          <div
-            ref={popRef}
-            className={`${styles.pop}${wide ? ` ${styles.popWide}` : ""}`}
-            style={popStyle}
-          >
-            {children}
-          </div>,
-          document.body,
-        )}
-    </div>
-  );
-}
-
-interface PickerRowProps {
-  active?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}
-
-function PickerRow({ active, onClick, children }: PickerRowProps) {
-  return (
-    <button
-      type="button"
-      className={`${styles.popRow}${active ? ` ${styles.popRowActive}` : ""}`}
-      onClick={onClick}
-    >
-      {children}
-      <span className={styles.popCheck}>
-        <Icons.IconCheck size={12} />
-      </span>
-    </button>
   );
 }
 

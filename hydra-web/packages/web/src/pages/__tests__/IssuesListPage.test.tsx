@@ -70,6 +70,10 @@ vi.mock("../../features/auth/useAuth", () => ({
   }),
 }));
 
+vi.mock("../../hooks/useAgents", () => ({
+  useAgents: () => ({ data: [], isLoading: false }),
+}));
+
 vi.mock("../../api/auth", () => ({
   actorDisplayName: () => "alice",
 }));
@@ -133,6 +137,37 @@ vi.mock("@hydra/ui", () => ({
   Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid="type-chip">{type}</span>,
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
+  Picker: ({
+    label,
+    value,
+    onToggle,
+    children,
+  }: {
+    label: string;
+    value: React.ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    children: React.ReactNode;
+  }) => (
+    <div data-testid={`picker-${label.toLowerCase()}`}>
+      <button type="button" onClick={onToggle} aria-label={label}>
+        {value}
+      </button>
+      {children}
+    </div>
+  ),
+  PickerRow: ({
+    onClick,
+    children,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+  }) => (
+    <button type="button" onClick={onClick}>
+      {children}
+    </button>
+  ),
   Icons: new Proxy(
     {},
     {
@@ -236,8 +271,16 @@ describe("IssuesListPage Issue Create modal", () => {
 });
 
 describe("IssuesListPage breadcrumb label", () => {
-  it("publishes Workspace / My issues breadcrumb on the default view", () => {
+  it("publishes Workspace / All issues breadcrumb on the default view", () => {
     renderIssuesList("/");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Workspace", to: "/" }],
+      "All issues",
+    );
+  });
+
+  it("publishes Workspace / My issues when ?creator=<user> is set", () => {
+    renderIssuesList("/?creator=alice");
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
       "My issues",
@@ -252,24 +295,29 @@ describe("IssuesListPage breadcrumb label", () => {
     );
   });
 
-  it("normalises legacy ?selected=patches back to the default My issues view", () => {
+  it("normalises legacy ?selected=patches back to the default All issues view", () => {
     renderIssuesList("/?selected=patches");
-    // patches is no longer a dashboard tab — fall back to the default 'My issues'
+    // patches is no longer a dashboard tab — fall back to the default 'All issues'
     expect(useBreadcrumbsMock).toHaveBeenCalledWith(
       [{ label: "Workspace", to: "/" }],
-      "My issues",
+      "All issues",
     );
   });
 });
 
 describe("IssuesListPage default filter", () => {
-  it("sends only { creator } to the server on the default index route", () => {
+  it("sends no filters to the server on a bare index route (All issues)", () => {
     renderIssuesList("/");
-    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
-    expect(paginatedState.countFilters).toEqual({ creator: "alice" });
+    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(paginatedState.countFilters).toEqual({});
   });
 
-  it("sends only { creator } when ?selected=your-issues is explicit", () => {
+  it("sends { creator } when the URL pins creator to the current user", () => {
+    renderIssuesList("/?creator=alice");
+    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
+  });
+
+  it("translates legacy ?selected=your-issues to a creator filter", () => {
     renderIssuesList("/?selected=your-issues");
     expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
   });
@@ -300,7 +348,7 @@ describe("IssuesListPage eyebrow count", () => {
 
     const eyebrow = container.querySelector(".eyebrow");
     expect(eyebrow).not.toBeNull();
-    expect(eyebrow!.textContent).toBe("MINE · 3 ISSUES");
+    expect(eyebrow!.textContent).toBe("ALL · 3 ISSUES");
   });
 
   it("uses the singular form when the resolved count is exactly 1", () => {
