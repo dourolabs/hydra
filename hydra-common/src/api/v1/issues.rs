@@ -350,6 +350,31 @@ impl Issue {
     }
 }
 
+impl crate::graph::GraphView for Issue {
+    const KIND: crate::graph::ObjectKind = crate::graph::ObjectKind::Issue;
+
+    fn view_l1(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+        })
+    }
+
+    fn view_l2(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+            "assignee": self.assignee,
+            "progress": self.progress,
+            "dependencies": self.dependencies,
+        })
+    }
+
+    fn view_l3(&self) -> Value {
+        serde_json::to_value(self).expect("Issue serialization is infallible")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -1162,5 +1187,92 @@ mod tests {
         let issue = make_test_issue("");
         let summary = IssueSummary::from(&issue);
         assert_eq!(summary.description, "");
+    }
+
+    mod graph_view {
+        use super::*;
+        use crate::graph::{GraphView, ObjectKind};
+
+        fn sample_issue() -> Issue {
+            Issue {
+                issue_type: IssueType::Task,
+                title: "Track flakiness".to_string(),
+                description: "Investigate flaky CI".to_string(),
+                creator: Username::from("alice"),
+                progress: "started".to_string(),
+                status: IssueStatus::InProgress,
+                assignee: Some("bob".to_string()),
+                session_settings: SessionSettings {
+                    repo_name: Some(RepoName::from_str("org/repo").unwrap()),
+                    ..Default::default()
+                },
+                todo_list: vec![TodoItem {
+                    description: "reproduce".to_string(),
+                    is_done: false,
+                }],
+                dependencies: vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    issue_id("i-parent"),
+                )],
+                patches: vec!["p-abcd".parse().unwrap()],
+                deleted: false,
+                form: None,
+                form_response: None,
+                feedback: Some("look closer".to_string()),
+            }
+        }
+
+        #[test]
+        fn kind_is_issue() {
+            assert_eq!(<Issue as GraphView>::KIND, ObjectKind::Issue);
+        }
+
+        #[test]
+        fn view_l1_matches_expected() {
+            let issue = sample_issue();
+            assert_eq!(
+                issue.view_l1(),
+                json!({
+                    "title": "Track flakiness",
+                    "status": "in-progress",
+                })
+            );
+        }
+
+        #[test]
+        fn view_l2_matches_expected() {
+            let issue = sample_issue();
+            assert_eq!(
+                issue.view_l2(),
+                json!({
+                    "title": "Track flakiness",
+                    "status": "in-progress",
+                    "assignee": "bob",
+                    "progress": "started",
+                    "dependencies": [{
+                        "type": "child-of",
+                        "issue_id": "i-parent",
+                    }],
+                })
+            );
+        }
+
+        #[test]
+        fn view_l3_round_trips_to_original() {
+            let issue = sample_issue();
+            let value = issue.view_l3();
+            let roundtripped: Issue = serde_json::from_value(value).unwrap();
+            assert_eq!(roundtripped, issue);
+        }
+
+        #[test]
+        fn view_l2_contains_view_l1_keys_with_same_values() {
+            let issue = sample_issue();
+            let l1 = issue.view_l1();
+            let l2 = issue.view_l2();
+            for (key, expected) in l1.as_object().unwrap() {
+                assert_eq!(l2.get(key), Some(expected), "key {key} mismatch in L2");
+            }
+        }
     }
 }

@@ -2,6 +2,7 @@ use super::issues::SessionSettings;
 use crate::{ConversationId, SessionId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -109,6 +110,31 @@ impl Conversation {
             created_at,
             updated_at,
         }
+    }
+}
+
+impl crate::graph::GraphView for Conversation {
+    const KIND: crate::graph::ObjectKind = crate::graph::ObjectKind::Conversation;
+
+    fn view_l1(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+        })
+    }
+
+    fn view_l2(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+            "agent_name": self.agent_name,
+            "creator": self.creator,
+            "updated_at": self.updated_at,
+        })
+    }
+
+    fn view_l3(&self) -> Value {
+        serde_json::to_value(self).expect("Conversation serialization is infallible")
     }
 }
 
@@ -574,5 +600,75 @@ mod tests {
             parsed.is_err(),
             "legacy raw bytes must not parse as payload"
         );
+    }
+
+    mod graph_view {
+        use super::*;
+        use crate::graph::{GraphView, ObjectKind};
+        use chrono::TimeZone;
+        use serde_json::json;
+
+        fn sample_conversation() -> Conversation {
+            Conversation::new(
+                ConversationId::new(),
+                Some("Triaging flake".to_string()),
+                Some("claude".to_string()),
+                ConversationStatus::Active,
+                Username::from("alice"),
+                SessionSettings::default(),
+                Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 5, 2, 12, 0, 0).unwrap(),
+            )
+        }
+
+        #[test]
+        fn kind_is_conversation() {
+            assert_eq!(<Conversation as GraphView>::KIND, ObjectKind::Conversation);
+        }
+
+        #[test]
+        fn view_l1_matches_expected() {
+            let conv = sample_conversation();
+            assert_eq!(
+                conv.view_l1(),
+                json!({
+                    "title": "Triaging flake",
+                    "status": "active",
+                })
+            );
+        }
+
+        #[test]
+        fn view_l2_matches_expected() {
+            let conv = sample_conversation();
+            assert_eq!(
+                conv.view_l2(),
+                json!({
+                    "title": "Triaging flake",
+                    "status": "active",
+                    "agent_name": "claude",
+                    "creator": "alice",
+                    "updated_at": "2026-05-02T12:00:00Z",
+                })
+            );
+        }
+
+        #[test]
+        fn view_l3_round_trips_to_original() {
+            let conv = sample_conversation();
+            let value = conv.view_l3();
+            let roundtripped: Conversation = serde_json::from_value(value).unwrap();
+            assert_eq!(roundtripped, conv);
+        }
+
+        #[test]
+        fn view_l2_contains_view_l1_keys_with_same_values() {
+            let conv = sample_conversation();
+            let l1 = conv.view_l1();
+            let l2 = conv.view_l2();
+            for (key, expected) in l1.as_object().unwrap() {
+                assert_eq!(l2.get(key), Some(expected), "key {key} mismatch in L2");
+            }
+        }
     }
 }
