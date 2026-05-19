@@ -4,7 +4,7 @@ use crate::{
         output::{render_session_records, CommandContext, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
-    worker::commands::ModelAwareCommands,
+    worker::commands::ClaudeCommands,
 };
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -178,7 +178,12 @@ pub async fn run(
             issue_id,
             tempdir,
         } => {
-            let commands = ModelAwareCommands::default();
+            // PR 3 cleanup: `worker_run::run` still takes a `&dyn WorkerCommands`
+            // parameter for the trait deletion to happen in a separate PR; the
+            // live dispatch path goes through `ModelSelector::from_context`
+            // inside `worker_run`. A zero-sized `ClaudeCommands` satisfies the
+            // type and is never called.
+            let commands = ClaudeCommands;
             worker_run::run(client, session, path, issue_id, tempdir, &commands, context).await?
         }
     }
