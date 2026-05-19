@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 const MIN_RANDOM_LEN: usize = 4;
 const DEFAULT_RANDOM_LEN: usize = 6;
 const MAX_RANDOM_LEN: usize = 12;
+const ALPHABET_SIZE: u64 = 26;
 const ISSUE_PREFIX: &str = "i-";
 const PATCH_PREFIX: &str = "p-";
 const SESSION_PREFIX: &str = "s-";
@@ -768,6 +769,33 @@ impl FromStr for ConversationId {
     }
 }
 
+/// Returns the random-suffix length that preserves the `MIN_RANDOM_LEN`
+/// collision-resistance margin given `count` existing entities.
+///
+/// Formula: `max(DEFAULT_RANDOM_LEN, MIN_RANDOM_LEN + ceil(log_26(count)))`,
+/// clamped to `MAX_RANDOM_LEN`. `count <= 1` contributes 0 extra characters so
+/// fresh tables stay at `DEFAULT_RANDOM_LEN`.
+pub fn random_len_for_count(count: u64) -> usize {
+    let extra = if count <= 1 {
+        0
+    } else {
+        // ceil(log_26(count)) = smallest k such that 26^k >= count.
+        let mut threshold: u64 = 1;
+        let mut k: usize = 0;
+        while threshold < count {
+            k += 1;
+            threshold = match threshold.checked_mul(ALPHABET_SIZE) {
+                Some(value) => value,
+                None => return MAX_RANDOM_LEN,
+            };
+        }
+        k
+    };
+    MIN_RANDOM_LEN
+        .saturating_add(extra)
+        .clamp(DEFAULT_RANDOM_LEN, MAX_RANDOM_LEN)
+}
+
 fn validate_random_length(len: usize) -> Result<(), HydraIdError> {
     if (MIN_RANDOM_LEN..=MAX_RANDOM_LEN).contains(&len) {
         Ok(())
@@ -860,5 +888,36 @@ mod tests {
         let serialized = serde_json::to_string(&document_id).expect("serialize");
         let deserialized: DocumentId = serde_json::from_str(&serialized).expect("deserialize");
         assert_eq!(deserialized, document_id);
+    }
+
+    #[test]
+    fn random_len_for_count_starts_at_default() {
+        assert_eq!(random_len_for_count(0), DEFAULT_RANDOM_LEN);
+        assert_eq!(random_len_for_count(1), DEFAULT_RANDOM_LEN);
+    }
+
+    #[test]
+    fn random_len_for_count_holds_default_within_two_chars() {
+        // ceil(log_26(26)) = 1 → 4 + 1 = 5, floored to DEFAULT_RANDOM_LEN = 6.
+        assert_eq!(random_len_for_count(26), DEFAULT_RANDOM_LEN);
+        // ceil(log_26(27)) = 2 → 4 + 2 = 6, still DEFAULT_RANDOM_LEN.
+        assert_eq!(random_len_for_count(27), DEFAULT_RANDOM_LEN);
+        // ceil(log_26(26 * 26)) = 2 → still 6.
+        assert_eq!(random_len_for_count(26 * 26), DEFAULT_RANDOM_LEN);
+    }
+
+    #[test]
+    fn random_len_for_count_grows_past_default() {
+        // ceil(log_26(26*26 + 1)) = 3 → 4 + 3 = 7.
+        assert_eq!(random_len_for_count(26 * 26 + 1), 7);
+        // 20k sessions → ceil(log_26(20_000)) = 4 → 4 + 4 = 8.
+        assert_eq!(random_len_for_count(20_000), 8);
+        // 1M entities → ceil(log_26(1_000_000)) = 5 → 4 + 5 = 9.
+        assert_eq!(random_len_for_count(1_000_000), 9);
+    }
+
+    #[test]
+    fn random_len_for_count_clamps_to_max() {
+        assert_eq!(random_len_for_count(u64::MAX), MAX_RANDOM_LEN);
     }
 }

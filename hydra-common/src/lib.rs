@@ -33,7 +33,7 @@ pub use conversations::ConversationEventId;
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, NotificationId, PatchId,
-    SessionId,
+    SessionId, random_len_for_count,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
