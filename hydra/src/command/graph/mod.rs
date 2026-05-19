@@ -1,16 +1,19 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
 //! Exposed subcommands: `search` (PR 3) and `diff` (PR 4). PR 5 will add
-//! `log`. The dispatch and node-set helpers in `dispatch.rs` are shared
-//! across subcommands.
+//! `log`. Selection-flag parsing, validation, and node-id resolution live
+//! in [`utils`]; per-kind hydration and version-history fetching live in
+//! [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
 pub mod search;
+pub mod utils;
 
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
+use hydra_common::time::HydraTime;
 use hydra_common::HydraId;
 use std::str::FromStr;
 
@@ -71,7 +74,7 @@ pub enum GraphCommand {
         /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
         /// relative duration, or 'now'). Required.
         #[arg(long, value_name = "TS", allow_hyphen_values = true)]
-        since: String,
+        since: HydraTime,
 
         /// End of the time window (same syntax as --since). Defaults to 'now'.
         #[arg(
@@ -80,7 +83,7 @@ pub enum GraphCommand {
             default_value = "now",
             allow_hyphen_values = true
         )]
-        until: String,
+        until: HydraTime,
 
         /// Filter by source object ID.
         #[arg(long, value_name = "ID")]
@@ -177,7 +180,7 @@ pub async fn run(
         } => {
             search::run_search(
                 client,
-                search::SearchParams {
+                utils::Selection {
                     source,
                     target,
                     object,
@@ -210,15 +213,17 @@ pub async fn run(
                 diff::DiffParams {
                     since,
                     until,
-                    source,
-                    target,
-                    object,
-                    rel_type,
-                    transitive,
-                    scope,
-                    kinds,
-                    verbosity: verbosity.0,
-                    max_nodes,
+                    selection: utils::Selection {
+                        source,
+                        target,
+                        object,
+                        rel_type,
+                        transitive,
+                        scope,
+                        kinds,
+                        verbosity: verbosity.0,
+                        max_nodes,
+                    },
                 },
                 context,
             )

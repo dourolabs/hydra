@@ -3,4 +3,4 @@
 
 pub mod parse;
 
-pub use parse::{TimeParseError, parse_window_arg};
+pub use parse::{HydraTime, TimeParseError, parse_window_arg};

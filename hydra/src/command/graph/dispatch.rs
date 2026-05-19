@@ -1,8 +1,10 @@
 //! Hydrated-node dispatch: id-prefix → `GET /v1/{kind}/:id` → `HydratedNode`,
-//! plus the `render_view` shim that fans out to per-kind `GraphView::view_lN`.
-//!
-//! Also exposes `VersionedNode` + `fetch_versions` for `hydra graph diff`
+//! plus the version-history fetch helpers shared with `hydra graph diff`
 //! (PR 4) and `hydra graph log` (PR 5).
+//!
+//! Per-kind projection and version-selection logic is exposed as methods on
+//! [`HydratedNode`] / [`VersionedNode`] / [`VersionView`] so the dispatch
+//! layer stays focused on wiring (id → enum variant → fetch routing).
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -50,46 +52,23 @@ impl HydratedNode {
         }
     }
 
-    pub fn kind_str(&self) -> &'static str {
-        kind_to_str(self.kind())
+    /// Render the hydrated node through the per-kind
+    /// `GraphView::view_lN` projection.
+    pub fn render(&self, level: VerbosityLevel) -> Value {
+        match self {
+            HydratedNode::Issue(r) => render_view(&r.issue, level),
+            HydratedNode::Patch(r) => render_view(&r.patch, level),
+            HydratedNode::Document(r) => render_view(&r.document, level),
+            HydratedNode::Conversation(c) => render_view(c, level),
+        }
     }
 }
 
-pub fn kind_to_str(kind: ObjectKind) -> &'static str {
-    match kind {
-        ObjectKind::Issue => "issue",
-        ObjectKind::Patch => "patch",
-        ObjectKind::Document => "document",
-        ObjectKind::Conversation => "conversation",
-    }
-}
-
-/// Render a hydrated node through the per-kind `GraphView::view_lN` projection.
-///
-/// This is the single place where `match HydratedNode` × `match VerbosityLevel`
-/// lives. New kinds = one new variant on `HydratedNode` + one new arm here.
-pub fn render_view(node: &HydratedNode, level: VerbosityLevel) -> Value {
-    match node {
-        HydratedNode::Issue(r) => match level {
-            VerbosityLevel::L1 => r.issue.view_l1(),
-            VerbosityLevel::L2 => r.issue.view_l2(),
-            VerbosityLevel::L3 => r.issue.view_l3(),
-        },
-        HydratedNode::Patch(r) => match level {
-            VerbosityLevel::L1 => r.patch.view_l1(),
-            VerbosityLevel::L2 => r.patch.view_l2(),
-            VerbosityLevel::L3 => r.patch.view_l3(),
-        },
-        HydratedNode::Document(r) => match level {
-            VerbosityLevel::L1 => r.document.view_l1(),
-            VerbosityLevel::L2 => r.document.view_l2(),
-            VerbosityLevel::L3 => r.document.view_l3(),
-        },
-        HydratedNode::Conversation(c) => match level {
-            VerbosityLevel::L1 => c.view_l1(),
-            VerbosityLevel::L2 => c.view_l2(),
-            VerbosityLevel::L3 => c.view_l3(),
-        },
+fn render_view<T: GraphView>(item: &T, level: VerbosityLevel) -> Value {
+    match level {
+        VerbosityLevel::L1 => item.view_l1(),
+        VerbosityLevel::L2 => item.view_l2(),
+        VerbosityLevel::L3 => item.view_l3(),
     }
 }
 
@@ -159,6 +138,118 @@ impl VersionedNode {
             VersionedNode::Conversation(_) => ObjectKind::Conversation,
         }
     }
+
+    /// Return the latest version whose timestamp is `<= at`, or `None` if no
+    /// such version exists. The versions vector is assumed to be ordered by
+    /// ascending `timestamp` (true for all four kinds: server-side stores
+    /// append in order; the conversation fold preserves event order).
+    pub fn version_at(&self, at: DateTime<Utc>) -> Option<VersionView<'_>> {
+        match self {
+            VersionedNode::Issue(v) => v
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, r)| r.timestamp <= at)
+                .map(|(i, r)| VersionView::Issue {
+                    record: r,
+                    index: i,
+                }),
+            VersionedNode::Patch(v) => v
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, r)| r.timestamp <= at)
+                .map(|(i, r)| VersionView::Patch {
+                    record: r,
+                    index: i,
+                }),
+            VersionedNode::Document(v) => v
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, r)| r.timestamp <= at)
+                .map(|(i, r)| VersionView::Document {
+                    record: r,
+                    index: i,
+                }),
+            VersionedNode::Conversation(v) => v
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, r)| r.timestamp <= at)
+                .map(|(i, r)| VersionView::Conversation {
+                    record: r,
+                    index: i,
+                }),
+        }
+    }
+}
+
+/// A typed borrow of a single version within a [`VersionedNode`].
+///
+/// Carries the per-kind value alongside its version number, timestamp, and
+/// vector index, and exposes [`VersionView::render`] for the matching
+/// `GraphView::view_lN` projection.
+#[derive(Debug, Clone, Copy)]
+pub enum VersionView<'a> {
+    Issue {
+        record: &'a IssueVersionRecord,
+        index: usize,
+    },
+    Patch {
+        record: &'a PatchVersionRecord,
+        index: usize,
+    },
+    Document {
+        record: &'a DocumentVersionRecord,
+        index: usize,
+    },
+    Conversation {
+        record: &'a Versioned<ApiConversation>,
+        index: usize,
+    },
+}
+
+impl<'a> VersionView<'a> {
+    /// Version number of the borrowed version.
+    pub fn version(&self) -> VersionNumber {
+        match self {
+            VersionView::Issue { record, .. } => record.version,
+            VersionView::Patch { record, .. } => record.version,
+            VersionView::Document { record, .. } => record.version,
+            VersionView::Conversation { record, .. } => record.version,
+        }
+    }
+
+    /// Wall-clock timestamp of the borrowed version.
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            VersionView::Issue { record, .. } => record.timestamp,
+            VersionView::Patch { record, .. } => record.timestamp,
+            VersionView::Document { record, .. } => record.timestamp,
+            VersionView::Conversation { record, .. } => record.timestamp,
+        }
+    }
+
+    /// Index of this version within the underlying history vector.
+    pub fn index(&self) -> usize {
+        match self {
+            VersionView::Issue { index, .. }
+            | VersionView::Patch { index, .. }
+            | VersionView::Document { index, .. }
+            | VersionView::Conversation { index, .. } => *index,
+        }
+    }
+
+    /// Project this version through the per-kind `GraphView::view_lN`.
+    pub fn render(&self, level: VerbosityLevel) -> Value {
+        match self {
+            VersionView::Issue { record, .. } => render_view(&record.issue, level),
+            VersionView::Patch { record, .. } => render_view(&record.patch, level),
+            VersionView::Document { record, .. } => render_view(&record.document, level),
+            VersionView::Conversation { record, .. } => render_view(&record.item, level),
+        }
+    }
 }
 
 /// Fetch the full version history of a node from the server.
@@ -209,109 +300,12 @@ pub async fn fetch_versions(
                 .into_iter()
                 .enumerate()
                 .map(|(i, event)| {
-                    let ts = conversation_event_timestamp(&event);
+                    let ts = event.timestamp();
                     Versioned::new(event, (i + 1) as VersionNumber, ts, creation_time)
                 })
                 .collect();
             let snapshots = events_to_versions(&initial, &versioned_events);
             Ok(VersionedNode::Conversation(snapshots))
         }
-    }
-}
-
-fn conversation_event_timestamp(
-    event: &hydra_common::api::v1::conversations::ConversationEvent,
-) -> DateTime<Utc> {
-    use hydra_common::api::v1::conversations::ConversationEvent as E;
-    match event {
-        E::UserMessage { timestamp, .. } => *timestamp,
-        E::AssistantMessage { timestamp, .. } => *timestamp,
-        E::Suspending { timestamp, .. } => *timestamp,
-        E::Resumed { timestamp, .. } => *timestamp,
-        E::Closed { timestamp } => *timestamp,
-    }
-}
-
-/// Identifies a single version within a [`VersionedNode`] for diff classification.
-#[derive(Debug, Clone, Copy)]
-pub struct VersionSelection {
-    pub version: VersionNumber,
-    pub timestamp: DateTime<Utc>,
-    pub index: usize,
-}
-
-/// Return the latest version whose timestamp is `<= at`, or `None` if no such
-/// version exists. The versions vector is assumed to be ordered by ascending
-/// `timestamp` (this is true for all four kinds: server-side stores append
-/// versions in order, and the conversation fold preserves event order).
-pub fn select_version_at(node: &VersionedNode, at: DateTime<Utc>) -> Option<VersionSelection> {
-    match node {
-        VersionedNode::Issue(v) => v
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, r)| r.timestamp <= at)
-            .map(|(i, r)| VersionSelection {
-                version: r.version,
-                timestamp: r.timestamp,
-                index: i,
-            }),
-        VersionedNode::Patch(v) => v
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, r)| r.timestamp <= at)
-            .map(|(i, r)| VersionSelection {
-                version: r.version,
-                timestamp: r.timestamp,
-                index: i,
-            }),
-        VersionedNode::Document(v) => v
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, r)| r.timestamp <= at)
-            .map(|(i, r)| VersionSelection {
-                version: r.version,
-                timestamp: r.timestamp,
-                index: i,
-            }),
-        VersionedNode::Conversation(v) => v
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, r)| r.timestamp <= at)
-            .map(|(i, r)| VersionSelection {
-                version: r.version,
-                timestamp: r.timestamp,
-                index: i,
-            }),
-    }
-}
-
-/// Project the version at `index` of `node` through the per-kind
-/// `GraphView::view_lN` projection.
-pub fn render_version(node: &VersionedNode, index: usize, level: VerbosityLevel) -> Value {
-    match node {
-        VersionedNode::Issue(v) => match level {
-            VerbosityLevel::L1 => v[index].issue.view_l1(),
-            VerbosityLevel::L2 => v[index].issue.view_l2(),
-            VerbosityLevel::L3 => v[index].issue.view_l3(),
-        },
-        VersionedNode::Patch(v) => match level {
-            VerbosityLevel::L1 => v[index].patch.view_l1(),
-            VerbosityLevel::L2 => v[index].patch.view_l2(),
-            VerbosityLevel::L3 => v[index].patch.view_l3(),
-        },
-        VersionedNode::Document(v) => match level {
-            VerbosityLevel::L1 => v[index].document.view_l1(),
-            VerbosityLevel::L2 => v[index].document.view_l2(),
-            VerbosityLevel::L3 => v[index].document.view_l3(),
-        },
-        VersionedNode::Conversation(v) => match level {
-            VerbosityLevel::L1 => v[index].item.view_l1(),
-            VerbosityLevel::L2 => v[index].item.view_l2(),
-            VerbosityLevel::L3 => v[index].item.view_l3(),
-        },
     }
 }

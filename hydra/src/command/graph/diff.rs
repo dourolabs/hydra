@@ -15,49 +15,23 @@ use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
-use hydra_common::time::parse_window_arg;
+use hydra_common::time::HydraTime;
 use hydra_common::versioning::VersionNumber;
 use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
-use crate::command::graph::dispatch::{
-    fetch_versions, kind_to_str, render_version, select_version_at, VersionSelection, VersionedNode,
-};
-use crate::command::graph::search::{resolve_node_ids, SearchParams};
+use crate::command::graph::dispatch::{fetch_versions, VersionView, VersionedNode};
+use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
 
 /// Selection and rendering inputs for `hydra graph diff`.
 #[derive(Debug, Clone)]
 pub struct DiffParams {
-    pub since: String,
-    pub until: String,
-    pub source: Option<HydraId>,
-    pub target: Option<HydraId>,
-    pub object: Option<HydraId>,
-    pub rel_type: Option<String>,
-    pub transitive: bool,
-    pub scope: Option<HydraId>,
-    pub kinds: Vec<KindArg>,
-    pub verbosity: VerbosityLevel,
-    pub max_nodes: usize,
-}
-
-impl DiffParams {
-    fn as_search_params(&self) -> SearchParams {
-        SearchParams {
-            source: self.source.clone(),
-            target: self.target.clone(),
-            object: self.object.clone(),
-            rel_type: self.rel_type.clone(),
-            transitive: self.transitive,
-            scope: self.scope.clone(),
-            kinds: self.kinds.clone(),
-            verbosity: self.verbosity,
-            max_nodes: self.max_nodes,
-        }
-    }
+    pub since: HydraTime,
+    pub until: HydraTime,
+    pub selection: Selection,
 }
 
 /// One classified diff record for a single node.
@@ -100,53 +74,48 @@ pub async fn run_diff(
     params: DiffParams,
     context: &CommandContext,
 ) -> Result<()> {
-    let now = Utc::now();
-    let (since, until) = match parse_window(&params.since, &params.until, now) {
-        Ok(w) => w,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            process::exit(2);
-        }
-    };
-
-    // Selection validation is reused from search.
-    let search_params = params.as_search_params();
-    if let Err(msg) = crate::command::graph::search::validate(&search_params) {
+    if let Err(msg) = check_window(params.since, params.until) {
         eprintln!("error: {msg}");
         process::exit(2);
     }
 
-    let node_ids = resolve_node_ids(client, &search_params).await?;
-    if node_ids.len() > params.max_nodes {
+    if let Err(msg) = validate(&params.selection) {
+        eprintln!("error: {msg}");
+        process::exit(2);
+    }
+
+    let node_ids = resolve_node_ids(client, &params.selection).await?;
+    if node_ids.len() > params.selection.max_nodes {
         eprintln!(
             "error: matched node set ({}) exceeds --max-nodes ({}); narrow your selection (use --max-nodes to raise)",
             node_ids.len(),
-            params.max_nodes,
+            params.selection.max_nodes,
         );
         process::exit(2);
     }
 
-    let filter = build_kind_filter(&params.kinds);
-    let records = diff_all(client, node_ids, since, until, params.verbosity, &filter).await?;
+    let filter = build_kind_filter(&params.selection.kinds);
+    let records = diff_all(
+        client,
+        node_ids,
+        params.since.into_inner(),
+        params.until.into_inner(),
+        params.selection.verbosity,
+        &filter,
+    )
+    .await?;
 
     let mut stdout = io::stdout().lock();
     render(context.output_format, &records, &mut stdout)?;
     Ok(())
 }
 
-/// Resolve and validate the `--since`/`--until` time window. Returns
-/// `(since, until)` on success.
-pub(crate) fn parse_window(
-    since: &str,
-    until: &str,
-    _now: DateTime<Utc>,
-) -> Result<(DateTime<Utc>, DateTime<Utc>), String> {
-    let since = parse_window_arg(since).map_err(|e| format!("--since: {e}"))?;
-    let until = parse_window_arg(until).map_err(|e| format!("--until: {e}"))?;
-    if since > until {
+/// Reject inverted windows. Parsing was already done by clap via [`HydraTime`].
+pub(crate) fn check_window(since: HydraTime, until: HydraTime) -> Result<(), String> {
+    if since.into_inner() > until.into_inner() {
         return Err(format!("--since ({since}) must be <= --until ({until})"));
     }
-    Ok((since, until))
+    Ok(())
 }
 
 fn build_kind_filter(kinds: &[KindArg]) -> Option<std::collections::HashSet<ObjectKind>> {
@@ -154,20 +123,6 @@ fn build_kind_filter(kinds: &[KindArg]) -> Option<std::collections::HashSet<Obje
         None
     } else {
         Some(kinds.iter().map(|k| k.as_object_kind()).collect())
-    }
-}
-
-fn kind_from_id(id: &HydraId) -> Option<ObjectKind> {
-    if id.as_issue_id().is_some() {
-        Some(ObjectKind::Issue)
-    } else if id.as_patch_id().is_some() {
-        Some(ObjectKind::Patch)
-    } else if id.as_document_id().is_some() {
-        Some(ObjectKind::Document)
-    } else if id.as_conversation_id().is_some() {
-        Some(ObjectKind::Conversation)
-    } else {
-        None
     }
 }
 
@@ -183,7 +138,7 @@ async fn diff_all(
     // Drop ids whose kind is excluded by --kind before issuing any HTTP calls.
     let ids: Vec<HydraId> = ids
         .into_iter()
-        .filter(|id| match (kind_filter, kind_from_id(id)) {
+        .filter(|id| match (kind_filter, ObjectKind::from_id(id)) {
             (Some(allow), Some(k)) => allow.contains(&k),
             (None, _) => true,
             (_, None) => false,
@@ -222,7 +177,7 @@ async fn diff_one(
     until: DateTime<Utc>,
     verbosity: VerbosityLevel,
 ) -> Result<Option<DiffRecord>> {
-    let kind = kind_from_id(&id).ok_or_else(|| {
+    let kind = ObjectKind::from_id(&id).ok_or_else(|| {
         anyhow!("id '{id}' does not belong to a graph object kind (expected i-/p-/d-/c- prefix)")
     })?;
     let versions = fetch_versions(client, kind, &id).await?;
@@ -238,36 +193,35 @@ pub(crate) fn classify(
     until: DateTime<Utc>,
     verbosity: VerbosityLevel,
 ) -> Option<DiffRecord> {
-    let v_start = select_version_at(versions, since);
-    let v_end = select_version_at(versions, until);
+    let v_start = versions.version_at(since);
+    let v_end = versions.version_at(until);
     match (v_start, v_end) {
         (None, None) => None,
         (None, Some(end)) => Some(DiffRecord::Added {
             kind,
             id: id.clone(),
-            to_version: end.version,
-            end_view: render_version(versions, end.index, verbosity),
+            to_version: end.version(),
+            end_view: end.render(verbosity),
         }),
         (Some(start), None) => Some(DiffRecord::Removed {
             kind,
             id: id.clone(),
-            from_version: start.version,
-            start_view: render_version(versions, start.index, verbosity),
+            from_version: start.version(),
+            start_view: start.render(verbosity),
         }),
-        (Some(start), Some(end)) => modified_record(id, kind, versions, start, end, verbosity),
+        (Some(start), Some(end)) => modified_record(id, kind, start, end, verbosity),
     }
 }
 
 fn modified_record(
     id: &HydraId,
     kind: ObjectKind,
-    versions: &VersionedNode,
-    start: VersionSelection,
-    end: VersionSelection,
+    start: VersionView<'_>,
+    end: VersionView<'_>,
     verbosity: VerbosityLevel,
 ) -> Option<DiffRecord> {
-    let before = render_version(versions, start.index, verbosity);
-    let after = render_version(versions, end.index, verbosity);
+    let before = start.render(verbosity);
+    let after = end.render(verbosity);
     if before == after {
         return None;
     }
@@ -279,8 +233,8 @@ fn modified_record(
     Some(DiffRecord::Modified {
         kind,
         id: id.clone(),
-        from_version: start.version,
-        to_version: end.version,
+        from_version: start.version(),
+        to_version: end.version(),
         fields: changes,
     })
 }
@@ -386,7 +340,7 @@ fn record_to_json(record: &DiffRecord) -> Value {
             end_view,
         } => serde_json::json!({
             "change": "added",
-            "kind": kind_to_str(*kind),
+            "kind": kind.as_str(),
             "id": id.as_ref(),
             "version": { "from": Value::Null, "to": to_version },
             "object": end_view,
@@ -398,7 +352,7 @@ fn record_to_json(record: &DiffRecord) -> Value {
             start_view,
         } => serde_json::json!({
             "change": "removed",
-            "kind": kind_to_str(*kind),
+            "kind": kind.as_str(),
             "id": id.as_ref(),
             "version": { "from": from_version, "to": Value::Null },
             "object": start_view,
@@ -426,7 +380,7 @@ fn record_to_json(record: &DiffRecord) -> Value {
             );
             serde_json::json!({
                 "change": "modified",
-                "kind": kind_to_str(*kind),
+                "kind": kind.as_str(),
                 "id": id.as_ref(),
                 "version": { "from": from_version, "to": to_version },
                 "fields": fields_value,
@@ -450,7 +404,7 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                 writeln!(
                     writer,
                     "{} {} (v{}): + NEW",
-                    kind_to_str(*kind),
+                    kind.as_str(),
                     id.as_ref(),
                     to_version,
                 )?;
@@ -464,7 +418,7 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                 writeln!(
                     writer,
                     "{} {} (v{}): - REMOVED",
-                    kind_to_str(*kind),
+                    kind.as_str(),
                     id.as_ref(),
                     from_version,
                 )?;
@@ -479,7 +433,7 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                 writeln!(
                     writer,
                     "{} {} (v{} -> v{}):",
-                    kind_to_str(*kind),
+                    kind.as_str(),
                     id.as_ref(),
                     from_version,
                     to_version,
@@ -554,18 +508,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_window_rejects_since_after_until() {
-        let err = parse_window("2026-05-15T13:00:00Z", "2026-05-15T12:00:00Z", ts(0)).unwrap_err();
+    fn check_window_rejects_since_after_until() {
+        let since: HydraTime = "2026-05-15T13:00:00Z".parse().unwrap();
+        let until: HydraTime = "2026-05-15T12:00:00Z".parse().unwrap();
+        let err = check_window(since, until).unwrap_err();
         assert!(err.contains("must be <="), "got: {err}");
     }
 
     #[test]
-    fn parse_window_accepts_now_until() {
-        let now = ts(0);
-        let (since, until) = parse_window("-1h", "now", now).unwrap();
-        // The parser uses real Utc::now() under the hood for relative arg
-        // values; we only assert ordering here.
-        assert!(since < until);
+    fn check_window_accepts_ordered() {
+        let since: HydraTime = "2026-05-15T12:00:00Z".parse().unwrap();
+        let until: HydraTime = "2026-05-15T13:00:00Z".parse().unwrap();
+        assert!(check_window(since, until).is_ok());
     }
 
     #[test]

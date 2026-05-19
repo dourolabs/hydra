@@ -8,6 +8,58 @@
 
 use chrono::{DateTime, Duration, Utc};
 use std::fmt;
+use std::str::FromStr;
+
+/// CLI time-window value parsed from `--since` / `--until` flags.
+///
+/// Implements [`FromStr`] (and [`Display`]) so clap can parse it directly as
+/// an argument type — callers should declare `since: HydraTime` /
+/// `until: Option<HydraTime>` on their arg structs rather than parsing
+/// strings manually in the command body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HydraTime(DateTime<Utc>);
+
+impl HydraTime {
+    /// Construct from an existing UTC timestamp.
+    pub const fn from_utc(ts: DateTime<Utc>) -> Self {
+        Self(ts)
+    }
+
+    /// Extract the underlying UTC timestamp.
+    pub const fn into_inner(self) -> DateTime<Utc> {
+        self.0
+    }
+
+    /// Borrow the underlying UTC timestamp.
+    pub const fn as_utc(&self) -> &DateTime<Utc> {
+        &self.0
+    }
+}
+
+impl From<DateTime<Utc>> for HydraTime {
+    fn from(ts: DateTime<Utc>) -> Self {
+        Self(ts)
+    }
+}
+
+impl From<HydraTime> for DateTime<Utc> {
+    fn from(t: HydraTime) -> Self {
+        t.0
+    }
+}
+
+impl FromStr for HydraTime {
+    type Err = TimeParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_window_arg(s).map(Self)
+    }
+}
+
+impl fmt::Display for HydraTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.to_rfc3339())
+    }
+}
 
 /// Errors returned by [`parse_window_arg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,5 +275,31 @@ mod tests {
             matches!(err, TimeParseError::Unrecognized(_)),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn hydra_time_from_str_parses_rfc3339() {
+        let t: HydraTime = "2026-05-15T13:00:00Z".parse().unwrap();
+        assert_eq!(
+            t.into_inner(),
+            Utc.with_ymd_and_hms(2026, 5, 15, 13, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn hydra_time_from_str_rejects_garbage() {
+        let err = "yesterday".parse::<HydraTime>().unwrap_err();
+        assert!(
+            matches!(err, TimeParseError::Unrecognized(_)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn hydra_time_display_round_trips_through_from_str() {
+        let original = HydraTime::from_utc(Utc.with_ymd_and_hms(2026, 5, 15, 13, 0, 0).unwrap());
+        let s = original.to_string();
+        let parsed: HydraTime = s.parse().unwrap();
+        assert_eq!(parsed, original);
     }
 }

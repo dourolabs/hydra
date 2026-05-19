@@ -12,29 +12,15 @@ use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
-use hydra_common::api::v1::relations::{ListRelationsRequest, ListRelationsResponse};
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
-use crate::command::graph::dispatch::{hydrate_by_id, kind_to_str, render_view, HydratedNode};
+use crate::command::graph::dispatch::{hydrate_by_id, HydratedNode};
+use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
-
-/// Selection and rendering inputs for `hydra graph search`.
-#[derive(Debug, Clone)]
-pub struct SearchParams {
-    pub source: Option<HydraId>,
-    pub target: Option<HydraId>,
-    pub object: Option<HydraId>,
-    pub rel_type: Option<String>,
-    pub transitive: bool,
-    pub scope: Option<HydraId>,
-    pub kinds: Vec<KindArg>,
-    pub verbosity: VerbosityLevel,
-    pub max_nodes: usize,
-}
 
 /// Top-level entry point for `hydra graph search`.
 ///
@@ -43,151 +29,36 @@ pub struct SearchParams {
 /// `anyhow::Error` (exit 1).
 pub async fn run_search(
     client: &dyn HydraClientInterface,
-    params: SearchParams,
+    selection: Selection,
     context: &CommandContext,
 ) -> Result<()> {
-    if let Err(msg) = validate(&params) {
+    if let Err(msg) = validate(&selection) {
         eprintln!("error: {msg}");
         process::exit(2);
     }
 
-    let node_ids = resolve_node_ids(client, &params).await?;
-    if node_ids.len() > params.max_nodes {
+    let node_ids = resolve_node_ids(client, &selection).await?;
+    if node_ids.len() > selection.max_nodes {
         eprintln!(
             "error: matched node set ({}) exceeds --max-nodes ({}); narrow your selection (use --max-nodes to raise)",
             node_ids.len(),
-            params.max_nodes,
+            selection.max_nodes,
         );
         process::exit(2);
     }
 
     let mut nodes = hydrate_all(client, node_ids).await?;
-    apply_kind_filter(&mut nodes, &params.kinds);
+    apply_kind_filter(&mut nodes, &selection.kinds);
     nodes.sort_by(|a, b| a.id().as_ref().cmp(b.id().as_ref()));
 
     let mut stdout = io::stdout().lock();
-    render(context.output_format, &nodes, params.verbosity, &mut stdout)?;
+    render(
+        context.output_format,
+        &nodes,
+        selection.verbosity,
+        &mut stdout,
+    )?;
     Ok(())
-}
-
-/// Validate the CLI flag combinations. Returns an error message on misuse.
-pub(crate) fn validate(params: &SearchParams) -> Result<(), String> {
-    if params.scope.is_some()
-        && (params.source.is_some() || params.target.is_some() || params.object.is_some())
-    {
-        return Err("--scope is mutually exclusive with --source/--target/--object".to_string());
-    }
-    if params.scope.is_none()
-        && params.source.is_none()
-        && params.target.is_none()
-        && params.object.is_none()
-    {
-        return Err(
-            "at least one of --source, --target, --object, or --scope is required".to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// Step 1 of the algorithm: resolve the set of node ids to hydrate.
-pub(crate) async fn resolve_node_ids(
-    client: &dyn HydraClientInterface,
-    params: &SearchParams,
-) -> Result<Vec<HydraId>> {
-    if let Some(scope) = &params.scope {
-        resolve_scope_node_ids(client, scope).await
-    } else {
-        let query = ListRelationsRequest {
-            source_id: params.source.clone(),
-            source_ids: None,
-            target_id: params.target.clone(),
-            target_ids: None,
-            object_id: params.object.clone(),
-            rel_type: params.rel_type.clone(),
-            transitive: if params.transitive { Some(true) } else { None },
-        };
-        let response = client
-            .list_relations(&query)
-            .await
-            .context("failed to list relations")?;
-        Ok(node_ids_from_edges(&response))
-    }
-}
-
-/// Union of `source_id` and `target_id` across each returned edge.
-fn node_ids_from_edges(response: &ListRelationsResponse) -> Vec<HydraId> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut out: Vec<HydraId> = Vec::new();
-    for edge in &response.relations {
-        if seen.insert(edge.source_id.as_ref().to_string()) {
-            out.push(edge.source_id.clone());
-        }
-        if seen.insert(edge.target_id.as_ref().to_string()) {
-            out.push(edge.target_id.clone());
-        }
-    }
-    out
-}
-
-/// Resolve `--scope <ID>` to the full node set per the design doc:
-/// {scope} ∪ descendants(child-of, transitive) ∪ has-patch targets ∪ has-document targets.
-/// `refers-to` is intentionally **not** fanned out.
-async fn resolve_scope_node_ids(
-    client: &dyn HydraClientInterface,
-    scope: &HydraId,
-) -> Result<Vec<HydraId>> {
-    // 1. Descendants via child-of (transitive).
-    let descendants_query = ListRelationsRequest {
-        target_id: Some(scope.clone()),
-        rel_type: Some("child-of".to_string()),
-        transitive: Some(true),
-        ..Default::default()
-    };
-    let descendants_response = client
-        .list_relations(&descendants_query)
-        .await
-        .context("failed to list child-of descendants for --scope")?;
-
-    // For child-of edges with target=scope (transitive), each edge's source is
-    // a descendant issue.
-    let mut s_set: Vec<HydraId> = vec![scope.clone()];
-    let mut seen: HashSet<String> = HashSet::new();
-    seen.insert(scope.as_ref().to_string());
-    for edge in &descendants_response.relations {
-        if seen.insert(edge.source_id.as_ref().to_string()) {
-            s_set.push(edge.source_id.clone());
-        }
-    }
-
-    // 2. In parallel, for each of has-patch and has-document, fetch targets
-    // whose source is in `s_set`.
-    let source_ids_csv = s_set
-        .iter()
-        .map(|id| id.as_ref().to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-
-    let mut futures = FuturesUnordered::new();
-    for rel in ["has-patch", "has-document"] {
-        let query = ListRelationsRequest {
-            source_ids: Some(source_ids_csv.clone()),
-            rel_type: Some(rel.to_string()),
-            ..Default::default()
-        };
-        futures.push(async move { client.list_relations(&query).await });
-    }
-
-    let mut all_ids = s_set;
-    while let Some(result) = futures.next().await {
-        let response =
-            result.context("failed to list has-patch/has-document targets for --scope")?;
-        for edge in &response.relations {
-            if seen.insert(edge.target_id.as_ref().to_string()) {
-                all_ids.push(edge.target_id.clone());
-            }
-        }
-    }
-    Ok(all_ids)
 }
 
 /// Hydrate each id concurrently (bounded by `DEFAULT_HYDRATION_CONCURRENCY`).
@@ -256,13 +127,13 @@ fn json_record(node: &HydratedNode, level: VerbosityLevel) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert(
         "kind".to_string(),
-        Value::String(node.kind_str().to_string()),
+        Value::String(node.kind().as_str().to_string()),
     );
     obj.insert(
         "id".to_string(),
         Value::String(node.id().as_ref().to_string()),
     );
-    let view = render_view(node, level);
+    let view = node.render(level);
     if let Value::Object(fields) = view {
         for (k, v) in fields {
             obj.insert(k, v);
@@ -291,8 +162,8 @@ fn render_pretty(
         .iter()
         .map(|node| {
             let id = node.id().as_ref().to_string();
-            let kind = kind_to_str(node.kind());
-            let view = render_view(node, level);
+            let kind = node.kind().as_str();
+            let view = node.render(level);
             let title = view
                 .get("title")
                 .and_then(|v| v.as_str())
@@ -340,104 +211,4 @@ fn render_pretty(
     }
     writer.flush()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn empty_params() -> SearchParams {
-        SearchParams {
-            source: None,
-            target: None,
-            object: None,
-            rel_type: None,
-            transitive: false,
-            scope: None,
-            kinds: Vec::new(),
-            verbosity: VerbosityLevel::L1,
-            max_nodes: 10_000,
-        }
-    }
-
-    #[test]
-    fn validate_rejects_empty_selection() {
-        let err = validate(&empty_params()).unwrap_err();
-        assert!(err.contains("at least one of"), "got: {err}");
-    }
-
-    #[test]
-    fn validate_rejects_scope_with_source() {
-        let params = SearchParams {
-            scope: Some("i-aaaaaa".parse().unwrap()),
-            source: Some("i-bbbbbb".parse().unwrap()),
-            ..empty_params()
-        };
-        let err = validate(&params).unwrap_err();
-        assert!(err.contains("mutually exclusive"), "got: {err}");
-    }
-
-    #[test]
-    fn validate_rejects_scope_with_target() {
-        let params = SearchParams {
-            scope: Some("i-aaaaaa".parse().unwrap()),
-            target: Some("i-bbbbbb".parse().unwrap()),
-            ..empty_params()
-        };
-        let err = validate(&params).unwrap_err();
-        assert!(err.contains("mutually exclusive"), "got: {err}");
-    }
-
-    #[test]
-    fn validate_rejects_scope_with_object() {
-        let params = SearchParams {
-            scope: Some("i-aaaaaa".parse().unwrap()),
-            object: Some("i-bbbbbb".parse().unwrap()),
-            ..empty_params()
-        };
-        let err = validate(&params).unwrap_err();
-        assert!(err.contains("mutually exclusive"), "got: {err}");
-    }
-
-    #[test]
-    fn validate_accepts_object_only() {
-        let params = SearchParams {
-            object: Some("i-aaaaaa".parse().unwrap()),
-            ..empty_params()
-        };
-        assert!(validate(&params).is_ok());
-    }
-
-    #[test]
-    fn validate_accepts_scope_alone() {
-        let params = SearchParams {
-            scope: Some("i-aaaaaa".parse().unwrap()),
-            ..empty_params()
-        };
-        assert!(validate(&params).is_ok());
-    }
-
-    #[test]
-    fn node_ids_from_edges_dedupes_and_preserves_order() {
-        use hydra_common::api::v1::relations::RelationResponse;
-        let response = ListRelationsResponse {
-            relations: vec![
-                RelationResponse {
-                    source_id: "i-aaaaaa".parse().unwrap(),
-                    target_id: "i-bbbbbb".parse().unwrap(),
-                    rel_type: "child-of".to_string(),
-                },
-                RelationResponse {
-                    source_id: "i-aaaaaa".parse().unwrap(),
-                    target_id: "p-cccccc".parse().unwrap(),
-                    rel_type: "has-patch".to_string(),
-                },
-            ],
-        };
-        let ids = node_ids_from_edges(&response);
-        assert_eq!(ids.len(), 3);
-        assert_eq!(ids[0].as_ref(), "i-aaaaaa");
-        assert_eq!(ids[1].as_ref(), "i-bbbbbb");
-        assert_eq!(ids[2].as_ref(), "p-cccccc");
-    }
 }
