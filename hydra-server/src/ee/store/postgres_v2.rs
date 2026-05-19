@@ -209,12 +209,14 @@ impl PostgresStoreV2 {
     // random_len_for_count, which takes ceil(log_26(n)) — a 26x error only
     // bumps the suffix by one char, so reltuples staleness is harmless.
     // Versioned tables (is_latest = true) are over-counted by the version
-    // cardinality, also bounded to ~1 char of error. reltuples is -1 on
-    // never-ANALYZEd tables; GREATEST clamps it to 0 so fresh deployments
-    // fall back to the default suffix until autovacuum runs ANALYZE.
-    // to_regclass resolves schema-qualified names like "metis.tasks_v2" to a
-    // pg_class oid (or NULL when missing), so the WHERE never matches a
-    // not-yet-created table and fetch_optional falls through to unwrap_or(0).
+    // cardinality, also bounded to ~1 char of error. Soft-delete tables
+    // (labels) are over-counted by the soft-deleted row count — same family
+    // of small inaccuracies, same bound. reltuples is -1 on never-ANALYZEd
+    // tables; GREATEST clamps it to 0 so fresh deployments fall back to the
+    // default suffix until autovacuum runs ANALYZE. to_regclass resolves
+    // schema-qualified names like "metis.tasks_v2" to a pg_class oid (or NULL
+    // when missing), so the WHERE never matches a not-yet-created table and
+    // fetch_optional falls through to unwrap_or(0).
     async fn estimated_row_count(&self, table: &str) -> Result<u64, StoreError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT GREATEST(reltuples, 0)::bigint

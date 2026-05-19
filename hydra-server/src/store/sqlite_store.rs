@@ -91,6 +91,12 @@ fn bump_count(cell: &OnceCell<AtomicI64>) {
     }
 }
 
+fn decrement_count(cell: &OnceCell<AtomicI64>) {
+    if let Some(atomic) = cell.get() {
+        atomic.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct RepositoryRow {
     id: String,
@@ -459,6 +465,28 @@ impl SqliteStore {
         Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
     }
 
+    // Like `cached_count_all`, but seeds the cell with `WHERE deleted = 0`
+    // so the cache tracks the live row count. `add_label` increments it and
+    // `delete_label` decrements it to keep it consistent with the soft-delete
+    // semantics; soft-deleted rows do not inflate `next_label_id`'s suffix.
+    async fn cached_count_undeleted(
+        &self,
+        cell: &OnceCell<AtomicI64>,
+        table: &str,
+    ) -> Result<u64, StoreError> {
+        let atomic = cell
+            .get_or_try_init(|| async {
+                let sql = format!("SELECT COUNT(*) FROM {table} WHERE deleted = 0");
+                let count = sqlx::query_scalar::<_, i64>(&sql)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                Ok::<_, StoreError>(AtomicI64::new(count.max(0)))
+            })
+            .await?;
+        Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
+    }
+
     async fn next_issue_id(&self) -> Result<IssueId, StoreError> {
         let count = self
             .cached_count_latest(&self.row_counts.issues, TABLE_ISSUES_V2)
@@ -501,7 +529,7 @@ impl SqliteStore {
 
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
         let count = self
-            .cached_count_all(&self.row_counts.labels, TABLE_LABELS)
+            .cached_count_undeleted(&self.row_counts.labels, TABLE_LABELS)
             .await?;
         let len = random_len_for_count(count);
         Ok(LabelId::generate(len).expect("length within bounds"))
@@ -4912,6 +4940,7 @@ impl Store for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
 
+        decrement_count(&self.row_counts.labels);
         Ok(())
     }
 
@@ -9840,6 +9869,66 @@ mod tests {
             .unwrap();
         }
         store.bump_row_count_for_test(TABLE_TASKS_V2, count as i64);
+    }
+
+    async fn insert_dummy_undeleted_labels(store: &SqliteStore, count: usize) -> Vec<LabelId> {
+        // Insert minimal label rows with deleted = 0 to inflate the count
+        // cheaply without exercising the full add_label pipeline. Generates
+        // wide random suffixes so collisions across this many rows are
+        // vanishingly unlikely. Bumps the in-memory row-count cache to match,
+        // since these raw inserts bypass add_label.
+        let mut ids = Vec::with_capacity(count);
+        let now = Utc::now().to_rfc3339();
+        for i in 0..count {
+            let id = LabelId::generate(10).unwrap();
+            sqlx::query(&format!(
+                "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at)
+                 VALUES (?1, ?2, '#000000', 0, 0, 0, ?3, ?3)"
+            ))
+            .bind(id.as_ref())
+            .bind(format!("dummy-{i}"))
+            .bind(&now)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        store.bump_row_count_for_test(TABLE_LABELS, count as i64);
+        ids
+    }
+
+    #[tokio::test]
+    async fn delete_label_decrements_next_label_id_count() {
+        let store = create_test_store().await;
+
+        // Seed 677 live labels so the cache crosses the 6 → 7-char threshold.
+        let dummies = insert_dummy_undeleted_labels(&store, 677).await;
+        let pre = store
+            .add_label(sample_label("live-pre", "#ffffff"))
+            .await
+            .unwrap();
+        assert_eq!(
+            pre.as_ref().len() - LabelId::prefix().len(),
+            7,
+            "677 live labels should bump suffix length to 7"
+        );
+
+        // Soft-delete every label; each delete_label call must decrement the
+        // cache so subsequent next_label_id sees a live count of zero.
+        for id in &dummies {
+            store.delete_label(id).await.unwrap();
+        }
+        store.delete_label(&pre).await.unwrap();
+
+        let post = store
+            .add_label(sample_label("live-post", "#ffffff"))
+            .await
+            .unwrap();
+        assert_eq!(
+            post.as_ref().len() - LabelId::prefix().len(),
+            6,
+            "soft-deleted labels must not inflate the suffix length"
+        );
     }
 
     #[tokio::test]
