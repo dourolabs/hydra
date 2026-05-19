@@ -1,61 +1,236 @@
-/* Repository-specific styles (shared styles in SettingsSection.module.css) */
+/* Repositories list — refreshed admin table. */
 
-.formHint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
-/* Patch workflow section */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-0);
+  z-index: 1;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  padding: 9px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--line);
+  transition: background var(--tx-fast);
+}
+
+.table tbody tr:hover {
+  background: var(--bg-1);
+}
+
+.table tbody td {
+  padding: 0 var(--pad-x);
+  height: var(--row-h);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+/* Columns */
+.colName {
+  width: 220px;
+}
+
+.colRemote {
+  width: auto;
+  max-width: 0;
+}
+
+.colBranch {
+  width: 130px;
+}
+
+.colImage {
+  width: 220px;
+}
+
+.colWorkflow {
+  width: 150px;
+}
+
+.colActions {
+  width: 110px;
+  text-align: right;
+}
+
+/* Cell internals */
+.nameCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nameCell svg {
+  color: var(--fg-2);
+  flex-shrink: 0;
+}
+
+.nameText {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.monoDim {
+  composes: mono;
+  color: var(--fg-2);
+}
+
+.dash {
+  color: var(--fg-3);
+}
+
+.workflowChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Form styles (used in modals) */
+.formHint {
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  margin-top: 4px;
+}
+
 .workflowSection {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .workflowToggleRow {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 8px;
   cursor: pointer;
 }
 
 .workflowHeader {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  color: var(--fg-0);
+  font-size: var(--t-sm);
   font-weight: 600;
 }
 
 .reviewerList {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 .reviewerRow {
   display: flex;
   align-items: flex-end;
-  gap: var(--space-2);
+  gap: 8px;
 }
 
 .reviewerRow > :first-child {
   flex: 1;
 }
 
-/* Mobile responsive */
+/* Mobile */
 @media (max-width: 768px) {
-  .detailRow {
-    flex-direction: column;
-    gap: var(--space-1);
+  .table,
+  .table tbody {
+    display: block;
+    width: 100%;
   }
 
-  .detailLabel {
+  .table thead {
+    display: none;
+  }
+
+  .table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name actions"
+      "meta meta";
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: center;
+    padding: 12px var(--pad-x);
+    height: auto;
+  }
+
+  .table tbody td {
+    display: block;
+    padding: 0;
+    height: auto;
+    overflow: visible;
+    white-space: normal;
     width: auto;
   }
 
-  .repoDetails {
-    padding-left: var(--space-3);
+  .table tbody td.colName {
+    grid-area: name;
+  }
+
+  .table tbody td.colActions {
+    grid-area: actions;
+    text-align: right;
+  }
+
+  .table tbody td.colRemote,
+  .table tbody td.colBranch,
+  .table tbody td.colImage,
+  .table tbody td.colWorkflow {
+    grid-area: auto;
   }
 }
