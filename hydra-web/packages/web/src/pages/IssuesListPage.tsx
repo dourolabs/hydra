@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import type { IssueStatus } from "@hydra/api";
 import {
   usePaginatedIssues,
+  useIssueCount,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
@@ -156,6 +157,8 @@ export function IssuesListPage() {
     isFetchingNextPage,
   } = usePaginatedIssues(serverFilters, true);
 
+  const { data: totalCount } = useIssueCount(serverFilters);
+
   const issues = useMemo(() => {
     const seen = new Set<string>();
     return (paginatedData?.pages.flatMap((page) => page.issues) ?? []).filter((issue) => {
@@ -164,6 +167,8 @@ export function IssuesListPage() {
       return true;
     });
   }, [paginatedData]);
+
+  const displayCount = totalCount ?? issues.length;
 
   const { childStatusMap, sessionsByIssue } = usePageIssueTrees(issues, username);
 
@@ -201,7 +206,7 @@ export function IssuesListPage() {
         onSearchChange={handleSearchChange}
         selectedStatus={selectedIssueStatus}
         onStatusChange={setSelectedIssueStatus}
-        eyebrow={eyebrowFor(filterRootId, issues.length)}
+        eyebrow={eyebrowFor(filterRootId, displayCount)}
         title={titleFor(filterRootId)}
       />
     </div>
