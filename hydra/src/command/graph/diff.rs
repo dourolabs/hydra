@@ -247,7 +247,12 @@ fn modified_record(
 /// (`Value::Null`) but the other is a structure, recursion still descends
 /// into the structure so each new leaf gets its own entry rather than the
 /// whole subtree being recorded at the parent path.
-fn diff_json(path: &str, before: &Value, after: &Value, out: &mut BTreeMap<String, FieldChange>) {
+pub(crate) fn diff_json(
+    path: &str,
+    before: &Value,
+    after: &Value,
+    out: &mut BTreeMap<String, FieldChange>,
+) {
     if before == after {
         return;
     }
