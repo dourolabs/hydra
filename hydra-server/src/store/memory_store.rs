@@ -135,7 +135,12 @@ impl MemoryStore {
     }
 
     fn next_label_id(&self) -> LabelId {
-        let len = random_len_for_count(self.labels.len() as u64);
+        let count = self
+            .labels
+            .iter()
+            .filter(|entry| !entry.value().deleted)
+            .count() as u64;
+        let len = random_len_for_count(count);
         LabelId::generate(len).expect("length within bounds")
     }
 
@@ -8115,6 +8120,65 @@ mod tests {
             id.as_ref().len() - SessionId::prefix().len(),
             7,
             "677 rows should bump suffix length to 7"
+        );
+    }
+
+    fn insert_dummy_undeleted_labels(store: &MemoryStore, count: usize) -> Vec<LabelId> {
+        let now = Utc::now();
+        let mut ids = Vec::with_capacity(count);
+        for i in 0..count {
+            // MAX_RANDOM_LEN keeps collisions across 677 rows vanishingly
+            // unlikely without falling back to retry.
+            let id = LabelId::generate(12).unwrap();
+            store.labels.insert(
+                id.clone(),
+                Label {
+                    name: format!("dummy-{i}"),
+                    color: "#000000".parse().unwrap(),
+                    deleted: false,
+                    recurse: false,
+                    hidden: false,
+                    created_at: now,
+                    updated_at: now,
+                },
+            );
+            ids.push(id);
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn delete_label_keeps_next_label_id_default() {
+        let store = MemoryStore::new();
+
+        // Seed 677 live labels so next_label_id sees a count past the 6 → 7
+        // threshold.
+        let dummies = insert_dummy_undeleted_labels(&store, 677);
+        let pre = store
+            .add_label(sample_label("live-pre", "#ffffff"))
+            .await
+            .unwrap();
+        assert_eq!(
+            pre.as_ref().len() - LabelId::prefix().len(),
+            7,
+            "677 live labels should bump suffix length to 7"
+        );
+
+        // Soft-delete every label; the live count should drop back to zero
+        // and the next id should fall back to the default 6-char suffix.
+        for id in &dummies {
+            store.delete_label(id).await.unwrap();
+        }
+        store.delete_label(&pre).await.unwrap();
+
+        let post = store
+            .add_label(sample_label("live-post", "#ffffff"))
+            .await
+            .unwrap();
+        assert_eq!(
+            post.as_ref().len() - LabelId::prefix().len(),
+            6,
+            "soft-deleted labels must not inflate the suffix length"
         );
     }
 }
