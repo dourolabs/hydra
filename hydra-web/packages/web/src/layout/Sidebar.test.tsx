@@ -227,7 +227,10 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("sidebar-chat-row-c-1")).toBeTruthy();
   });
 
-  it("excludes closed chats and orders the rest by most-recently-updated", () => {
+  it("excludes closed chats and orders by status bucket (active > idle) then updated_at desc", () => {
+    // c-recent-idle is the most recently updated non-closed conversation, but bucket-first
+    // ordering means c-old-active (older but active) ranks above it. c-recent-closed must
+    // still be excluded by the sidebar's closed filter.
     const now = Date.now();
     mockConversations = [
       {
@@ -263,13 +266,37 @@ describe("Sidebar", () => {
         created_at: new Date(now - 10_000).toISOString(),
         updated_at: new Date(now - 10_000).toISOString(),
       },
+      {
+        conversation_id: "c-newer-active",
+        title: "Newer active",
+        agent_name: null,
+        status: "active",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: new Date(now - 5 * 60_000).toISOString(),
+        updated_at: new Date(now - 5 * 60_000).toISOString(),
+      },
+      {
+        conversation_id: "c-older-idle",
+        title: "Older idle",
+        agent_name: null,
+        status: "idle",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: new Date(now - 90 * 60_000).toISOString(),
+        updated_at: new Date(now - 90 * 60_000).toISOString(),
+      },
     ];
     renderSidebar();
     expect(screen.queryByTestId("sidebar-chat-row-c-recent-closed")).toBeNull();
     const rows = screen.getAllByTestId(/^sidebar-chat-row-/);
     expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
-      "sidebar-chat-row-c-recent-idle",
+      "sidebar-chat-row-c-newer-active",
       "sidebar-chat-row-c-old-active",
+      "sidebar-chat-row-c-recent-idle",
+      "sidebar-chat-row-c-older-idle",
     ]);
   });
 
