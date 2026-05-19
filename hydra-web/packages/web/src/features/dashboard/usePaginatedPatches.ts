@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { SearchPatchesQuery, PatchStatus, ListPatchesResponse } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -24,6 +24,27 @@ export function usePaginatedPatches(filters: PatchFilters, enabled = true) {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+/**
+ * Count-only query for the page eyebrow total. Uses limit=0 and count=true
+ * to get total_count without fetching patch data.
+ */
+export function usePatchCount(filters: PatchFilters, enabled = true) {
+  return useQuery({
+    queryKey: ["patchCount", filters],
+    queryFn: async () => {
+      const query: Partial<SearchPatchesQuery> = {
+        limit: 0,
+        count: true,
+      };
+      if (filters.q) query.q = filters.q;
+      if (filters.status && filters.status.length > 0) query.status = filters.status;
+      const resp = await apiClient.listPatches(query);
+      return Number(resp.total_count ?? 0);
+    },
     enabled,
   });
 }

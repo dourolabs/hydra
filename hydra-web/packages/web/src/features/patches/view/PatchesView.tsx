@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, Icons, Kbd } from "@hydra/ui";
 import type { PatchStatus, PatchSummaryRecord } from "@hydra/api";
-import { usePaginatedPatches } from "../../dashboard/usePaginatedPatches";
+import { usePaginatedPatches, usePatchCount } from "../../dashboard/usePaginatedPatches";
 import { normalizePatchStatus } from "../../../utils/statusMapping";
 import styles from "./PatchesView.module.css";
 
@@ -59,13 +59,10 @@ export function PatchesView() {
     [searchQuery, selectedStatus],
   );
 
-  const {
-    data,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = usePaginatedPatches(filters);
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    usePaginatedPatches(filters);
+
+  const { data: totalCount } = usePatchCount(filters);
 
   const patches = useMemo<PatchSummaryRecord[]>(() => {
     const seen = new Set<string>();
@@ -81,13 +78,14 @@ export function PatchesView() {
   };
 
   const activeKey: StatusFilter["key"] = selectedStatus ?? "all";
+  const displayCount = totalCount ?? patches.length;
 
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
         <div className={styles.headLeft}>
           <span className={styles.eyebrow}>
-            WORK · {patches.length === 1 ? "1 PATCH" : `${patches.length} PATCHES`}
+            WORK · {displayCount === 1 ? "1 PATCH" : `${displayCount} PATCHES`}
           </span>
           <h1 className={styles.pageTitle}>Patches</h1>
         </div>
@@ -122,9 +120,7 @@ export function PatchesView() {
       </div>
 
       <div className={styles.body}>
-        {isLoading && patches.length === 0 && (
-          <div className={styles.empty}>Loading patches…</div>
-        )}
+        {isLoading && patches.length === 0 && <div className={styles.empty}>Loading patches…</div>}
 
         {!isLoading && patches.length === 0 && (
           <div className={styles.empty}>No patches match the current filters.</div>
