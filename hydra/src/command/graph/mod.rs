@@ -1,12 +1,13 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
-//! Exposed subcommands: `search` (PR 3) and `diff` (PR 4). PR 5 will add
-//! `log`. Selection-flag parsing, validation, and node-id resolution live
-//! in [`utils`]; per-kind hydration and version-history fetching live in
+//! Exposed subcommands: `search` (PR 3), `diff` (PR 4), and `log` (PR 5).
+//! Selection-flag parsing, validation, and node-id resolution live in
+//! [`utils`]; per-kind hydration and version-history fetching live in
 //! [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
+pub mod log;
 pub mod search;
 pub mod utils;
 
@@ -26,6 +27,9 @@ pub const DEFAULT_MAX_NODES: usize = 10_000;
 
 /// Maximum number of in-flight per-id hydration requests.
 pub const DEFAULT_HYDRATION_CONCURRENCY: usize = 32;
+
+/// Default cap on the number of log events emitted by `hydra graph log`.
+pub const DEFAULT_LOG_LIMIT: usize = 200;
 
 #[derive(Debug, Subcommand)]
 pub enum GraphCommand {
@@ -123,6 +127,65 @@ pub enum GraphCommand {
         #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_NODES)]
         max_nodes: usize,
     },
+    /// Stream a time-ordered event log of `created` / `updated` records for
+    /// the matched nodes.
+    Log {
+        /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
+        /// relative duration, or 'now'). Required.
+        #[arg(long, value_name = "TS", allow_hyphen_values = true)]
+        since: HydraTime,
+
+        /// End of the time window (same syntax as --since). Defaults to 'now'.
+        #[arg(
+            long,
+            value_name = "TS",
+            default_value = "now",
+            allow_hyphen_values = true
+        )]
+        until: HydraTime,
+
+        /// Filter by source object ID.
+        #[arg(long, value_name = "ID")]
+        source: Option<HydraId>,
+
+        /// Filter by target object ID.
+        #[arg(long, value_name = "ID")]
+        target: Option<HydraId>,
+
+        /// Show all relations where this object is source or target.
+        #[arg(long, value_name = "ID")]
+        object: Option<HydraId>,
+
+        /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
+        #[arg(long, value_name = "TYPE")]
+        rel_type: Option<String>,
+
+        /// Follow transitive edges (requires --source or --target plus --rel-type).
+        #[arg(long)]
+        transitive: bool,
+
+        /// Convenience: include the issue plus all transitively-reachable
+        /// child issues plus all attached patches and documents. Mutually
+        /// exclusive with --source/--target/--object.
+        #[arg(long, value_name = "ID")]
+        scope: Option<HydraId>,
+
+        /// Post-filter the logged nodes to one or more kinds (repeatable).
+        #[arg(long = "kind", value_enum, value_name = "KIND")]
+        kinds: Vec<KindArg>,
+
+        /// Verbosity level (1 = terse, 2 = intermediate, 3 = full).
+        #[arg(long, value_name = "LEVEL", default_value = "1")]
+        verbosity: VerbosityArg,
+
+        /// Maximum number of events to emit (most recent first).
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_LOG_LIMIT)]
+        limit: usize,
+
+        /// Maximum size of the resolved node-id set before aborting.
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_NODES)]
+        max_nodes: usize,
+    },
 }
 
 /// CLI-facing kind filter, repeatable as `--kind issue --kind patch ...`.
@@ -213,6 +276,42 @@ pub async fn run(
                 diff::DiffParams {
                     since,
                     until,
+                    selection: utils::Selection {
+                        source,
+                        target,
+                        object,
+                        rel_type,
+                        transitive,
+                        scope,
+                        kinds,
+                        verbosity: verbosity.0,
+                        max_nodes,
+                    },
+                },
+                context,
+            )
+            .await
+        }
+        GraphCommand::Log {
+            since,
+            until,
+            source,
+            target,
+            object,
+            rel_type,
+            transitive,
+            scope,
+            kinds,
+            verbosity,
+            limit,
+            max_nodes,
+        } => {
+            log::run_log(
+                client,
+                log::LogParams {
+                    since,
+                    until,
+                    limit,
                     selection: utils::Selection {
                         source,
                         target,
