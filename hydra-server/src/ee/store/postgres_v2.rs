@@ -205,56 +205,60 @@ impl PostgresStoreV2 {
         Ok(())
     }
 
-    async fn count_latest_rows(&self, table: &str) -> Result<u64, StoreError> {
-        let sql = format!("SELECT COUNT(*) FROM {table} WHERE is_latest = true");
-        let count = sqlx::query_scalar::<_, i64>(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        Ok(count.max(0) as u64)
-    }
-
-    async fn count_all_rows(&self, table: &str) -> Result<u64, StoreError> {
-        let sql = format!("SELECT COUNT(*) FROM {table}");
-        let count = sqlx::query_scalar::<_, i64>(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
+    // Approximate row count from pg_class.reltuples. Only feeds
+    // random_len_for_count, which takes ceil(log_26(n)) — a 26x error only
+    // bumps the suffix by one char, so reltuples staleness is harmless.
+    // Versioned tables (is_latest = true) are over-counted by the version
+    // cardinality, also bounded to ~1 char of error. reltuples is -1 on
+    // never-ANALYZEd tables; GREATEST clamps it to 0 so fresh deployments
+    // fall back to the default suffix until autovacuum runs ANALYZE.
+    async fn estimated_row_count(&self, table: &str) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT GREATEST(reltuples, 0)::bigint
+             FROM pg_class
+             WHERE relname = $1 AND relkind = 'r'
+             LIMIT 1",
+        )
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?
+        .unwrap_or(0);
         Ok(count.max(0) as u64)
     }
 
     async fn next_issue_id(&self) -> Result<IssueId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_ISSUES_V2).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_ISSUES_V2).await?);
         Ok(IssueId::generate(len).expect("length within bounds"))
     }
 
     async fn next_patch_id(&self) -> Result<PatchId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_PATCHES_V2).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_PATCHES_V2).await?);
         Ok(PatchId::generate(len).expect("length within bounds"))
     }
 
     async fn next_document_id(&self) -> Result<DocumentId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_DOCUMENTS_V2).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_DOCUMENTS_V2).await?);
         Ok(DocumentId::generate(len).expect("length within bounds"))
     }
 
     async fn next_session_id(&self) -> Result<SessionId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_TASKS_V2).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_TASKS_V2).await?);
         Ok(SessionId::generate(len).expect("length within bounds"))
     }
 
     async fn next_notification_id(&self) -> Result<NotificationId, StoreError> {
-        let len = random_len_for_count(self.count_all_rows(TABLE_NOTIFICATIONS).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_NOTIFICATIONS).await?);
         Ok(NotificationId::generate(len).expect("length within bounds"))
     }
 
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
-        let len = random_len_for_count(self.count_all_rows(TABLE_LABELS).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_LABELS).await?);
         Ok(LabelId::generate(len).expect("length within bounds"))
     }
 
     async fn next_conversation_id(&self) -> Result<ConversationId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_CONVERSATIONS_V2).await?);
+        let len = random_len_for_count(self.estimated_row_count(TABLE_CONVERSATIONS_V2).await?);
         Ok(ConversationId::generate(len).expect("length within bounds"))
     }
 
@@ -8601,6 +8605,12 @@ mod tests {
     async fn add_session_grows_id_suffix_with_table_size(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
 
+        // pg_class.reltuples is only refreshed by ANALYZE (and autovacuum),
+        // not by INSERT — so the test runs ANALYZE after every bulk insert.
+        sqlx::query(&format!("ANALYZE {TABLE_TASKS_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
         let (id, _) = store
             .add_session(sample_session(), Utc::now(), &ActorRef::test())
             .await
@@ -8612,6 +8622,10 @@ mod tests {
         );
 
         insert_dummy_latest_sessions(&store, 0, 26).await; // total = 27
+        sqlx::query(&format!("ANALYZE {TABLE_TASKS_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
         let (id, _) = store
             .add_session(sample_session(), Utc::now(), &ActorRef::test())
             .await
@@ -8623,6 +8637,10 @@ mod tests {
         );
 
         insert_dummy_latest_sessions(&store, 26, 649).await; // total = 677
+        sqlx::query(&format!("ANALYZE {TABLE_TASKS_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
         let (id, _) = store
             .add_session(sample_session(), Utc::now(), &ActorRef::test())
             .await
