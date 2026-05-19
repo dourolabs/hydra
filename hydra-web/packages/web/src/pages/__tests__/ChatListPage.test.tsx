@@ -6,8 +6,36 @@ import type { ConversationSummary } from "@hydra/api";
 // --- Mocks ---
 
 const mockNavigate = vi.fn();
+
+let searchParamsString = "";
+const setSearchParamsMock = vi.fn(
+  (
+    updater:
+      | URLSearchParams
+      | string
+      | Record<string, string>
+      | ((prev: URLSearchParams) => URLSearchParams),
+  ) => {
+    const prev = new URLSearchParams(searchParamsString);
+    let next: URLSearchParams;
+    if (typeof updater === "function") {
+      next = updater(prev);
+    } else if (updater instanceof URLSearchParams) {
+      next = updater;
+    } else if (typeof updater === "string") {
+      next = new URLSearchParams(updater);
+    } else {
+      next = new URLSearchParams(updater);
+    }
+    searchParamsString = next.toString();
+  },
+);
+
 vi.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
+  useSearchParams: () => {
+    return [new URLSearchParams(searchParamsString), setSearchParamsMock] as const;
+  },
   Link: ({ to, children, className }: {
     to: string;
     children: React.ReactNode;
@@ -54,14 +82,30 @@ vi.mock("@tanstack/react-query", () => ({
 
 let mockConversations: ConversationSummary[] = [];
 const mockRefetch = vi.fn();
+const useConversationsMock = vi.fn();
 
 vi.mock("../../features/chat/useConversations", () => ({
-  useConversations: () => ({
-    data: mockConversations,
-    isLoading: false,
-    error: null,
-    refetch: mockRefetch,
-  }),
+  useConversations: (...args: unknown[]) => {
+    useConversationsMock(...args);
+    return {
+      data: mockConversations,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    };
+  },
+}));
+
+let mockUser: { actor: { type: "user"; username: string } } | null = {
+  actor: { type: "user", username: "alice" },
+};
+vi.mock("../../features/auth/useAuth", () => ({
+  useAuth: () => ({ user: mockUser, logout: vi.fn(), loading: false }),
+}));
+
+vi.mock("../../api/auth", () => ({
+  actorDisplayName: (actor: { type: string; username?: string }) =>
+    actor.type === "user" ? actor.username : "",
 }));
 
 const mockCreateConversation = vi.fn();
@@ -154,6 +198,9 @@ describe("ChatListPage New Chat button", () => {
     resetMutationState();
     mockCreateConversation.mockReset();
     useBreadcrumbsMock.mockReset();
+    useConversationsMock.mockReset();
+    searchParamsString = "";
+    mockUser = { actor: { type: "user", username: "alice" } };
   });
 
   it("publishes a Workspace / Chats breadcrumb on mount", () => {
@@ -340,6 +387,69 @@ describe("ChatListPage New Chat button", () => {
     const statuses = badges.map((b) => b.getAttribute("data-status"));
     expect(statuses).toEqual(["conv-active", "conv-idle", "conv-closed"]);
 
+    cleanup();
+  });
+});
+
+describe("ChatListPage scope toggle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConversations = [];
+    resetMutationState();
+    mockCreateConversation.mockReset();
+    useBreadcrumbsMock.mockReset();
+    useConversationsMock.mockReset();
+    setSearchParamsMock.mockClear();
+    searchParamsString = "";
+    mockUser = { actor: { type: "user", username: "alice" } };
+  });
+
+  it("defaults to 'Mine' and queries useConversations with creator=<current user>", () => {
+    render(<ChatListPage />);
+    expect(useConversationsMock).toHaveBeenCalled();
+    const firstArg = useConversationsMock.mock.calls[0]?.[0];
+    expect(firstArg).toEqual({ creator: "alice" });
+
+    const toggle = screen.getByTestId("chats-scope-toggle");
+    expect(toggle).toBeDefined();
+    const mineBtn = screen.getByTestId("chats-scope-mine");
+    expect(mineBtn.getAttribute("aria-selected")).toBe("true");
+    cleanup();
+  });
+
+  it("does not pass a creator filter when the user is not authenticated", () => {
+    mockUser = null;
+    render(<ChatListPage />);
+    expect(useConversationsMock).toHaveBeenCalled();
+    const firstArg = useConversationsMock.mock.calls[0]?.[0];
+    expect(firstArg).toBeUndefined();
+    cleanup();
+  });
+
+  it("omits creator filter when scope=all and updates URL via setSearchParams", () => {
+    searchParamsString = "scope=all";
+    render(<ChatListPage />);
+    const firstArg = useConversationsMock.mock.calls[0]?.[0];
+    expect(firstArg).toBeUndefined();
+    const allBtn = screen.getByTestId("chats-scope-all");
+    expect(allBtn.getAttribute("aria-selected")).toBe("true");
+    cleanup();
+  });
+
+  it("clicking 'All' sets ?scope=all", () => {
+    render(<ChatListPage />);
+    fireEvent.click(screen.getByTestId("chats-scope-all"));
+    expect(setSearchParamsMock).toHaveBeenCalled();
+    expect(searchParamsString).toBe("scope=all");
+    cleanup();
+  });
+
+  it("clicking 'Mine' removes ?scope param", () => {
+    searchParamsString = "scope=all";
+    render(<ChatListPage />);
+    fireEvent.click(screen.getByTestId("chats-scope-mine"));
+    expect(setSearchParamsMock).toHaveBeenCalled();
+    expect(searchParamsString).toBe("");
     cleanup();
   });
 });

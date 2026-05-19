@@ -1,8 +1,10 @@
 import { useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Icons } from "@hydra/ui";
-import type { Conversation } from "@hydra/api";
+import type { Conversation, SearchConversationsQuery } from "@hydra/api";
+import { useAuth } from "../features/auth/useAuth";
+import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
@@ -11,11 +13,27 @@ import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
 
+type Scope = "mine" | "all";
+
+function parseScope(raw: string | null): Scope {
+  return raw === "all" ? "all" : "mine";
+}
+
 export function ChatListPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Chats");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useConversations();
+  const { user } = useAuth();
+  const displayName = user ? actorDisplayName(user.actor) : null;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const scope = parseScope(searchParams.get("scope"));
+
+  const query = useMemo<Partial<SearchConversationsQuery> | undefined>(() => {
+    if (scope === "mine" && displayName) return { creator: displayName };
+    return undefined;
+  }, [scope, displayName]);
+
+  const { data, isLoading, error } = useConversations(query);
 
   const createMutation = useMutation({
     mutationFn: () => apiClient.createConversation({}),
@@ -32,6 +50,18 @@ export function ChatListPage() {
 
   const totalLabel = sorted.length === 1 ? "1 CHAT" : `${sorted.length} CHATS`;
 
+  const setScope = (next: Scope) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next === "all") {
+        params.set("scope", "all");
+      } else {
+        params.delete("scope");
+      }
+      return params;
+    });
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
@@ -40,6 +70,37 @@ export function ChatListPage() {
           <h1 className={styles.pageTitle}>Chats</h1>
         </div>
         <span className={styles.headSpacer} />
+        <div
+          className={styles.scopeToggle}
+          role="tablist"
+          aria-label="Chat scope"
+          data-testid="chats-scope-toggle"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scope === "mine"}
+            className={`${styles.scopeOption}${
+              scope === "mine" ? ` ${styles.scopeOptionActive}` : ""
+            }`}
+            onClick={() => setScope("mine")}
+            data-testid="chats-scope-mine"
+          >
+            Mine
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scope === "all"}
+            className={`${styles.scopeOption}${
+              scope === "all" ? ` ${styles.scopeOptionActive}` : ""
+            }`}
+            onClick={() => setScope("all")}
+            data-testid="chats-scope-all"
+          >
+            All
+          </button>
+        </div>
         <Button
           variant="primary"
           size="sm"

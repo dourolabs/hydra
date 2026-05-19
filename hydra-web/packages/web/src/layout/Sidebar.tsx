@@ -105,7 +105,14 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   const { data: inProgressCount = 0 } = useIssueCount(inProgressFilters, true);
 
   // ── Recent chats ──
-  const { data: conversations } = useConversations();
+  // Default to the logged-in user's own chats; mirrors the ChatListPage 'mine' default.
+  const conversationsQuery = useMemo(
+    () => (displayName ? { creator: displayName } : undefined),
+    [displayName],
+  );
+  const { data: conversations } = useConversations(conversationsQuery, {
+    enabled: !!displayName,
+  });
   const recentChats = useMemo<ConversationSummary[]>(() => {
     if (!conversations) return [];
     return conversations
@@ -254,7 +261,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             <span className={styles.itemIcon}>
               <Icons.IconChat />
             </span>
-            <span className={styles.itemLabel}>All chats</span>
+            <span className={styles.itemLabel}>My chats</span>
             {conversations && (
               <span className={styles.itemMeta}>{conversations.length}</span>
             )}
