@@ -416,12 +416,25 @@ impl AppState {
             match self.store.get_user_secret(creator, secret_name).await {
                 Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
                     Ok(value) => {
-                        info!(
-                            username = %creator,
-                            secret = %secret_name,
-                            "successfully decrypted and set user secret"
-                        );
-                        env_vars.insert(secret_name.clone(), value);
+                        // Skip empty AI model key values so the config fallback below
+                        // can still inject a usable token. Without this, a legacy DB
+                        // row with an empty stored value would shadow the config
+                        // fallback (via `contains_key` returning true with value "")
+                        // and `Claude::new` would reject the empty token as missing.
+                        if is_ai_key && value.trim().is_empty() {
+                            info!(
+                                username = %creator,
+                                secret = %secret_name,
+                                "user secret value is empty for AI key, skipping (will use config fallback)"
+                            );
+                        } else {
+                            info!(
+                                username = %creator,
+                                secret = %secret_name,
+                                "successfully decrypted and set user secret"
+                            );
+                            env_vars.insert(secret_name.clone(), value);
+                        }
                     }
                     Err(err) => {
                         warn!(
