@@ -2,6 +2,7 @@
 
 pub mod assertions;
 pub mod concurrency;
+pub mod relay_counter;
 pub mod user_handle;
 mod worker;
 
@@ -47,6 +48,7 @@ pub use assertions::{
     IssueAssertions, IssueSummaryAssertions, JobAssertions, PatchAssertions,
 };
 pub use concurrency::{concurrent, test_all_orderings, Step};
+pub use relay_counter::RelayCallCountingClient;
 // Re-export patch workflow config types for test files that construct configs directly.
 pub use hydra_server::policy::automations::patch_workflow::{
     MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,

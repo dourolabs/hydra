@@ -13,6 +13,25 @@ use std::time::Duration;
 #[cfg(unix)]
 use tokio::process::Command;
 
+#[cfg(unix)]
+use harness::RelayCallCountingClient;
+#[cfg(unix)]
+use hydra::client::HydraClientInterface;
+#[cfg(unix)]
+use hydra::command::output::{CommandContext, ResolvedOutputFormat};
+#[cfg(unix)]
+use hydra_common::{
+    issues::{IssueStatus, IssueType, SessionSettings},
+    sessions::{BundleSpec, CreateSessionRequest},
+    SessionId,
+};
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::sync::Arc;
+
 /// Integration test: create issue -> create job -> run_worker with git commit
 /// + patch create -> verify patch exists and job completes.
 #[tokio::test]
@@ -135,6 +154,163 @@ async fn run_worker_does_not_reap_test_runner_processes() -> Result<()> {
 
     let _ = sentinel.kill().await;
     Ok(())
+}
+
+/// Regression guard for the Codex + interactive short-circuit in
+/// `worker_run::run` (see `hydra/src/command/sessions/worker_run.rs:213`).
+///
+/// The `matches!(selector, ModelSelector::Codex(_))` guard returns `Err`
+/// *before* calling `client.connect_relay_websocket` at line 217 — so a
+/// gpt-4o (Codex-class) model in interactive mode must never open a relay
+/// websocket. This test pins that end-to-end by:
+///
+///   1. Creating an issue whose `session_settings.model` is `"gpt-4o"`.
+///   2. Creating an interactive session linked to that issue, with
+///      `BundleSpec::None` (no repo clone) and `OPENAI_API_KEY=test` in the
+///      session variables so `Codex::new` env validation passes.
+///   3. Writing a fake `codex` shell script (exit 0) to a TempDir and
+///      prepending it to `PATH` so `Codex::new`'s `codex login --with-api-key`
+///      subprocess succeeds without a real `codex` binary.
+///   4. Wrapping the harness client in `RelayCallCountingClient`, which
+///      intercepts `connect_relay_websocket` to increment a counter and
+///      return `Err` (so a regression fails LOUDLY at the call site in
+///      addition to the post-hoc counter assertion).
+///   5. Calling `worker_run::run(...)` with `commands = None` so dispatch
+///      goes through `ModelSelector::from_context` (the production path).
+///
+/// Asserts the call returns `Err` and the counter remained at 0.
+#[cfg(unix)]
+#[tokio::test]
+async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<()> {
+    // (2) Write a fake `codex` script to a TempDir, prepend it to PATH.
+    let codex_dir = tempfile::tempdir().expect("failed to create tempdir for fake codex");
+    let codex_path = codex_dir.path().join("codex");
+    std::fs::write(&codex_path, "#!/usr/bin/env sh\nexit 0\n")
+        .expect("failed to write fake codex script");
+    let mut perms = std::fs::metadata(&codex_path)
+        .expect("failed to stat fake codex script")
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&codex_path, perms)
+        .expect("failed to chmod fake codex script executable");
+    // Prepend the tempdir to PATH so `codex login --with-api-key` resolves to
+    // our no-op script. cargo nextest runs each test in its own process, so
+    // mutating PATH here is safe.
+    let existing_path = std::env::var("PATH").unwrap_or_default();
+    let new_path = format!("{}:{existing_path}", codex_dir.path().display());
+    std::env::set_var("PATH", &new_path);
+
+    // (1) Stand up the harness. No repo needed — the session uses BundleSpec::None.
+    let harness = harness::TestHarness::builder().build().await?;
+    let user = harness.default_user();
+
+    // Create an issue whose session_settings carry the model name. The
+    // server reads `model` off the issue's session_settings when creating
+    // a session linked to the issue.
+    let mut settings = SessionSettings::default();
+    settings.model = Some("gpt-4o".to_string());
+    let issue_id = user
+        .create_issue_with_settings(
+            "gpt-4o interactive regression guard",
+            IssueType::Task,
+            IssueStatus::Open,
+            None,
+            Some(settings),
+        )
+        .await?;
+
+    // (3) Construct a CreateSessionRequest inline so we can set both
+    // `BundleSpec::None` and `interactive = true`. The existing UserHandle
+    // helpers force `BundleSpec::ServiceRepository`, which would require a
+    // configured repo.
+    let mut variables = HashMap::new();
+    variables.insert("OPENAI_API_KEY".to_string(), "test".to_string());
+    let create_request = CreateSessionRequest::new(
+        "regression-guard prompt".to_string(),
+        None,
+        BundleSpec::None,
+        variables,
+        Some(issue_id.clone()),
+        None,
+        true, // interactive
+    );
+    let job_id = user.client().create_session(&create_request).await?.session_id;
+
+    // (4) Wait for the session to reach Running status. The
+    // `start_created_sessions` automation transitions Created → Pending,
+    // and the MockJobEngine reports the job as Running, which the
+    // monitor reconciles to the session.
+    wait_for_session_running(&harness, &job_id).await?;
+
+    // (5) Wrap the harness client in RelayCallCountingClient. The wrapper
+    // forwards every call EXCEPT `connect_relay_websocket`, which it
+    // counts and short-circuits with an Err.
+    let inner: Arc<dyn HydraClientInterface> = Arc::new(user.client().clone());
+    let wrapper = Arc::new(RelayCallCountingClient::new(inner));
+
+    // (6) Invoke worker_run::run with commands = None so dispatch goes
+    // through ModelSelector::from_context (the production path).
+    let temp_dir =
+        tempfile::tempdir().expect("failed to create temporary worker directory");
+    let worker_dir = temp_dir.path().to_path_buf();
+    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+    let client_for_run: Arc<dyn HydraClientInterface> = wrapper.clone();
+    let run_result = hydra::command::sessions::worker_run::run(
+        client_for_run,
+        job_id.clone(),
+        worker_dir,
+        None,
+        true,
+        None, // commands = None forces the ModelSelector branch
+        &context,
+    )
+    .await;
+
+    // (7) The run must fail — Codex + interactive returns Err at the
+    // `matches!(selector, ModelSelector::Codex(_))` guard, before
+    // `connect_relay_websocket` is called.
+    assert!(
+        run_result.is_err(),
+        "worker_run::run must return Err for a Codex model + interactive session"
+    );
+    let err_message = run_result.unwrap_err().to_string();
+    assert!(
+        err_message.contains("interactive") || err_message.contains("does not support"),
+        "expected error message to mention interactive mode, got: {err_message}"
+    );
+
+    // (8) And the relay websocket must never have been opened.
+    assert_eq!(
+        wrapper.relay_call_count(),
+        0,
+        "connect_relay_websocket must be invoked exactly 0 times — the \
+         Codex+interactive guard at worker_run.rs:213 short-circuits before \
+         the relay open at line 217"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn wait_for_session_running(
+    harness: &harness::TestHarness,
+    job_id: &SessionId,
+) -> Result<()> {
+    use hydra_common::sessions::SearchSessionsQuery;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let client = harness.client()?;
+    loop {
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("timed out waiting for session '{job_id}' to reach Running status");
+        }
+        let sessions = client.list_sessions(&SearchSessionsQuery::default()).await?;
+        if let Some(record) = sessions.sessions.iter().find(|s| &s.session_id == job_id) {
+            if record.session.status == Status::Running {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// Verify that run_worker_expect_failure returns WorkerFailure when a command fails.

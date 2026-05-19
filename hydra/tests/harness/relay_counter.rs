@@ -1,0 +1,504 @@
+//! `RelayCallCountingClient`: a `HydraClientInterface` wrapper that counts
+//! `connect_relay_websocket` invocations and returns `Err` instead of opening
+//! a real WebSocket. Used by the regression test that pins the Codex +
+//! interactive short-circuit in `worker_run::run`.
+
+#![allow(dead_code)]
+
+use std::path::Path;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use hydra::client::{HydraClientInterface, RelayWebSocket};
+use hydra::client::sse::SseEventStream;
+use hydra_common::{
+    agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
+    api::v1::conversations::{
+        Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
+        ConversationSummary as ApiConversationSummary, CreateConversationRequest,
+        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
+    },
+    api::v1::events::EventsQuery,
+    api::v1::labels::{
+        ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
+    },
+    api::v1::notifications::{
+        ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
+    },
+    api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
+    api::v1::secrets::ListSecretsResponse,
+    documents::{
+        DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
+        SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
+    },
+    issues::{
+        IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse, SearchIssuesQuery,
+        SubmitFormRequest, SubmitFormResponse, UpsertIssueRequest, UpsertIssueResponse,
+    },
+    logs::LogsQuery,
+    merge_queues::MergeQueue,
+    patches::{
+        ListPatchVersionsResponse, ListPatchesResponse, PatchVersionRecord, SearchPatchesQuery,
+        UpsertPatchRequest, UpsertPatchResponse,
+    },
+    repositories::{
+        CreateRepositoryRequest, ListRepositoriesResponse, RepositoryRecord,
+        SearchRepositoriesQuery, UpdateRepositoryRequest, UpsertRepositoryResponse,
+    },
+    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
+    sessions::{
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse,
+        ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
+        SessionVersionRecord, WorkerContext,
+    },
+    users::UserSummary,
+    whoami::WhoAmIResponse,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId,
+    RelativeVersionNumber, RepoName, SessionId,
+};
+use reqwest::Url;
+
+/// Wraps a `HydraClientInterface` and intercepts `connect_relay_websocket`.
+///
+/// Every other method delegates to the inner client. The intercepted method
+/// increments an `AtomicUsize` and returns `Err`, so a regression that lets
+/// the relay open fails immediately at the `?` in `worker_run::run` AND is
+/// caught by the post-hoc counter assertion.
+pub struct RelayCallCountingClient {
+    inner: Arc<dyn HydraClientInterface>,
+    relay_calls: Arc<AtomicUsize>,
+}
+
+impl RelayCallCountingClient {
+    pub fn new(inner: Arc<dyn HydraClientInterface>) -> Self {
+        Self {
+            inner,
+            relay_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    pub fn relay_call_count(&self) -> usize {
+        self.relay_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl HydraClientInterface for RelayCallCountingClient {
+    fn base_url(&self) -> &Url {
+        self.inner.base_url()
+    }
+
+    async fn connect_relay_websocket(&self, _session_id: &SessionId) -> Result<RelayWebSocket> {
+        self.relay_calls.fetch_add(1, Ordering::SeqCst);
+        Err(anyhow!(
+            "RelayCallCountingClient: relay websocket must not be opened in this test"
+        ))
+    }
+
+    async fn create_session(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
+        self.inner.create_session(request).await
+    }
+
+    async fn list_sessions(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
+        self.inner.list_sessions(query).await
+    }
+
+    async fn get_session(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
+        self.inner.get_session(job_id).await
+    }
+
+    async fn get_session_version(
+        &self,
+        job_id: &SessionId,
+        version: RelativeVersionNumber,
+    ) -> Result<SessionVersionRecord> {
+        self.inner.get_session_version(job_id, version).await
+    }
+
+    async fn kill_session(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
+        self.inner.kill_session(job_id).await
+    }
+
+    async fn get_session_logs(
+        &self,
+        job_id: &SessionId,
+        query: &LogsQuery,
+    ) -> Result<hydra::client::LogStream> {
+        self.inner.get_session_logs(job_id, query).await
+    }
+
+    async fn set_session_status(
+        &self,
+        job_id: &SessionId,
+        status: &SessionStatusUpdate,
+    ) -> Result<SetSessionStatusResponse> {
+        self.inner.set_session_status(job_id, status).await
+    }
+
+    async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
+        self.inner.get_session_context(job_id).await
+    }
+
+    async fn list_session_versions(
+        &self,
+        job_id: &SessionId,
+    ) -> Result<ListSessionVersionsResponse> {
+        self.inner.list_session_versions(job_id).await
+    }
+
+    async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
+        self.inner.create_issue(request).await
+    }
+
+    async fn update_issue(
+        &self,
+        issue_id: &IssueId,
+        request: &UpsertIssueRequest,
+    ) -> Result<UpsertIssueResponse> {
+        self.inner.update_issue(issue_id, request).await
+    }
+
+    async fn get_issue(
+        &self,
+        issue_id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<IssueVersionRecord> {
+        self.inner.get_issue(issue_id, include_deleted).await
+    }
+
+    async fn get_issue_version(
+        &self,
+        issue_id: &IssueId,
+        version: RelativeVersionNumber,
+    ) -> Result<IssueVersionRecord> {
+        self.inner.get_issue_version(issue_id, version).await
+    }
+
+    async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse> {
+        self.inner.list_issues(query).await
+    }
+
+    async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse> {
+        self.inner.list_issue_versions(issue_id).await
+    }
+
+    async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse> {
+        self.inner.create_patch(request).await
+    }
+
+    async fn update_patch(
+        &self,
+        patch_id: &PatchId,
+        request: &UpsertPatchRequest,
+    ) -> Result<UpsertPatchResponse> {
+        self.inner.update_patch(patch_id, request).await
+    }
+
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
+        self.inner.get_patch(patch_id).await
+    }
+
+    async fn get_patch_version(
+        &self,
+        patch_id: &PatchId,
+        version: RelativeVersionNumber,
+    ) -> Result<PatchVersionRecord> {
+        self.inner.get_patch_version(patch_id, version).await
+    }
+
+    async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
+        self.inner.list_patches(query).await
+    }
+
+    async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse> {
+        self.inner.list_patch_versions(patch_id).await
+    }
+
+    async fn create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        self.inner.create_document(request).await
+    }
+
+    async fn update_document(
+        &self,
+        document_id: &DocumentId,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        self.inner.update_document(document_id, request).await
+    }
+
+    async fn get_document(
+        &self,
+        document_id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
+        self.inner.get_document(document_id, include_deleted).await
+    }
+
+    async fn get_document_by_path(
+        &self,
+        path: &str,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
+        self.inner.get_document_by_path(path, include_deleted).await
+    }
+
+    async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {
+        self.inner.list_documents(query).await
+    }
+
+    async fn list_document_versions(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<ListDocumentVersionsResponse> {
+        self.inner.list_document_versions(document_id).await
+    }
+
+    async fn get_document_version(
+        &self,
+        document_id: &DocumentId,
+        version: RelativeVersionNumber,
+    ) -> Result<DocumentVersionRecord> {
+        self.inner.get_document_version(document_id, version).await
+    }
+
+    async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {
+        self.inner.create_patch_asset(patch_id, file_path).await
+    }
+
+    async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<ListRepositoriesResponse> {
+        self.inner.list_repositories(query).await
+    }
+
+    async fn create_repository(
+        &self,
+        request: &CreateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        self.inner.create_repository(request).await
+    }
+
+    async fn update_repository(
+        &self,
+        repo_name: &RepoName,
+        request: &UpdateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        self.inner.update_repository(repo_name, request).await
+    }
+
+    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+        self.inner.delete_repository(repo_name).await
+    }
+
+    async fn get_github_token(&self) -> Result<String> {
+        self.inner.get_github_token().await
+    }
+
+    async fn whoami(&self) -> Result<WhoAmIResponse> {
+        self.inner.whoami().await
+    }
+
+    async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
+        self.inner.get_user_info(username).await
+    }
+
+    async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse> {
+        self.inner.list_user_secrets(username).await
+    }
+
+    async fn set_user_secret(&self, username: &str, name: &str, value: &str) -> Result<()> {
+        self.inner.set_user_secret(username, name, value).await
+    }
+
+    async fn delete_user_secret(&self, username: &str, name: &str) -> Result<()> {
+        self.inner.delete_user_secret(username, name).await
+    }
+
+    async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
+        self.inner.get_merge_queue(repo_name, branch).await
+    }
+
+    async fn enqueue_merge_patch(
+        &self,
+        repo_name: &RepoName,
+        branch: &str,
+        patch_id: &PatchId,
+    ) -> Result<MergeQueue> {
+        self.inner
+            .enqueue_merge_patch(repo_name, branch, patch_id)
+            .await
+    }
+
+    async fn list_agents(&self) -> Result<ListAgentsResponse> {
+        self.inner.list_agents().await
+    }
+
+    async fn get_agent(&self, name: &str) -> Result<AgentResponse> {
+        self.inner.get_agent(name).await
+    }
+
+    async fn create_agent(&self, request: &UpsertAgentRequest) -> Result<AgentResponse> {
+        self.inner.create_agent(request).await
+    }
+
+    async fn update_agent(
+        &self,
+        name: &str,
+        request: &UpsertAgentRequest,
+    ) -> Result<AgentResponse> {
+        self.inner.update_agent(name, request).await
+    }
+
+    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
+        self.inner.delete_agent(name).await
+    }
+
+    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
+        self.inner.delete_issue(issue_id).await
+    }
+
+    async fn submit_form(
+        &self,
+        issue_id: &IssueId,
+        request: &SubmitFormRequest,
+    ) -> Result<SubmitFormResponse> {
+        self.inner.submit_form(issue_id, request).await
+    }
+
+    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
+        self.inner.delete_patch(patch_id).await
+    }
+
+    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
+        self.inner.delete_document(document_id).await
+    }
+
+    async fn subscribe_events(
+        &self,
+        query: &EventsQuery,
+        last_event_id: Option<u64>,
+    ) -> Result<SseEventStream> {
+        self.inner.subscribe_events(query, last_event_id).await
+    }
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<ListNotificationsResponse> {
+        self.inner.list_notifications(query).await
+    }
+
+    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
+        self.inner.get_unread_notification_count().await
+    }
+
+    async fn mark_notification_read(
+        &self,
+        notification_id: &NotificationId,
+    ) -> Result<MarkReadResponse> {
+        self.inner.mark_notification_read(notification_id).await
+    }
+
+    async fn mark_all_notifications_read(
+        &self,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<MarkReadResponse> {
+        self.inner.mark_all_notifications_read(before).await
+    }
+
+    async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse> {
+        self.inner.list_relations(query).await
+    }
+
+    async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse> {
+        self.inner.list_labels(query).await
+    }
+
+    async fn create_label(&self, request: &UpsertLabelRequest) -> Result<UpsertLabelResponse> {
+        self.inner.create_label(request).await
+    }
+
+    async fn add_label_association(&self, label_id: &LabelId, object_id: &HydraId) -> Result<()> {
+        self.inner.add_label_association(label_id, object_id).await
+    }
+
+    async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &HydraId,
+    ) -> Result<()> {
+        self.inner
+            .remove_label_association(label_id, object_id)
+            .await
+    }
+
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+        self.inner.create_relation(request).await
+    }
+
+    async fn create_conversation(
+        &self,
+        request: &CreateConversationRequest,
+    ) -> Result<ApiConversation> {
+        self.inner.create_conversation(request).await
+    }
+
+    async fn send_message(
+        &self,
+        conversation_id: &ConversationId,
+        request: &SendMessageRequest,
+    ) -> Result<ApiConversationEvent> {
+        self.inner.send_message(conversation_id, request).await
+    }
+
+    async fn get_conversation_events(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<ApiConversationEvent>> {
+        self.inner.get_conversation_events(conversation_id).await
+    }
+
+    async fn close_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        self.inner.close_conversation(conversation_id).await
+    }
+
+    async fn list_conversations(
+        &self,
+        query: &SearchConversationsQuery,
+    ) -> Result<Vec<ApiConversationSummary>> {
+        self.inner.list_conversations(query).await
+    }
+
+    async fn get_conversation(&self, conversation_id: &ConversationId) -> Result<ApiConversation> {
+        self.inner.get_conversation(conversation_id).await
+    }
+
+    async fn update_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        request: &UpdateConversationRequest,
+    ) -> Result<ApiConversation> {
+        self.inner.update_conversation(conversation_id, request).await
+    }
+
+    async fn delete_conversation(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<ApiConversation> {
+        self.inner.delete_conversation(conversation_id).await
+    }
+}
