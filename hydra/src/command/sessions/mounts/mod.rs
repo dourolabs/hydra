@@ -22,6 +22,9 @@ pub mod bundle;
 pub mod documents;
 pub mod orchestrator;
 
+#[cfg(test)]
+mod orchestration_tests;
+
 pub use build_cache::{build_cache_mount, BuildCacheMount};
 pub use bundle::{bundle_mount, BundleMount};
 pub use documents::DocumentsMount;
