@@ -7,18 +7,23 @@
 //! status logging.
 //!
 //! See `/designs/worker-mount-trait.md` for the full design.
-//!
-//! This module is scaffolding; the concrete mount impls and the call
-//! sites in `worker_run.rs` land in follow-up PRs.
 
-use anyhow::Result;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Result;
+use hydra_common::{sessions::Bundle, BuildCacheContext, RepoName, SessionId};
+
+use crate::client::HydraClientInterface;
+
 pub mod build_cache;
+pub mod bundle;
 pub mod documents;
 pub mod orchestrator;
 
 pub use build_cache::{build_cache_mount, BuildCacheMount};
+pub use bundle::{bundle_mount, BundleMount};
 pub use documents::DocumentsMount;
 
 /// An error returned from a [`Mount::setup`] or [`Mount::save`] call.
@@ -93,11 +98,198 @@ pub trait Mount: Send {
     }
 }
 
-/// Build the list of mounts applicable to a given worker run.
+/// Build the ordered list of mounts applicable to a worker run.
 ///
-/// Stub for the scaffolding PR: returns an empty list. The real wiring
-/// (and the full parameter list described in the design doc) lands in
-/// the PR that ports `BundleMount` to this trait.
-pub fn build_mounts() -> Result<Vec<Box<dyn Mount>>> {
-    Ok(Vec::new())
+/// The order is `[BundleMount, BuildCacheMount?, DocumentsMount]`, matching
+/// the setup/save sequencing described in `/designs/worker-mount-trait.md`.
+/// Mounts that cannot be applied (e.g. no build cache configured) are
+/// simply not constructed — there is no runtime gating inside `setup` or
+/// `save`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mounts(
+    repo_path: &Path,
+    documents_path: &Path,
+    client: Arc<dyn HydraClientInterface>,
+    request_context: &Bundle,
+    build_cache: Option<&BuildCacheContext>,
+    service_repo_name: Option<&RepoName>,
+    github_token: Option<String>,
+    issue_branch_id: Option<String>,
+    worker_home_dir: Option<PathBuf>,
+    session_id: SessionId,
+) -> Result<Vec<Box<dyn Mount>>> {
+    let mut mounts: Vec<Box<dyn Mount>> = Vec::new();
+
+    let bundle = bundle_mount(
+        request_context,
+        repo_path.to_path_buf(),
+        github_token,
+        session_id,
+        issue_branch_id,
+    )?;
+    mounts.push(Box::new(bundle));
+
+    if let Some(cache_mount) = build_cache_mount(
+        request_context,
+        build_cache,
+        service_repo_name,
+        repo_path.to_path_buf(),
+        worker_home_dir,
+    ) {
+        mounts.push(Box::new(cache_mount));
+    }
+
+    mounts.push(Box::new(DocumentsMount::new(
+        documents_path.to_path_buf(),
+        client,
+    )));
+
+    Ok(mounts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::HydraClient;
+    use crate::test_utils::ids::task_id;
+    use hydra_common::{BuildCacheSettings, BuildCacheStorageConfig};
+    use reqwest::Client as HttpClient;
+    use std::path::PathBuf;
+
+    fn dummy_client() -> Arc<dyn HydraClientInterface> {
+        Arc::new(
+            HydraClient::with_http_client("http://example.invalid", "tok", HttpClient::new())
+                .expect("dummy client"),
+        )
+    }
+
+    fn dummy_cache_context() -> BuildCacheContext {
+        BuildCacheContext {
+            storage: BuildCacheStorageConfig::FileSystem {
+                root_dir: "/tmp/dummy-cache".into(),
+            },
+            settings: BuildCacheSettings::default(),
+        }
+    }
+
+    fn dummy_repo_name() -> RepoName {
+        RepoName::new("acme", "widgets").expect("repo name")
+    }
+
+    #[test]
+    fn build_mounts_bundle_none_skips_build_cache() {
+        let mounts = build_mounts(
+            &PathBuf::from("/tmp/repo"),
+            &PathBuf::from("/tmp/documents"),
+            dummy_client(),
+            &Bundle::None,
+            Some(&dummy_cache_context()),
+            Some(&dummy_repo_name()),
+            None,
+            None,
+            None,
+            task_id("t-bm-none"),
+        )
+        .expect("build_mounts");
+        assert_eq!(
+            mounts.len(),
+            2,
+            "Bundle::None must produce BundleMount + DocumentsMount (no BuildCacheMount)"
+        );
+    }
+
+    #[test]
+    fn build_mounts_git_repository_without_cache_skips_build_cache() {
+        let bundle = Bundle::GitRepository {
+            url: "https://example.com/acme/widgets".to_string(),
+            rev: "main".to_string(),
+        };
+        let mounts = build_mounts(
+            &PathBuf::from("/tmp/repo"),
+            &PathBuf::from("/tmp/documents"),
+            dummy_client(),
+            &bundle,
+            None,
+            Some(&dummy_repo_name()),
+            None,
+            None,
+            None,
+            task_id("t-bm-nocache"),
+        )
+        .expect("build_mounts");
+        assert_eq!(
+            mounts.len(),
+            2,
+            "GitRepository without build_cache must skip BuildCacheMount"
+        );
+    }
+
+    #[test]
+    fn build_mounts_git_repository_with_cache_pushes_all_three() {
+        let bundle = Bundle::GitRepository {
+            url: "https://example.com/acme/widgets".to_string(),
+            rev: "main".to_string(),
+        };
+        let mounts = build_mounts(
+            &PathBuf::from("/tmp/repo"),
+            &PathBuf::from("/tmp/documents"),
+            dummy_client(),
+            &bundle,
+            Some(&dummy_cache_context()),
+            Some(&dummy_repo_name()),
+            Some("ghp_token".to_string()),
+            Some("i-bm-all".to_string()),
+            Some(PathBuf::from("/tmp/worker-home")),
+            task_id("t-bm-all"),
+        )
+        .expect("build_mounts");
+        assert_eq!(
+            mounts.len(),
+            3,
+            "all three inputs present → BundleMount + BuildCacheMount + DocumentsMount"
+        );
+    }
+
+    #[test]
+    fn build_mounts_git_repository_without_repo_name_skips_build_cache() {
+        let bundle = Bundle::GitRepository {
+            url: "https://example.com/acme/widgets".to_string(),
+            rev: "main".to_string(),
+        };
+        let mounts = build_mounts(
+            &PathBuf::from("/tmp/repo"),
+            &PathBuf::from("/tmp/documents"),
+            dummy_client(),
+            &bundle,
+            Some(&dummy_cache_context()),
+            None,
+            None,
+            None,
+            None,
+            task_id("t-bm-nonameid"),
+        )
+        .expect("build_mounts");
+        assert_eq!(
+            mounts.len(),
+            2,
+            "without service_repo_name the build cache mount is skipped"
+        );
+    }
+
+    #[test]
+    fn build_mounts_unknown_bundle_is_an_error() {
+        let result = build_mounts(
+            &PathBuf::from("/tmp/repo"),
+            &PathBuf::from("/tmp/documents"),
+            dummy_client(),
+            &Bundle::Unknown,
+            None,
+            None,
+            None,
+            None,
+            None,
+            task_id("t-bm-unknown"),
+        );
+        assert!(result.is_err(), "Bundle::Unknown must surface as an error");
+    }
 }
