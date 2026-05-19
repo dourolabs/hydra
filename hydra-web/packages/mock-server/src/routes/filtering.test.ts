@@ -88,7 +88,9 @@ describe("Issue list filtering", () => {
     store.create("issues", "i-3", makeIssue({ status: "open" }), "issue");
     const data = await listIssues({ status: "open" });
     expect(data.issues).toHaveLength(2);
-    expect(data.issues.every((i: { issue: { status: string } }) => i.issue.status === "open")).toBe(true);
+    expect(data.issues.every((i: { issue: { status: string } }) => i.issue.status === "open")).toBe(
+      true,
+    );
   });
 
   it("filters by assignee", async () => {
@@ -105,7 +107,9 @@ describe("Issue list filtering", () => {
     store.create("issues", "i-3", makeIssue({ type: "task" }), "issue");
     const data = await listIssues({ issue_type: "task" });
     expect(data.issues).toHaveLength(2);
-    expect(data.issues.every((i: { issue: { type: string } }) => i.issue.type === "task")).toBe(true);
+    expect(data.issues.every((i: { issue: { type: string } }) => i.issue.type === "task")).toBe(
+      true,
+    );
   });
 
   it("filters by q (case-insensitive substring on description)", async () => {
@@ -188,10 +192,46 @@ describe("Patch list filtering", () => {
 
   it("combines filters with AND logic", async () => {
     store.create("patches", "p-1", makePatch({ title: "Fix auth bug", status: "Open" }), "patch");
-    store.create("patches", "p-2", makePatch({ title: "Fix auth issue", status: "Closed" }), "patch");
+    store.create(
+      "patches",
+      "p-2",
+      makePatch({ title: "Fix auth issue", status: "Closed" }),
+      "patch",
+    );
     store.create("patches", "p-3", makePatch({ title: "Add feature", status: "Open" }), "patch");
     const data = await listPatches({ q: "auth", status: "Open" });
     expect(data.patches).toHaveLength(1);
+  });
+
+  it("returns total_count when count=true", async () => {
+    store.create("patches", "p-1", makePatch({ title: "First" }), "patch");
+    store.create("patches", "p-2", makePatch({ title: "Second" }), "patch");
+    store.create("patches", "p-3", makePatch({ title: "Third" }), "patch");
+    const data = await listPatches({ count: "true" });
+    expect(data.total_count).toBe(3);
+  });
+
+  it("returns total_count for the filtered set, not the page", async () => {
+    store.create("patches", "p-1", makePatch({ status: "Open" }), "patch");
+    store.create("patches", "p-2", makePatch({ status: "Open" }), "patch");
+    store.create("patches", "p-3", makePatch({ status: "Closed" }), "patch");
+    const data = await listPatches({ count: "true", status: "Open", limit: "0" });
+    expect(data.patches).toHaveLength(0);
+    expect(data.total_count).toBe(2);
+  });
+
+  it("supports limit=0 returning no patches but a valid total_count", async () => {
+    store.create("patches", "p-1", makePatch({ title: "A" }), "patch");
+    store.create("patches", "p-2", makePatch({ title: "B" }), "patch");
+    const data = await listPatches({ count: "true", limit: "0" });
+    expect(data.patches).toHaveLength(0);
+    expect(data.total_count).toBe(2);
+  });
+
+  it("omits total_count when count is not set", async () => {
+    store.create("patches", "p-1", makePatch({ title: "First" }), "patch");
+    const data = await listPatches();
+    expect(data.total_count).toBeUndefined();
   });
 });
 
@@ -224,7 +264,11 @@ describe("Session list filtering", () => {
     store.create("sessions", "t-3", makeSession({ spawned_from: "i-abc123" }), "session");
     const data = await listSessions({ spawned_from: "i-abc123" });
     expect(data.sessions).toHaveLength(2);
-    expect(data.sessions.every((j: { session: { spawned_from: string } }) => j.session.spawned_from === "i-abc123")).toBe(true);
+    expect(
+      data.sessions.every(
+        (j: { session: { spawned_from: string } }) => j.session.spawned_from === "i-abc123",
+      ),
+    ).toBe(true);
   });
 
   it("filters by status", async () => {
@@ -233,7 +277,9 @@ describe("Session list filtering", () => {
     store.create("sessions", "t-3", makeSession({ status: "running" as Status }), "session");
     const data = await listSessions({ status: "running" });
     expect(data.sessions).toHaveLength(2);
-    expect(data.sessions.every((j: { session: { status: string } }) => j.session.status === "running")).toBe(true);
+    expect(
+      data.sessions.every((j: { session: { status: string } }) => j.session.status === "running"),
+    ).toBe(true);
   });
 
   it("filters by q (case-insensitive substring on prompt)", async () => {
@@ -245,9 +291,24 @@ describe("Session list filtering", () => {
   });
 
   it("combines filters with AND logic", async () => {
-    store.create("sessions", "t-1", makeSession({ spawned_from: "i-abc", status: "running" as Status }), "session");
-    store.create("sessions", "t-2", makeSession({ spawned_from: "i-abc", status: "complete" as Status }), "session");
-    store.create("sessions", "t-3", makeSession({ spawned_from: "i-def", status: "running" as Status }), "session");
+    store.create(
+      "sessions",
+      "t-1",
+      makeSession({ spawned_from: "i-abc", status: "running" as Status }),
+      "session",
+    );
+    store.create(
+      "sessions",
+      "t-2",
+      makeSession({ spawned_from: "i-abc", status: "complete" as Status }),
+      "session",
+    );
+    store.create(
+      "sessions",
+      "t-3",
+      makeSession({ spawned_from: "i-def", status: "running" as Status }),
+      "session",
+    );
     const data = await listSessions({ spawned_from: "i-abc", status: "running" });
     expect(data.sessions).toHaveLength(1);
   });
@@ -285,16 +346,41 @@ describe("Document list filtering", () => {
   });
 
   it("filters by q matching path (case-insensitive)", async () => {
-    store.create("documents", "d-1", makeDocument({ title: "Doc A", path: "docs/readme.md" }), "document");
-    store.create("documents", "d-2", makeDocument({ title: "Doc B", path: "src/index.ts" }), "document");
+    store.create(
+      "documents",
+      "d-1",
+      makeDocument({ title: "Doc A", path: "docs/readme.md" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-2",
+      makeDocument({ title: "Doc B", path: "src/index.ts" }),
+      "document",
+    );
     const data = await listDocuments({ q: "readme" });
     expect(data.documents).toHaveLength(1);
   });
 
   it("filters by q matching either title or path", async () => {
-    store.create("documents", "d-1", makeDocument({ title: "README", path: "docs/intro.md" }), "document");
-    store.create("documents", "d-2", makeDocument({ title: "Guide", path: "docs/readme.md" }), "document");
-    store.create("documents", "d-3", makeDocument({ title: "Other", path: "src/main.ts" }), "document");
+    store.create(
+      "documents",
+      "d-1",
+      makeDocument({ title: "README", path: "docs/intro.md" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-2",
+      makeDocument({ title: "Guide", path: "docs/readme.md" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-3",
+      makeDocument({ title: "Other", path: "src/main.ts" }),
+      "document",
+    );
     const data = await listDocuments({ q: "readme" });
     expect(data.documents).toHaveLength(2);
   });
@@ -308,17 +394,47 @@ describe("Document list filtering", () => {
   });
 
   it("combines q and created_by with AND logic", async () => {
-    store.create("documents", "d-1", makeDocument({ title: "README", created_by: "t-xyz" }), "document");
-    store.create("documents", "d-2", makeDocument({ title: "README", created_by: "t-abc" }), "document");
-    store.create("documents", "d-3", makeDocument({ title: "Guide", created_by: "t-xyz" }), "document");
+    store.create(
+      "documents",
+      "d-1",
+      makeDocument({ title: "README", created_by: "t-xyz" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-2",
+      makeDocument({ title: "README", created_by: "t-abc" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-3",
+      makeDocument({ title: "Guide", created_by: "t-xyz" }),
+      "document",
+    );
     const data = await listDocuments({ q: "readme", created_by: "t-xyz" });
     expect(data.documents).toHaveLength(1);
   });
 
   it("combines with existing path_prefix filter", async () => {
-    store.create("documents", "d-1", makeDocument({ title: "Doc A", path: "docs/readme.md", created_by: "t-xyz" }), "document");
-    store.create("documents", "d-2", makeDocument({ title: "Doc B", path: "docs/guide.md", created_by: "t-xyz" }), "document");
-    store.create("documents", "d-3", makeDocument({ title: "Doc C", path: "src/readme.md", created_by: "t-xyz" }), "document");
+    store.create(
+      "documents",
+      "d-1",
+      makeDocument({ title: "Doc A", path: "docs/readme.md", created_by: "t-xyz" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-2",
+      makeDocument({ title: "Doc B", path: "docs/guide.md", created_by: "t-xyz" }),
+      "document",
+    );
+    store.create(
+      "documents",
+      "d-3",
+      makeDocument({ title: "Doc C", path: "src/readme.md", created_by: "t-xyz" }),
+      "document",
+    );
     const data = await listDocuments({ path_prefix: "docs/", created_by: "t-xyz" });
     expect(data.documents).toHaveLength(2);
   });

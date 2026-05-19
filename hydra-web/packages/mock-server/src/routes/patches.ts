@@ -131,31 +131,58 @@ export function createPatchRoutes(store: Store): Hono {
     const q = c.req.query("q");
     const statusParam = c.req.query("status");
     const branchName = c.req.query("branch_name");
+    const limitParam = c.req.query("limit");
+    const cursorParam = c.req.query("cursor");
+    const countParam = c.req.query("count");
 
     const items = store.list<Patch>(COLLECTION, includeDeleted);
 
     let filtered = items;
     if (q) {
       const lower = q.toLowerCase();
-      filtered = filtered.filter(({ entry }) =>
-        entry.data.title.toLowerCase().includes(lower),
-      );
+      filtered = filtered.filter(({ entry }) => entry.data.title.toLowerCase().includes(lower));
     }
     if (statusParam) {
       const statuses = statusParam.split(",");
-      filtered = filtered.filter(({ entry }) =>
-        statuses.includes(entry.data.status),
-      );
+      filtered = filtered.filter(({ entry }) => statuses.includes(entry.data.status));
     }
     if (branchName) {
       filtered = filtered.filter(({ entry }) => entry.data.branch_name === branchName);
+    }
+
+    // Sort by last-update time descending (most recently updated first) for stable pagination
+    filtered.sort((a, b) => {
+      return b.entry.timestamp.localeCompare(a.entry.timestamp);
+    });
+
+    const totalCount = filtered.length;
+
+    // Apply cursor-based pagination
+    if (cursorParam) {
+      const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
+      if (cursorIndex !== -1) {
+        filtered = filtered.slice(cursorIndex + 1);
+      }
+    }
+
+    let nextCursor: string | null = null;
+    if (limitParam !== undefined && limitParam !== null) {
+      const limit = Number(limitParam);
+      if (Number.isFinite(limit) && limit >= 0 && filtered.length > limit) {
+        nextCursor = filtered[limit - 1]?.id ?? null;
+        filtered = filtered.slice(0, limit);
+      }
     }
 
     const patches: PatchSummaryRecord[] = filtered.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });
-    const resp: ListPatchesResponse = { patches };
+    const resp: ListPatchesResponse = {
+      patches,
+      next_cursor: nextCursor,
+      total_count: countParam === "true" ? BigInt(totalCount) : undefined,
+    };
     return c.json(resp);
   });
 
