@@ -58,30 +58,40 @@ vi.mock("../useChatReferencedArtifacts", () => ({
   },
 }));
 
-vi.mock("../../dashboard/ItemRow", () => ({
-  ItemRow: ({
-    item,
+vi.mock("../../related/RailRow", () => ({
+  IssueRailRow: ({
+    record,
     sessions,
   }: {
-    item: { kind: string; id: string; data: unknown };
+    record: IssueSummaryRecord;
     sessions?: SessionSummaryRecord[];
   }) => {
-    capturedItemRowProps.push({ itemId: item.id, sessions });
-    let title = "";
-    if (item.kind === "issue") {
-      title = (item.data as IssueSummaryRecord).issue.title;
-    } else if (item.kind === "patch") {
-      title = (item.data as PatchSummaryRecord).patch.title;
-    }
+    capturedItemRowProps.push({ itemId: record.issue_id, sessions });
     return (
-      <li
-        data-testid={`item-row-${item.kind}-${item.id}`}
+      <div
+        data-testid={`item-row-issue-${record.issue_id}`}
         data-sessions-count={sessions?.length ?? 0}
       >
-        {title}
-      </li>
+        {record.issue.title}
+      </div>
     );
   },
+  PatchRailRow: ({ record }: { record: PatchSummaryRecord }) => {
+    capturedItemRowProps.push({ itemId: record.patch_id, sessions: undefined });
+    return (
+      <div data-testid={`item-row-patch-${record.patch_id}`}>
+        {record.patch.title}
+      </div>
+    );
+  },
+  DocumentRailRow: ({ record }: { record: DocumentSummaryRecord }) => (
+    <div data-testid={`item-row-document-${record.document_id}`}>
+      <a href={`/documents/${record.document_id}`}>
+        {record.document.title ?? record.document.path ?? record.document_id}
+      </a>
+      {record.document.path && <span>{record.document.path}</span>}
+    </div>
+  ),
 }));
 
 vi.mock("@hydra/ui", () => ({
@@ -101,6 +111,10 @@ vi.mock("../../../components/icons/DocumentIcon", () => ({
 }));
 
 vi.mock("../ChatRelatedTab.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../../related/RelatedSection.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
@@ -384,7 +398,7 @@ describe("ChatRelatedTab", () => {
 
     render(<ChatRelatedTab conversationId="c-abc" />);
 
-    const button = screen.getByRole("button", { name: "Loading..." });
+    const button = screen.getByRole("button", { name: "Loading…" });
     expect(button).toBeDefined();
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button);

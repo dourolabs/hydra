@@ -5,6 +5,7 @@ import type { Store } from "./store.js";
 import type { Issue, Session, Patch, Document, Repository, AgentRecord, Conversation, ConversationEvent } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 import { clearConversationEvents, setConversationEvents } from "./routes/conversations.js";
+import { clearSeededRelations, addSeededRelation } from "./routes/relations.js";
 
 interface LabelData {
   name: string;
@@ -36,6 +37,12 @@ type IssueFixture = Issue & VersionedFixture<Issue>;
 type SessionFixture = Session & VersionedFixture<Session>;
 type PatchFixture = Patch & VersionedFixture<Patch>;
 
+interface RelationSeed {
+  source_id: string;
+  target_id: string;
+  rel_type: string;
+}
+
 interface SeedData {
   issues: Record<string, IssueFixture>;
   sessions: Record<string, SessionFixture>;
@@ -47,6 +54,7 @@ interface SeedData {
   label_associations?: LabelAssociationSeed[];
   conversations?: Record<string, Conversation>;
   conversation_events?: Record<string, ConversationEvent[]>;
+  relations?: RelationSeed[];
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -127,6 +135,7 @@ export function loadSeedData(store: Store): void {
   store.clear();
   clearAssociations();
   clearConversationEvents();
+  clearSeededRelations();
 
   const seed = loadFixture();
 
@@ -186,8 +195,15 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  if (seed.relations) {
+    for (const rel of seed.relations) {
+      addSeededRelation(rel);
+    }
+  }
+
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
   const conversationCount = seed.conversations ? Object.keys(seed.conversations).length : 0;
+  const relationCount = seed.relations ? seed.relations.length : 0;
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
     `${Object.keys(seed.sessions).length} sessions, ` +
@@ -197,6 +213,7 @@ export function loadSeedData(store: Store): void {
     `${Object.keys(seed.agents).length} agents, ` +
     `${labelCount} labels, ` +
     `${conversationCount} conversations, ` +
-    `${conversationEventCount} conversation events`,
+    `${conversationEventCount} conversation events, ` +
+    `${relationCount} relations`,
   );
 }

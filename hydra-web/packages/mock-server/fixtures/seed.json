@@ -2336,6 +2336,42 @@
       "creator": "alice",
       "created_at": "2026-05-08T09:30:00.000Z",
       "updated_at": "2026-05-08T10:15:00.000Z"
+    },
+    "c-seed00003": {
+      "conversation_id": "c-seed00003",
+      "title": "OAuth2 migration sync",
+      "agent_name": null,
+      "status": "active",
+      "creator": "alice",
+      "created_at": "2026-05-12T15:20:00.000Z",
+      "updated_at": "2026-05-12T16:05:00.000Z"
+    },
+    "c-seed00004": {
+      "conversation_id": "c-seed00004",
+      "title": "Realtime collab — design questions",
+      "agent_name": "architect-bot",
+      "status": "active",
+      "creator": "bob",
+      "created_at": "2026-05-13T11:00:00.000Z",
+      "updated_at": "2026-05-13T12:30:00.000Z"
+    },
+    "c-seed00005": {
+      "conversation_id": "c-seed00005",
+      "title": "GraphQL gateway rollout plan",
+      "agent_name": null,
+      "status": "active",
+      "creator": "carol",
+      "created_at": "2026-05-14T09:15:00.000Z",
+      "updated_at": "2026-05-14T10:00:00.000Z"
+    },
+    "c-seed00006": {
+      "conversation_id": "c-seed00006",
+      "title": "SSE memory leak triage",
+      "agent_name": "triage-bot",
+      "status": "closed",
+      "creator": "dev-user",
+      "created_at": "2026-05-09T08:45:00.000Z",
+      "updated_at": "2026-05-09T11:20:00.000Z"
     }
   },
   "conversation_events": {
@@ -2376,6 +2412,133 @@
         "type": "closed",
         "timestamp": "2026-05-08T10:15:00.000Z"
       }
+    ],
+    "c-seed00003": [
+      {
+        "type": "user_message",
+        "content": "Where are we on the OAuth2 migration? I need to update the steering doc.",
+        "timestamp": "2026-05-12T15:20:30.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "OAuth2 migration is mid-flight. The provider integration patch is merged, the scopes/permissions patch is in review, and the token refresh subtask is still open. The migration ADR (d-seed00001) is the canonical reference.",
+        "timestamp": "2026-05-12T15:21:00.000Z"
+      },
+      {
+        "type": "user_message",
+        "content": "Any blockers on the refresh subtask?",
+        "timestamp": "2026-05-12T15:48:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Yes — i-seed00003 is blocked on resolving the concurrent-refresh race condition. There's a draft mutex design in p-seed00010 that addresses it but needs review.",
+        "timestamp": "2026-05-12T16:05:00.000Z"
+      }
+    ],
+    "c-seed00004": [
+      {
+        "type": "user_message",
+        "content": "I'm trying to map out the realtime collab work. Can you walk me through what's outstanding?",
+        "timestamp": "2026-05-13T11:00:30.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Two issues drive this: i-seed00013 (WebSocket connection manager) and i-seed00014 (Yjs CRDT integration). The connection manager has a draft patch (p-seed00007) with JWT auth and heartbeat; the Yjs piece has p-seed00005 attaching CRDT to PostgreSQL persistence. ADR-002 (d-seed00004) captures the overall architecture.",
+        "timestamp": "2026-05-13T11:02:00.000Z"
+      },
+      {
+        "type": "user_message",
+        "content": "Are the CRDT and WebSocket pieces sequenced or independent?",
+        "timestamp": "2026-05-13T11:18:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Independent in implementation, but the demo cannot ship without both. ADR-002 calls for a single multiplexed connection per client, so the gateway needs to be live before CRDT messages start flowing.",
+        "timestamp": "2026-05-13T12:30:00.000Z"
+      }
+    ],
+    "c-seed00005": [
+      {
+        "type": "user_message",
+        "content": "What's the state of the GraphQL gateway rollout?",
+        "timestamp": "2026-05-14T09:15:30.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Phase 1 (Users + Issues subgraphs) is complete behind the Apollo gateway. Phase 2 brings in Sessions and Patches; i-seed00017 tracks the gateway deployment and p-seed00004 is the active patch. The migration plan doc (d-seed00005) breaks the phases out in detail.",
+        "timestamp": "2026-05-14T09:18:00.000Z"
+      },
+      {
+        "type": "user_message",
+        "content": "When can we deprecate the REST endpoints?",
+        "timestamp": "2026-05-14T09:55:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Phase 3, per the plan. Targets are not committed yet — depends on client migration.",
+        "timestamp": "2026-05-14T10:00:00.000Z"
+      }
+    ],
+    "c-seed00006": [
+      {
+        "type": "user_message",
+        "content": "We're seeing SSE clients drop and memory climb on the broadcaster. Where do we start?",
+        "timestamp": "2026-05-09T08:45:30.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "i-seed00016 captures the leak; the fix is staged in p-seed00006 (release listeners on client disconnect). The review issue is i-seed00018. The API reference doc (d-seed00002) has the SSE endpoint contract if you need to verify client behaviour against the spec.",
+        "timestamp": "2026-05-09T08:48:00.000Z"
+      },
+      {
+        "type": "user_message",
+        "content": "Any chance this is related to the websocket gateway work?",
+        "timestamp": "2026-05-09T10:30:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Unrelated — the leak is in the SSE broadcaster's per-client listener registry, not the websocket gateway. Different process.",
+        "timestamp": "2026-05-09T10:32:00.000Z"
+      },
+      {
+        "type": "closed",
+        "timestamp": "2026-05-09T11:20:00.000Z"
+      }
     ]
-  }
+  },
+  "relations": [
+    { "source_id": "c-seed00001", "target_id": "i-seed00001", "rel_type": "refers_to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00002", "rel_type": "refers_to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00005", "rel_type": "refers_to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00006", "rel_type": "refers_to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00013", "rel_type": "refers_to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00017", "rel_type": "refers_to" },
+
+    { "source_id": "c-seed00002", "target_id": "i-seed00002", "rel_type": "refers_to" },
+    { "source_id": "c-seed00002", "target_id": "i-seed00005", "rel_type": "refers_to" },
+    { "source_id": "c-seed00002", "target_id": "d-seed00001", "rel_type": "refers_to" },
+
+    { "source_id": "c-seed00003", "target_id": "i-seed00002", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "i-seed00003", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "i-seed00004", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00001", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00002", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00010", "rel_type": "refers_to" },
+    { "source_id": "c-seed00003", "target_id": "d-seed00001", "rel_type": "refers_to" },
+
+    { "source_id": "c-seed00004", "target_id": "i-seed00013", "rel_type": "refers_to" },
+    { "source_id": "c-seed00004", "target_id": "i-seed00014", "rel_type": "refers_to" },
+    { "source_id": "c-seed00004", "target_id": "p-seed00005", "rel_type": "refers_to" },
+    { "source_id": "c-seed00004", "target_id": "p-seed00007", "rel_type": "refers_to" },
+    { "source_id": "c-seed00004", "target_id": "d-seed00004", "rel_type": "refers_to" },
+
+    { "source_id": "c-seed00005", "target_id": "i-seed00017", "rel_type": "refers_to" },
+    { "source_id": "c-seed00005", "target_id": "p-seed00004", "rel_type": "refers_to" },
+    { "source_id": "c-seed00005", "target_id": "d-seed00005", "rel_type": "refers_to" },
+
+    { "source_id": "c-seed00006", "target_id": "i-seed00016", "rel_type": "refers_to" },
+    { "source_id": "c-seed00006", "target_id": "i-seed00018", "rel_type": "refers_to" },
+    { "source_id": "c-seed00006", "target_id": "p-seed00006", "rel_type": "refers_to" },
+    { "source_id": "c-seed00006", "target_id": "d-seed00002", "rel_type": "refers_to" }
+  ]
 }

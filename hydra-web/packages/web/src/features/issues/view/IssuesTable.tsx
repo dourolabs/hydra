@@ -4,8 +4,12 @@ import { Avatar, Badge, TypeChip } from "@hydra/ui";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import { formatDuration } from "../../../utils/time";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import { IssueRailRow } from "../../related/RailRow";
 import styles from "./IssuesTable.module.css";
+
+const MOBILE_QUERY = "(max-width: 768px)";
 
 interface IssuesTableProps {
   issues: IssueSummaryRecord[];
@@ -123,13 +127,33 @@ export function IssuesTable({
   filterRootId,
 }: IssuesTableProps) {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery(MOBILE_QUERY);
 
-  const handleRowClick = (id: string) => {
-    const params = new URLSearchParams({
+  const linkSearch =
+    "?" +
+    new URLSearchParams({
       from: "dashboard",
       filter: filterRootId ?? "everything",
-    });
-    navigate(`/issues/${id}?${params.toString()}`);
+    }).toString();
+
+  if (isMobile) {
+    return (
+      <div className={styles.mobileList}>
+        {issues.map((rec) => (
+          <IssueRailRow
+            key={rec.issue_id}
+            record={rec}
+            sessions={sessionsByIssue.get(rec.issue_id)}
+            childStatuses={childStatusMap.get(rec.issue_id)}
+            linkSearch={linkSearch}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const handleRowClick = (id: string) => {
+    navigate(`/issues/${id}${linkSearch}`);
   };
 
   return (
