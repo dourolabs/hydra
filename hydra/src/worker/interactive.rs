@@ -25,6 +25,18 @@ use tracing::{error, info, warn};
 
 use crate::claude_formatter::StreamFormatter;
 use crate::client::RelayWebSocket;
+use crate::worker::report::TokenUsage;
+
+/// Aggregated state captured during an interactive Claude run, returned by
+/// [`run_interactive`] so the `ClaudeCommands::run_interactive` caller can
+/// assemble a `RunReport` without re-implementing the stdout-stream parsing
+/// (formatter aggregate, session id, transcript path).
+pub struct InteractiveRunReport {
+    pub last_assistant_text: Option<String>,
+    pub usage: TokenUsage,
+    pub claude_session_id: Option<String>,
+    pub home_dir: PathBuf,
+}
 
 /// Run an interactive Claude session, bridging between a relay WebSocket and
 /// Claude's stdin/stdout via `--input-format stream-json --output-format stream-json`.
@@ -77,7 +89,7 @@ pub async fn run_interactive(
     working_dir: &Path,
     idle_timeout: Duration,
     conversation_resume_from: Option<usize>,
-) -> Result<()> {
+) -> Result<InteractiveRunReport> {
     // Validate auth credentials exist.
     let has_anthropic_key = env
         .get(ENV_ANTHROPIC_API_KEY)
@@ -242,6 +254,12 @@ pub async fn run_interactive(
     let mut claude_session_id: Option<String> = resume_session_id.clone();
     let _ = &session_id; // used for logging context
 
+    // Formatter is owned out here so the post-loop code can read
+    // `aggregated_usage()` / `last_assistant_text()` and feed them back into
+    // the `InteractiveRunReport` that `ClaudeCommands::run_interactive`
+    // assembles a `RunReport` from.
+    let mut formatter = StreamFormatter::new();
+
     // Relay loop: bidirectional message forwarding.
     let exit = relay_loop(
         &mut ws_sender,
@@ -253,6 +271,7 @@ pub async fn run_interactive(
         &home_dir,
         working_dir,
         &mut prompt_prepend,
+        &mut formatter,
     )
     .await?;
 
@@ -294,7 +313,12 @@ pub async fn run_interactive(
     // Close WebSocket.
     let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
 
-    Ok(())
+    Ok(InteractiveRunReport {
+        last_assistant_text: formatter.last_assistant_text().map(str::to_owned),
+        usage: formatter.aggregated_usage().clone(),
+        claude_session_id,
+        home_dir,
+    })
 }
 
 /// Result of `relay_loop`. The caller uses it to log the reason for shutdown;
@@ -408,7 +432,7 @@ fn try_primary_resume(
 /// the source of truth, and the live `~/.claude/projects/` directory in the
 /// worker container. If the encoding ever diverges, that test will fail
 /// rather than producing a silently-wrong path in production.
-fn encoded_cwd(working_dir: &Path) -> String {
+pub(super) fn encoded_cwd(working_dir: &Path) -> String {
     working_dir
         .to_string_lossy()
         .chars()
@@ -417,7 +441,7 @@ fn encoded_cwd(working_dir: &Path) -> String {
 }
 
 /// Compute the absolute path Claude reads for `claude --resume <session_id>`.
-fn transcript_path(home_dir: &Path, working_dir: &Path, session_id: &str) -> PathBuf {
+pub(super) fn transcript_path(home_dir: &Path, working_dir: &Path, session_id: &str) -> PathBuf {
     home_dir
         .join(".claude")
         .join("projects")
@@ -454,7 +478,7 @@ fn write_transcript_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Resolve the worker's HOME directory. We use `HOME` from the environment
 /// rather than `dirs::home_dir()` so the value is the *worker process's* home
 /// (where Claude reads `.claude/projects/...`), not whatever `dirs` infers.
-fn worker_home_dir() -> Result<PathBuf> {
+pub(super) fn worker_home_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable not set")?;
     Ok(PathBuf::from(home))
 }
@@ -749,6 +773,7 @@ async fn relay_loop<St, Si, W, R>(
     home_dir: &Path,
     working_dir: &Path,
     prompt_prepend: &mut PromptPrepend,
+    formatter: &mut StreamFormatter,
 ) -> Result<LoopExit>
 where
     St: Stream<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
@@ -757,7 +782,6 @@ where
     R: AsyncRead + Unpin,
 {
     let mut stdout_line = String::new();
-    let mut formatter = StreamFormatter::new();
 
     let idle_deadline = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle_deadline);
@@ -1024,7 +1048,7 @@ fn build_claude_input(content: &str) -> String {
 }
 
 /// Extract the `session_id` field from a Claude JSONL output line.
-fn extract_session_id(line: &str) -> Option<String> {
+pub(super) fn extract_session_id(line: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     value
         .get("session_id")
@@ -1701,6 +1725,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1711,6 +1736,7 @@ mod tests {
             tmp.path(),
             Path::new("/work"),
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -1761,6 +1787,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1771,6 +1798,7 @@ mod tests {
             tmp.path(),
             Path::new("/work"),
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -1836,6 +1864,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1846,6 +1875,7 @@ mod tests {
             tmp.path(),
             working_dir,
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -1917,6 +1947,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1927,6 +1958,7 @@ mod tests {
             tmp.path(),
             working_dir,
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -1974,6 +2006,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new("", &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -1984,6 +2017,7 @@ mod tests {
             tmp.path(),
             Path::new("/work"),
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -2225,6 +2259,7 @@ mod tests {
         let mut session_id = None;
 
         let mut prompt_prepend = PromptPrepend::new(AGENT_PROMPT, &[]);
+        let mut formatter = StreamFormatter::new();
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -2235,6 +2270,7 @@ mod tests {
             tmp.path(),
             Path::new("/work"),
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();
@@ -2370,6 +2406,8 @@ mod tests {
             "feed_catch_up should have consumed the prepend"
         );
 
+        let mut formatter = StreamFormatter::new();
+
         let result = relay_loop(
             &mut ws_sender,
             &mut ws_receiver,
@@ -2380,6 +2418,7 @@ mod tests {
             tmp.path(),
             Path::new("/work"),
             &mut prompt_prepend,
+            &mut formatter,
         )
         .await
         .unwrap();

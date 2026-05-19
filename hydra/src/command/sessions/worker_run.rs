@@ -21,6 +21,7 @@ use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::worker::commands::WorkerCommands;
 use crate::worker::reaper::reap_other_processes;
+use crate::worker::report::RunReport;
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -147,12 +148,13 @@ pub async fn run(
             )
             .await
         {
-            Ok(message) => {
+            Ok(report) => {
                 let elapsed = agent_start.elapsed().as_secs_f64();
                 log_status(format!(
                     "Phase: interactive agent execution — completed ({elapsed:.2}s)"
                 ));
-                message
+                log_run_report(&report);
+                report.last_message
             }
             Err(err) => {
                 let elapsed = agent_start.elapsed().as_secs_f64();
@@ -179,12 +181,13 @@ pub async fn run(
             )
             .await
         {
-            Ok(message) => {
+            Ok(report) => {
                 let elapsed = agent_start.elapsed().as_secs_f64();
                 log_status(format!(
                     "Phase: agent execution — completed successfully ({elapsed:.2}s)"
                 ));
-                message
+                log_run_report(&report);
+                report.last_message
             }
             Err(err) => {
                 let elapsed = agent_start.elapsed().as_secs_f64();
@@ -385,6 +388,42 @@ fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
 }
 
+/// Emit the three per-run report log lines (token totals, model session id,
+/// session-state path) so the per-session log file the job engine captures
+/// records everything `RunReport` carries. These are the user-visible
+/// outcome of PR 1 — see `designs/worker-model-commands-refactor.md` §7.
+fn log_run_report(report: &RunReport) {
+    for line in format_run_report_lines(report) {
+        log_status(line);
+    }
+}
+
+/// Build the three log lines `log_run_report` emits, kept separate so unit
+/// tests can assert on the output without capturing stdout.
+fn format_run_report_lines(report: &RunReport) -> Vec<String> {
+    let mut lines = Vec::with_capacity(3);
+    lines.push(format!(
+        "  tokens: input={} output={} cache_read={} cache_create={}",
+        report.usage.input_tokens,
+        report.usage.output_tokens,
+        report.usage.cache_read_input_tokens,
+        report.usage.cache_creation_input_tokens,
+    ));
+    match &report.model_session_id {
+        Some(id) => lines.push(format!("  model_session_id: {id}")),
+        None => lines.push("  model_session_id: <none>".to_string()),
+    }
+    match &report.session_state {
+        Some(s) => lines.push(format!(
+            "  session_state: {} ({:?})",
+            s.local_path.display(),
+            s.format,
+        )),
+        None => lines.push("  session_state: <none>".to_string()),
+    }
+    lines
+}
+
 fn resolve_worker_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -434,6 +473,60 @@ mod tests {
         assert_eq!(config.get_string("user.email")?, "hydra-worker@example.com");
 
         Ok(())
+    }
+
+    #[test]
+    fn format_run_report_lines_full_report() {
+        use crate::worker::report::{SessionStateFormat, SessionStateRef, TokenUsage};
+
+        let report = RunReport {
+            last_message: "ignored for this test".to_string(),
+            usage: TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_input_tokens: 25,
+                cache_creation_input_tokens: 10,
+            },
+            model_session_id: Some("abc-123".to_string()),
+            session_state: Some(SessionStateRef {
+                local_path: PathBuf::from("/tmp/session.jsonl"),
+                format: SessionStateFormat::CodexJsonl,
+            }),
+        };
+        let lines = format_run_report_lines(&report);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(
+            lines[0],
+            "  tokens: input=100 output=50 cache_read=25 cache_create=10"
+        );
+        assert_eq!(lines[1], "  model_session_id: abc-123");
+        assert!(
+            lines[2].contains("/tmp/session.jsonl"),
+            "session_state line should mention the path; got: {}",
+            lines[2]
+        );
+        assert!(
+            lines[2].contains("CodexJsonl"),
+            "session_state line should mention the format"
+        );
+    }
+
+    #[test]
+    fn format_run_report_lines_missing_fields() {
+        let report = RunReport {
+            last_message: String::new(),
+            usage: Default::default(),
+            model_session_id: None,
+            session_state: None,
+        };
+        let lines = format_run_report_lines(&report);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(
+            lines[0],
+            "  tokens: input=0 output=0 cache_read=0 cache_create=0"
+        );
+        assert_eq!(lines[1], "  model_session_id: <none>");
+        assert_eq!(lines[2], "  session_state: <none>");
     }
 
     #[test]
