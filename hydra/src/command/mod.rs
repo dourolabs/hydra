@@ -8,7 +8,6 @@ pub mod issues;
 pub mod notifications;
 pub mod output;
 pub mod patches;
-pub mod relations;
 pub mod repos;
 pub mod sessions;
 pub mod users;

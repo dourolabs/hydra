@@ -8,7 +8,8 @@
 //! - `--verbosity` projection
 //! - `--max-nodes` cap (exit 2)
 //! - mutually-exclusive flag rejection (exit 2)
-//! - `hydra relations list` still works unchanged (PR 6 removes it).
+//! - the legacy `relations` CLI subcommand is gone — invoking it exits
+//!   non-zero with clap's "unknown subcommand" error.
 
 mod harness;
 
@@ -390,32 +391,22 @@ async fn graph_search_empty_selection_exits_code_two() -> Result<()> {
 }
 
 #[tokio::test]
-async fn relations_list_still_works() -> Result<()> {
-    // Regression: PR 3 does NOT remove `hydra relations list`. PR 6 will.
+async fn relations_subcommand_is_removed() -> Result<()> {
+    // PR 6 removed the legacy top-level `relations` CLI subcommand.
+    // Invoking it must fail with clap's "unrecognized subcommand" error
+    // (exit 2).
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
 
-    let parent = user.create_issue("rl-parent").await?;
-    let _child = user.create_child_issue(&parent, "rl-child").await?;
+    let output = user.cli_expect_failure(&["relations", "list"]).await?;
 
-    let output = user
-        .cli(&[
-            "--output-format",
-            "jsonl",
-            "relations",
-            "list",
-            "--target",
-            parent.as_ref(),
-            "--rel-type",
-            "child-of",
-        ])
-        .await?;
-    let records = parse_jsonl(&output.stdout);
-    assert_eq!(records.len(), 1, "expected one child-of edge");
-    assert_eq!(
-        records[0]["rel_type"].as_str(),
-        Some("child-of"),
-        "edge should be child-of"
+    assert_eq!(output.status.code(), Some(2), "expected exit 2");
+    let stderr_lower = output.stderr.to_lowercase();
+    assert!(
+        stderr_lower.contains("unrecognized subcommand")
+            || stderr_lower.contains("unknown subcommand"),
+        "expected clap unknown-subcommand error, got: {}",
+        output.stderr
     );
     Ok(())
 }

@@ -131,11 +131,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::notifications::NotificationsCommand,
     },
-    /// Query relations between objects.
-    Relations {
-        #[command(subcommand)]
-        command: command::relations::RelationsCommand,
-    },
     /// Query the knowledge graph (nodes, with version-aware views).
     Graph {
         #[command(subcommand)]
@@ -305,9 +300,6 @@ pub async fn dispatch(
         }
         Commands::Notifications { command } => {
             command::notifications::run(client.as_ref(), command, context).await?
-        }
-        Commands::Relations { command } => {
-            command::relations::run(client.as_ref(), command, context).await?
         }
         Commands::Graph { command } => {
             command::graph::run(client.as_ref(), command, context).await?

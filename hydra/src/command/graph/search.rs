@@ -1,8 +1,9 @@
 //! `hydra graph search` — implementation.
 //!
-//! Selection: same flags as `hydra relations list` plus `--scope <ID>`. The
-//! result is the set of **nodes** addressed by the matching edges, hydrated
-//! and projected through the per-kind `GraphView::view_lN` impl.
+//! Selection: the shared `Selection` flag surface (`--source`/`--target`/
+//! `--object`/`--rel-type`/`--transitive`) plus `--scope <ID>`. The result is
+//! the set of **nodes** addressed by the matching edges, hydrated and
+//! projected through the per-kind `GraphView::view_lN` impl.
 
 use std::collections::HashSet;
 use std::io::{self, Write};
