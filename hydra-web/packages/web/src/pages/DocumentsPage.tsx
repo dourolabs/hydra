@@ -7,6 +7,7 @@ import { apiClient } from "../api/client";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
 import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumentPaths";
+import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useDocumentsByIds } from "../features/documents/useDocumentsByIds";
 import { getDocumentDisplayTitle } from "../features/documents/utils";
 import { formatRelativeTime } from "../utils/time";
@@ -358,6 +359,7 @@ export function DocumentsPage() {
     useBatchedDocumentPaths(prefixes);
 
   const { data: uncategorized } = useUncategorizedDocuments(true);
+  const { data: totalCount } = useDocumentCount();
 
   const topLevelEntries = useMemo(() => childrenMap.get(ROOT_PATH) ?? [], [childrenMap]);
   const topLevelFolders = useMemo(() => topLevelEntries.filter(isFolderEntry), [topLevelEntries]);
@@ -368,7 +370,8 @@ export function DocumentsPage() {
   }, [topLevelPaths, autoExpand]);
 
   const totalDocs = topLevelEntries.length + (uncategorized?.documents.length ?? 0);
-  const totalLabel = totalDocs === 1 ? "1 DOC" : `${totalDocs} DOCS`;
+  const displayCount = totalCount ?? totalDocs;
+  const totalLabel = displayCount === 1 ? "1 DOC" : `${displayCount} DOCS`;
 
   return (
     <div className={styles.page}>

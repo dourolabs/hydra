@@ -216,11 +216,53 @@ describe("DocumentsPage batched paths fetch", () => {
       expect(matches.length).toBeGreaterThan(0);
     });
 
-    // The only `listDocuments` call permitted is the uncategorized-docs query.
+    // The only `listDocuments` calls permitted are the uncategorized-docs and
+    // document-count queries; neither uses `path_prefix` or `ids`.
     for (const call of mockListDocuments.mock.calls) {
       const arg = call[0] as { path_prefix?: string; ids?: string };
       expect(arg.path_prefix).toBeUndefined();
       expect(arg.ids).toBeUndefined();
     }
+  });
+
+  it("eyebrow falls back to topLevel+uncategorized count while the count query is loading, then swaps to the backend total", async () => {
+    mockListDocumentPaths.mockResolvedValue({
+      children: [
+        pathEntry("/a", { child_count: 1 }),
+        pathEntry("/b", { child_count: 1 }),
+        pathEntry("/c", { child_count: 1 }),
+      ],
+    } satisfies ListDocumentPathsResponse);
+
+    let resolveCount: ((value: ListDocumentsResponse) => void) | null = null;
+    mockListDocuments.mockImplementation((arg: { count?: boolean; limit?: number }) => {
+      if (arg?.count === true) {
+        return new Promise<ListDocumentsResponse>((resolve) => {
+          resolveCount = resolve;
+        });
+      }
+      // uncategorized-docs query: resolve immediately to keep the page rendered.
+      return Promise.resolve<ListDocumentsResponse>({ documents: [] });
+    });
+
+    renderPage();
+
+    // While the count call is pending, the eyebrow reflects the fallback —
+    // top-level entries + uncategorized (3 + 0 = 3).
+    await waitFor(() => {
+      expect(screen.getByText(/KNOWLEDGE · 3 DOCS/)).toBeDefined();
+    });
+
+    // Confirm the count call was issued (in parallel with paths), not after.
+    expect(
+      mockListDocuments.mock.calls.some((c) => (c[0] as { count?: boolean }).count === true),
+    ).toBe(true);
+
+    // Resolve the count query with a much larger total — the eyebrow updates.
+    resolveCount!({ documents: [], next_cursor: null, total_count: 247n });
+
+    await waitFor(() => {
+      expect(screen.getByText(/KNOWLEDGE · 247 DOCS/)).toBeDefined();
+    });
   });
 });
