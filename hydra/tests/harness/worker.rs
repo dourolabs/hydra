@@ -1,15 +1,12 @@
 use std::{
     collections::HashMap,
-    path::Path,
-    sync::{Arc, Mutex},
+    fs,
+    path::PathBuf,
+    sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use hydra::client::RelayWebSocket;
+use anyhow::{bail, Context, Result};
 use hydra::command::output::{CommandContext, ResolvedOutputFormat};
-use hydra::worker::commands::WorkerCommands;
-use hydra::worker::report::RunReport;
 use hydra_common::{
     constants::{ENV_HYDRA_ISSUE_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN},
     patches::SearchPatchesQuery,
@@ -17,6 +14,7 @@ use hydra_common::{
     task_status::Status,
     PatchId, SessionId,
 };
+use tempfile::TempDir;
 
 use hydra_server::domain::actors::ActorRef;
 
@@ -51,116 +49,118 @@ pub struct WorkerFailure {
     pub final_status: Status,
 }
 
-/// Internal `WorkerCommands` implementation that executes shell commands,
-/// replacing `hydra` invocations with the test binary.
-struct BashCommands {
+/// Test fixture standing in for the real `claude` binary.
+///
+/// Materializes a `claude` shim script in a temp dir, prepends that dir to
+/// PATH (via the session's env_vars), and writes the test's shell commands
+/// to a file the shim reads when invoked. Outputs are captured per-command
+/// into the temp dir and read back via [`Self::read_outputs`].
+struct FakeClaude {
+    _temp_dir: TempDir,
+    bin_dir: PathBuf,
+    commands_file: PathBuf,
+    outputs_dir: PathBuf,
     commands: Vec<String>,
-    outputs: Arc<Mutex<Vec<CommandOutput>>>,
     fail_after_run: bool,
 }
 
-impl BashCommands {
-    fn new(commands: Vec<String>, fail_after_run: bool) -> Self {
-        Self {
-            commands,
-            outputs: Arc::new(Mutex::new(Vec::new())),
+impl FakeClaude {
+    fn new(commands: Vec<String>, fail_after_run: bool) -> Result<Self> {
+        let temp_dir = tempfile::tempdir().context("create fake-claude temp dir")?;
+        let bin_dir = temp_dir.path().join("bin");
+        let outputs_dir = temp_dir.path().join("outputs");
+        fs::create_dir_all(&bin_dir).context("create fake-claude bin dir")?;
+        fs::create_dir_all(&outputs_dir).context("create fake-claude outputs dir")?;
+
+        // Substitute `hydra` for the test binary path before writing to the
+        // commands file — the fake-claude shim doesn't know about cargo's
+        // bin layout and just runs each line via `bash -c`.
+        let substituted: Vec<String> = commands
+            .into_iter()
+            .map(|c| replace_hydra_in_command(&c))
+            .collect();
+        let commands_file = temp_dir.path().join("commands.txt");
+        fs::write(&commands_file, substituted.join("\n"))
+            .context("write fake-claude commands file")?;
+
+        let script_path = bin_dir.join("claude");
+        fs::write(&script_path, include_str!("fake_claude.sh"))
+            .context("write fake-claude shim")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&script_path)
+                .context("stat fake-claude shim")?
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script_path, perms)
+                .context("chmod fake-claude shim")?;
+        }
+
+        Ok(Self {
+            _temp_dir: temp_dir,
+            bin_dir,
+            commands_file,
+            outputs_dir,
+            commands: substituted,
             fail_after_run,
-        }
-    }
-
-    fn outputs(&self) -> Vec<CommandOutput> {
-        self.outputs
-            .lock()
-            .expect("failed to lock command outputs")
-            .clone()
-    }
-
-    async fn run_custom_command(
-        &self,
-        command_string: &str,
-        working_dir: &Path,
-        env: &HashMap<String, String>,
-    ) -> Result<CommandOutput> {
-        let command_to_run = replace_hydra_in_command(command_string);
-
-        let output = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(&command_to_run)
-            .current_dir(working_dir)
-            .envs(env)
-            .output()
-            .await
-            .context("failed to spawn custom run command")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let status_code = output.status.code().unwrap_or(-1);
-        let command_output = CommandOutput {
-            command: command_to_run.clone(),
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            status: status_code,
-        };
-        self.outputs
-            .lock()
-            .expect("failed to store command outputs")
-            .push(command_output.clone());
-
-        if !output.status.success() {
-            bail!(
-                "custom run command '{command_to_run}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-                status = output.status,
-            );
-        }
-
-        Ok(command_output)
-    }
-}
-
-#[async_trait]
-impl WorkerCommands for BashCommands {
-    async fn run(
-        &self,
-        _prompt: &str,
-        _model: Option<&str>,
-        working_dir: &Path,
-        env: &HashMap<String, String>,
-        _output_path: &Path,
-        _mcp_config: Option<&str>,
-    ) -> Result<RunReport> {
-        let mut last_output = String::new();
-        for command_string in &self.commands {
-            let output = self
-                .run_custom_command(command_string, working_dir, env)
-                .await
-                .with_context(|| format!("failed to run command '{command_string}'"))?;
-            last_output = output.stdout.clone();
-        }
-
-        if self.fail_after_run {
-            bail!("BashCommands configured to fail after running commands");
-        }
-
-        Ok(RunReport {
-            last_message: last_output,
-            usage: Default::default(),
-            model_session_id: None,
-            session_state: None,
         })
     }
 
-    async fn run_interactive(
-        &self,
-        _ws_stream: RelayWebSocket,
-        _session_id: &SessionId,
-        _prompt: &str,
-        _model: Option<&str>,
-        _working_dir: &Path,
-        _env: &HashMap<String, String>,
-        _idle_timeout: std::time::Duration,
-        _conversation_resume_from: Option<usize>,
-    ) -> Result<RunReport> {
-        Err(anyhow!("interactive mode is not supported in test harness"))
+    /// Env vars the session must carry so the worker (a) finds the shim on
+    /// PATH, (b) passes `Claude::new`'s API-key validation, and (c) tells
+    /// the shim where its commands and outputs live.
+    fn session_env_vars(&self) -> HashMap<String, String> {
+        let parent_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = if parent_path.is_empty() {
+            self.bin_dir.display().to_string()
+        } else {
+            format!("{}:{}", self.bin_dir.display(), parent_path)
+        };
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), new_path);
+        env.insert("ANTHROPIC_API_KEY".to_string(), "fake-claude-test".to_string());
+        env.insert(
+            "HYDRA_TEST_FAKE_CLAUDE_COMMANDS_FILE".to_string(),
+            self.commands_file.display().to_string(),
+        );
+        env.insert(
+            "HYDRA_TEST_FAKE_CLAUDE_OUTPUTS_DIR".to_string(),
+            self.outputs_dir.display().to_string(),
+        );
+        if self.fail_after_run {
+            env.insert(
+                "HYDRA_TEST_FAKE_CLAUDE_FAIL_AFTER_RUN".to_string(),
+                "1".to_string(),
+            );
+        }
+        env
+    }
+
+    /// Read the per-command outputs the shim wrote. Stops at the first
+    /// missing index (commands after a failure are never written).
+    fn read_outputs(&self) -> Vec<CommandOutput> {
+        let mut outputs = Vec::new();
+        for idx in 0..self.commands.len() {
+            let cmd_dir = self.outputs_dir.join(idx.to_string());
+            if !cmd_dir.exists() {
+                break;
+            }
+            let command = fs::read_to_string(cmd_dir.join("command")).unwrap_or_default();
+            let stdout = fs::read_to_string(cmd_dir.join("stdout")).unwrap_or_default();
+            let stderr = fs::read_to_string(cmd_dir.join("stderr")).unwrap_or_default();
+            let status = fs::read_to_string(cmd_dir.join("status"))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(-1);
+            outputs.push(CommandOutput {
+                command,
+                stdout,
+                stderr,
+                status,
+            });
+        }
+        outputs
     }
 }
 
@@ -252,24 +252,32 @@ fn find_next_shell_operator(s: &str) -> Option<(&str, &str, &str)> {
     None
 }
 
-/// Ensure the job's environment variables include the server URL, auth
-/// token, and issue ID so that subprocess commands (e.g. `hydra patches
-/// create`) can reach the test server and resolve the current issue.
-/// Updates the task record in the store directly.
-async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &SessionId) -> Result<()> {
+/// Ensure the job's environment variables, model selector, and auth token
+/// are configured so the worker subprocess can (a) find the fake-claude
+/// shim on PATH, (b) reach the test server, and (c) resolve its issue id.
+async fn configure_worker_session(
+    harness: &TestHarness,
+    job_id: &SessionId,
+    fake_claude: &FakeClaude,
+) -> Result<()> {
     let store = harness.store();
     let versioned_task = store
         .get_session(job_id, false)
         .await
-        .context("failed to get task to check env vars")?;
-
+        .context("failed to get task to configure worker session")?;
     let mut task = versioned_task.item;
-    let mut changed = false;
+
+    // Force ModelSelector to pick the Claude path so the fake-claude shim
+    // is invoked. `decide_kind` matches any model name containing "claude".
+    task.model = Some("claude-fake".to_string());
+
+    for (key, value) in fake_claude.session_env_vars() {
+        task.env_vars.insert(key, value);
+    }
 
     if !task.env_vars.contains_key(ENV_HYDRA_SERVER_URL) {
         task.env_vars
             .insert(ENV_HYDRA_SERVER_URL.to_string(), harness.server_url());
-        changed = true;
     }
     if !task.env_vars.contains_key(ENV_HYDRA_TOKEN) {
         // Mint a job-scoped auth token so subprocess CLI calls present as a
@@ -283,22 +291,18 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &SessionId) -> Re
             .context("failed to mint job-scoped auth token for worker subprocess")?;
         task.env_vars
             .insert(ENV_HYDRA_TOKEN.to_string(), auth_token);
-        changed = true;
     }
     if !task.env_vars.contains_key(ENV_HYDRA_ISSUE_ID) {
         if let Some(issue_id) = &task.spawned_from {
             task.env_vars
                 .insert(ENV_HYDRA_ISSUE_ID.to_string(), issue_id.to_string());
-            changed = true;
         }
     }
 
-    if changed {
-        store
-            .update_session(job_id, task, &ActorRef::test())
-            .await
-            .context("failed to update task env vars for worker")?;
-    }
+    store
+        .update_session(job_id, task, &ActorRef::test())
+        .await
+        .context("failed to update task for worker")?;
 
     Ok(())
 }
@@ -362,8 +366,10 @@ pub(super) async fn run_worker_impl(
     commands: Vec<&str>,
     fail_after_run: bool,
 ) -> Result<WorkerResult> {
-    // Ensure env vars are set for the worker subprocess.
-    ensure_worker_env_vars(harness, job_id).await?;
+    let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
+    let fake_claude = FakeClaude::new(string_commands, fail_after_run)?;
+
+    configure_worker_session(harness, job_id, &fake_claude).await?;
 
     // Wait for the job to reach Running status (background workers handle
     // the Created -> Pending -> Running transitions).
@@ -382,10 +388,6 @@ pub(super) async fn run_worker_impl(
         .map(|p| p.patch_id.clone())
         .collect();
 
-    // Create BashCommands and run the worker.
-    let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
-    let bash_commands = BashCommands::new(string_commands, fail_after_run);
-
     let temp_dir =
         tempfile::tempdir().context("failed to create temporary directory for worker")?;
     let worker_dir = temp_dir.path().to_path_buf();
@@ -399,12 +401,11 @@ pub(super) async fn run_worker_impl(
         worker_dir,
         None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
-        Some(&bash_commands),
         &context,
     )
     .await;
 
-    let outputs = bash_commands.outputs();
+    let outputs = fake_claude.read_outputs();
 
     if let Err(err) = run_result {
         let formatted = format_command_outputs(&outputs);
@@ -428,15 +429,13 @@ pub(super) async fn run_worker_expect_failure_impl(
     job_id: &SessionId,
     commands: Vec<&str>,
 ) -> Result<WorkerFailure> {
-    // Ensure env vars are set for the worker subprocess.
-    ensure_worker_env_vars(harness, job_id).await?;
+    let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
+    let fake_claude = FakeClaude::new(string_commands, false)?;
+
+    configure_worker_session(harness, job_id, &fake_claude).await?;
 
     // Wait for the job to reach Running status.
     wait_for_running(harness, job_id).await?;
-
-    // Create BashCommands (not configured to fail — the commands themselves should fail).
-    let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
-    let bash_commands = BashCommands::new(string_commands, false);
 
     let temp_dir =
         tempfile::tempdir().context("failed to create temporary directory for worker")?;
@@ -451,12 +450,11 @@ pub(super) async fn run_worker_expect_failure_impl(
         worker_dir,
         None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
-        Some(&bash_commands),
         &context,
     )
     .await;
 
-    let outputs = bash_commands.outputs();
+    let outputs = fake_claude.read_outputs();
     let final_status = get_session_status(harness, job_id).await?;
 
     match run_result {

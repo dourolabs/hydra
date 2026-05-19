@@ -33,17 +33,16 @@
 //! becomes a no-op and a status log line, so call sites don't need to know
 //! about the gate.
 //!
-//! The companion in-band shutdown paths
-//! (`worker::commands::kill_process_group` / `worker::interactive`) remain in
-//! place — they handle the common stdout-pipe path. This reaper exists to catch
-//! the cases where a child detached its stdout (`> /dev/null 2>&1 &`) or called
-//! `setsid` and so escaped the process-group SIGTERM.
+//! The companion in-band shutdown path (`worker::claude::kill_process_group`)
+//! remains in place — it handles the common stdout-pipe case. This reaper
+//! exists to catch children that detached their stdout (`> /dev/null 2>&1 &`)
+//! or called `setsid` and so escaped the process-group SIGTERM.
 
 #[cfg(unix)]
 use std::time::Duration;
 
 /// Grace period between SIGTERM and SIGKILL, aligned with
-/// `worker::commands::PROCESS_GROUP_GRACE_PERIOD`.
+/// `worker::claude::PROCESS_GROUP_GRACE_PERIOD`.
 #[cfg(unix)]
 const REAP_GRACE_PERIOD: Duration = Duration::from_secs(5);
 

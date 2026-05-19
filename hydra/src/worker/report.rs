@@ -2,15 +2,16 @@
 //! by the worker. See `designs/worker-model-commands-refactor.md` §3–4 for the
 //! design that motivates this module.
 //!
-//! `RunReport` is the value every `WorkerCommands` impl returns from `run` /
-//! `run_interactive`. The generic types (`SessionResume`, `WorkerInputMessage`,
-//! `WorkerEvent`) live here so PR 2 can wire them into `ModelSelector` without
-//! moving them again.
+//! `RunReport` is the value `ModelSelector::run` and
+//! `ModelSelector::run_interactive` return. The generic types
+//! (`SessionResume`, `WorkerInputMessage`, `WorkerEvent`) live here so the
+//! per-model wrappers can speak only model-native types and the translation
+//! is local to `ModelSelector`.
 
 use std::path::PathBuf;
 
 /// Result of one batch or interactive worker run, returned by
-/// `WorkerCommands::run` / `WorkerCommands::run_interactive`.
+/// `ModelSelector::run` / `ModelSelector::run_interactive`.
 #[derive(Debug, Clone)]
 pub struct RunReport {
     /// The final assistant text emitted by the model. Used to populate
