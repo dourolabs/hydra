@@ -207,6 +207,94 @@ describe("ChatListPage New Chat button", () => {
     cleanup();
   });
 
+  it("orders rows by status bucket (active > idle > closed), then updated_at desc within each bucket", () => {
+    // Timestamps are chosen so that bucket-only and recency-only orderings diverge:
+    // c-new-closed is the single most recently updated, but must sink to the bottom;
+    // c-old-active is the least recently updated active, but must still rank above
+    // any idle (incl. the most-recently-updated idle).
+    mockConversations = [
+      {
+        conversation_id: "c-old-closed",
+        title: "Old closed",
+        agent_name: null,
+        status: "closed",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-18T18:00:00Z",
+      },
+      {
+        conversation_id: "c-new-closed",
+        title: "New closed",
+        agent_name: null,
+        status: "closed",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-19T00:00:00Z",
+      },
+      {
+        conversation_id: "c-old-active",
+        title: "Old active",
+        agent_name: null,
+        status: "active",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-18T19:00:00Z",
+        updated_at: "2026-05-18T19:00:00Z",
+      },
+      {
+        conversation_id: "c-new-idle",
+        title: "New idle",
+        agent_name: null,
+        status: "idle",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-18T23:30:00Z",
+        updated_at: "2026-05-18T23:30:00Z",
+      },
+      {
+        conversation_id: "c-old-idle",
+        title: "Old idle",
+        agent_name: null,
+        status: "idle",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-18T20:00:00Z",
+        updated_at: "2026-05-18T20:00:00Z",
+      },
+      {
+        conversation_id: "c-new-active",
+        title: "New active",
+        agent_name: null,
+        status: "active",
+        event_count: 0,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-18T23:00:00Z",
+        updated_at: "2026-05-18T23:00:00Z",
+      },
+    ];
+    render(<ChatListPage />);
+
+    const rows = screen.getAllByTestId(/^chats-list-row-/);
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
+      "chats-list-row-c-new-active",
+      "chats-list-row-c-old-active",
+      "chats-list-row-c-new-idle",
+      "chats-list-row-c-old-idle",
+      "chats-list-row-c-new-closed",
+      "chats-list-row-c-old-closed",
+    ]);
+
+    cleanup();
+  });
+
   it("renders literal Active / Idle / Closed status labels on chat rows", () => {
     mockConversations = [
       {

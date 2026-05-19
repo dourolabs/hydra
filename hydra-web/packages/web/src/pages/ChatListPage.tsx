@@ -5,6 +5,7 @@ import { Badge, Button, Icons } from "@hydra/ui";
 import type { Conversation } from "@hydra/api";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
+import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
 import { formatRelativeTime } from "../utils/time";
 import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -26,9 +27,7 @@ export function ChatListPage() {
 
   const sorted = useMemo(() => {
     if (!data) return [];
-    return [...data].sort(
-      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-    );
+    return [...data].sort(compareConversationsByBucketThenUpdated);
   }, [data]);
 
   const totalLabel = sorted.length === 1 ? "1 CHAT" : `${sorted.length} CHATS`;

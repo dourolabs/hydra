@@ -11,6 +11,7 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
+import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useActiveSessions } from "../features/sessions/useActiveSessions";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
@@ -109,7 +110,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
     if (!conversations) return [];
     return conversations
       .filter((c) => c.status !== "closed")
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .sort(compareConversationsByBucketThenUpdated)
       .slice(0, CHATS_SECTION_LIMIT);
   }, [conversations]);
 
