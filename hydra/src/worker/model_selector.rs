@@ -124,10 +124,12 @@ impl ModelSelector {
         matches!(Self::decide_kind(name), Kind::Claude)
     }
 
-    /// Decide which kind of model wrapper this name maps to. Prefix-based
-    /// (per design §6):
+    /// Decide which kind of model wrapper this name maps to. Name-based
+    /// (per design §6); matches either an exact bare family name or one of
+    /// the `<family>-...` prefix forms:
     ///
-    /// * `claude-` / `haiku-` / `sonnet-` / `opus-` → [`Kind::Claude`]
+    /// * `claude` / `haiku` / `sonnet` / `opus` (bare) or `claude-` /
+    ///   `haiku-` / `sonnet-` / `opus-` (prefix) → [`Kind::Claude`]
     /// * `gpt-` / `o1` / `o3` / `o4` / `codex-` → [`Kind::Codex`]
     /// * Everything else (and `None`) → [`Kind::Codex`] with a `warn!` log so
     ///   misroutes are spottable.
@@ -136,8 +138,12 @@ impl ModelSelector {
             return Kind::Codex;
         };
         let lc = raw.to_ascii_lowercase();
+        let claude_exact = ["claude", "haiku", "sonnet", "opus"];
         let claude_prefixes = ["claude-", "haiku-", "sonnet-", "opus-"];
         let codex_prefixes = ["gpt-", "o1", "o3", "o4", "codex-"];
+        if claude_exact.iter().any(|n| lc == *n) {
+            return Kind::Claude;
+        }
         if claude_prefixes.iter().any(|p| lc.starts_with(p)) {
             return Kind::Claude;
         }
@@ -253,6 +259,20 @@ mod tests {
     }
 
     #[test]
+    fn decide_kind_bare_claude_family_names() {
+        assert_eq!(ModelSelector::decide_kind(Some("claude")), Kind::Claude);
+        assert_eq!(ModelSelector::decide_kind(Some("opus")), Kind::Claude);
+        assert_eq!(ModelSelector::decide_kind(Some("sonnet")), Kind::Claude);
+        assert_eq!(ModelSelector::decide_kind(Some("haiku")), Kind::Claude);
+    }
+
+    #[test]
+    fn decide_kind_bare_claude_family_names_case_insensitive() {
+        assert_eq!(ModelSelector::decide_kind(Some("Opus")), Kind::Claude);
+        assert_eq!(ModelSelector::decide_kind(Some("SONNET")), Kind::Claude);
+    }
+
+    #[test]
     fn decide_kind_gpt_dash_prefix() {
         assert_eq!(ModelSelector::decide_kind(Some("gpt-4o")), Kind::Codex);
     }
@@ -282,6 +302,14 @@ mod tests {
         assert!(ModelSelector::supports_interactive(Some(
             "haiku-4-5-20251001"
         )));
+    }
+
+    #[test]
+    fn supports_interactive_true_for_bare_claude_family_names() {
+        assert!(ModelSelector::supports_interactive(Some("claude")));
+        assert!(ModelSelector::supports_interactive(Some("opus")));
+        assert!(ModelSelector::supports_interactive(Some("sonnet")));
+        assert!(ModelSelector::supports_interactive(Some("haiku")));
     }
 
     #[test]
