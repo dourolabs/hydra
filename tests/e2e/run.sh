@@ -30,7 +30,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
+CONFIG_TEMPLATE="${SCRIPT_DIR}/config/test-config.yaml"
+CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
@@ -88,8 +89,8 @@ if ! command -v npx &>/dev/null; then
   exit 1
 fi
 
-if [[ ! -f "${CONFIG_PATH}" ]]; then
-  echo "ERROR: Test config not found at ${CONFIG_PATH}" >&2
+if [[ ! -f "${CONFIG_TEMPLATE}" ]]; then
+  echo "ERROR: Test config template not found at ${CONFIG_TEMPLATE}" >&2
   exit 1
 fi
 
@@ -100,6 +101,38 @@ echo "    All prerequisites met."
 # --------------------------------------------------------------------------
 echo "==> Creating directories for test paths..."
 mkdir -p /tmp/hydra-e2e
+
+# --------------------------------------------------------------------------
+# 2b. Render the final test config.
+#
+# The static template under tests/e2e/config/ deliberately omits the
+# CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY lines because setup_local_auth
+# rejects an explicitly-empty CLAUDE_CODE_OAUTH_TOKEN. Inject each key into the
+# `hydra:` block only when its env var is non-empty, so an unset env var
+# produces an absent field rather than `Some("")`.
+# --------------------------------------------------------------------------
+awk \
+  -v inject_claude="${CLAUDE_CODE_OAUTH_TOKEN:+1}" \
+  -v inject_anthropic="${ANTHROPIC_API_KEY:+1}" \
+  '
+    function emit_injected() {
+      if (inject_claude == "1") {
+        print "  CLAUDE_CODE_OAUTH_TOKEN: \"${CLAUDE_CODE_OAUTH_TOKEN}\""
+      }
+      if (inject_anthropic == "1") {
+        print "  ANTHROPIC_API_KEY: \"${ANTHROPIC_API_KEY}\""
+      }
+    }
+    /^hydra:/ { print; in_hydra = 1; next }
+    in_hydra && /^[a-zA-Z]/ {
+      emit_injected()
+      in_hydra = 0
+    }
+    { print }
+    END {
+      if (in_hydra) emit_injected()
+    }
+  ' "${CONFIG_TEMPLATE}" > "${CONFIG_PATH}"
 
 # --------------------------------------------------------------------------
 # 3. Clean previous state

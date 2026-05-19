@@ -7,13 +7,15 @@
 #   GH_TOKEN                - GitHub personal access token (repo scope)
 #
 # At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set.
+# These keys are NOT listed under `hydra:` here on purpose: an empty value (from
+# e.g. an unset env var via `${VAR:-}`) is rejected by setup_local_auth. The
+# e2e bootstrap script (tests/e2e/run.sh) instead appends only the keys whose
+# env vars are non-empty, then passes the resulting file to `hydra-sp server init`.
 
 hydra:
   namespace: "test"
   server_hostname: "127.0.0.1:8080"
   HYDRA_SECRET_ENCRYPTION_KEY: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
-  CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
-  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
 job:
   default_model: "opus"
