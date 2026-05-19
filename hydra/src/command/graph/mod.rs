@@ -1,9 +1,10 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
-//! This module currently exposes a single subcommand, `search`. PRs 4 and 5
-//! will add `diff` and `log` alongside; the dispatch and node-set helpers in
-//! `dispatch.rs` are shared with those subcommands.
+//! Exposed subcommands: `search` (PR 3) and `diff` (PR 4). PR 5 will add
+//! `log`. The dispatch and node-set helpers in `dispatch.rs` are shared
+//! across subcommands.
 
+pub mod diff;
 pub mod dispatch;
 pub mod search;
 
@@ -54,6 +55,60 @@ pub enum GraphCommand {
         scope: Option<HydraId>,
 
         /// Post-filter the hydrated nodes to one or more kinds (repeatable).
+        #[arg(long = "kind", value_enum, value_name = "KIND")]
+        kinds: Vec<KindArg>,
+
+        /// Verbosity level (1 = terse, 2 = intermediate, 3 = full).
+        #[arg(long, value_name = "LEVEL", default_value = "1")]
+        verbosity: VerbosityArg,
+
+        /// Maximum size of the resolved node-id set before aborting.
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_NODES)]
+        max_nodes: usize,
+    },
+    /// Show what changed between two timestamps for the matched nodes.
+    Diff {
+        /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
+        /// relative duration, or 'now'). Required.
+        #[arg(long, value_name = "TS", allow_hyphen_values = true)]
+        since: String,
+
+        /// End of the time window (same syntax as --since). Defaults to 'now'.
+        #[arg(
+            long,
+            value_name = "TS",
+            default_value = "now",
+            allow_hyphen_values = true
+        )]
+        until: String,
+
+        /// Filter by source object ID.
+        #[arg(long, value_name = "ID")]
+        source: Option<HydraId>,
+
+        /// Filter by target object ID.
+        #[arg(long, value_name = "ID")]
+        target: Option<HydraId>,
+
+        /// Show all relations where this object is source or target.
+        #[arg(long, value_name = "ID")]
+        object: Option<HydraId>,
+
+        /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
+        #[arg(long, value_name = "TYPE")]
+        rel_type: Option<String>,
+
+        /// Follow transitive edges (requires --source or --target plus --rel-type).
+        #[arg(long)]
+        transitive: bool,
+
+        /// Convenience: include the issue plus all transitively-reachable
+        /// child issues plus all attached patches and documents. Mutually
+        /// exclusive with --source/--target/--object.
+        #[arg(long, value_name = "ID")]
+        scope: Option<HydraId>,
+
+        /// Post-filter the diffed nodes to one or more kinds (repeatable).
         #[arg(long = "kind", value_enum, value_name = "KIND")]
         kinds: Vec<KindArg>,
 
@@ -123,6 +178,38 @@ pub async fn run(
             search::run_search(
                 client,
                 search::SearchParams {
+                    source,
+                    target,
+                    object,
+                    rel_type,
+                    transitive,
+                    scope,
+                    kinds,
+                    verbosity: verbosity.0,
+                    max_nodes,
+                },
+                context,
+            )
+            .await
+        }
+        GraphCommand::Diff {
+            since,
+            until,
+            source,
+            target,
+            object,
+            rel_type,
+            transitive,
+            scope,
+            kinds,
+            verbosity,
+            max_nodes,
+        } => {
+            diff::run_diff(
+                client,
+                diff::DiffParams {
+                    since,
+                    until,
                     source,
                     target,
                     object,

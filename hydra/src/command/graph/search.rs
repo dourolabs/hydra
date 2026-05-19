@@ -90,7 +90,7 @@ pub(crate) fn validate(params: &SearchParams) -> Result<(), String> {
 }
 
 /// Step 1 of the algorithm: resolve the set of node ids to hydrate.
-async fn resolve_node_ids(
+pub(crate) async fn resolve_node_ids(
     client: &dyn HydraClientInterface,
     params: &SearchParams,
 ) -> Result<Vec<HydraId>> {
