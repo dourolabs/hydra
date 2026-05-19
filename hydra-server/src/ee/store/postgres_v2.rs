@@ -212,11 +212,14 @@ impl PostgresStoreV2 {
     // cardinality, also bounded to ~1 char of error. reltuples is -1 on
     // never-ANALYZEd tables; GREATEST clamps it to 0 so fresh deployments
     // fall back to the default suffix until autovacuum runs ANALYZE.
+    // to_regclass resolves schema-qualified names like "metis.tasks_v2" to a
+    // pg_class oid (or NULL when missing), so the WHERE never matches a
+    // not-yet-created table and fetch_optional falls through to unwrap_or(0).
     async fn estimated_row_count(&self, table: &str) -> Result<u64, StoreError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT GREATEST(reltuples, 0)::bigint
              FROM pg_class
-             WHERE relname = $1 AND relkind = 'r'
+             WHERE oid = to_regclass($1)
              LIMIT 1",
         )
         .bind(table)
