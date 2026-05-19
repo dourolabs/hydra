@@ -1605,6 +1605,17 @@ impl ReadOnlyStore for MemoryStore {
             .unwrap_or_default())
     }
 
+    async fn get_conversation_versions(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
+        let snapshot = self.get_conversation(id, false).await?;
+        let events = self.get_conversation_events(id).await?;
+        Ok(crate::store::fold_conversation_versions(
+            id, &snapshot, &events,
+        ))
+    }
+
     async fn get_conversation_event_summaries(
         &self,
         ids: &[ConversationId],
@@ -7678,6 +7689,88 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].version, 1);
         assert_eq!(events[1].version, 2);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_versions_folds_events_into_snapshots() {
+        use crate::domain::conversations::{ConversationEvent, ConversationStatus};
+
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // No events yet -> empty result.
+        let versions = store.get_conversation_versions(&id).await.unwrap();
+        assert!(versions.is_empty());
+
+        let ts1 = Utc::now();
+        store
+            .append_conversation_event(
+                &id,
+                ConversationEvent::UserMessage {
+                    content: "hi".to_string(),
+                    timestamp: ts1,
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        let ts2 = Utc::now();
+        store
+            .append_conversation_event(
+                &id,
+                ConversationEvent::Closed { timestamp: ts2 },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let events = store.get_conversation_events(&id).await.unwrap();
+        let versions = store.get_conversation_versions(&id).await.unwrap();
+
+        // One snapshot per event, with versions / timestamps lifted from the events.
+        assert_eq!(versions.len(), events.len());
+        for (v, e) in versions.iter().zip(events.iter()) {
+            assert_eq!(v.version, e.version);
+            assert_eq!(v.timestamp, e.timestamp);
+            assert_eq!(v.actor, e.actor);
+            assert_eq!(v.creation_time, e.creation_time);
+        }
+
+        // Final snapshot reflects the Closed event.
+        assert_eq!(
+            versions.last().unwrap().item.status,
+            ConversationStatus::Closed
+        );
+        // Mid-stream snapshot for the user message is Active.
+        assert_eq!(versions[0].item.status, ConversationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_versions_not_found_for_missing_conversation() {
+        let store = MemoryStore::new();
+        let id = hydra_common::ConversationId::new();
+        let err = store.get_conversation_versions(&id).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_versions_rejects_deleted_conversation() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let mut deleted = sample_conversation();
+        deleted.deleted = true;
+        store
+            .update_conversation(&id, deleted, &test_actor())
+            .await
+            .unwrap();
+        let err = store.get_conversation_versions(&id).await.unwrap_err();
+        assert!(matches!(err, StoreError::ConversationNotFound(_)));
     }
 
     #[tokio::test]

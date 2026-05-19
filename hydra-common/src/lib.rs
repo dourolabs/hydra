@@ -5,6 +5,7 @@ pub mod actor_ref;
 pub mod api;
 pub mod build_cache;
 pub mod constants;
+pub mod conversation;
 pub mod document_path;
 pub mod github;
 pub mod graph;

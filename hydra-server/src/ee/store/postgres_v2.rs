@@ -3813,6 +3813,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(results)
     }
 
+    async fn get_conversation_versions(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
+        let snapshot = self.get_conversation(id, false).await?;
+        let events = self.get_conversation_events(id).await?;
+        Ok(crate::store::fold_conversation_versions(
+            id, &snapshot, &events,
+        ))
+    }
+
     async fn get_conversation_events(
         &self,
         id: &ConversationId,
