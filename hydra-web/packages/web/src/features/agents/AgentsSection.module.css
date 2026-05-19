@@ -1,70 +1,163 @@
-/* Agent-specific styles (shared styles in SettingsSection.module.css) */
+/* Agents list — refreshed cards layout. */
 
-/* Assignment badge */
-.assignmentBadge {
-  font-size: var(--font-size-xs);
-  color: var(--color-accent);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-  flex-shrink: 0;
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
 }
 
-/* Checkbox label */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast);
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cardName {
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cardHeadSpacer {
+  flex: 1;
+}
+
+.tagChip {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 6px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--acc);
+  background: var(--acc-soft);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* Legacy alias kept for AgentEditModal / AgentCreateModal references. */
+.assignmentBadge {
+  composes: tagChip;
+}
+
+.path {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.pathLabel {
+  color: var(--fg-3);
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.metaChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.metaChipKey {
+  color: var(--fg-3);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.cardFootSpacer {
+  flex: 1;
+}
+
+/* Modal form helpers. */
 .checkboxLabel {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  gap: 8px;
+  color: var(--fg-0);
+  font-size: var(--t-sm);
   cursor: pointer;
 }
 
 .checkboxLabel input[type="checkbox"] {
-  accent-color: var(--color-accent);
+  accent-color: var(--acc);
 }
 
-/* Secrets selector */
 .secretsField {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
 .secretsFieldLabel {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  color: var(--fg-0);
+  font-size: var(--t-sm);
   font-weight: 500;
 }
 
 .secretsCheckboxList {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 4px;
 }
 
-/* Field-level error */
 .fieldError {
-  color: var(--color-danger);
-  font-size: var(--font-size-xs);
+  color: var(--s-failed);
+  font-size: var(--t-xs);
   margin: 0;
 }
 
-/* Mobile responsive */
 @media (max-width: 768px) {
-  .detailRow {
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-
-  .detailLabel {
-    width: auto;
-  }
-
-  .agentDetails {
-    padding-left: var(--space-3);
+  .cards {
+    grid-template-columns: 1fr;
   }
 }
