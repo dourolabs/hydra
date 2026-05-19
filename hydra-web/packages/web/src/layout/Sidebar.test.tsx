@@ -52,6 +52,11 @@ vi.mock("../features/sessions/useActiveSessions", () => ({
   useActiveSessions: (...args: unknown[]) => activeSessionsMock(...args),
 }));
 
+const activeSessionCountMock = vi.fn();
+vi.mock("../features/sessions/useActiveSessionCount", () => ({
+  useActiveSessionCount: (...args: unknown[]) => activeSessionCountMock(...args),
+}));
+
 const getVersionMock = vi.fn();
 vi.mock("../api/client", () => ({
   apiClient: {
@@ -105,6 +110,7 @@ beforeEach(() => {
   mockConversations = [];
   issueCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
   activeSessionsMock.mockReturnValue({ data: [], isLoading: false, error: null });
+  activeSessionCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
   getVersionMock.mockResolvedValue({ version: "0.0.0" });
 
   Object.defineProperty(window, "matchMedia", {
@@ -299,5 +305,32 @@ describe("Sidebar", () => {
     });
     renderSidebar();
     expect(screen.getByText("No active sessions.")).toBeTruthy();
+  });
+
+  it("shows true active session count even when more rows exist than the list cap", () => {
+    // 6 rendered rows but 12 total active sessions — count badge should show 12.
+    const rows = Array.from({ length: 6 }, (_, i) => ({
+      session_id: `s-${i + 1}`,
+      version: 1n,
+      timestamp: new Date().toISOString(),
+      session: {
+        prompt: `Session ${i + 1}`,
+        creator: "alice",
+        status: "running",
+        start_time: new Date(Date.now() - 60_000).toISOString(),
+      },
+    }));
+    activeSessionsMock.mockReturnValue({ data: rows, isLoading: false, error: null });
+    activeSessionCountMock.mockReturnValue({ data: 12, isLoading: false, error: null });
+
+    renderSidebar();
+    expect(screen.getByTestId("sidebar-active-sessions-count").textContent).toBe("12");
+    expect(screen.getAllByTestId(/^sidebar-session-row-/).length).toBe(6);
+  });
+
+  it("hides the count badge when there are no active sessions", () => {
+    activeSessionCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-active-sessions-count")).toBeNull();
   });
 });
