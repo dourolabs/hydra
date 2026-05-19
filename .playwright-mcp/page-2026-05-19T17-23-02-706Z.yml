@@ -1,0 +1,94 @@
+- generic [ref=e3]:
+  - navigation "Primary" [ref=e5]:
+    - link "Hydra" [ref=e7] [cursor=pointer]:
+      - /url: /
+      - img [ref=e8]
+      - generic [ref=e12]: Hydra
+    - button "Search… ⌘K" [ref=e13] [cursor=pointer]:
+      - img [ref=e14]
+      - generic [ref=e17]: Search…
+      - generic [ref=e18]: ⌘K
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e22]: Chats
+        - link "All chats" [ref=e23] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e25]
+          - generic [ref=e27]: All chats
+      - generic [ref=e28]:
+        - generic [ref=e30]: Workspace
+        - link "Issues" [ref=e31] [cursor=pointer]:
+          - /url: /?selected=all
+          - img [ref=e33]
+          - generic [ref=e36]: Issues
+        - link "Patches" [ref=e37] [cursor=pointer]:
+          - /url: /patches
+          - img [ref=e39]
+          - generic [ref=e44]: Patches
+        - link "Sessions" [ref=e45] [cursor=pointer]:
+          - /url: /sessions
+          - img [ref=e47]
+          - generic [ref=e49]: Sessions
+        - link "Documents" [ref=e50] [cursor=pointer]:
+          - /url: /documents
+          - img [ref=e52]
+          - generic [ref=e55]: Documents
+        - link "Agents" [ref=e56] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e58]
+          - generic [ref=e62]: Agents
+        - link "Repositories" [ref=e63] [cursor=pointer]:
+          - /url: /repositories
+          - img [ref=e65]
+          - generic [ref=e67]: Repositories
+        - link "Secrets" [ref=e68] [cursor=pointer]:
+          - /url: /secrets
+          - img [ref=e70]
+          - generic [ref=e74]: Secrets
+      - generic [ref=e75]:
+        - generic [ref=e77]: Views
+        - link "Assigned to me" [ref=e78] [cursor=pointer]:
+          - /url: /?selected=assigned
+          - img [ref=e80]
+          - generic [ref=e82]: Assigned to me
+        - link "In progress" [ref=e83] [cursor=pointer]:
+          - /url: /?selected=in_progress
+          - img [ref=e85]
+          - generic [ref=e88]: In progress
+      - generic [ref=e91]: Active sessions
+    - generic [ref=e92]:
+      - generic [ref=e96]: Connected
+      - generic [ref=e97]:
+        - generic "test-agent" [ref=e98]: ta
+        - generic "test-agent" [ref=e100]
+        - button "Logout" [ref=e102] [cursor=pointer]:
+          - img [ref=e103]
+  - generic [ref=e105]:
+    - banner [ref=e106]:
+      - button "Hide sidebar" [ref=e108] [cursor=pointer]:
+        - img [ref=e109]
+      - navigation "Breadcrumb" [ref=e112]:
+        - link "Workspace" [ref=e113] [cursor=pointer]:
+          - /url: /
+        - img [ref=e115]
+        - generic [ref=e117]: Secrets
+      - generic [ref=e118]:
+        - link "Active sessions" [ref=e119] [cursor=pointer]:
+          - /url: /sessions
+          - generic [ref=e121]: no sessions
+        - button "Search" [ref=e122] [cursor=pointer]:
+          - img [ref=e123]
+          - generic [ref=e126]: ⌘K
+        - button "Create new" [ref=e128] [cursor=pointer]:
+          - img [ref=e129]
+          - generic [ref=e131]: New
+    - main [ref=e132]:
+      - generic [ref=e133]:
+        - generic [ref=e134]:
+          - generic [ref=e135]:
+            - generic [ref=e136]: SYSTEM · 0 SECRETS
+            - heading "Secrets" [level=1] [ref=e137]
+          - button "Add secret" [ref=e138] [cursor=pointer]:
+            - img [ref=e139]
+            - text: Add secret
+        - status "Loading" [ref=e143]

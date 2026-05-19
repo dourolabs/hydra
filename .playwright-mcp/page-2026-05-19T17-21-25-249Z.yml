@@ -1,0 +1,111 @@
+- generic [ref=e3]:
+  - navigation "Primary" [ref=e5]:
+    - link "Hydra" [ref=e7] [cursor=pointer]:
+      - /url: /
+      - img [ref=e8]
+      - generic [ref=e12]: Hydra
+    - button "Search… ⌘K" [ref=e13] [cursor=pointer]:
+      - img [ref=e14]
+      - generic [ref=e17]: Search…
+      - generic [ref=e18]: ⌘K
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e22]: Chats
+        - link "All chats" [ref=e23] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e25]
+          - generic [ref=e27]: All chats
+      - generic [ref=e28]:
+        - generic [ref=e30]: Workspace
+        - link "Issues" [ref=e31] [cursor=pointer]:
+          - /url: /?selected=all
+          - img [ref=e33]
+          - generic [ref=e36]: Issues
+        - link "Patches" [ref=e37] [cursor=pointer]:
+          - /url: /patches
+          - img [ref=e39]
+          - generic [ref=e44]: Patches
+        - link "Sessions" [ref=e45] [cursor=pointer]:
+          - /url: /sessions
+          - img [ref=e47]
+          - generic [ref=e49]: Sessions
+        - link "Documents" [ref=e50] [cursor=pointer]:
+          - /url: /documents
+          - img [ref=e52]
+          - generic [ref=e55]: Documents
+        - link "Agents" [ref=e56] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e58]
+          - generic [ref=e62]: Agents
+        - link "Repositories" [ref=e63] [cursor=pointer]:
+          - /url: /repositories
+          - img [ref=e65]
+          - generic [ref=e67]: Repositories
+        - link "Secrets" [ref=e68] [cursor=pointer]:
+          - /url: /secrets
+          - img [ref=e70]
+          - generic [ref=e74]: Secrets
+      - generic [ref=e75]:
+        - generic [ref=e77]: Views
+        - link "Assigned to me" [ref=e78] [cursor=pointer]:
+          - /url: /?selected=assigned
+          - img [ref=e80]
+          - generic [ref=e82]: Assigned to me
+        - link "In progress" [ref=e83] [cursor=pointer]:
+          - /url: /?selected=in_progress
+          - img [ref=e85]
+          - generic [ref=e88]: In progress
+      - generic [ref=e91]: Active sessions
+    - generic [ref=e92]:
+      - generic [ref=e96]: Connecting
+      - generic [ref=e97]:
+        - generic "test-agent" [ref=e98]: ta
+        - generic "test-agent" [ref=e100]
+        - button "Logout" [ref=e102] [cursor=pointer]:
+          - img [ref=e103]
+  - generic [ref=e105]:
+    - banner [ref=e106]:
+      - button "Hide sidebar" [ref=e108] [cursor=pointer]:
+        - img [ref=e109]
+      - generic [ref=e111]:
+        - link "Active sessions" [ref=e112] [cursor=pointer]:
+          - /url: /sessions
+          - generic [ref=e114]: no sessions
+        - button "Search" [ref=e115] [cursor=pointer]:
+          - img [ref=e116]
+          - generic [ref=e119]: ⌘K
+        - button "Create new" [ref=e121] [cursor=pointer]:
+          - img [ref=e122]
+          - generic [ref=e124]: New
+    - main [ref=e125]:
+      - generic [ref=e127]:
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - generic [ref=e130]: WORK · 0 ISSUES
+            - heading "Issues" [level=1] [ref=e131]
+          - tablist "Layout" [ref=e133]:
+            - tab "Table" [selected] [ref=e134] [cursor=pointer]:
+              - img [ref=e135]
+              - text: Table
+            - tab "Board" [ref=e137] [cursor=pointer]:
+              - img [ref=e138]
+              - text: Board
+        - generic [ref=e140]:
+          - button "All" [ref=e141] [cursor=pointer]:
+            - generic [ref=e142]: All
+          - button "Open" [ref=e143] [cursor=pointer]:
+            - generic [ref=e144]: Open
+          - button "In progress" [ref=e145] [cursor=pointer]:
+            - generic [ref=e146]: In progress
+          - button "Failed" [ref=e147] [cursor=pointer]:
+            - generic [ref=e148]: Failed
+          - button "Closed" [ref=e149] [cursor=pointer]:
+            - generic [ref=e150]: Closed
+          - button "Dropped" [ref=e151] [cursor=pointer]:
+            - generic [ref=e152]: Dropped
+          - generic [ref=e153]:
+            - img [ref=e154]
+            - textbox "Search issues" [ref=e157]:
+              - /placeholder: Search issues…
+            - generic [ref=e158]: /
+        - generic [ref=e160]: Loading issues…

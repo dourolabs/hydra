@@ -1,0 +1,111 @@
+- generic [ref=e3]:
+  - navigation "Primary" [ref=e5]:
+    - link "Hydra" [ref=e7] [cursor=pointer]:
+      - /url: /
+      - img [ref=e8]
+      - generic [ref=e12]: Hydra
+    - button "Search… ⌘K" [ref=e13] [cursor=pointer]:
+      - img [ref=e14]
+      - generic [ref=e17]: Search…
+      - generic [ref=e18]: ⌘K
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e22]: Chats
+        - link "All chats 0" [ref=e23] [cursor=pointer]:
+          - /url: /chat
+          - img [ref=e25]
+          - generic [ref=e27]: All chats
+          - generic [ref=e28]: "0"
+      - generic [ref=e29]:
+        - generic [ref=e31]: Workspace
+        - link "Issues" [ref=e32] [cursor=pointer]:
+          - /url: /?selected=all
+          - img [ref=e34]
+          - generic [ref=e37]: Issues
+        - link "Patches" [ref=e38] [cursor=pointer]:
+          - /url: /patches
+          - img [ref=e40]
+          - generic [ref=e45]: Patches
+        - link "Sessions" [ref=e46] [cursor=pointer]:
+          - /url: /sessions
+          - img [ref=e48]
+          - generic [ref=e50]: Sessions
+        - link "Documents" [ref=e51] [cursor=pointer]:
+          - /url: /documents
+          - img [ref=e53]
+          - generic [ref=e56]: Documents
+        - link "Agents" [ref=e57] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e59]
+          - generic [ref=e63]: Agents
+        - link "Repositories" [ref=e64] [cursor=pointer]:
+          - /url: /repositories
+          - img [ref=e66]
+          - generic [ref=e68]: Repositories
+        - link "Secrets" [ref=e69] [cursor=pointer]:
+          - /url: /secrets
+          - img [ref=e71]
+          - generic [ref=e75]: Secrets
+      - generic [ref=e76]:
+        - generic [ref=e78]: Views
+        - link "Assigned to me" [ref=e79] [cursor=pointer]:
+          - /url: /?selected=assigned
+          - img [ref=e81]
+          - generic [ref=e83]: Assigned to me
+        - link "In progress" [ref=e84] [cursor=pointer]:
+          - /url: /?selected=in_progress
+          - img [ref=e86]
+          - generic [ref=e89]: In progress
+      - generic [ref=e90]:
+        - generic [ref=e92]: Active sessions
+        - generic [ref=e93]: No active sessions.
+    - generic [ref=e94]:
+      - generic [ref=e96]:
+        - generic [ref=e98]: Connected
+        - generic [ref=e99]: 0.19.0
+      - generic [ref=e100]:
+        - generic "test-agent" [ref=e101]: ta
+        - generic "test-agent" [ref=e103]
+        - button "Logout" [ref=e105] [cursor=pointer]:
+          - img [ref=e106]
+  - generic [ref=e108]:
+    - banner [ref=e109]:
+      - button "Hide sidebar" [ref=e111] [cursor=pointer]:
+        - img [ref=e112]
+      - navigation "Breadcrumb" [ref=e115]:
+        - link "Workspace" [ref=e116] [cursor=pointer]:
+          - /url: /
+        - img [ref=e118]
+        - generic [ref=e120]: Patches
+      - generic [ref=e121]:
+        - link "Active sessions" [ref=e122] [cursor=pointer]:
+          - /url: /sessions
+          - generic [ref=e124]: no sessions
+        - button "Search" [ref=e125] [cursor=pointer]:
+          - img [ref=e126]
+          - generic [ref=e129]: ⌘K
+        - button "Create new" [ref=e131] [cursor=pointer]:
+          - img [ref=e132]
+          - generic [ref=e134]: New
+    - main [ref=e135]:
+      - generic [ref=e136]:
+        - generic [ref=e138]:
+          - generic [ref=e139]: WORK · 0 PATCHES
+          - heading "Patches" [level=1] [ref=e140]
+        - generic [ref=e141]:
+          - button "All" [ref=e142] [cursor=pointer]:
+            - generic [ref=e143]: All
+          - button "Open" [ref=e144] [cursor=pointer]:
+            - generic [ref=e145]: Open
+          - button "Changes requested" [ref=e146] [cursor=pointer]:
+            - generic [ref=e147]: Changes requested
+          - button "Merged" [ref=e148] [cursor=pointer]:
+            - generic [ref=e149]: Merged
+          - button "Closed" [ref=e150] [cursor=pointer]:
+            - generic [ref=e151]: Closed
+          - generic [ref=e152]:
+            - img [ref=e153]
+            - textbox "Search patches" [ref=e156]:
+              - /placeholder: Search patches…
+            - generic [ref=e157]: /
+        - generic [ref=e159]: Loading patches…
