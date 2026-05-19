@@ -175,6 +175,23 @@ pub async fn run(
                     .unwrap_or_else(|| "worker command execution failed".to_string())
             }
         }
+    } else if let Err(err) = reject_interactive_if_unsupported(&model, interactive.is_some()) {
+        // Fast-path: when the caller asked for interactive but the model
+        // name resolves to a wrapper that doesn't support it, bail before
+        // `ModelSelector::from_context` runs any per-worker setup (e.g.
+        // `codex login`, writing `~/.codex/config.toml`, creating the output
+        // tempdir, opening the relay WebSocket). The defense-in-depth guard
+        // a few lines below still rejects the same case if it somehow
+        // reaches construction.
+        let elapsed = agent_start.elapsed().as_secs_f64();
+        log_status(format!(
+            "Phase: agent execution — failed during model setup ({elapsed:.2}s): {err}"
+        ));
+        errors.push(err);
+        errors
+            .last()
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "model setup failed".to_string())
     } else {
         let selector_home_dir = worker_home_dir
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
@@ -492,6 +509,20 @@ fn resolve_worker_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// Side-effect-free fast-path kind-check used to short-circuit
+/// `worker_run` when an interactive run is requested for a model that
+/// doesn't support it. Returns `Err` only for the rejection case; the
+/// error message matches the defense-in-depth guard below
+/// `ModelSelector::from_context` byte-for-byte so the observable
+/// rejection behavior is unchanged.
+fn reject_interactive_if_unsupported(model: &Option<String>, interactive: bool) -> Result<()> {
+    if interactive && !ModelSelector::supports_interactive(model.as_deref()) {
+        Err(anyhow!("model {model:?} does not support interactive mode"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,6 +622,41 @@ mod tests {
         );
         assert_eq!(lines[1], "  model_session_id: <none>");
         assert_eq!(lines[2], "  session_state: <none>");
+    }
+
+    #[test]
+    fn reject_interactive_if_unsupported_codex_interactive_returns_err() {
+        let model = Some("gpt-4o".to_string());
+        let err = reject_interactive_if_unsupported(&model, true)
+            .expect_err("Codex+interactive must be rejected");
+        assert_eq!(
+            err.to_string(),
+            "model Some(\"gpt-4o\") does not support interactive mode"
+        );
+    }
+
+    #[test]
+    fn reject_interactive_if_unsupported_claude_interactive_returns_ok() {
+        let model = Some("claude-3-5-sonnet".to_string());
+        assert!(reject_interactive_if_unsupported(&model, true).is_ok());
+    }
+
+    #[test]
+    fn reject_interactive_if_unsupported_codex_non_interactive_returns_ok() {
+        let model = Some("gpt-4o".to_string());
+        assert!(reject_interactive_if_unsupported(&model, false).is_ok());
+    }
+
+    #[test]
+    fn reject_interactive_if_unsupported_none_interactive_returns_err() {
+        // `None` defaults to Codex per `ModelSelector::decide_kind`, so the
+        // fast-path must reject it when interactive is requested.
+        let err = reject_interactive_if_unsupported(&None, true)
+            .expect_err("None+interactive must be rejected");
+        assert_eq!(
+            err.to_string(),
+            "model None does not support interactive mode"
+        );
     }
 
     #[test]
