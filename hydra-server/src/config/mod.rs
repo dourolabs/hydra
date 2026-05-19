@@ -1307,14 +1307,12 @@ github_app:
         // the template's `hydra:` block is augmented with the two API key
         // lines before the YAML is handed to `hydra-sp server init`.
         let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
-        let with_keys = raw
-            .replace("${GH_TOKEN}", "ghp_test_token")
-            .replace(
-                "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"",
-                "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"\n  \
+        let with_keys = raw.replace("${GH_TOKEN}", "ghp_test_token").replace(
+            "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"",
+            "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"\n  \
                  CLAUDE_CODE_OAUTH_TOKEN: \"test-oauth-token\"\n  \
                  ANTHROPIC_API_KEY: \"test-anthropic-api-key\"",
-            );
+        );
         let config: AppConfig =
             serde_yaml_ng::from_str(&with_keys).expect("E2E test config should parse with keys");
         assert_eq!(
