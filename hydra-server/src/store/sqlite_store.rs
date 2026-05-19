@@ -34,6 +34,9 @@ use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+use tokio::sync::OnceCell;
 
 use super::{
     ConversationEventSummary, InteractiveOptions, ReadOnlyStore, Session, Status, Store,
@@ -62,6 +65,30 @@ static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 #[derive(Clone)]
 pub struct SqliteStore {
     pool: SqlitePool,
+    row_counts: Arc<RowCountCache>,
+}
+
+/// In-memory row counts for the seven tables that drive `next_xxx_id`.
+///
+/// Each cell is lazily seeded with a single `SELECT COUNT(*)` and then
+/// incremented in-process on every successful `add_*`. Assumes a single
+/// writer to the SQLite database — diverges from disk if an external
+/// process inserts directly.
+#[derive(Default)]
+struct RowCountCache {
+    issues: OnceCell<AtomicI64>,
+    patches: OnceCell<AtomicI64>,
+    documents: OnceCell<AtomicI64>,
+    tasks: OnceCell<AtomicI64>,
+    notifications: OnceCell<AtomicI64>,
+    labels: OnceCell<AtomicI64>,
+    conversations: OnceCell<AtomicI64>,
+}
+
+fn bump_count(cell: &OnceCell<AtomicI64>) {
+    if let Some(atomic) = cell.get() {
+        atomic.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -371,7 +398,10 @@ fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
 
 impl SqliteStore {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            row_counts: Arc::new(RowCountCache::default()),
+        }
     }
 
     pub async fn init_pool(database_url: &str) -> Result<SqlitePool, anyhow::Error> {
@@ -393,57 +423,115 @@ impl SqliteStore {
         Ok(())
     }
 
-    async fn count_latest_rows(&self, table: &str) -> Result<u64, StoreError> {
-        let sql = format!("SELECT COUNT(*) FROM {table} WHERE is_latest = 1");
-        let count = sqlx::query_scalar::<_, i64>(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        Ok(count.max(0) as u64)
+    async fn cached_count_latest(
+        &self,
+        cell: &OnceCell<AtomicI64>,
+        table: &str,
+    ) -> Result<u64, StoreError> {
+        let atomic = cell
+            .get_or_try_init(|| async {
+                let sql = format!("SELECT COUNT(*) FROM {table} WHERE is_latest = 1");
+                let count = sqlx::query_scalar::<_, i64>(&sql)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                Ok::<_, StoreError>(AtomicI64::new(count.max(0)))
+            })
+            .await?;
+        Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
     }
 
-    async fn count_all_rows(&self, table: &str) -> Result<u64, StoreError> {
-        let sql = format!("SELECT COUNT(*) FROM {table}");
-        let count = sqlx::query_scalar::<_, i64>(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        Ok(count.max(0) as u64)
+    async fn cached_count_all(
+        &self,
+        cell: &OnceCell<AtomicI64>,
+        table: &str,
+    ) -> Result<u64, StoreError> {
+        let atomic = cell
+            .get_or_try_init(|| async {
+                let sql = format!("SELECT COUNT(*) FROM {table}");
+                let count = sqlx::query_scalar::<_, i64>(&sql)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                Ok::<_, StoreError>(AtomicI64::new(count.max(0)))
+            })
+            .await?;
+        Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
     }
 
     async fn next_issue_id(&self) -> Result<IssueId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_ISSUES_V2).await?);
+        let count = self
+            .cached_count_latest(&self.row_counts.issues, TABLE_ISSUES_V2)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(IssueId::generate(len).expect("length within bounds"))
     }
 
     async fn next_patch_id(&self) -> Result<PatchId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_PATCHES_V2).await?);
+        let count = self
+            .cached_count_latest(&self.row_counts.patches, TABLE_PATCHES_V2)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(PatchId::generate(len).expect("length within bounds"))
     }
 
     async fn next_document_id(&self) -> Result<DocumentId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_DOCUMENTS_V2).await?);
+        let count = self
+            .cached_count_latest(&self.row_counts.documents, TABLE_DOCUMENTS_V2)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(DocumentId::generate(len).expect("length within bounds"))
     }
 
     async fn next_session_id(&self) -> Result<SessionId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_TASKS_V2).await?);
+        let count = self
+            .cached_count_latest(&self.row_counts.tasks, TABLE_TASKS_V2)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(SessionId::generate(len).expect("length within bounds"))
     }
 
     async fn next_notification_id(&self) -> Result<NotificationId, StoreError> {
-        let len = random_len_for_count(self.count_all_rows(TABLE_NOTIFICATIONS).await?);
+        let count = self
+            .cached_count_all(&self.row_counts.notifications, TABLE_NOTIFICATIONS)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(NotificationId::generate(len).expect("length within bounds"))
     }
 
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
-        let len = random_len_for_count(self.count_all_rows(TABLE_LABELS).await?);
+        let count = self
+            .cached_count_all(&self.row_counts.labels, TABLE_LABELS)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(LabelId::generate(len).expect("length within bounds"))
     }
 
     async fn next_conversation_id(&self) -> Result<ConversationId, StoreError> {
-        let len = random_len_for_count(self.count_latest_rows(TABLE_CONVERSATIONS).await?);
+        let count = self
+            .cached_count_latest(&self.row_counts.conversations, TABLE_CONVERSATIONS)
+            .await?;
+        let len = random_len_for_count(count);
         Ok(ConversationId::generate(len).expect("length within bounds"))
+    }
+
+    #[cfg(test)]
+    pub(super) fn bump_row_count_for_test(&self, table: &str, n: i64) {
+        let cell = match table {
+            TABLE_ISSUES_V2 => &self.row_counts.issues,
+            TABLE_PATCHES_V2 => &self.row_counts.patches,
+            TABLE_DOCUMENTS_V2 => &self.row_counts.documents,
+            TABLE_TASKS_V2 => &self.row_counts.tasks,
+            TABLE_NOTIFICATIONS => &self.row_counts.notifications,
+            TABLE_LABELS => &self.row_counts.labels,
+            TABLE_CONVERSATIONS => &self.row_counts.conversations,
+            _ => panic!("unknown table for row-count cache: {table}"),
+        };
+        if let Some(atomic) = cell.get() {
+            atomic.fetch_add(n, Ordering::Relaxed);
+        } else {
+            let _ = cell.set(AtomicI64::new(n));
+        }
     }
 
     async fn fetch_latest_version_number(
@@ -4185,6 +4273,7 @@ impl Store for SqliteStore {
         Self::sync_issue_relationships_in_tx(&mut tx, &id, &issue).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
+        bump_count(&self.row_counts.issues);
         Ok((id, 1))
     }
 
@@ -4242,6 +4331,7 @@ impl Store for SqliteStore {
         let id = self.next_patch_id().await?;
         let actor_json = actor_to_json_string(actor);
         self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
+        bump_count(&self.row_counts.patches);
         Ok((id, 1))
     }
 
@@ -4285,6 +4375,7 @@ impl Store for SqliteStore {
         let actor_json = actor_to_json_string(actor);
         self.insert_document(&id, 1, &document, Some(&actor_json))
             .await?;
+        bump_count(&self.row_counts.documents);
         Ok((id, 1))
     }
 
@@ -4336,6 +4427,7 @@ impl Store for SqliteStore {
         let created_at = creation_time.to_rfc3339();
         self.insert_task(&id, 1, &session, Some(&actor_json), Some(&created_at))
             .await?;
+        bump_count(&self.row_counts.tasks);
         Ok((id, 1))
     }
 
@@ -4513,6 +4605,7 @@ impl Store for SqliteStore {
     ) -> Result<NotificationId, StoreError> {
         let id = self.next_notification_id().await?;
         self.insert_notification_row(&id, &notification).await?;
+        bump_count(&self.row_counts.notifications);
         Ok(id)
     }
 
@@ -4778,6 +4871,7 @@ impl Store for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
 
+        bump_count(&self.row_counts.labels);
         Ok(id)
     }
 
@@ -4999,6 +5093,7 @@ impl Store for SqliteStore {
         Self::insert_conversation_in_tx(&mut *tx, &id, 1, &conversation, Some(&actor_json)).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
+        bump_count(&self.row_counts.conversations);
         Ok((id, 1))
     }
 
@@ -9731,7 +9826,8 @@ mod tests {
     async fn insert_dummy_latest_sessions(store: &SqliteStore, start: usize, count: usize) {
         // Insert minimal session rows with is_latest = 1 to inflate the count
         // cheaply without exercising the full add_session pipeline. The numeric
-        // suffix keeps each id globally unique across calls.
+        // suffix keeps each id globally unique across calls. Bumps the in-memory
+        // row-count cache to match, since these raw inserts bypass add_session.
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
@@ -9743,6 +9839,7 @@ mod tests {
             .await
             .unwrap();
         }
+        store.bump_row_count_for_test(TABLE_TASKS_V2, count as i64);
     }
 
     #[tokio::test]
