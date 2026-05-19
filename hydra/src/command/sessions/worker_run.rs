@@ -21,7 +21,7 @@ use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
 use crate::worker::relay_adapter::{spawn_relay_adapter, RelayAdapter};
-use crate::worker::report::{RunReport, SessionResume};
+use crate::worker::report::{RunReport, SessionResume, TokenUsage};
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -121,6 +121,7 @@ pub async fn run(
 
     let agent_start = Instant::now();
 
+    let mut run_usage: Option<TokenUsage> = None;
     let last_message = if let Err(err) =
         reject_interactive_if_unsupported(&model, interactive.is_some())
     {
@@ -214,6 +215,7 @@ pub async fn run(
                             "Phase: agent execution — completed successfully ({elapsed:.2}s)"
                         ));
                         log_run_report(&report);
+                        run_usage = Some(report.usage.clone());
                         report.last_message
                     }
                     Err(err) => {
@@ -272,6 +274,7 @@ pub async fn run(
     let status_update = if errors.is_empty() {
         SessionStatusUpdate::Complete {
             last_message: Some(last_message.clone()),
+            usage: run_usage.clone(),
         }
     } else {
         SessionStatusUpdate::Failed {

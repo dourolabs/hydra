@@ -1,5 +1,6 @@
 use crate::{
     SessionId,
+    sessions::TokenUsage,
     task_status::{Status, TaskError},
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,11 @@ use serde::{Deserialize, Serialize};
 pub enum SessionStatusUpdate {
     Complete {
         last_message: Option<String>,
+        /// Aggregated token usage for the run. `None` when the worker did not
+        /// report usage (older workers, or runs that ended before any tokens
+        /// were consumed).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TokenUsage>,
     },
     Failed {
         reason: String,
@@ -41,7 +47,15 @@ impl SessionStatusUpdate {
 
     pub fn last_message(&self) -> Option<String> {
         match self {
-            SessionStatusUpdate::Complete { last_message } => last_message.clone(),
+            SessionStatusUpdate::Complete { last_message, .. } => last_message.clone(),
+            SessionStatusUpdate::Failed { .. } => None,
+            SessionStatusUpdate::Unknown => None,
+        }
+    }
+
+    pub fn usage(&self) -> Option<TokenUsage> {
+        match self {
+            SessionStatusUpdate::Complete { usage, .. } => usage.clone(),
             SessionStatusUpdate::Failed { .. } => None,
             SessionStatusUpdate::Unknown => None,
         }

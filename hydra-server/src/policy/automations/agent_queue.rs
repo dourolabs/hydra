@@ -545,7 +545,7 @@ mod tests {
             .await?;
         handles
             .state
-            .transition_task_to_completion(&task_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&task_id, Ok(()), None, None, ActorRef::test())
             .await?;
         Ok(())
     }
@@ -1387,6 +1387,7 @@ mod tests {
                     creation_time: None,
                     start_time: None,
                     end_time: None,
+                    usage: None,
                 },
                 Utc::now(),
                 &ActorRef::test(),
@@ -1494,6 +1495,7 @@ mod tests {
                     creation_time: None,
                     start_time: None,
                     end_time: None,
+                    usage: None,
                 },
                 Utc::now(),
                 &ActorRef::test(),

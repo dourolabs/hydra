@@ -2,7 +2,7 @@ use super::task_status::{Status, TaskError};
 use super::users::Username;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1 as api;
-use hydra_common::api::v1::sessions::McpConfig;
+use hydra_common::api::v1::sessions::{McpConfig, TokenUsage};
 use hydra_common::{ConversationId, IssueId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -58,6 +58,10 @@ pub struct Session {
     pub start_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_time: Option<DateTime<Utc>>,
+    /// Aggregated token usage reported by the worker at the end of a run.
+    /// `None` until the worker submits a `Complete` status with usage data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl Session {
@@ -99,6 +103,7 @@ impl Session {
             creation_time: None,
             start_time: None,
             end_time: None,
+            usage: None,
         }
     }
 
@@ -255,13 +260,14 @@ impl TryFrom<api::sessions::Session> for Session {
             creation_time: value.creation_time,
             start_time: value.start_time,
             end_time: value.end_time,
+            usage: value.usage,
         })
     }
 }
 
 impl From<Session> for api::sessions::Session {
     fn from(value: Session) -> Self {
-        api::sessions::Session::new(
+        let mut session = api::sessions::Session::new(
             value.prompt,
             value.context.into(),
             value.spawned_from,
@@ -281,7 +287,9 @@ impl From<Session> for api::sessions::Session {
             value.creation_time,
             value.start_time,
             value.end_time,
-        )
+        );
+        session.usage = value.usage;
+        session
     }
 }
 

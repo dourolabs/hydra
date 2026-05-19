@@ -667,6 +667,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             now - Duration::seconds(30),
             &ActorRef::test(),
@@ -940,6 +941,7 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1018,6 +1020,7 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1116,6 +1119,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1150,7 +1154,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         )
         .await?;
     state
-        .transition_task_to_completion(&parent_job_id, Ok(()), None, ActorRef::test())
+        .transition_task_to_completion(&parent_job_id, Ok(()), None, None, ActorRef::test())
         .await?;
     let (ctx_job_id, _) = handles
         .store
@@ -1175,6 +1179,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1232,6 +1237,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1282,6 +1288,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1343,6 +1350,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),

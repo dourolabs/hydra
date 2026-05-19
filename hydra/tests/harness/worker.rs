@@ -412,6 +412,7 @@ async fn drive_worker_lifecycle(
     let status_update = if errors.is_empty() {
         SessionStatusUpdate::Complete {
             last_message: Some(last_message),
+            usage: None,
         }
     } else {
         SessionStatusUpdate::Failed {

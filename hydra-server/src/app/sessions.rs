@@ -327,6 +327,7 @@ impl AppState {
                     })
                 }),
                 status.last_message(),
+                status.usage(),
                 actor,
             )
             .await
@@ -583,6 +584,7 @@ impl AppState {
                             reason: failure_reason,
                         }),
                         None,
+                        None,
                         actor,
                     )
                     .await
@@ -692,6 +694,7 @@ impl AppState {
                         Err(TaskError::JobEngineError {
                             reason: failure_reason,
                         }),
+                        None,
                         None,
                         actor,
                     )
@@ -900,6 +903,7 @@ impl AppState {
                                 reason: failure_reason,
                             }),
                             None,
+                            None,
                             actor.clone(),
                         )
                         .await
@@ -922,6 +926,7 @@ impl AppState {
                             Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
+                            None,
                             None,
                             actor.clone(),
                         )
@@ -949,6 +954,7 @@ impl AppState {
                         Err(TaskError::JobEngineError {
                             reason: failure_reason,
                         }),
+                        None,
                         None,
                         actor,
                     )
@@ -1015,6 +1021,7 @@ impl AppState {
         session_id: &SessionId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
+        usage: Option<hydra_common::sessions::TokenUsage>,
         actor: ActorRef,
     ) -> Result<Versioned<Session>, StoreError> {
         let store = self.store.as_ref();
@@ -1041,6 +1048,7 @@ impl AppState {
                 updated.status = Status::Complete;
                 updated.last_message = last_message;
                 updated.error = None;
+                updated.usage = usage;
             }
             Err(error) => {
                 updated.status = Status::Failed;

@@ -4,6 +4,7 @@ import type { InteractiveOptions } from "./InteractiveOptions";
 import type { IssueId } from "./IssueId";
 import type { Status } from "./Status";
 import type { TaskError } from "./TaskError";
+import type { TokenUsage } from "./TokenUsage";
 import type { Username } from "./Username";
 import type { JsonValue } from "./serde_json/JsonValue";
 
@@ -11,4 +12,9 @@ export type Session = { prompt: string, context: BundleSpec, spawned_from?: Issu
 /**
  * Interactive-only settings. `Some` for interactive sessions, `None` otherwise.
  */
-interactive?: InteractiveOptions | null, status: Status, last_message?: string | null, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, };
+interactive?: InteractiveOptions | null, status: Status, last_message?: string | null, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, 
+/**
+ * Aggregated token usage reported by the worker at the end of a run.
+ * `None` until the worker submits a `Complete` status with usage data.
+ */
+usage?: TokenUsage | null, };

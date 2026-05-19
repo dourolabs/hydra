@@ -8,6 +8,8 @@
 
 use std::path::PathBuf;
 
+pub use hydra_common::sessions::TokenUsage;
+
 /// Result of one batch or interactive worker run, returned by
 /// `ModelSelector::run` / `ModelSelector::run_interactive`.
 #[derive(Debug, Clone)]
@@ -23,15 +25,6 @@ pub struct RunReport {
     /// Pointer to the on-disk session-state file (Claude transcript or Codex
     /// JSONL), if such a file exists for this run.
     pub session_state: Option<SessionStateRef>,
-}
-
-/// Token totals aggregated across all turns in a single run.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: u64,
-    pub cache_creation_input_tokens: u64,
 }
 
 /// Pointer to a session-state file on disk.

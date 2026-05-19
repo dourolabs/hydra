@@ -2055,6 +2055,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         creation_time: None,
         start_time: None,
         end_time: None,
+        usage: None,
     };
 
     // Session 1: Running (should be killed)
@@ -2089,7 +2090,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         .transition_task_to_running(&s_complete, ActorRef::test())
         .await?;
     state
-        .transition_task_to_completion(&s_complete, Ok(()), None, ActorRef::test())
+        .transition_task_to_completion(&s_complete, Ok(()), None, None, ActorRef::test())
         .await?;
     engine.insert_job(&s_complete, JobStatus::Complete).await;
 
@@ -2109,6 +2110,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
             Err(crate::domain::task_status::TaskError::JobEngineError {
                 reason: "err".to_string(),
             }),
+            None,
             None,
             ActorRef::test(),
         )

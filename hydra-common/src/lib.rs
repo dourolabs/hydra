@@ -186,6 +186,7 @@ mod ts_export {
 
         // API v1: sessions
         crate::sessions::Session::export_all(&cfg).expect("Session");
+        crate::sessions::TokenUsage::export_all(&cfg).expect("TokenUsage");
         crate::sessions::CreateSessionRequest::export_all(&cfg).expect("CreateSessionRequest");
         crate::sessions::BundleSpec::export_all(&cfg).expect("BundleSpec");
         crate::sessions::Bundle::export_all(&cfg).expect("Bundle");

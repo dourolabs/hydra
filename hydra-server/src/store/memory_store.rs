@@ -3562,7 +3562,7 @@ mod tests {
             .await
             .unwrap();
         state
-            .transition_task_to_completion(&task_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&task_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap();
 
@@ -3632,6 +3632,7 @@ mod tests {
                 &task_id,
                 Ok(()),
                 Some("done".to_string()),
+                None,
                 ActorRef::test(),
             )
             .await
@@ -3696,7 +3697,7 @@ mod tests {
             .await
             .unwrap();
         state
-            .transition_task_to_completion(&completed_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&completed_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap();
 
@@ -3866,7 +3867,7 @@ mod tests {
 
         // Then mark as complete
         state
-            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&root_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap();
         assert_eq!(
@@ -3928,6 +3929,7 @@ mod tests {
                     reason: "test failure".to_string(),
                 }),
                 None,
+                None,
                 ActorRef::test(),
             )
             .await
@@ -3956,7 +3958,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = state
-            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&root_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -3980,6 +3982,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "test".to_string(),
                 }),
+                None,
                 None,
                 ActorRef::test(),
             )
@@ -4020,6 +4023,7 @@ mod tests {
                 &root_id,
                 Ok(()),
                 Some("first message".to_string()),
+                None,
                 ActorRef::test(),
             )
             .await
@@ -4040,6 +4044,7 @@ mod tests {
                 &root_id,
                 Ok(()),
                 Some("second message".to_string()),
+                None,
                 ActorRef::test(),
             )
             .await;
@@ -4077,6 +4082,7 @@ mod tests {
                     reason: "first failure".to_string(),
                 }),
                 None,
+                None,
                 ActorRef::test(),
             )
             .await
@@ -4098,6 +4104,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "second failure".to_string(),
                 }),
+                None,
                 None,
                 ActorRef::test(),
             )
@@ -4133,7 +4140,7 @@ mod tests {
             .await
             .unwrap();
         state
-            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&root_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap();
 
@@ -4144,6 +4151,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "conflict".to_string(),
                 }),
+                None,
                 None,
                 ActorRef::test(),
             )
@@ -4178,6 +4186,7 @@ mod tests {
                     reason: "failure".to_string(),
                 }),
                 None,
+                None,
                 ActorRef::test(),
             )
             .await
@@ -4185,7 +4194,7 @@ mod tests {
 
         // Trying to transition Failed -> Complete should fail
         let err = state
-            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
+            .transition_task_to_completion(&root_id, Ok(()), None, None, ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -5574,6 +5583,7 @@ mod tests {
                 &task2_id,
                 Ok(()),
                 Some("done".to_string()),
+                None,
                 ActorRef::test(),
             )
             .await
@@ -5597,6 +5607,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "test failure".to_string(),
                 }),
+                None,
                 None,
                 ActorRef::test(),
             )
