@@ -2159,6 +2159,7 @@ mod tests {
             creation_time: None,
             start_time: None,
             end_time: None,
+            usage: None,
         };
 
         let (task_id, _) = store
@@ -2187,6 +2188,7 @@ mod tests {
             creation_time: None,
             start_time: None,
             end_time: None,
+            usage: None,
         };
 
         store

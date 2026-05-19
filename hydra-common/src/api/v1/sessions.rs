@@ -50,6 +50,19 @@ impl InteractiveOptions {
     }
 }
 
+/// Aggregated token totals reported by the worker at the end of a session run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -91,6 +104,10 @@ pub struct Session {
     pub start_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_time: Option<DateTime<Utc>>,
+    /// Aggregated token usage reported by the worker at the end of a run.
+    /// `None` until the worker submits a `Complete` status with usage data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl Session {
@@ -136,6 +153,7 @@ impl Session {
             creation_time,
             start_time,
             end_time,
+            usage: None,
         }
     }
 }

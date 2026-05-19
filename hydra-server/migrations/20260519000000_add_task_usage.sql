@@ -1,0 +1,1 @@
+ALTER TABLE metis.tasks_v2 ADD COLUMN usage JSONB DEFAULT NULL;

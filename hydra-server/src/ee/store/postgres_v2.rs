@@ -738,9 +738,19 @@ impl PostgresStoreV2 {
             Status::Failed => "failed",
         };
 
+        let usage_json = session
+            .usage
+            .as_ref()
+            .map(|u| {
+                serde_json::to_value(u).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize usage: {err}"))
+                })
+            })
+            .transpose()?;
+
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -773,6 +783,7 @@ impl PostgresStoreV2 {
                     .and_then(|opts| opts.conversation_resume_from)
                     .map(|n| n as i64),
             )
+            .bind(usage_json.as_ref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -843,6 +854,16 @@ impl PostgresStoreV2 {
             None
         };
 
+        let usage = row
+            .usage
+            .as_ref()
+            .map(|u| {
+                serde_json::from_value(u.clone()).map_err(|err| {
+                    StoreError::Internal(format!("failed to deserialize usage: {err}"))
+                })
+            })
+            .transpose()?;
+
         Ok(Session {
             prompt: row.prompt.clone(),
             context,
@@ -863,6 +884,7 @@ impl PostgresStoreV2 {
             creation_time: row.creation_time,
             start_time: row.start_time,
             end_time: row.end_time,
+            usage,
         })
     }
 
@@ -1478,6 +1500,8 @@ struct TaskRow {
     conversation_id: Option<String>,
     #[sqlx(default)]
     conversation_resume_from: Option<i64>,
+    #[sqlx(default)]
+    usage: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2856,7 +2880,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2893,7 +2917,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2934,7 +2958,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time \
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time, t.usage \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -3026,7 +3050,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"

@@ -318,6 +318,8 @@ struct TaskRow {
     conversation_id: Option<String>,
     #[sqlx(default)]
     conversation_resume_from: Option<i64>,
+    #[sqlx(default)]
+    usage: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1285,6 +1287,15 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
+        let usage_json = session
+            .usage
+            .as_ref()
+            .map(|u| {
+                serde_json::to_string(u).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize usage: {err}"))
+                })
+            })
+            .transpose()?;
         let status_str = super::status_to_db_str(session.status);
         let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
@@ -1306,8 +1317,8 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1341,14 +1352,15 @@ impl SqliteStore {
                     .and_then(|opts| opts.conversation_resume_from)
                     .map(|n| n as i64),
             )
+            .bind(&usage_json)
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1381,6 +1393,7 @@ impl SqliteStore {
                     .and_then(|opts| opts.conversation_resume_from)
                     .map(|n| n as i64),
             )
+            .bind(&usage_json)
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1480,6 +1493,15 @@ impl SqliteStore {
             None
         };
 
+        let usage = row
+            .usage
+            .as_deref()
+            .map(|s| {
+                serde_json::from_str(s)
+                    .map_err(|e| StoreError::Internal(format!("failed to deserialize usage: {e}")))
+            })
+            .transpose()?;
+
         Ok(Session {
             prompt: row.prompt.clone(),
             context,
@@ -1500,6 +1522,7 @@ impl SqliteStore {
             creation_time,
             start_time,
             end_time,
+            usage,
         })
     }
 
@@ -3103,7 +3126,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at,
-                 creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
+                 creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -3128,7 +3151,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -3162,7 +3185,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.mcp_config, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
-             t.creation_time, t.start_time, t.end_time \
+             t.creation_time, t.start_time, t.end_time, t.usage \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
@@ -3241,7 +3264,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",

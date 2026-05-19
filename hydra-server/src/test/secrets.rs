@@ -1015,6 +1015,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
                 creation_time: None,
                 start_time: None,
                 end_time: None,
+                usage: None,
             },
             Utc::now(),
             &ActorRef::test(),

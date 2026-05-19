@@ -2055,6 +2055,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         creation_time: None,
         start_time: None,
         end_time: None,
+        usage: None,
     };
 
     // Session 1: Running (should be killed)

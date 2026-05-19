@@ -675,6 +675,7 @@ mod tests {
             creation_time: None,
             start_time: None,
             end_time: None,
+            usage: None,
         };
 
         let payload = Arc::new(MutationPayload::Session {
@@ -853,6 +854,7 @@ mod tests {
             creation_time: None,
             start_time: None,
             end_time: None,
+            usage: None,
         };
 
         let payload = Arc::new(MutationPayload::Session {

@@ -319,7 +319,7 @@ impl AppState {
                     session_id: session_id.clone(),
                 })?;
 
-            self.transition_task_to_completion(
+            self.transition_task_to_completion_with_usage(
                 &session_id,
                 status.to_result().map_err(|e| {
                     TaskError::try_from(e).unwrap_or_else(|err| TaskError::JobEngineError {
@@ -327,6 +327,7 @@ impl AppState {
                     })
                 }),
                 status.last_message(),
+                status.usage(),
                 actor,
             )
             .await
@@ -1017,6 +1018,18 @@ impl AppState {
         last_message: Option<String>,
         actor: ActorRef,
     ) -> Result<Versioned<Session>, StoreError> {
+        self.transition_task_to_completion_with_usage(session_id, result, last_message, None, actor)
+            .await
+    }
+
+    pub async fn transition_task_to_completion_with_usage(
+        &self,
+        session_id: &SessionId,
+        result: Result<(), TaskError>,
+        last_message: Option<String>,
+        usage: Option<hydra_common::sessions::TokenUsage>,
+        actor: ActorRef,
+    ) -> Result<Versioned<Session>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_session(session_id, false).await?;
         let can_transition = match latest.item.status {
@@ -1041,6 +1054,9 @@ impl AppState {
                 updated.status = Status::Complete;
                 updated.last_message = last_message;
                 updated.error = None;
+                if usage.is_some() {
+                    updated.usage = usage;
+                }
             }
             Err(error) => {
                 updated.status = Status::Failed;
