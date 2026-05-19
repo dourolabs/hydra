@@ -17,6 +17,9 @@ export type BadgeStatus =
   | "running"
   | "complete"
   | "success"
+  | "conv-active"
+  | "conv-idle"
+  | "conv-closed"
   | "unknown";
 
 export interface BadgeProps {
@@ -41,6 +44,9 @@ const statusLabels: Record<BadgeStatus, string> = {
   running: "Running",
   complete: "Complete",
   success: "Success",
+  "conv-active": "Active",
+  "conv-idle": "Idle",
+  "conv-closed": "Closed",
   unknown: "Unknown",
 };
 
@@ -62,6 +68,9 @@ const statusTones: Record<BadgeStatus, string> = {
   running: "in_progress",
   complete: "closed",
   success: "closed",
+  "conv-active": "conv_active",
+  "conv-idle": "conv_idle",
+  "conv-closed": "conv_closed",
   unknown: "neutral",
 };
 

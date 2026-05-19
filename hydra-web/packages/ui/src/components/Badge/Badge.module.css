@@ -38,3 +38,12 @@
 .badge[data-tone="blocked"] .dot { background: var(--s-blocked); }
 .badge[data-tone="rejected"] .dot { background: var(--s-rejected); }
 .badge[data-tone="neutral"] .dot { background: var(--s-neutral); }
+
+.badge[data-tone="conv_active"] .dot {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
+}
+
+.badge[data-tone="conv_idle"] .dot { background: var(--s-conv-idle); }
+.badge[data-tone="conv_closed"] .dot { background: var(--s-conv-closed); }

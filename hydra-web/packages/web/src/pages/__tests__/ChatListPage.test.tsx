@@ -71,8 +71,18 @@ vi.mock("../../api/client", () => ({
   },
 }));
 
+const BADGE_LABELS: Record<string, string> = {
+  "conv-active": "Active",
+  "conv-idle": "Idle",
+  "conv-closed": "Closed",
+};
+
 vi.mock("@hydra/ui", () => ({
-  Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
+  Badge: ({ status }: { status: string }) => (
+    <span data-testid="badge" data-status={status}>
+      {BADGE_LABELS[status] ?? status}
+    </span>
+  ),
   Button: ({
     children,
     onClick,
@@ -110,10 +120,6 @@ vi.mock("../../components/EmptyState/EmptyState", () => ({
   EmptyState: ({ message }: { message: string }) => (
     <div data-testid="empty-state">{message}</div>
   ),
-}));
-
-vi.mock("../../utils/statusMapping", () => ({
-  normalizeConversationStatus: (s: string) => s,
 }));
 
 vi.mock("../../utils/time", () => ({
@@ -197,6 +203,54 @@ describe("ChatListPage New Chat button", () => {
     render(<ChatListPage />);
 
     expect(screen.getByText(/network down/)).toBeDefined();
+
+    cleanup();
+  });
+
+  it("renders literal Active / Idle / Closed status labels on chat rows", () => {
+    mockConversations = [
+      {
+        conversation_id: "c-active",
+        title: "An active chat",
+        agent_name: null,
+        status: "active",
+        event_count: 1,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-19T00:00:00Z",
+      },
+      {
+        conversation_id: "c-idle",
+        title: "An idle chat",
+        agent_name: null,
+        status: "idle",
+        event_count: 1,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-18T23:00:00Z",
+      },
+      {
+        conversation_id: "c-closed",
+        title: "A closed chat",
+        agent_name: null,
+        status: "closed",
+        event_count: 1,
+        last_event_preview: null,
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-18T22:00:00Z",
+      },
+    ];
+    render(<ChatListPage />);
+
+    const badges = screen.getAllByTestId("badge");
+    const labels = badges.map((b) => b.textContent);
+    expect(labels).toEqual(["Active", "Idle", "Closed"]);
+
+    const statuses = badges.map((b) => b.getAttribute("data-status"));
+    expect(statuses).toEqual(["conv-active", "conv-idle", "conv-closed"]);
 
     cleanup();
   });
