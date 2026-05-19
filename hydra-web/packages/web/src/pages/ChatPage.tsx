@@ -169,6 +169,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
+          key={conversationId}
           conversationId={conversationId}
           onSend={handleSend}
           disabled={sendMutation.isPending}

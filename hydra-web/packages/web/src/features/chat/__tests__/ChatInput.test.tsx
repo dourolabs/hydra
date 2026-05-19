@@ -176,4 +176,37 @@ describe("ChatInput draft persistence", () => {
     expect(window.localStorage.getItem(conversationDraftKey("c-1"))).toBe("draft for one");
     expect(window.localStorage.getItem(conversationDraftKey("c-2"))).toBe("updated two");
   });
+
+  // ChatPage renders <ChatInput key={conversationId} ... /> so that switching
+  // conversations forces a remount and the textarea is initialized from the new
+  // conversation's stored draft on the very first paint, with no intermediate
+  // frame showing the previous draft. Lock in that contract here.
+  it("remounts when key={conversationId} changes, swapping the DOM node and resetting local state", () => {
+    window.localStorage.setItem(conversationDraftKey("c-1"), "draft for one");
+    window.localStorage.setItem(conversationDraftKey("c-2"), "draft for two");
+
+    const { rerender } = render(
+      <ChatInput key="c-1" conversationId="c-1" onSend={vi.fn()} />,
+    );
+
+    const firstTextarea = getTextarea();
+    expect(firstTextarea.value).toBe("draft for one");
+    // Park a cursor position that we can later prove was thrown away by the
+    // remount (i.e. uncontrolled DOM state was reset, not just `value`).
+    firstTextarea.setSelectionRange(3, 7);
+    expect(firstTextarea.selectionStart).toBe(3);
+    expect(firstTextarea.selectionEnd).toBe(7);
+
+    rerender(<ChatInput key="c-2" conversationId="c-2" onSend={vi.fn()} />);
+
+    const secondTextarea = getTextarea();
+    expect(secondTextarea.value).toBe("draft for two");
+    // Different DOM element ⇒ React unmounted/remounted (the whole point of
+    // the key). If ChatPage stops passing key={conversationId}, this fails.
+    expect(secondTextarea).not.toBe(firstTextarea);
+    // Selection state from the previous conversation must not leak into the
+    // new one — another consequence of remounting.
+    expect(secondTextarea.selectionStart).toBe(0);
+    expect(secondTextarea.selectionEnd).toBe(0);
+  });
 });

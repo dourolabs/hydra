@@ -52,6 +52,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Chat
 
 - `@chat:sidebar` — Clicking a chat row in the sidebar navigates to /chat/&lt;id&gt;
+- `@chat:draft-per-conversation` — Each conversation's composer keeps its own draft when the user navigates between conversations; no other conversation's text ever appears in the textarea
 
 ## Error Handling
 
