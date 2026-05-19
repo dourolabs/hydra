@@ -150,9 +150,10 @@ describe("Sidebar", () => {
   it("renders the brand and workspace nav items", () => {
     renderSidebar();
     expect(screen.getByTestId("hydra-brand")).toBeTruthy();
-    const issuesLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    // The main 'Issues' workspace link defaults to the current user's issues.
+    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
     expect(issuesLink).toBeTruthy();
-    expect(issuesLink.getAttribute("href")).toBe("/?selected=all");
+    expect(issuesLink.getAttribute("href")).toBe("/?selected=your-issues");
     expect(screen.getByTestId("sidebar-patches")).toBeTruthy();
     expect(screen.getByTestId("sidebar-sessions")).toBeTruthy();
     expect(screen.getByTestId("sidebar-chats")).toBeTruthy();
@@ -160,6 +161,34 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("sidebar-agents")).toBeTruthy();
     expect(screen.getByTestId("sidebar-context-repositories")).toBeTruthy();
     expect(screen.getByTestId("sidebar-context-secrets")).toBeTruthy();
+  });
+
+  it("exposes the All issues opt-out from the Views section", () => {
+    renderSidebar();
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink.getAttribute("href")).toBe("/?selected=all");
+  });
+
+  it("marks the main Issues link active at / with no selected param", () => {
+    renderSidebar({ initialEntry: "/" });
+    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(issuesLink.className).toContain("itemActive");
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink.className).not.toContain("itemActive");
+  });
+
+  it("marks the main Issues link active at /?selected=your-issues", () => {
+    renderSidebar({ initialEntry: "/?selected=your-issues" });
+    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(issuesLink.className).toContain("itemActive");
+  });
+
+  it("marks the All issues link active at /?selected=all (and not the main Issues link)", () => {
+    renderSidebar({ initialEntry: "/?selected=all" });
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink.className).toContain("itemActive");
+    const issuesLink = screen.getByTestId("sidebar-issues-your-issues") as HTMLAnchorElement;
+    expect(issuesLink.className).not.toContain("itemActive");
   });
 
   it("workspace items navigate to the expected routes", () => {

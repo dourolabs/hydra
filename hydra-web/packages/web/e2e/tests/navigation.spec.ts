@@ -16,7 +16,13 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await page.getByTestId("site-header-sessions").click();
     await expect(page).toHaveURL(/\/sessions$/);
 
-    // Navigate to the dashboard via the Issues > All issues link.
+    // Main 'Issues' workspace link → dashboard scoped to the current user.
+    await page.getByTestId("sidebar-issues-your-issues").click();
+    await expect(page).toHaveURL(
+      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
+    );
+
+    // The Views > All issues link is the explicit opt-out.
     await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(
       /^http:\/\/localhost:\d+\/\?selected=all$/,
@@ -26,6 +32,12 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
   test("Issues section items deep-link to the dashboard @nav:sidebar", async ({
     authenticatedPage: page,
   }) => {
+    // Default Issues link (workspace) → your-issues.
+    await page.getByTestId("sidebar-issues-your-issues").click();
+    await expect(page).toHaveURL(
+      /^http:\/\/localhost:\d+\/\?selected=your-issues$/,
+    );
+
     // Assigned to you → dashboard with Assigned filter selected.
     await page.getByTestId("sidebar-issues-assigned").click();
     await expect(page).toHaveURL(

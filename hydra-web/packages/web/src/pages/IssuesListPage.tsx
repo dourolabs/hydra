@@ -11,7 +11,6 @@ import { actorDisplayName } from "../api/auth";
 import { IssuesView } from "../features/issues/view/IssuesView";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { readFilterState, writeFilterState } from "../features/dashboard/filterStorage";
-import { useInboxLabel } from "../features/labels/useLabels";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./IssuesListPage.module.css";
 
@@ -20,7 +19,6 @@ const VALID_FILTERS = ["your-issues", "assigned", "all", "in_progress"];
 function buildServerFilters(
   filterRootId: string | null,
   username: string,
-  inboxLabelId: string | undefined,
   searchQuery: string,
   selectedIssueStatus: IssueStatus | null,
   selectedLabelId: string | null,
@@ -30,7 +28,6 @@ function buildServerFilters(
   if (searchQuery) filters.q = searchQuery;
 
   if (filterRootId === "your-issues") {
-    if (inboxLabelId) filters.labels = inboxLabelId;
     if (username) filters.creator = username;
   } else if (filterRootId === "assigned") {
     if (username) filters.assignee = username;
@@ -60,7 +57,7 @@ function eyebrowFor(filterRootId: string | null, count: number): string {
       return `ALL · ${n}`;
     case "your-issues":
     default:
-      return `WORK · ${n}`;
+      return `MINE · ${n}`;
   }
 }
 
@@ -74,7 +71,7 @@ function titleFor(filterRootId: string | null): string {
       return "All issues";
     case "your-issues":
     default:
-      return "Issues";
+      return "My issues";
   }
 }
 
@@ -133,20 +130,17 @@ export function IssuesListPage() {
   }, [filterRootId, selectedIssueStatus, selectedLabelId, searchValue]);
 
   const username = user ? actorDisplayName(user.actor) : "";
-  const { data: inboxLabel } = useInboxLabel();
-  const inboxLabelId = inboxLabel?.label_id;
 
   const serverFilters = useMemo(
     () =>
       buildServerFilters(
         filterRootId,
         username,
-        inboxLabelId,
         searchQuery,
         selectedIssueStatus,
         selectedLabelId,
       ),
-    [filterRootId, username, inboxLabelId, searchQuery, selectedIssueStatus, selectedLabelId],
+    [filterRootId, username, searchQuery, selectedIssueStatus, selectedLabelId],
   );
 
   const {

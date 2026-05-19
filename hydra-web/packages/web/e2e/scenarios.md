@@ -13,7 +13,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Dashboard
 
 - `@dashboard:view` — User can see the issue list on the dashboard (planned)
-- `@dashboard:inbox` — User can filter dashboard to inbox items
+- `@dashboard:inbox` — Default `your-issues` view shows the logged-in user's own issues (creator = user), including dropped/closed states
 - `@dashboard:search` — User can search for issues by title
 
 ## Navigation

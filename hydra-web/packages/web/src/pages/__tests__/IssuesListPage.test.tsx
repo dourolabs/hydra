@@ -78,10 +78,6 @@ vi.mock("../../api/auth", () => ({
   actorDisplayName: () => "alice",
 }));
 
-vi.mock("../../features/labels/useLabels", () => ({
-  useInboxLabel: () => ({ data: undefined }),
-}));
-
 interface TreesState {
   childStatusMap: Map<string, ChildStatus[]>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
@@ -244,9 +240,12 @@ describe("IssuesListPage Issue Create modal", () => {
 });
 
 describe("IssuesListPage breadcrumb label", () => {
-  it("publishes Workspace / Issues breadcrumb on the default view", () => {
+  it("publishes Workspace / My issues breadcrumb on the default view", () => {
     renderIssuesList("/");
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Workspace", to: "/" }], "Issues");
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Workspace", to: "/" }],
+      "My issues",
+    );
   });
 
   it("publishes Workspace / Assigned to me when ?selected=assigned", () => {
@@ -257,10 +256,31 @@ describe("IssuesListPage breadcrumb label", () => {
     );
   });
 
-  it("normalises legacy ?selected=patches back to the default Issues view", () => {
+  it("normalises legacy ?selected=patches back to the default My issues view", () => {
     renderIssuesList("/?selected=patches");
-    // patches is no longer a dashboard tab — fall back to Issues
-    expect(useBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Workspace", to: "/" }], "Issues");
+    // patches is no longer a dashboard tab — fall back to the default 'My issues'
+    expect(useBreadcrumbsMock).toHaveBeenCalledWith(
+      [{ label: "Workspace", to: "/" }],
+      "My issues",
+    );
+  });
+});
+
+describe("IssuesListPage default filter", () => {
+  it("sends only { creator } to the server on the default index route", () => {
+    renderIssuesList("/");
+    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
+    expect(paginatedState.countFilters).toEqual({ creator: "alice" });
+  });
+
+  it("sends only { creator } when ?selected=your-issues is explicit", () => {
+    renderIssuesList("/?selected=your-issues");
+    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
+  });
+
+  it("sends an empty filter set when ?selected=all", () => {
+    renderIssuesList("/?selected=all");
+    expect(paginatedState.paginatedFilters).toEqual({});
   });
 });
 
@@ -284,7 +304,7 @@ describe("IssuesListPage eyebrow count", () => {
 
     const eyebrow = container.querySelector(".eyebrow");
     expect(eyebrow).not.toBeNull();
-    expect(eyebrow!.textContent).toBe("WORK · 3 ISSUES");
+    expect(eyebrow!.textContent).toBe("MINE · 3 ISSUES");
   });
 
   it("uses the singular form when the resolved count is exactly 1", () => {

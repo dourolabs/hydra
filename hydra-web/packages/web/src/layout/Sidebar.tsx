@@ -140,15 +140,15 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // ── Workspace items ── (Chats lives in its own top section)
   const workspaceItems: NavItem[] = [
     {
-      to: "/?selected=all",
+      to: "/?selected=your-issues",
       end: true,
       label: "Issues",
-      testId: "sidebar-issues-all",
+      testId: "sidebar-issues-your-issues",
       icon: <Icons.IconIssue />,
       isActive: (pathname, search) => {
         if (pathname !== "/") return false;
         const selected = search.get("selected");
-        return selected === null || selected === "all";
+        return selected === null || selected === "your-issues";
       },
     },
     {
@@ -293,6 +293,19 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             <div className={styles.sectionHead}>
               <span>Views</span>
             </div>
+            <NavLink
+              to="/?selected=all"
+              className={({ isActive }) => {
+                const active = isActive && selectedParam === "all";
+                return `${styles.item}${active ? ` ${styles.itemActive}` : ""}`;
+              }}
+              data-testid="sidebar-issues-all"
+            >
+              <span className={styles.itemIcon}>
+                <Icons.IconIssue />
+              </span>
+              <span className={styles.itemLabel}>All issues</span>
+            </NavLink>
             <NavLink
               to="/?selected=assigned"
               className={({ isActive }) => {
