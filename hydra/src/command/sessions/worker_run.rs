@@ -18,7 +18,6 @@ use hydra_common::{
 use crate::command::patches::resolve_service_repo_name;
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
-use crate::worker::commands::WorkerCommands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
 use crate::worker::relay_adapter::{spawn_relay_adapter, RelayAdapter};
@@ -39,19 +38,11 @@ pub async fn run(
     dest: PathBuf,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
-    commands: Option<&dyn WorkerCommands>,
     _context: &CommandContext,
 ) -> Result<()> {
-    // The `commands` parameter is transitional and will be removed in PR 3
-    // (it survives this PR so we can drop `ModelAwareCommands` without
-    // touching the trait surface). Production passes `None`; the integration
-    // test harness passes `Some(&BashCommands)` so it can mock the model
-    // without requiring real `claude` / `codex` binaries on PATH. The live
-    // dispatch path goes through `ModelSelector::from_context` below.
     // Initialize a tracing subscriber so structured `tracing::info!` /
-    // `tracing::warn!` / `tracing::error!` calls from worker code (e.g.
-    // `hydra/src/worker/interactive.rs` suspend/upload/resume instrumentation)
-    // are surfaced on the worker subprocess's stdout/stderr, which the job
+    // `tracing::warn!` / `tracing::error!` calls from worker code are
+    // surfaced on the worker subprocess's stdout/stderr, which the job
     // engine captures into the per-session log file. `try_init` is a no-op if
     // a subscriber has already been installed (e.g. inside an integration
     // test that initializes its own).
@@ -130,53 +121,16 @@ pub async fn run(
 
     let agent_start = Instant::now();
 
-    // When the caller supplies a `commands` impl, dispatch through the legacy
-    // `WorkerCommands` trait rather than `ModelSelector`. Production passes
-    // `None`; the integration-test harness (`hydra/tests/harness/worker.rs`)
-    // passes `Some(&BashCommands)` so it can mock the model without requiring
-    // real `claude` / `codex` binaries on PATH. Both arms are removed in PR 3
-    // when the trait goes away.
-    let last_message = if let Some(commands) = commands {
-        log_status("Phase: agent execution — starting (test path: WorkerCommands trait)");
-        match commands
-            .run(
-                &prompt,
-                model.as_deref(),
-                &repo_path,
-                &execution_env,
-                &dest.join("worker-output.txt"),
-                mcp_config_json.as_deref(),
-            )
-            .await
-        {
-            Ok(report) => {
-                let elapsed = agent_start.elapsed().as_secs_f64();
-                log_status(format!(
-                    "Phase: agent execution — completed successfully ({elapsed:.2}s)"
-                ));
-                log_run_report(&report);
-                report.last_message
-            }
-            Err(err) => {
-                let elapsed = agent_start.elapsed().as_secs_f64();
-                log_status(format!(
-                    "Phase: agent execution — failed ({elapsed:.2}s): {err}"
-                ));
-                errors.push(err);
-                errors
-                    .last()
-                    .map(|err| err.to_string())
-                    .unwrap_or_else(|| "worker command execution failed".to_string())
-            }
-        }
-    } else if let Err(err) = reject_interactive_if_unsupported(&model, interactive.is_some()) {
+    let last_message = if let Err(err) =
+        reject_interactive_if_unsupported(&model, interactive.is_some())
+    {
         // Fast-path: when the caller asked for interactive but the model
         // name resolves to a wrapper that doesn't support it, bail before
         // `ModelSelector::from_context` runs any per-worker setup (e.g.
         // `codex login`, writing `~/.codex/config.toml`, creating the output
         // tempdir, opening the relay WebSocket). The defense-in-depth guard
-        // a few lines below still rejects the same case if it somehow
-        // reaches construction.
+        // inside the `Ok(mut selector)` arm below still rejects the same
+        // case if it somehow reaches construction.
         let elapsed = agent_start.elapsed().as_secs_f64();
         log_status(format!(
             "Phase: agent execution — failed during model setup ({elapsed:.2}s): {err}"
@@ -282,7 +236,7 @@ pub async fn run(
     // process the agent kicked off (e.g. `pnpm dev`, `vite`, `mock-server`,
     // or a script that backgrounded itself with `> /dev/null 2>&1 &`) is now
     // an orphan we don't want — it would keep the worker pod alive past its
-    // useful end. The kill-process-group path in `worker::commands` only
+    // useful end. The per-model wrappers' kill-process-group path only
     // catches children that kept stdout open; this is the namespace-wide
     // safety net for everything else.
     //

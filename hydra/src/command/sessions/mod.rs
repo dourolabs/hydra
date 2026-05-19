@@ -176,14 +176,7 @@ pub async fn run(
             path,
             issue_id,
             tempdir,
-        } => {
-            // PR 3 cleanup: `worker_run::run` still accepts an optional
-            // `&dyn WorkerCommands` so the integration-test harness can mock
-            // the model layer; production always passes `None` and dispatch
-            // goes through `ModelSelector::from_context` inside `worker_run`.
-            // The whole parameter is deleted in PR 3 alongside the trait.
-            worker_run::run(client, session, path, issue_id, tempdir, None, context).await?
-        }
+        } => worker_run::run(client, session, path, issue_id, tempdir, context).await?,
     }
 
     Ok(())
