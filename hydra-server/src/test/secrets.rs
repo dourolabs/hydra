@@ -731,6 +731,47 @@ async fn resolve_secrets_custom_secrets_injected_when_listed() {
 }
 
 #[tokio::test]
+async fn resolve_secrets_empty_ai_key_user_secret_falls_back_to_config() {
+    // Regression: if a legacy DB row has CLAUDE_CODE_OAUTH_TOKEN stored as an
+    // empty string (e.g., a prior setup_local_auth pass wrote `Some("")` from
+    // an unsubstituted `${CLAUDE_CODE_OAUTH_TOKEN:-}` placeholder), the
+    // resolver must treat it as "not set" so the config fallback can supply a
+    // usable value. Otherwise `env_vars[CLAUDE_CODE_OAUTH_TOKEN] = ""` would
+    // be shipped to the worker and `Claude::new`'s `!v.trim().is_empty()`
+    // validation would reject it as missing.
+    let mut config = test_app_config();
+    config.hydra.claude_code_oauth_token = Some("config-fallback-token".to_string());
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+    let secret_manager = test_secret_manager();
+    let username = Username::from("empty-user-secret");
+
+    let encrypted_empty = secret_manager.encrypt("").unwrap();
+    store
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted_empty, true)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    assert_eq!(
+        env_vars.get("CLAUDE_CODE_OAUTH_TOKEN").map(String::as_str),
+        Some("config-fallback-token"),
+        "empty user-secret value must not shadow the config fallback for AI model keys"
+    );
+}
+
+#[tokio::test]
 async fn resolve_secrets_ai_keys_always_injected_regardless_of_filter() {
     let handles = test_state_with_secrets_and_config();
     let secret_manager = test_secret_manager();
@@ -975,6 +1016,82 @@ async fn resolve_secrets_user_set_gh_token_takes_priority_over_auto_injection() 
 }
 
 // ---- End-to-end integration test: user secret appears in get_job_context ----
+
+#[tokio::test]
+async fn get_job_context_includes_internal_claude_oauth_token() -> anyhow::Result<()> {
+    // Regression: in local-auth mode, `setup_local_auth` stores
+    // CLAUDE_CODE_OAUTH_TOKEN as a system-internal (internal=true) user secret.
+    // `resolve_secrets_into_env_vars` must surface those internal secrets to
+    // worker env so `Claude::new` can validate them; if this path silently
+    // drops internal=true entries the e2e worker dies during model setup with
+    // "Either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be provided".
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+
+    let creator = Username::from(TEST_USERNAME);
+
+    let encrypted = secret_manager
+        .encrypt("sk-ant-oat01-test-internal")
+        .unwrap();
+    handles
+        .store
+        .set_user_secret(&creator, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted, true)
+        .await
+        .unwrap();
+
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                prompt: "test prompt".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                creator: creator.clone(),
+                image: Some("test-image:latest".to_string()),
+                model: None,
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mcp_config: None,
+                interactive: None,
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: v1::sessions::WorkerContext = response.json().await?;
+
+    assert_eq!(
+        body.variables
+            .get("CLAUDE_CODE_OAUTH_TOKEN")
+            .map(String::as_str),
+        Some("sk-ant-oat01-test-internal"),
+        "internal CLAUDE_CODE_OAUTH_TOKEN must appear in WorkerContext.variables"
+    );
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {

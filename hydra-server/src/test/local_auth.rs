@@ -2,7 +2,7 @@ use crate::{
     config::AuthConfig,
     domain::{
         actors::AuthToken,
-        secrets::{SECRET_GITHUB_TOKEN, SecretManager},
+        secrets::{SECRET_CLAUDE_CODE_OAUTH_TOKEN, SECRET_GITHUB_TOKEN, SecretManager},
         users::Username,
     },
     setup_local_auth,
@@ -265,6 +265,75 @@ async fn setup_local_auth_recreates_deleted_token_file() -> anyhow::Result<()> {
     assert!(
         actor.item.verify_auth_token(&parsed),
         "actor should verify the recreated token"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_stores_claude_oauth_token_from_config() -> anyhow::Result<()> {
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some("sk-ant-oat01-test-token".to_string());
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let username = Username::from("local");
+    let encrypted = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?
+        .expect("CLAUDE_CODE_OAUTH_TOKEN should be stored when set in config");
+    assert_eq!(sm.decrypt(&encrypted)?, "sk-ant-oat01-test-token");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_does_not_overwrite_claude_oauth_token_with_empty() -> anyhow::Result<()> {
+    // Regression: when `${CLAUDE_CODE_OAUTH_TOKEN:-}` substitutes to "" on a
+    // restart where the env var is unset, the resulting `Some("")` from the
+    // config would otherwise overwrite the previously-stored real token,
+    // resulting in env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "" for every worker
+    // and "must be provided" failures during model setup.
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    let username = Username::from("local");
+
+    // First init with a real token.
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some("sk-ant-oat01-real".to_string());
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let encrypted = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?
+        .expect("CLAUDE_CODE_OAUTH_TOKEN should be stored");
+    assert_eq!(sm.decrypt(&encrypted)?, "sk-ant-oat01-real");
+
+    // Second init with an empty token (simulates a server restart where the
+    // env var is unset and `${CLAUDE_CODE_OAUTH_TOKEN:-}` substitutes to "").
+    config.hydra.claude_code_oauth_token = Some(String::new());
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let encrypted = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?
+        .expect("CLAUDE_CODE_OAUTH_TOKEN should still be stored");
+    assert_eq!(
+        sm.decrypt(&encrypted)?,
+        "sk-ant-oat01-real",
+        "empty oauth token from config must not overwrite the previously-stored real token"
     );
 
     Ok(())
