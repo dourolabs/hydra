@@ -1,6 +1,5 @@
 pub mod claude;
 pub mod codex;
-pub mod commands;
 pub mod model_selector;
 pub(crate) mod reaper;
 pub mod relay_adapter;

@@ -1,19 +1,18 @@
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use hydra::client::RelayWebSocket;
-use hydra::command::output::{CommandContext, ResolvedOutputFormat};
-use hydra::worker::commands::WorkerCommands;
-use hydra::worker::report::RunReport;
+use hydra::command::sessions::mounts::{self, orchestrator::run_phase};
 use hydra_common::{
-    constants::{ENV_HYDRA_ISSUE_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN},
+    constants::{
+        ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN,
+    },
     patches::SearchPatchesQuery,
-    sessions::SearchSessionsQuery,
+    session_status::SessionStatusUpdate,
+    sessions::{SearchSessionsQuery, WorkerContext},
     task_status::Status,
     PatchId, SessionId,
 };
@@ -51,117 +50,48 @@ pub struct WorkerFailure {
     pub final_status: Status,
 }
 
-/// Internal `WorkerCommands` implementation that executes shell commands,
-/// replacing `hydra` invocations with the test binary.
-struct BashCommands {
-    commands: Vec<String>,
-    outputs: Arc<Mutex<Vec<CommandOutput>>>,
-    fail_after_run: bool,
-}
+/// Runs a shell command in the worker repo directory, replacing `hydra`
+/// invocations with the test binary path. The result is appended to
+/// `outputs` regardless of success.
+async fn run_custom_command(
+    command_string: &str,
+    working_dir: &Path,
+    env: &HashMap<String, String>,
+    outputs: &Arc<Mutex<Vec<CommandOutput>>>,
+) -> Result<CommandOutput> {
+    let command_to_run = replace_hydra_in_command(command_string);
 
-impl BashCommands {
-    fn new(commands: Vec<String>, fail_after_run: bool) -> Self {
-        Self {
-            commands,
-            outputs: Arc::new(Mutex::new(Vec::new())),
-            fail_after_run,
-        }
+    let output = tokio::process::Command::new("bash")
+        .arg("-c")
+        .arg(&command_to_run)
+        .current_dir(working_dir)
+        .envs(env)
+        .output()
+        .await
+        .context("failed to spawn custom run command")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let status_code = output.status.code().unwrap_or(-1);
+    let command_output = CommandOutput {
+        command: command_to_run.clone(),
+        stdout: stdout.clone(),
+        stderr: stderr.clone(),
+        status: status_code,
+    };
+    outputs
+        .lock()
+        .expect("failed to store command outputs")
+        .push(command_output.clone());
+
+    if !output.status.success() {
+        bail!(
+            "custom run command '{command_to_run}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            status = output.status,
+        );
     }
 
-    fn outputs(&self) -> Vec<CommandOutput> {
-        self.outputs
-            .lock()
-            .expect("failed to lock command outputs")
-            .clone()
-    }
-
-    async fn run_custom_command(
-        &self,
-        command_string: &str,
-        working_dir: &Path,
-        env: &HashMap<String, String>,
-    ) -> Result<CommandOutput> {
-        let command_to_run = replace_hydra_in_command(command_string);
-
-        let output = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(&command_to_run)
-            .current_dir(working_dir)
-            .envs(env)
-            .output()
-            .await
-            .context("failed to spawn custom run command")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let status_code = output.status.code().unwrap_or(-1);
-        let command_output = CommandOutput {
-            command: command_to_run.clone(),
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            status: status_code,
-        };
-        self.outputs
-            .lock()
-            .expect("failed to store command outputs")
-            .push(command_output.clone());
-
-        if !output.status.success() {
-            bail!(
-                "custom run command '{command_to_run}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-                status = output.status,
-            );
-        }
-
-        Ok(command_output)
-    }
-}
-
-#[async_trait]
-impl WorkerCommands for BashCommands {
-    async fn run(
-        &self,
-        _prompt: &str,
-        _model: Option<&str>,
-        working_dir: &Path,
-        env: &HashMap<String, String>,
-        _output_path: &Path,
-        _mcp_config: Option<&str>,
-    ) -> Result<RunReport> {
-        let mut last_output = String::new();
-        for command_string in &self.commands {
-            let output = self
-                .run_custom_command(command_string, working_dir, env)
-                .await
-                .with_context(|| format!("failed to run command '{command_string}'"))?;
-            last_output = output.stdout.clone();
-        }
-
-        if self.fail_after_run {
-            bail!("BashCommands configured to fail after running commands");
-        }
-
-        Ok(RunReport {
-            last_message: last_output,
-            usage: Default::default(),
-            model_session_id: None,
-            session_state: None,
-        })
-    }
-
-    async fn run_interactive(
-        &self,
-        _ws_stream: RelayWebSocket,
-        _session_id: &SessionId,
-        _prompt: &str,
-        _model: Option<&str>,
-        _working_dir: &Path,
-        _env: &HashMap<String, String>,
-        _idle_timeout: std::time::Duration,
-        _conversation_resume_from: Option<usize>,
-    ) -> Result<RunReport> {
-        Err(anyhow!("interactive mode is not supported in test harness"))
-    }
+    Ok(command_output)
 }
 
 fn hydra_bin() -> std::path::PathBuf {
@@ -356,20 +286,161 @@ async fn wait_for_running(harness: &TestHarness, job_id: &SessionId) -> Result<(
     }
 }
 
+/// Drive the worker lifecycle for an integration test: mount setup,
+/// bash-command "agent" phase, mount save, and final status submission.
+///
+/// This is a test-only replica of the production `worker_run::run` path,
+/// substituting shell commands for the real `ModelSelector` dispatch so
+/// tests do not need `claude` / `codex` on PATH. Patches are still created
+/// by the bash commands themselves (typically via `hydra patches create`).
+///
+/// **Drift warning:** the orchestration glue here — phase order (mount
+/// setup → agent → mount save → status submission), error-collection
+/// semantics (`errors` collected across phases; first error becomes the
+/// `Failed { reason }`; status submission still runs after a phase failed),
+/// and final-status payload — duplicates the production flow in
+/// `hydra/src/command/sessions/worker_run.rs::run`. Any change to that
+/// lifecycle ordering needs a matching change here, or integration tests
+/// will quietly diverge from production behavior. The duplication exists
+/// because PR 3 removed the `WorkerCommands` mocking surface
+/// (see `designs/worker-model-commands-refactor.md` §7), and the parent
+/// design forbids new abstractions to bridge production and test paths.
+async fn drive_worker_lifecycle(
+    harness: &TestHarness,
+    job_id: &SessionId,
+    commands: &[String],
+    fail_after_run: bool,
+) -> (Vec<CommandOutput>, Result<()>) {
+    let outputs: Arc<Mutex<Vec<CommandOutput>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let client: Arc<dyn hydra::client::HydraClientInterface> =
+        Arc::new(harness.default_user().client().clone());
+
+    let context = match client.get_session_context(job_id).await {
+        Ok(ctx) => ctx,
+        Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
+    };
+    let WorkerContext {
+        request_context,
+        mut variables,
+        build_cache,
+        ..
+    } = context;
+
+    let service_repo_name =
+        match hydra::command::patches::resolve_service_repo_name(client.as_ref(), Some(job_id))
+            .await
+        {
+            Ok(name) => name,
+            Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
+        };
+
+    let temp_dir = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(err) => {
+            return (
+                outputs.lock().unwrap().clone(),
+                Err(anyhow::Error::from(err).context("failed to create worker tempdir")),
+            );
+        }
+    };
+    let dest = temp_dir.path().to_path_buf();
+    let repo_path = dest.join("repo");
+    let documents_path = dest.join("documents");
+    variables.insert(
+        ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+        documents_path.to_string_lossy().into_owned(),
+    );
+
+    let worker_home_dir = std::env::var_os("HOME").map(PathBuf::from);
+    let issue_branch_id = variables.get(ENV_HYDRA_ISSUE_ID).cloned();
+    let github_token = client.get_github_token().await.ok();
+
+    let mut mounts = match mounts::build_mounts(
+        &repo_path,
+        &documents_path,
+        Arc::clone(&client),
+        &request_context,
+        build_cache.as_ref(),
+        service_repo_name.as_ref(),
+        github_token,
+        issue_branch_id,
+        worker_home_dir,
+        job_id.clone(),
+    ) {
+        Ok(m) => m,
+        Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
+    };
+
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+
+    for mount in mounts.iter_mut() {
+        if let Err(err) = run_phase(mount.setup_phase(), || mount.setup(), &mut errors).await {
+            return (outputs.lock().unwrap().clone(), Err(err));
+        }
+    }
+
+    let mut last_message = String::new();
+    if errors.is_empty() {
+        for command_string in commands {
+            match run_custom_command(command_string, &repo_path, &variables, &outputs).await {
+                Ok(output) => {
+                    last_message = output.stdout;
+                }
+                Err(err) => {
+                    errors.push(err.context(format!("failed to run command '{command_string}'")));
+                    break;
+                }
+            }
+        }
+        if fail_after_run && errors.is_empty() {
+            errors.push(anyhow!(
+                "BashCommands configured to fail after running commands"
+            ));
+        }
+    }
+
+    for mount in mounts.iter_mut() {
+        let Some(phase) = mount.save_phase() else {
+            continue;
+        };
+        if let Err(err) = run_phase(phase, || mount.save(), &mut errors).await {
+            return (outputs.lock().unwrap().clone(), Err(err));
+        }
+    }
+
+    let status_update = if errors.is_empty() {
+        SessionStatusUpdate::Complete {
+            last_message: Some(last_message),
+        }
+    } else {
+        SessionStatusUpdate::Failed {
+            reason: errors
+                .first()
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "worker run failed for unknown reasons".to_string()),
+        }
+    };
+    let _ = client.set_session_status(job_id, &status_update).await;
+
+    let captured = outputs.lock().unwrap().clone();
+    let result = if let Some(err) = errors.into_iter().next() {
+        Err(err)
+    } else {
+        Ok(())
+    };
+    (captured, result)
+}
+
 pub(super) async fn run_worker_impl(
     harness: &TestHarness,
     job_id: &SessionId,
     commands: Vec<&str>,
     fail_after_run: bool,
 ) -> Result<WorkerResult> {
-    // Ensure env vars are set for the worker subprocess.
     ensure_worker_env_vars(harness, job_id).await?;
-
-    // Wait for the job to reach Running status (background workers handle
-    // the Created -> Pending -> Running transitions).
     wait_for_running(harness, job_id).await?;
 
-    // Snapshot existing patches before the worker run.
     let client = harness.client()?;
     let before_patches = client
         .list_patches(&SearchPatchesQuery::default())
@@ -382,29 +453,9 @@ pub(super) async fn run_worker_impl(
         .map(|p| p.patch_id.clone())
         .collect();
 
-    // Create BashCommands and run the worker.
     let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
-    let bash_commands = BashCommands::new(string_commands, fail_after_run);
-
-    let temp_dir =
-        tempfile::tempdir().context("failed to create temporary directory for worker")?;
-    let worker_dir = temp_dir.path().to_path_buf();
-
-    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-    let client: Arc<dyn hydra::client::HydraClientInterface> =
-        Arc::new(harness.default_user().client().clone());
-    let run_result = hydra::command::sessions::worker_run::run(
-        client,
-        job_id.clone(),
-        worker_dir,
-        None,
-        true, // use_tempdir — matches production (K8s always passes --tempdir)
-        Some(&bash_commands),
-        &context,
-    )
-    .await;
-
-    let outputs = bash_commands.outputs();
+    let (outputs, run_result) =
+        drive_worker_lifecycle(harness, job_id, &string_commands, fail_after_run).await;
 
     if let Err(err) = run_result {
         let formatted = format_command_outputs(&outputs);
@@ -428,35 +479,13 @@ pub(super) async fn run_worker_expect_failure_impl(
     job_id: &SessionId,
     commands: Vec<&str>,
 ) -> Result<WorkerFailure> {
-    // Ensure env vars are set for the worker subprocess.
     ensure_worker_env_vars(harness, job_id).await?;
-
-    // Wait for the job to reach Running status.
     wait_for_running(harness, job_id).await?;
 
-    // Create BashCommands (not configured to fail — the commands themselves should fail).
     let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
-    let bash_commands = BashCommands::new(string_commands, false);
+    let (outputs, run_result) =
+        drive_worker_lifecycle(harness, job_id, &string_commands, false).await;
 
-    let temp_dir =
-        tempfile::tempdir().context("failed to create temporary directory for worker")?;
-    let worker_dir = temp_dir.path().to_path_buf();
-
-    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-    let client: Arc<dyn hydra::client::HydraClientInterface> =
-        Arc::new(harness.default_user().client().clone());
-    let run_result = hydra::command::sessions::worker_run::run(
-        client,
-        job_id.clone(),
-        worker_dir,
-        None,
-        true, // use_tempdir — matches production (K8s always passes --tempdir)
-        Some(&bash_commands),
-        &context,
-    )
-    .await;
-
-    let outputs = bash_commands.outputs();
     let final_status = get_session_status(harness, job_id).await?;
 
     match run_result {
