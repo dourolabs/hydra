@@ -14,7 +14,6 @@ use hydra_common::{
     sessions::WorkerContext,
     IssueId, SessionId,
 };
-use tempfile::Builder;
 
 use crate::command::patches::resolve_service_repo_name;
 use crate::command::sessions::mounts;
@@ -128,11 +127,6 @@ pub async fn run(
     for mount in mounts.iter_mut() {
         run_phase(mount.setup_phase(), || mount.setup(), &mut errors).await?;
     }
-
-    let _output_dir = Builder::new()
-        .prefix("codex-output")
-        .tempdir()
-        .context("failed to create temporary codex output directory")?;
 
     let agent_start = Instant::now();
 
