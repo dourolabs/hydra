@@ -192,13 +192,21 @@ export function createDocumentRoutes(store: Store): Hono {
   // GET /v1/documents
   app.get("/v1/documents", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const ids = c.req.query("ids");
     const pathPrefix = c.req.query("path_prefix");
     const pathIsExact = c.req.query("path_is_exact") === "true";
     const q = c.req.query("q");
     const createdBy = c.req.query("created_by");
+    const limitParam = c.req.query("limit");
+    const cursorParam = c.req.query("cursor");
+    const countParam = c.req.query("count");
     const items = store.list<Document>(COLLECTION, includeDeleted);
 
     let filtered = items;
+    if (ids) {
+      const idSet = new Set(ids.split(",").map((s) => s.trim()));
+      filtered = filtered.filter(({ id }) => idSet.has(id));
+    }
     if (pathPrefix) {
       filtered = filtered.filter(({ entry }) => {
         const docPath = entry.data.path;
@@ -219,11 +227,39 @@ export function createDocumentRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => entry.data.created_by === createdBy);
     }
 
+    // Sort by last-update time descending (most recently updated first) for stable pagination
+    filtered.sort((a, b) => {
+      return b.entry.timestamp.localeCompare(a.entry.timestamp);
+    });
+
+    const totalCount = filtered.length;
+
+    // Apply cursor-based pagination
+    if (cursorParam) {
+      const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
+      if (cursorIndex !== -1) {
+        filtered = filtered.slice(cursorIndex + 1);
+      }
+    }
+
+    let nextCursor: string | null = null;
+    if (limitParam !== undefined && limitParam !== null) {
+      const limit = Number(limitParam);
+      if (Number.isFinite(limit) && limit >= 0 && filtered.length > limit) {
+        nextCursor = filtered[limit - 1]?.id ?? null;
+        filtered = filtered.slice(0, limit);
+      }
+    }
+
     const documents: DocumentSummaryRecord[] = filtered.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });
-    const resp: ListDocumentsResponse = { documents };
+    const resp: ListDocumentsResponse = {
+      documents,
+      next_cursor: nextCursor,
+      total_count: countParam === "true" ? BigInt(totalCount) : undefined,
+    };
     return c.json(resp);
   });
 

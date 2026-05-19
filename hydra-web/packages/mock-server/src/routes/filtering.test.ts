@@ -448,4 +448,142 @@ describe("Document list filtering", () => {
     const data = await listDocuments({ path_prefix: "docs/", created_by: "t-xyz" });
     expect(data.documents).toHaveLength(2);
   });
+
+  it("filters by ids (comma-separated)", async () => {
+    store.create("documents", "d-1", makeDocument({ title: "First" }), "document");
+    store.create("documents", "d-2", makeDocument({ title: "Second" }), "document");
+    store.create("documents", "d-3", makeDocument({ title: "Third" }), "document");
+    const data = await listDocuments({ ids: "d-1,d-3" });
+    expect(data.documents).toHaveLength(2);
+    const returnedIds = data.documents
+      .map((d: { document_id: string }) => d.document_id)
+      .sort();
+    expect(returnedIds).toEqual(["d-1", "d-3"]);
+  });
+
+  it("returns total_count when count=true", async () => {
+    store.create("documents", "d-1", makeDocument({ title: "First" }), "document");
+    store.create("documents", "d-2", makeDocument({ title: "Second" }), "document");
+    const data = await listDocuments({ count: "true" });
+    expect(data.total_count).toBe(2);
+  });
+
+  it("paginates with limit + cursor and preserves ids filter across pages", async () => {
+    // Regression for i-pfowwitt: when the client paginates a relation-scoped
+    // query, the `ids` filter must be honored on every page — not just the
+    // first. This test seeds 3 in-set documents + 2 out-of-set documents,
+    // pages through the in-set with limit=2, and asserts the second page only
+    // contains the remaining in-set document (never the out-of-set ones).
+    for (let i = 1; i <= 3; i++) {
+      store.create(
+        "documents",
+        `d-in-${i}`,
+        makeDocument({ title: `In ${i}` }),
+        "document",
+      );
+    }
+    store.create("documents", "d-out-1", makeDocument({ title: "Out 1" }), "document");
+    store.create("documents", "d-out-2", makeDocument({ title: "Out 2" }), "document");
+
+    const idsParam = "d-in-1,d-in-2,d-in-3";
+
+    const page1 = await listDocuments({ ids: idsParam, limit: "2" });
+    expect(page1.documents).toHaveLength(2);
+    expect(
+      page1.documents.every((d: { document_id: string }) =>
+        d.document_id.startsWith("d-in-"),
+      ),
+    ).toBe(true);
+    expect(page1.next_cursor).toBeTruthy();
+
+    const page2 = await listDocuments({
+      ids: idsParam,
+      limit: "2",
+      cursor: page1.next_cursor,
+    });
+    expect(page2.documents).toHaveLength(1);
+    expect(page2.documents[0].document_id.startsWith("d-in-")).toBe(true);
+    expect(page2.next_cursor).toBeFalsy();
+
+    // Union of the two pages must equal the in-set, with no out-of-set leaks.
+    const allReturned = [...page1.documents, ...page2.documents]
+      .map((d: { document_id: string }) => d.document_id)
+      .sort();
+    expect(allReturned).toEqual(["d-in-1", "d-in-2", "d-in-3"]);
+  });
+});
+
+// Regression coverage for i-pfowwitt: when the Chat Related tab's Load More
+// fires `fetchNextPage`, the paginated query must continue to honor the
+// `ids` filter (the relation scope). These tests assert the mock backend
+// keeps that contract for issues and patches as well — both surfaces are
+// driven by the same chat related artifacts hook.
+describe("Paginated relation scoping", () => {
+  it("issues: cursor pagination keeps the ids filter on every page", async () => {
+    const store = new Store();
+    const app = createIssueRoutes(store);
+    for (let i = 1; i <= 3; i++) {
+      store.create("issues", `i-in-${i}`, makeIssue({ description: `In ${i}` }), "issue");
+    }
+    store.create("issues", "i-out-1", makeIssue({ description: "Out 1" }), "issue");
+    store.create("issues", "i-out-2", makeIssue({ description: "Out 2" }), "issue");
+
+    const idsParam = "i-in-1,i-in-2,i-in-3";
+    async function listIssues(params: Record<string, string>) {
+      const qs = new URLSearchParams(params).toString();
+      const res = await app.request(`http://localhost/v1/issues?${qs}`);
+      return res.json();
+    }
+
+    const page1 = await listIssues({ ids: idsParam, limit: "2" });
+    expect(page1.issues).toHaveLength(2);
+    expect(page1.next_cursor).toBeTruthy();
+
+    const page2 = await listIssues({
+      ids: idsParam,
+      limit: "2",
+      cursor: page1.next_cursor,
+    });
+    const allReturned = [...page1.issues, ...page2.issues]
+      .map((i: { issue_id: string }) => i.issue_id)
+      .sort();
+    expect(allReturned).toEqual(["i-in-1", "i-in-2", "i-in-3"]);
+    expect(
+      allReturned.every((id: string) => id.startsWith("i-in-")),
+    ).toBe(true);
+  });
+
+  it("patches: cursor pagination keeps the ids filter on every page", async () => {
+    const store = new Store();
+    const app = createPatchRoutes(store);
+    for (let i = 1; i <= 3; i++) {
+      store.create("patches", `p-in-${i}`, makePatch({ title: `In ${i}` }), "patch");
+    }
+    store.create("patches", "p-out-1", makePatch({ title: "Out 1" }), "patch");
+    store.create("patches", "p-out-2", makePatch({ title: "Out 2" }), "patch");
+
+    const idsParam = "p-in-1,p-in-2,p-in-3";
+    async function listPatches(params: Record<string, string>) {
+      const qs = new URLSearchParams(params).toString();
+      const res = await app.request(`http://localhost/v1/patches?${qs}`);
+      return res.json();
+    }
+
+    const page1 = await listPatches({ ids: idsParam, limit: "2" });
+    expect(page1.patches).toHaveLength(2);
+    expect(page1.next_cursor).toBeTruthy();
+
+    const page2 = await listPatches({
+      ids: idsParam,
+      limit: "2",
+      cursor: page1.next_cursor,
+    });
+    const allReturned = [...page1.patches, ...page2.patches]
+      .map((p: { patch_id: string }) => p.patch_id)
+      .sort();
+    expect(allReturned).toEqual(["p-in-1", "p-in-2", "p-in-3"]);
+    expect(
+      allReturned.every((id: string) => id.startsWith("p-in-")),
+    ).toBe(true);
+  });
 });
