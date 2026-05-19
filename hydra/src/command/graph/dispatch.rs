@@ -8,6 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
+use hydra_common::actor_ref::ActorRef;
 use hydra_common::api::v1::conversations::Conversation as ApiConversation;
 use hydra_common::conversation::events_to_versions;
 use hydra_common::documents::DocumentVersionRecord;
@@ -139,6 +140,34 @@ impl VersionedNode {
         }
     }
 
+    /// Iterate over each version in storage order, yielding a typed
+    /// [`VersionView`] per entry. Shared between `diff` and `log` so neither
+    /// has to match on the variant directly to walk the history vector.
+    pub fn iter_views(&self) -> Box<dyn Iterator<Item = VersionView<'_>> + '_> {
+        match self {
+            VersionedNode::Issue(v) => Box::new(
+                v.iter()
+                    .enumerate()
+                    .map(|(index, record)| VersionView::Issue { record, index }),
+            ),
+            VersionedNode::Patch(v) => Box::new(
+                v.iter()
+                    .enumerate()
+                    .map(|(index, record)| VersionView::Patch { record, index }),
+            ),
+            VersionedNode::Document(v) => Box::new(
+                v.iter()
+                    .enumerate()
+                    .map(|(index, record)| VersionView::Document { record, index }),
+            ),
+            VersionedNode::Conversation(v) => Box::new(
+                v.iter()
+                    .enumerate()
+                    .map(|(index, record)| VersionView::Conversation { record, index }),
+            ),
+        }
+    }
+
     /// Return the latest version whose timestamp is `<= at`, or `None` if no
     /// such version exists. The versions vector is assumed to be ordered by
     /// ascending `timestamp` (true for all four kinds: server-side stores
@@ -238,6 +267,17 @@ impl<'a> VersionView<'a> {
             | VersionView::Patch { index, .. }
             | VersionView::Document { index, .. }
             | VersionView::Conversation { index, .. } => *index,
+        }
+    }
+
+    /// Actor attribution for this version, if recorded. Pre-actor-tracking
+    /// versions return `None`.
+    pub fn actor(&self) -> Option<&'a ActorRef> {
+        match self {
+            VersionView::Issue { record, .. } => record.actor.as_ref(),
+            VersionView::Patch { record, .. } => record.actor.as_ref(),
+            VersionView::Document { record, .. } => record.actor.as_ref(),
+            VersionView::Conversation { record, .. } => record.actor.as_ref(),
         }
     }
 
