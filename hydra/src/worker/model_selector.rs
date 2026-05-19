@@ -114,6 +114,16 @@ impl ModelSelector {
         }
     }
 
+    /// Side-effect-free probe over the model name: returns `true` if the name
+    /// resolves to a wrapper that supports interactive (long-lived
+    /// stdin/stdout) runs, `false` otherwise. Used by `worker_run` to
+    /// short-circuit Codex+interactive before constructing the wrapper, which
+    /// would otherwise perform per-worker setup (e.g. `codex login`, writing
+    /// `~/.codex/config.toml`, creating the output tempdir).
+    pub(crate) fn supports_interactive(name: Option<&str>) -> bool {
+        matches!(Self::decide_kind(name), Kind::Claude)
+    }
+
     /// Decide which kind of model wrapper this name maps to. Prefix-based
     /// (per design §6):
     ///
@@ -260,6 +270,33 @@ mod tests {
     #[test]
     fn decide_kind_none_defaults_to_codex() {
         assert_eq!(ModelSelector::decide_kind(None), Kind::Codex);
+    }
+
+    #[test]
+    fn supports_interactive_true_for_claude_names() {
+        assert!(ModelSelector::supports_interactive(Some(
+            "claude-3-5-sonnet"
+        )));
+        assert!(ModelSelector::supports_interactive(Some("opus-4")));
+        assert!(ModelSelector::supports_interactive(Some("sonnet-4-6")));
+        assert!(ModelSelector::supports_interactive(Some(
+            "haiku-4-5-20251001"
+        )));
+    }
+
+    #[test]
+    fn supports_interactive_false_for_codex_names() {
+        assert!(!ModelSelector::supports_interactive(Some("gpt-4o")));
+        assert!(!ModelSelector::supports_interactive(Some("codex-cli")));
+        assert!(!ModelSelector::supports_interactive(Some("o1")));
+        assert!(!ModelSelector::supports_interactive(Some("o3")));
+        assert!(!ModelSelector::supports_interactive(Some("o4")));
+    }
+
+    #[test]
+    fn supports_interactive_false_for_unknown_and_none() {
+        assert!(!ModelSelector::supports_interactive(Some("unknown")));
+        assert!(!ModelSelector::supports_interactive(None));
     }
 
     #[test]
