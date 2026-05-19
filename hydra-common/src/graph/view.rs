@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::HydraId;
+
 /// The kind of object participating in the knowledge graph.
 ///
 /// Mirrors the variants of `hydra-server`'s `ObjectKind` but lives in
@@ -11,6 +13,36 @@ pub enum ObjectKind {
     Patch,
     Document,
     Conversation,
+}
+
+impl ObjectKind {
+    /// Identify the kind of object addressed by `id` from its prefix
+    /// (`i-` / `p-` / `d-` / `c-`). Returns `None` for ids that don't belong
+    /// to a graph object kind.
+    pub fn from_id(id: &HydraId) -> Option<Self> {
+        if id.as_issue_id().is_some() {
+            Some(ObjectKind::Issue)
+        } else if id.as_patch_id().is_some() {
+            Some(ObjectKind::Patch)
+        } else if id.as_document_id().is_some() {
+            Some(ObjectKind::Document)
+        } else if id.as_conversation_id().is_some() {
+            Some(ObjectKind::Conversation)
+        } else {
+            None
+        }
+    }
+
+    /// Snake-case display string used by JSONL output (`"issue"`, `"patch"`,
+    /// `"document"`, `"conversation"`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ObjectKind::Issue => "issue",
+            ObjectKind::Patch => "patch",
+            ObjectKind::Document => "document",
+            ObjectKind::Conversation => "conversation",
+        }
+    }
 }
 
 /// Selects the level of detail returned by `GraphView::view_lN`.

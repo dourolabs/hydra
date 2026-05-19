@@ -72,6 +72,19 @@ pub enum ConversationEvent {
     },
 }
 
+impl ConversationEvent {
+    /// The event's own wall-clock timestamp.
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            ConversationEvent::UserMessage { timestamp, .. } => *timestamp,
+            ConversationEvent::AssistantMessage { timestamp, .. } => *timestamp,
+            ConversationEvent::Suspending { timestamp, .. } => *timestamp,
+            ConversationEvent::Resumed { timestamp, .. } => *timestamp,
+            ConversationEvent::Closed { timestamp } => *timestamp,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
