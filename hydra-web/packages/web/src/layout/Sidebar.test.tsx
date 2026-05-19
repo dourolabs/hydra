@@ -34,12 +34,16 @@ vi.mock("../api/auth", () => ({
 }));
 
 let mockConversations: ConversationSummary[] | undefined = [];
+const useConversationsMock = vi.fn();
 vi.mock("../features/chat/useConversations", () => ({
-  useConversations: () => ({
-    data: mockConversations,
-    isLoading: false,
-    error: null,
-  }),
+  useConversations: (...args: unknown[]) => {
+    useConversationsMock(...args);
+    return {
+      data: mockConversations,
+      isLoading: false,
+      error: null,
+    };
+  },
 }));
 
 const issueCountMock = vi.fn();
@@ -108,6 +112,7 @@ function renderSidebar(
 
 beforeEach(() => {
   mockConversations = [];
+  useConversationsMock.mockClear();
   issueCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
   activeSessionsMock.mockReturnValue({ data: [], isLoading: false, error: null });
   activeSessionCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
@@ -207,6 +212,15 @@ describe("Sidebar", () => {
   it("shows the user card with display name", () => {
     renderSidebar();
     expect(screen.getByTestId("avatar").textContent).toBe("Alice");
+  });
+
+  it("passes the current-user creator filter into the Chats useConversations call", () => {
+    renderSidebar();
+    expect(useConversationsMock).toHaveBeenCalled();
+    const firstArg = useConversationsMock.mock.calls[0]?.[0];
+    const secondArg = useConversationsMock.mock.calls[0]?.[1];
+    expect(firstArg).toEqual({ creator: "Alice" });
+    expect(secondArg).toEqual({ enabled: true });
   });
 
   it("renders recent chats in Chats section", () => {

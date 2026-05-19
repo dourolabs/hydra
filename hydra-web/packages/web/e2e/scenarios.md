@@ -52,6 +52,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Chat
 
 - `@chat:sidebar` — Clicking a chat row in the sidebar navigates to /chat/&lt;id&gt;
+- `@chat:default-mine` — `/chat` defaults to the logged-in user's chats (Mine); toggle flips to All (`?scope=all`) and back, the Chats query carries `creator=<me>` by default
 
 ## Error Handling
 
