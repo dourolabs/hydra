@@ -135,7 +135,12 @@ impl MemoryStore {
     }
 
     fn next_label_id(&self) -> LabelId {
-        let len = random_len_for_count(self.labels.len() as u64);
+        let count = self
+            .labels
+            .iter()
+            .filter(|entry| !entry.value().deleted)
+            .count() as u64;
+        let len = random_len_for_count(count);
         LabelId::generate(len).expect("length within bounds")
     }
 
@@ -8115,6 +8120,31 @@ mod tests {
             id.as_ref().len() - SessionId::prefix().len(),
             7,
             "677 rows should bump suffix length to 7"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_label_suffix_ignores_soft_deleted_rows() {
+        let store = MemoryStore::new();
+
+        // Add 27 labels and soft-delete each. Without the fix, the next
+        // add_label would see 27 rows and inflate the suffix length.
+        for i in 0..27 {
+            let id = store
+                .add_label(sample_label(&format!("label-{i}"), "#000000"))
+                .await
+                .unwrap();
+            store.delete_label(&id).await.unwrap();
+        }
+
+        let live_id = store
+            .add_label(sample_label("live", "#ffffff"))
+            .await
+            .unwrap();
+        assert_eq!(
+            live_id.as_ref().len() - LabelId::prefix().len(),
+            6,
+            "soft-deleted labels must not inflate the suffix length"
         );
     }
 }

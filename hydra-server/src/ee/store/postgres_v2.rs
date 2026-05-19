@@ -223,6 +223,15 @@ impl PostgresStoreV2 {
         Ok(count.max(0) as u64)
     }
 
+    async fn count_undeleted_rows(&self, table: &str) -> Result<u64, StoreError> {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE NOT deleted");
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(count.max(0) as u64)
+    }
+
     async fn next_issue_id(&self) -> Result<IssueId, StoreError> {
         let len = random_len_for_count(self.count_latest_rows(TABLE_ISSUES_V2).await?);
         Ok(IssueId::generate(len).expect("length within bounds"))
@@ -249,7 +258,7 @@ impl PostgresStoreV2 {
     }
 
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
-        let len = random_len_for_count(self.count_all_rows(TABLE_LABELS).await?);
+        let len = random_len_for_count(self.count_undeleted_rows(TABLE_LABELS).await?);
         Ok(LabelId::generate(len).expect("length within bounds"))
     }
 
@@ -8631,6 +8640,33 @@ mod tests {
             id.as_ref().len() - SessionId::prefix().len(),
             7,
             "677 rows should bump suffix length to 7"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_label_suffix_ignores_soft_deleted_rows(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Add 27 labels and soft-delete each. Without the fix, the next
+        // add_label would see 27 rows and inflate the suffix length.
+        for i in 0..27 {
+            let label = Label::new(
+                format!("label-{i}"),
+                "#000000".parse().unwrap(),
+                true,
+                false,
+            );
+            let id = store.add_label(label).await.unwrap();
+            store.delete_label(&id).await.unwrap();
+        }
+
+        let live = Label::new("live".to_string(), "#ffffff".parse().unwrap(), true, false);
+        let live_id = store.add_label(live).await.unwrap();
+        assert_eq!(
+            live_id.as_ref().len() - LabelId::prefix().len(),
+            6,
+            "soft-deleted labels must not inflate the suffix length"
         );
     }
 }
