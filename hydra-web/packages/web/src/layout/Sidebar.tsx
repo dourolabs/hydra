@@ -13,6 +13,7 @@ import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useActiveSessions } from "../features/sessions/useActiveSessions";
+import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./Sidebar.module.css";
@@ -113,7 +114,10 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   }, [conversations]);
 
   // ── Active sessions ──
+  // List is capped at SESSIONS_SECTION_LIMIT rows, but the count badge shows
+  // the true total (matching the top nav) so it doesn't appear to plateau at 6.
   const { data: activeSessions } = useActiveSessions(SESSIONS_SECTION_LIMIT);
+  const { data: activeSessionCount = 0 } = useActiveSessionCount();
 
   // On mobile, close drawer when navigating.
   const handleNavClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -329,8 +333,13 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
         <div className={styles.section} data-testid="sidebar-active-sessions">
           <div className={styles.sectionHead}>
             <span>Active sessions</span>
-            {activeSessions && activeSessions.length > 0 && (
-              <span className={styles.itemMeta}>{activeSessions.length}</span>
+            {activeSessionCount > 0 && (
+              <span
+                className={styles.itemMeta}
+                data-testid="sidebar-active-sessions-count"
+              >
+                {activeSessionCount}
+              </span>
             )}
           </div>
           {activeSessions && activeSessions.length === 0 && (
