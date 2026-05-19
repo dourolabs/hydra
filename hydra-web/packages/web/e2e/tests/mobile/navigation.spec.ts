@@ -33,7 +33,7 @@ test.describe("Mobile Navigation @mobile:nav", () => {
     await page.getByTestId("sidebar-agents").click();
     await expect(page).toHaveURL(/\/agents/);
 
-    // Navigate to the dashboard via the Issues > All issues link.
+    // Navigate to the dashboard via the Views > All issues opt-out link.
     await openMobileDrawer(page);
     await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(
