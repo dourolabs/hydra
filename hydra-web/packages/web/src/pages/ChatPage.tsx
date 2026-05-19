@@ -7,6 +7,7 @@ import { useConversation, useConversationEvents } from "../features/chat/useConv
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
 import { ChatInput } from "../features/chat/ChatInput";
+import { clearConversationDraft } from "../features/chat/useConversationDraft";
 import { ChatRightPanel, type ChatRightPanelTabKey } from "../features/chat/ChatRightPanel";
 import { MobileTabBar, type MobileTabBarItem } from "../components/MobileTabBar";
 import { ApiError, apiClient } from "../api/client";
@@ -82,6 +83,9 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
       if (context?.previous) {
         queryClient.setQueryData(["conversation", conversationId], context.previous);
       }
+    },
+    onSuccess: () => {
+      clearConversationDraft(conversationId);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
@@ -165,6 +169,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events ?? []} agentName={conversation.agent_name} />
         <ChatInput
+          conversationId={conversationId}
           onSend={handleSend}
           disabled={sendMutation.isPending}
           onEndChat={canClose ? handleEndChat : undefined}

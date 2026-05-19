@@ -1,16 +1,24 @@
-import { useState, useCallback, type KeyboardEvent } from "react";
+import { useCallback, type KeyboardEvent } from "react";
 import { Button, Kbd } from "@hydra/ui";
+import { useConversationDraft } from "./useConversationDraft";
 import styles from "./ChatInput.module.css";
 
 interface ChatInputProps {
+  conversationId: string;
   onSend: (content: string) => void;
   disabled?: boolean;
   onEndChat?: () => void;
   endChatDisabled?: boolean;
 }
 
-export function ChatInput({ onSend, disabled, onEndChat, endChatDisabled }: ChatInputProps) {
-  const [value, setValue] = useState("");
+export function ChatInput({
+  conversationId,
+  onSend,
+  disabled,
+  onEndChat,
+  endChatDisabled,
+}: ChatInputProps) {
+  const { value, setValue, clear } = useConversationDraft(conversationId);
 
   const isDisabled = disabled;
 
@@ -18,8 +26,8 @@ export function ChatInput({ onSend, disabled, onEndChat, endChatDisabled }: Chat
     const trimmed = value.trim();
     if (!trimmed || isDisabled) return;
     onSend(trimmed);
-    setValue("");
-  }, [value, isDisabled, onSend]);
+    clear();
+  }, [value, isDisabled, onSend, clear]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
