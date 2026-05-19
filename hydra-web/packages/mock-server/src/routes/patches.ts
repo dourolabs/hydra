@@ -128,6 +128,7 @@ export function createPatchRoutes(store: Store): Hono {
   // GET /v1/patches
   app.get("/v1/patches", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const ids = c.req.query("ids");
     const q = c.req.query("q");
     const statusParam = c.req.query("status");
     const branchName = c.req.query("branch_name");
@@ -138,6 +139,10 @@ export function createPatchRoutes(store: Store): Hono {
     const items = store.list<Patch>(COLLECTION, includeDeleted);
 
     let filtered = items;
+    if (ids) {
+      const idSet = new Set(ids.split(",").map((s) => s.trim()));
+      filtered = filtered.filter(({ id }) => idSet.has(id));
+    }
     if (q) {
       const lower = q.toLowerCase();
       filtered = filtered.filter(({ entry }) => entry.data.title.toLowerCase().includes(lower));

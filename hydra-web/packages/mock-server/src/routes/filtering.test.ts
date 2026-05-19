@@ -233,6 +233,16 @@ describe("Patch list filtering", () => {
     const data = await listPatches();
     expect(data.total_count).toBeUndefined();
   });
+
+  it("filters by ids (comma-separated)", async () => {
+    store.create("patches", "p-1", makePatch({ title: "First" }), "patch");
+    store.create("patches", "p-2", makePatch({ title: "Second" }), "patch");
+    store.create("patches", "p-3", makePatch({ title: "Third" }), "patch");
+    const data = await listPatches({ ids: "p-1,p-3" });
+    expect(data.patches).toHaveLength(2);
+    const returnedIds = data.patches.map((p: { patch_id: string }) => p.patch_id).sort();
+    expect(returnedIds).toEqual(["p-1", "p-3"]);
+  });
 });
 
 describe("Session list filtering", () => {
