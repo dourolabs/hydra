@@ -18,17 +18,32 @@ vi.mock("../../features/dashboard/FilterBar", () => ({
 
 interface PaginatedState {
   issues: IssueSummaryRecord[];
+  totalCount: number | undefined;
+  paginatedFilters: unknown;
+  countFilters: unknown;
 }
-const paginatedState: PaginatedState = { issues: [] };
+const paginatedState: PaginatedState = {
+  issues: [],
+  totalCount: undefined,
+  paginatedFilters: undefined,
+  countFilters: undefined,
+};
 
 vi.mock("../../features/issues/usePaginatedIssues", () => ({
-  usePaginatedIssues: () => ({
-    data: { pages: [{ issues: paginatedState.issues }] },
-    isLoading: false,
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-  }),
+  usePaginatedIssues: (filters: unknown) => {
+    paginatedState.paginatedFilters = filters;
+    return {
+      data: { pages: [{ issues: paginatedState.issues }] },
+      isLoading: false,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+    };
+  },
+  useIssueCount: (filters: unknown) => {
+    paginatedState.countFilters = filters;
+    return { data: paginatedState.totalCount };
+  },
 }));
 
 vi.mock("../../features/dashboard/usePaginatedPatches", () => ({
@@ -207,6 +222,9 @@ function makeSession(
 beforeEach(() => {
   vi.clearAllMocks();
   paginatedState.issues = [];
+  paginatedState.totalCount = undefined;
+  paginatedState.paginatedFilters = undefined;
+  paginatedState.countFilters = undefined;
   treesState.childStatusMap = new Map();
   treesState.sessionsByIssue = new Map();
 });
@@ -243,6 +261,53 @@ describe("IssuesListPage breadcrumb label", () => {
     renderIssuesList("/?selected=patches");
     // patches is no longer a dashboard tab — fall back to Issues
     expect(useBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Workspace", to: "/" }], "Issues");
+  });
+});
+
+describe("IssuesListPage eyebrow count", () => {
+  it("renders total_count from the count query, not just the loaded page length", () => {
+    paginatedState.issues = [makeIssue("i-1"), makeIssue("i-2")];
+    paginatedState.totalCount = 247;
+
+    const { container } = renderIssuesList("/?selected=all");
+
+    const eyebrow = container.querySelector(".eyebrow");
+    expect(eyebrow).not.toBeNull();
+    expect(eyebrow!.textContent).toBe("ALL · 247 ISSUES");
+  });
+
+  it("falls back to the rendered issues length while the count query is loading", () => {
+    paginatedState.issues = [makeIssue("i-1"), makeIssue("i-2"), makeIssue("i-3")];
+    paginatedState.totalCount = undefined;
+
+    const { container } = renderIssuesList("/");
+
+    const eyebrow = container.querySelector(".eyebrow");
+    expect(eyebrow).not.toBeNull();
+    expect(eyebrow!.textContent).toBe("WORK · 3 ISSUES");
+  });
+
+  it("uses the singular form when the resolved count is exactly 1", () => {
+    paginatedState.issues = [];
+    paginatedState.totalCount = 1;
+
+    const { container } = renderIssuesList("/?selected=in_progress");
+
+    const eyebrow = container.querySelector(".eyebrow");
+    expect(eyebrow!.textContent).toBe("IN PROGRESS · 1 ISSUE");
+  });
+
+  it("invokes the list and count hooks with identical filter inputs", () => {
+    paginatedState.issues = [makeIssue("i-1")];
+    paginatedState.totalCount = 9;
+
+    renderIssuesList("/?selected=assigned");
+
+    expect(paginatedState.paginatedFilters).toBeDefined();
+    expect(paginatedState.countFilters).toBeDefined();
+    // Both hooks must see the same filter object so React Query's cache keys
+    // and the backend filter set stay aligned across the two queries.
+    expect(paginatedState.countFilters).toEqual(paginatedState.paginatedFilters);
   });
 });
 
