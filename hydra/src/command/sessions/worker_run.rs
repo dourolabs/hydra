@@ -119,7 +119,7 @@ pub async fn run(
         service_repo_name.as_ref(),
         github_token,
         issue_branch_id,
-        worker_home_dir,
+        worker_home_dir.clone(),
         job.clone(),
     )?;
 
@@ -176,7 +176,7 @@ pub async fn run(
             }
         }
     } else {
-        let selector_home_dir = resolve_worker_home_dir()
+        let selector_home_dir = worker_home_dir
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
         let selector_idle_timeout = Duration::from_secs(
             interactive
