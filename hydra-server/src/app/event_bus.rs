@@ -1705,6 +1705,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_conversation_events(id).await
     }
 
+    async fn get_conversation_versions(
+        &self,
+        id: &ConversationId,
+    ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
+        self.inner.get_conversation_versions(id).await
+    }
+
     async fn get_conversation_event_summaries(
         &self,
         ids: &[ConversationId],
