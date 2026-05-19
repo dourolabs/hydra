@@ -362,6 +362,15 @@ pub(super) async fn run_worker_impl(
     commands: Vec<&str>,
     fail_after_run: bool,
 ) -> Result<WorkerResult> {
+    // Tell `worker_run::run` to dispatch through the legacy `WorkerCommands`
+    // trait (our `BashCommands` mock) rather than `ModelSelector`. PR 3 will
+    // remove both the env var and the trait once the harness can mock the
+    // model layer directly.
+    std::env::set_var(
+        hydra::command::sessions::worker_run::ENV_HYDRA_TEST_USE_COMMANDS,
+        "1",
+    );
+
     // Ensure env vars are set for the worker subprocess.
     ensure_worker_env_vars(harness, job_id).await?;
 
@@ -428,6 +437,12 @@ pub(super) async fn run_worker_expect_failure_impl(
     job_id: &SessionId,
     commands: Vec<&str>,
 ) -> Result<WorkerFailure> {
+    // Match the success path: route through the legacy WorkerCommands trait.
+    std::env::set_var(
+        hydra::command::sessions::worker_run::ENV_HYDRA_TEST_USE_COMMANDS,
+        "1",
+    );
+
     // Ensure env vars are set for the worker subprocess.
     ensure_worker_env_vars(harness, job_id).await?;
 
