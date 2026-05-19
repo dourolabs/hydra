@@ -798,8 +798,8 @@ mod tests {
             .head()?
             .target()
             .ok_or_else(|| anyhow!("HEAD missing target after bundle setup"))?;
-        let remote_repo = Repository::open(fixture.remote_dir())
-            .context("open remote repo for assertions")?;
+        let remote_repo =
+            Repository::open(fixture.remote_dir()).context("open remote repo for assertions")?;
         assert_eq!(
             reference_target(&remote_repo, &format!("refs/heads/hydra/{job}/head"))?,
             head_oid,
@@ -827,7 +827,10 @@ mod tests {
             job,
             None,
         );
-        let err = mount.setup().await.expect_err("clone of missing repo must fail");
+        let err = mount
+            .setup()
+            .await
+            .expect_err("clone of missing repo must fail");
         assert!(err.fatal, "clone failures must be fatal");
         Ok(())
     }
