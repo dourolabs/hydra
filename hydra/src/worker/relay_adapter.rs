@@ -1,0 +1,778 @@
+//! Translates between the relay WebSocket protocol and the generic
+//! `WorkerInputMessage` / `WorkerEvent` channels consumed by
+//! [`crate::worker::model_selector::ModelSelector`].
+//!
+//! See `designs/worker-model-commands-refactor.md` §2.3 for the design. This
+//! module owns:
+//! * the `WorkerConnect` handshake and `WorkerCatchUp` drain,
+//! * the primary transcript-based resume install,
+//! * the bidirectional pump between the WebSocket and the generic channels,
+//! * idle-timeout / SIGTERM detection and the suspend-emission flow.
+//!
+//! It does **not** know about Claude-native or Codex-native types — those
+//! translations live inside `ModelSelector` (per design §3).
+
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
+use futures::{Sink, SinkExt, StreamExt};
+use hydra_common::{
+    api::v1::conversations::{
+        ConversationEvent, ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect,
+        WorkerMessage,
+    },
+    SessionId,
+};
+use tokio::sync::{mpsc, oneshot};
+use tokio_tungstenite::tungstenite;
+use tracing::{error, info, warn};
+
+use crate::client::RelayWebSocket;
+use crate::worker::claude::{transcript_path, write_transcript_atomic};
+use crate::worker::report::{SessionResume, WorkerEvent, WorkerInputMessage};
+
+/// Handles returned by [`spawn_relay_adapter`].
+pub struct RelayAdapter {
+    /// Caller-side input receiver. Carries `WorkerInputMessage`s produced from
+    /// catch-up and relay `UserMessage` events. The caller should pass this
+    /// into `ModelSelector::run_interactive`.
+    pub input_rx: mpsc::Receiver<WorkerInputMessage>,
+    /// Caller-side output sender. The caller passes this into
+    /// `ModelSelector::run_interactive`; the model emits `WorkerEvent`s on it
+    /// which the relay adapter consumes and forwards onto the WebSocket.
+    pub output_tx: mpsc::Sender<WorkerEvent>,
+    /// Join handle for the relay-pump task. The caller drops it without
+    /// awaiting in normal flow; the task ends when both the WebSocket and the
+    /// output channel close.
+    pub pump: tokio::task::JoinHandle<()>,
+    /// Resolves once during catch-up with the `SessionResume` the caller
+    /// should pass to `ModelSelector::run_interactive`. Resolves to `None` if
+    /// the catch-up does not carry a usable session state.
+    pub initial_resume: oneshot::Receiver<Option<SessionResume>>,
+}
+
+/// Spawn the relay adapter. Returns immediately; the WS handshake/catch-up
+/// proceed inside the spawned pump task. The caller should `.await` the
+/// `initial_resume` oneshot before invoking `ModelSelector::run_interactive`.
+pub fn spawn_relay_adapter(
+    ws: RelayWebSocket,
+    session_id: &SessionId,
+    conversation_resume_from: Option<usize>,
+    prompt: &str,
+    home_dir: PathBuf,
+    working_dir: PathBuf,
+    idle_timeout: Duration,
+) -> RelayAdapter {
+    let (input_tx, input_rx) = mpsc::channel::<WorkerInputMessage>(32);
+    let (output_tx, output_rx) = mpsc::channel::<WorkerEvent>(32);
+    let (initial_resume_tx, initial_resume_rx) = oneshot::channel::<Option<SessionResume>>();
+    let session_id = session_id.clone();
+    let prompt = prompt.to_string();
+
+    let pump = tokio::spawn(async move {
+        if let Err(err) = run_pump(
+            ws,
+            &session_id,
+            conversation_resume_from,
+            &prompt,
+            home_dir,
+            working_dir,
+            idle_timeout,
+            input_tx,
+            output_rx,
+            initial_resume_tx,
+        )
+        .await
+        {
+            error!(error = %err, "relay_adapter pump exited with error");
+        }
+    });
+
+    RelayAdapter {
+        input_rx,
+        output_tx,
+        pump,
+        initial_resume: initial_resume_rx,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_pump(
+    ws: RelayWebSocket,
+    session_id: &SessionId,
+    conversation_resume_from: Option<usize>,
+    prompt: &str,
+    home_dir: PathBuf,
+    working_dir: PathBuf,
+    idle_timeout: Duration,
+    input_tx: mpsc::Sender<WorkerInputMessage>,
+    mut output_rx: mpsc::Receiver<WorkerEvent>,
+    initial_resume_tx: oneshot::Sender<Option<SessionResume>>,
+) -> Result<()> {
+    let (mut ws_sender, mut ws_receiver) = ws.split();
+
+    println!("WebSocket connected, sending handshake");
+
+    let handshake = WorkerConnect::Fresh {
+        resume_from_event_index: conversation_resume_from,
+    };
+    let handshake_json =
+        serde_json::to_string(&handshake).context("failed to serialize WorkerConnect")?;
+    ws_sender
+        .send(tungstenite::Message::Text(handshake_json))
+        .await
+        .context("failed to send WorkerConnect handshake")?;
+
+    let catch_up_msg = ws_receiver
+        .next()
+        .await
+        .ok_or_else(|| anyhow!("WebSocket closed before catch-up"))?
+        .context("WebSocket error during catch-up")?;
+
+    let catch_up_text = match catch_up_msg {
+        tungstenite::Message::Text(text) => text,
+        other => return Err(anyhow!("expected text catch-up message, got {other:?}")),
+    };
+
+    let server_msg: ServerMessage =
+        serde_json::from_str(&catch_up_text).context("failed to parse catch-up message")?;
+    let catch_up = match server_msg {
+        ServerMessage::CatchUp(cu) => cu,
+        other => return Err(anyhow!("expected CatchUp message, got {other:?}")),
+    };
+
+    let session_state_bytes = catch_up.session_state.as_ref().map(|b| b.len());
+    info!(
+        %session_id,
+        events = catch_up.events.len(),
+        session_state_bytes = ?session_state_bytes,
+        "catch_up_received"
+    );
+
+    let primary_resume = try_primary_resume(&catch_up, &home_dir, &working_dir);
+    let resume_session_id: Option<String> = primary_resume.as_ref().map(|p| p.session_id.clone());
+
+    match (&primary_resume, &catch_up.session_state) {
+        (Some(p), _) => info!(
+            %session_id,
+            resume_session_id = %p.session_id,
+            transcript_bytes = p.transcript_bytes,
+            "resume_path=primary_transcript"
+        ),
+        (None, Some(bytes)) => warn!(
+            %session_id,
+            session_state_bytes = bytes.len(),
+            "resume_path=primer_fallback session_state_present_but_unusable"
+        ),
+        (None, None) => info!(
+            %session_id,
+            "resume_path=primer_fallback no_session_state"
+        ),
+    }
+
+    let initial_resume_value = resume_session_id.clone().map(SessionResume::BySessionId);
+    let _ = initial_resume_tx.send(initial_resume_value);
+
+    let mut prompt_prepend = PromptPrepend::new(prompt, &catch_up.events);
+
+    // Feed catch-up: if we restored the transcript Claude already has the
+    // prior history; only the trailing pending UserMessages are forwarded.
+    // Otherwise we synthesize a single primer wrapping the prior transcript
+    // and forward it before any pending input.
+    feed_catch_up_to_channel(
+        &input_tx,
+        &catch_up.events,
+        primary_resume.is_some(),
+        prompt,
+        &mut prompt_prepend,
+    )
+    .await?;
+
+    // Track the model session id reported via WorkerEvent::SessionInit so the
+    // suspend-upload code can find the transcript on disk. Pre-seed with the
+    // resumed session id, if any.
+    let mut model_session_id: Option<String> = resume_session_id;
+
+    let idle_deadline = tokio::time::sleep(idle_timeout);
+    tokio::pin!(idle_deadline);
+
+    #[cfg(unix)]
+    let mut sigterm_signal =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("failed to install SIGTERM handler")?;
+
+    loop {
+        tokio::select! {
+            event = output_rx.recv() => {
+                match event {
+                    Some(WorkerEvent::AssistantText { text }) => {
+                        if !text.is_empty() {
+                            let conv_event = ConversationEvent::AssistantMessage {
+                                content: text,
+                                timestamp: Utc::now(),
+                            };
+                            let msg = WorkerMessage::Event { event: conv_event };
+                            let json = serde_json::to_string(&msg)
+                                .context("failed to serialize worker message")?;
+                            if ws_sender
+                                .send(tungstenite::Message::Text(json))
+                                .await
+                                .is_err()
+                            {
+                                println!("WebSocket closed while sending assistant message");
+                                break;
+                            }
+                        }
+                    }
+                    Some(WorkerEvent::SessionInit { model_session_id: sid }) => {
+                        info!(%session_id, model_session_id = %sid, "session_init_observed");
+                        model_session_id = Some(sid);
+                    }
+                    Some(WorkerEvent::Usage { .. }) => {
+                        // Token usage is tracked by the model wrapper and
+                        // surfaced in `RunReport`; no relay-side action.
+                    }
+                    Some(WorkerEvent::Raw { .. }) => {
+                        tracing::trace!("relay_adapter: WorkerEvent::Raw ignored");
+                    }
+                    None => {
+                        // Model output stream closed — the run is done. Exit
+                        // the pump; the caller will see the WS close on next
+                        // send.
+                        println!("Model output channel closed");
+                        break;
+                    }
+                }
+            }
+
+            ws_msg = ws_receiver.next() => {
+                match ws_msg {
+                    Some(Ok(tungstenite::Message::Text(text))) => {
+                        match serde_json::from_str::<ServerMessage>(&text) {
+                            Ok(ServerMessage::Event { event }) => {
+                                if let ConversationEvent::UserMessage { content, .. } = event {
+                                    idle_deadline
+                                        .as_mut()
+                                        .reset(tokio::time::Instant::now() + idle_timeout);
+                                    let to_send = prompt_prepend.apply(&content);
+                                    if input_tx
+                                        .send(WorkerInputMessage { content: to_send })
+                                        .await
+                                        .is_err()
+                                    {
+                                        eprintln!("Model input channel closed; cannot forward user message");
+                                        break;
+                                    }
+                                    println!("Forwarded user message to model input channel");
+                                }
+                            }
+                            Ok(ServerMessage::CatchUp(_)) => {
+                                eprintln!("Unexpected CatchUp message during relay loop");
+                            }
+                            Err(err) => {
+                                eprintln!("Failed to parse server message: {err}");
+                            }
+                        }
+                    }
+                    Some(Ok(tungstenite::Message::Ping(data))) => {
+                        let _ = ws_sender.send(tungstenite::Message::Pong(data)).await;
+                    }
+                    Some(Ok(tungstenite::Message::Close(_))) | None => {
+                        println!("WebSocket closed by server");
+                        break;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        eprintln!("WebSocket error: {err}");
+                        break;
+                    }
+                }
+            }
+
+            _ = &mut idle_deadline => {
+                println!("Idle timeout reached ({idle_timeout:?}), suspending session");
+                emit_suspend(
+                    &mut ws_sender,
+                    "idle_timeout",
+                    model_session_id.as_deref(),
+                    &home_dir,
+                    &working_dir,
+                )
+                .await;
+                break;
+            }
+
+            _ = await_sigterm(
+                #[cfg(unix)]
+                &mut sigterm_signal,
+            ) => {
+                println!("SIGTERM received, suspending session");
+                emit_suspend(
+                    &mut ws_sender,
+                    "sigterm",
+                    model_session_id.as_deref(),
+                    &home_dir,
+                    &working_dir,
+                )
+                .await;
+                break;
+            }
+        }
+    }
+
+    // Drop the input sender to signal "no more input" to the model wrapper.
+    drop(input_tx);
+
+    let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
+    Ok(())
+}
+
+/// Outcome of attempting the primary transcript-based resume path.
+struct PrimaryResume {
+    session_id: String,
+    transcript_bytes: usize,
+}
+
+/// Try to apply the primary resume path: parse `catch_up.session_state` as
+/// `SessionStatePayload::V1 { transcript: Some(..) }`, then write the
+/// transcript bytes to the on-disk location Claude reads on `--resume`.
+fn try_primary_resume(
+    catch_up: &WorkerCatchUp,
+    home_dir: &Path,
+    working_dir: &Path,
+) -> Option<PrimaryResume> {
+    let Some(bytes) = catch_up.session_state.as_deref() else {
+        info!("try_primary_resume session_state=absent");
+        return None;
+    };
+    info!(
+        bytes = bytes.len(),
+        "try_primary_resume session_state=present"
+    );
+
+    let payload: SessionStatePayload = match serde_json::from_slice(bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            error!(
+                error = %err,
+                "try_primary_resume parse_failed falling_back_to_primer"
+            );
+            return None;
+        }
+    };
+
+    let (session_id, transcript) = match payload {
+        SessionStatePayload::V1 {
+            session_id,
+            transcript,
+        } => (session_id, transcript),
+    };
+
+    let bytes = match transcript {
+        Some(t) => {
+            info!(
+                resume_session_id = %session_id,
+                transcript_bytes = t.len(),
+                "try_primary_resume parsed transcript=present"
+            );
+            t
+        }
+        None => {
+            warn!(
+                resume_session_id = %session_id,
+                "try_primary_resume transcript=absent falling_back_to_primer"
+            );
+            return None;
+        }
+    };
+
+    let path = transcript_path(home_dir, working_dir, &session_id);
+    if let Err(err) = write_transcript_atomic(&path, &bytes) {
+        error!(
+            transcript_path = %path.display(),
+            error = %err,
+            "try_primary_resume write_failed falling_back_to_primer"
+        );
+        return None;
+    }
+    info!(
+        transcript_path = %path.display(),
+        transcript_bytes = bytes.len(),
+        "try_primary_resume write_succeeded"
+    );
+
+    Some(PrimaryResume {
+        session_id,
+        transcript_bytes: bytes.len(),
+    })
+}
+
+/// Feed catch-up events into the generic input channel. Mirrors the
+/// historical `feed_catch_up` behavior:
+/// * When `using_resumed_transcript` is true (primary path), only trailing
+///   pending `UserMessage`s are forwarded — the prior history is already
+///   restored on disk.
+/// * Otherwise (primer path) a single context primer wrapping the prior
+///   transcript is sent first, then any pending `UserMessage`s follow.
+async fn feed_catch_up_to_channel(
+    input_tx: &mpsc::Sender<WorkerInputMessage>,
+    events: &[ConversationEvent],
+    using_resumed_transcript: bool,
+    prompt: &str,
+    prompt_prepend: &mut PromptPrepend,
+) -> Result<()> {
+    let (past_context, pending_user_messages) = partition_events(events);
+
+    if !using_resumed_transcript && !past_context.is_empty() {
+        let primer = build_context_primer(prompt, &past_context);
+        input_tx
+            .send(WorkerInputMessage { content: primer })
+            .await
+            .context("failed to send context primer to model input channel")?;
+        println!(
+            "Sent context primer ({} prior events) to model input channel",
+            past_context.len()
+        );
+    }
+
+    for content in pending_user_messages {
+        let to_send = prompt_prepend.apply(content);
+        input_tx
+            .send(WorkerInputMessage { content: to_send })
+            .await
+            .context("failed to send catch-up user message to model input channel")?;
+        println!("Sent catch-up user message to model input channel");
+    }
+
+    Ok(())
+}
+
+/// Tracks the agent-prompt prepend across `feed_catch_up_to_channel` and the
+/// relay loop.
+#[derive(Debug)]
+struct PromptPrepend {
+    prompt: String,
+    pending: bool,
+}
+
+impl PromptPrepend {
+    fn new(prompt: &str, catch_up_events: &[ConversationEvent]) -> Self {
+        let has_assistant = catch_up_events
+            .iter()
+            .any(|e| matches!(e, ConversationEvent::AssistantMessage { .. }));
+        let pending = !prompt.is_empty() && !has_assistant;
+        Self {
+            prompt: prompt.to_string(),
+            pending,
+        }
+    }
+
+    fn apply(&mut self, content: &str) -> String {
+        if self.pending {
+            self.pending = false;
+            format!("{}\n\n{content}", self.prompt)
+        } else {
+            content.to_string()
+        }
+    }
+}
+
+/// Partition a catch-up event log into past context (everything up to and
+/// including the last assistant message) and pending user messages
+/// (everything after the last assistant message, or — if no assistant message
+/// is present — every `UserMessage` in the log).
+fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, Vec<&str>) {
+    let last_assistant_idx = events
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, e)| matches!(e, ConversationEvent::AssistantMessage { .. }))
+        .map(|(i, _)| i);
+
+    let mut past_context: Vec<&ConversationEvent> = Vec::new();
+    let mut pending: Vec<&str> = Vec::new();
+
+    match last_assistant_idx {
+        Some(idx) => {
+            for event in &events[..=idx] {
+                if matches!(
+                    event,
+                    ConversationEvent::UserMessage { .. }
+                        | ConversationEvent::AssistantMessage { .. }
+                ) {
+                    past_context.push(event);
+                }
+            }
+            for event in &events[idx + 1..] {
+                if let ConversationEvent::UserMessage { content, .. } = event {
+                    pending.push(content.as_str());
+                }
+            }
+        }
+        None => {
+            for event in events {
+                if let ConversationEvent::UserMessage { content, .. } = event {
+                    pending.push(content.as_str());
+                }
+            }
+        }
+    }
+
+    (past_context, pending)
+}
+
+/// Build a single primer message that wraps the prior transcript so the model
+/// can use it as historical context.
+fn build_context_primer(prompt: &str, past_context: &[&ConversationEvent]) -> String {
+    let mut transcript = String::new();
+    for event in past_context {
+        match event {
+            ConversationEvent::UserMessage { content, .. } => {
+                transcript.push_str("User: ");
+                transcript.push_str(&escape_wrapper_close(content));
+                transcript.push('\n');
+            }
+            ConversationEvent::AssistantMessage { content, .. } => {
+                transcript.push_str("Assistant: ");
+                transcript.push_str(&escape_wrapper_close(content));
+                transcript.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    let prior = format!(
+        "<prior-conversation>\n\
+The user and I had this prior conversation. The conversation was suspended or closed and is now being resumed. \
+Treat this as historical context only — do not re-execute or repeat any actions described. \
+Respond only to the next user message after this block.\n\
+\n\
+{transcript}\
+</prior-conversation>"
+    );
+
+    if prompt.is_empty() {
+        prior
+    } else {
+        let escaped = escape_agent_prompt_close(prompt);
+        format!("<agent-prompt>\n{escaped}\n</agent-prompt>\n\n{prior}")
+    }
+}
+
+fn escape_wrapper_close(content: &str) -> String {
+    content.replace("</prior-conversation>", "</prior-conversation\u{200B}>")
+}
+
+fn escape_agent_prompt_close(content: &str) -> String {
+    content.replace("</agent-prompt>", "</agent-prompt\u{200B}>")
+}
+
+/// Suspend-emission helper: writes a `Suspending` event followed by a
+/// best-effort `SessionStateUpload` carrying the transcript file.
+async fn emit_suspend<Si>(
+    ws_sender: &mut Si,
+    reason: &str,
+    model_session_id: Option<&str>,
+    home_dir: &Path,
+    working_dir: &Path,
+) where
+    Si: Sink<tungstenite::Message> + Unpin,
+{
+    info!(
+        reason,
+        has_model_session_id = model_session_id.is_some(),
+        "emit_suspend entry"
+    );
+    let suspending_event = ConversationEvent::Suspending {
+        reason: reason.to_string(),
+        timestamp: Utc::now(),
+    };
+    let suspending_msg = WorkerMessage::Event {
+        event: suspending_event,
+    };
+    if let Ok(json) = serde_json::to_string(&suspending_msg) {
+        if ws_sender
+            .send(tungstenite::Message::Text(json))
+            .await
+            .is_err()
+        {
+            error!(reason, "emit_suspend ws_send_suspending_failed ws_closed");
+            return;
+        }
+    }
+
+    let Some(sid) = model_session_id else {
+        warn!(
+            reason,
+            "emit_suspend transcript_upload_skipped — no model session id observed"
+        );
+        return;
+    };
+
+    let payload = build_session_state_payload(home_dir, working_dir, sid).await;
+    match send_session_state_upload(ws_sender, &payload).await {
+        Ok(()) => info!(reason, model_session_id = sid, "emit_suspend upload_ok"),
+        Err(err) => error!(
+            reason,
+            model_session_id = sid,
+            error = %err,
+            "emit_suspend upload_failed"
+        ),
+    }
+}
+
+/// Build a `SessionStatePayload` from the captured model session id and the
+/// current contents of its transcript file.
+async fn build_session_state_payload(
+    home_dir: &Path,
+    working_dir: &Path,
+    session_id: &str,
+) -> SessionStatePayload {
+    let path = transcript_path(home_dir, working_dir, session_id);
+    let transcript = match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            info!(
+                model_session_id = session_id,
+                transcript_path = %path.display(),
+                bytes = bytes.len(),
+                "build_session_state_payload read_ok"
+            );
+            Some(bytes)
+        }
+        Err(err) => {
+            warn!(
+                model_session_id = session_id,
+                transcript_path = %path.display(),
+                error = %err,
+                "build_session_state_payload read_failed uploading_session_id_only"
+            );
+            None
+        }
+    };
+    SessionStatePayload::V1 {
+        session_id: session_id.to_string(),
+        transcript,
+    }
+}
+
+/// Send a `SessionStateUpload` over the WebSocket.
+async fn send_session_state_upload<Si>(
+    ws_sender: &mut Si,
+    payload: &SessionStatePayload,
+) -> Result<()>
+where
+    Si: Sink<tungstenite::Message> + Unpin,
+{
+    let data =
+        serde_json::to_vec(payload).context("failed to serialize SessionStatePayload to bytes")?;
+    let bytes = data.len();
+    let msg = WorkerMessage::SessionStateUpload { data };
+    let json = serde_json::to_string(&msg).context("failed to serialize SessionStateUpload")?;
+    match ws_sender.send(tungstenite::Message::Text(json)).await {
+        Ok(()) => {
+            info!(bytes, "send_session_state_upload ws_send_ok");
+            Ok(())
+        }
+        Err(_) => {
+            error!(bytes, "send_session_state_upload ws_send_failed");
+            Err(anyhow!("WebSocket send of SessionStateUpload failed"))
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn await_sigterm(sig: &mut tokio::signal::unix::Signal) {
+    sig.recv().await;
+}
+
+#[cfg(not(unix))]
+async fn await_sigterm() {
+    futures::future::pending::<()>().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user_msg(content: &str) -> ConversationEvent {
+        ConversationEvent::UserMessage {
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn assistant_msg(content: &str) -> ConversationEvent {
+        ConversationEvent::AssistantMessage {
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn partition_events_returns_past_context_and_pending_user_messages() {
+        let events = vec![
+            user_msg("msg1"),
+            assistant_msg("reply1"),
+            user_msg("msg2"),
+            assistant_msg("reply2"),
+            user_msg("msg3"),
+        ];
+        let (past, pending) = partition_events(&events);
+        assert_eq!(past.len(), 4);
+        assert_eq!(pending, vec!["msg3"]);
+    }
+
+    #[test]
+    fn partition_events_no_assistant_treats_all_as_pending() {
+        let events = vec![user_msg("a"), user_msg("b")];
+        let (past, pending) = partition_events(&events);
+        assert!(past.is_empty());
+        assert_eq!(pending, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn prompt_prepend_applies_to_first_message_only() {
+        let mut p = PromptPrepend::new("agent", &[]);
+        let first = p.apply("hello");
+        assert_eq!(first, "agent\n\nhello");
+        let second = p.apply("world");
+        assert_eq!(second, "world");
+    }
+
+    #[test]
+    fn prompt_prepend_suppressed_when_prior_assistant_exists() {
+        let events = vec![user_msg("u1"), assistant_msg("a1")];
+        let mut p = PromptPrepend::new("agent", &events);
+        let out = p.apply("hello");
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn prompt_prepend_suppressed_when_prompt_empty() {
+        let mut p = PromptPrepend::new("", &[]);
+        let out = p.apply("hello");
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn build_context_primer_no_prompt_emits_only_prior_block() {
+        let user = user_msg("u1");
+        let asst = assistant_msg("a1");
+        let primer = build_context_primer("", &[&user, &asst]);
+        assert!(primer.contains("<prior-conversation>"));
+        assert!(!primer.contains("<agent-prompt>"));
+    }
+
+    #[test]
+    fn build_context_primer_with_prompt_wraps_in_agent_prompt() {
+        let user = user_msg("u1");
+        let primer = build_context_primer("agent text", &[&user]);
+        assert!(primer.starts_with("<agent-prompt>"));
+        assert!(primer.contains("agent text"));
+        assert!(primer.contains("<prior-conversation>"));
+    }
+}

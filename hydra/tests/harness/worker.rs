@@ -399,7 +399,7 @@ pub(super) async fn run_worker_impl(
         worker_dir,
         None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
-        &bash_commands,
+        Some(&bash_commands),
         &context,
     )
     .await;
@@ -451,7 +451,7 @@ pub(super) async fn run_worker_expect_failure_impl(
         worker_dir,
         None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
-        &bash_commands,
+        Some(&bash_commands),
         &context,
     )
     .await;

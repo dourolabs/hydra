@@ -4,7 +4,6 @@ use crate::{
         output::{render_session_records, CommandContext, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
-    worker::commands::ModelAwareCommands,
 };
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -178,8 +177,12 @@ pub async fn run(
             issue_id,
             tempdir,
         } => {
-            let commands = ModelAwareCommands::default();
-            worker_run::run(client, session, path, issue_id, tempdir, &commands, context).await?
+            // PR 3 cleanup: `worker_run::run` still accepts an optional
+            // `&dyn WorkerCommands` so the integration-test harness can mock
+            // the model layer; production always passes `None` and dispatch
+            // goes through `ModelSelector::from_context` inside `worker_run`.
+            // The whole parameter is deleted in PR 3 alongside the trait.
+            worker_run::run(client, session, path, issue_id, tempdir, None, context).await?
         }
     }
 

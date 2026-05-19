@@ -20,8 +20,10 @@ use crate::command::patches::resolve_service_repo_name;
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::worker::commands::WorkerCommands;
+use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::report::RunReport;
+use crate::worker::relay_adapter::{spawn_relay_adapter, RelayAdapter};
+use crate::worker::report::{RunReport, SessionResume};
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -38,9 +40,15 @@ pub async fn run(
     dest: PathBuf,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
-    commands: &dyn WorkerCommands,
+    commands: Option<&dyn WorkerCommands>,
     _context: &CommandContext,
 ) -> Result<()> {
+    // The `commands` parameter is transitional and will be removed in PR 3
+    // (it survives this PR so we can drop `ModelAwareCommands` without
+    // touching the trait surface). Production passes `None`; the integration
+    // test harness passes `Some(&BashCommands)` so it can mock the model
+    // without requiring real `claude` / `codex` binaries on PATH. The live
+    // dispatch path goes through `ModelSelector::from_context` below.
     // Initialize a tracing subscriber so structured `tracing::info!` /
     // `tracing::warn!` / `tracing::error!` calls from worker code (e.g.
     // `hydra/src/worker/interactive.rs` suspend/upload/resume instrumentation)
@@ -121,62 +129,28 @@ pub async fn run(
         run_phase(mount.setup_phase(), || mount.setup(), &mut errors).await?;
     }
 
-    let output_dir = Builder::new()
+    let _output_dir = Builder::new()
         .prefix("codex-output")
         .tempdir()
         .context("failed to create temporary codex output directory")?;
-    let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
     let agent_start = Instant::now();
 
-    let last_message = if let Some(interactive_opts) = interactive {
-        log_status("Phase: interactive agent execution — starting");
-        let ws_stream = client.connect_relay_websocket(&job).await?;
-        let idle_timeout =
-            std::time::Duration::from_secs(interactive_opts.idle_timeout_secs.unwrap_or(600));
-        let conversation_resume_from = interactive_opts.conversation_resume_from;
-        match commands
-            .run_interactive(
-                ws_stream,
-                &job,
-                &prompt,
-                model.as_deref(),
-                &repo_path,
-                &execution_env,
-                idle_timeout,
-                conversation_resume_from,
-            )
-            .await
-        {
-            Ok(report) => {
-                let elapsed = agent_start.elapsed().as_secs_f64();
-                log_status(format!(
-                    "Phase: interactive agent execution — completed ({elapsed:.2}s)"
-                ));
-                log_run_report(&report);
-                report.last_message
-            }
-            Err(err) => {
-                let elapsed = agent_start.elapsed().as_secs_f64();
-                log_status(format!(
-                    "Phase: interactive agent execution — failed ({elapsed:.2}s): {err}"
-                ));
-                errors.push(err);
-                errors
-                    .last()
-                    .map(|err| err.to_string())
-                    .unwrap_or_else(|| "interactive session failed".to_string())
-            }
-        }
-    } else {
-        log_status("Phase: agent execution — starting");
+    // When the caller supplies a `commands` impl, dispatch through the legacy
+    // `WorkerCommands` trait rather than `ModelSelector`. Production passes
+    // `None`; the integration-test harness (`hydra/tests/harness/worker.rs`)
+    // passes `Some(&BashCommands)` so it can mock the model without requiring
+    // real `claude` / `codex` binaries on PATH. Both arms are removed in PR 3
+    // when the trait goes away.
+    let last_message = if let Some(commands) = commands {
+        log_status("Phase: agent execution — starting (test path: WorkerCommands trait)");
         match commands
             .run(
                 &prompt,
                 model.as_deref(),
                 &repo_path,
                 &execution_env,
-                &output_path,
+                &dest.join("worker-output.txt"),
                 mcp_config_json.as_deref(),
             )
             .await
@@ -199,6 +173,96 @@ pub async fn run(
                     .last()
                     .map(|err| err.to_string())
                     .unwrap_or_else(|| "worker command execution failed".to_string())
+            }
+        }
+    } else {
+        let selector_home_dir = resolve_worker_home_dir()
+            .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
+        let selector_idle_timeout = Duration::from_secs(
+            interactive
+                .as_ref()
+                .and_then(|opts| opts.idle_timeout_secs)
+                .unwrap_or(600),
+        );
+
+        let selector_result = ModelSelector::from_context(
+            &model,
+            repo_path.clone(),
+            selector_home_dir.clone(),
+            execution_env.clone(),
+            mcp_config_json.as_deref(),
+            selector_idle_timeout,
+        )
+        .await;
+
+        match selector_result {
+            Err(err) => {
+                let elapsed = agent_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: agent execution — failed during model setup ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+                errors
+                    .last()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "model setup failed".to_string())
+            }
+            Ok(mut selector) => {
+                let run_result = if let Some(interactive_opts) = interactive {
+                    log_status("Phase: interactive agent execution — starting");
+                    if matches!(selector, ModelSelector::Codex(_)) {
+                        Err(anyhow!("model {model:?} does not support interactive mode"))
+                    } else {
+                        let conversation_resume_from = interactive_opts.conversation_resume_from;
+                        let ws_stream = client.connect_relay_websocket(&job).await?;
+                        let RelayAdapter {
+                            input_rx,
+                            output_tx,
+                            pump,
+                            initial_resume,
+                        } = spawn_relay_adapter(
+                            ws_stream,
+                            &job,
+                            conversation_resume_from,
+                            &prompt,
+                            selector_home_dir.clone(),
+                            repo_path.clone(),
+                            selector_idle_timeout,
+                        );
+                        let resume: Option<SessionResume> = initial_resume.await.unwrap_or(None);
+                        let report = selector
+                            .run_interactive(input_rx, output_tx, &job, &prompt, resume)
+                            .await;
+                        let _ = pump.await;
+                        report
+                    }
+                } else {
+                    log_status("Phase: agent execution — starting");
+                    let resume: Option<SessionResume> = None;
+                    selector.run(&prompt, resume).await
+                };
+
+                match run_result {
+                    Ok(report) => {
+                        let elapsed = agent_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Phase: agent execution — completed successfully ({elapsed:.2}s)"
+                        ));
+                        log_run_report(&report);
+                        report.last_message
+                    }
+                    Err(err) => {
+                        let elapsed = agent_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Phase: agent execution — failed ({elapsed:.2}s): {err}"
+                        ));
+                        errors.push(err);
+                        errors
+                            .last()
+                            .map(|err| err.to_string())
+                            .unwrap_or_else(|| "worker command execution failed".to_string())
+                    }
+                }
             }
         }
     };
