@@ -13,6 +13,22 @@ use std::time::Duration;
 #[cfg(unix)]
 use tokio::process::Command;
 
+#[cfg(unix)]
+use harness::RelayCallCountingClient;
+#[cfg(unix)]
+use hydra::client::HydraClientInterface;
+#[cfg(unix)]
+use hydra::command::output::{CommandContext, ResolvedOutputFormat};
+#[cfg(unix)]
+use hydra_common::{
+    api::v1::sessions::{BundleSpec, CreateSessionRequest},
+    issues::{IssueStatus, IssueType, SessionSettings},
+};
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::sync::Arc;
+
 /// Integration test: create issue -> create job -> run_worker with git commit
 /// + patch create -> verify patch exists and job completes.
 #[tokio::test]
@@ -134,6 +150,102 @@ async fn run_worker_does_not_reap_test_runner_processes() -> Result<()> {
     );
 
     let _ = sentinel.kill().await;
+    Ok(())
+}
+
+/// Regression guard for the `ModelSelector::Codex` interactive-mode short-circuit
+/// in `worker_run::run` (see `hydra/src/command/sessions/worker_run.rs:213`).
+///
+/// A Codex-class model selected for an interactive session must return `Err`
+/// **before** any relay WebSocket is opened. Today's `ModelSelector::decide_kind`
+/// unit tests cover the routing on paper; this test pins the invariant end-to-end
+/// through the production dispatch path (`commands = None`).
+#[cfg(unix)]
+#[tokio::test]
+async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    // Fake `codex` binary on PATH: `Codex::new` runs `codex login --with-api-key`
+    // as a subprocess and only checks its exit status. A no-op shell script
+    // satisfies that. Cargo nextest runs each test in its own process, so
+    // mutating PATH here is safe.
+    let path_dir = tempfile::tempdir()?;
+    let fake_codex = path_dir.path().join("codex");
+    std::fs::write(&fake_codex, "#!/usr/bin/env sh\nexit 0\n")?;
+    let mut perms = std::fs::metadata(&fake_codex)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&fake_codex, perms)?;
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let new_path = format!("{}:{}", path_dir.path().display(), original_path);
+    std::env::set_var("PATH", &new_path);
+
+    // Issue carrying `model = "gpt-4o"` in its session settings — `gpt-4o`
+    // matches the `gpt-` prefix in `ModelSelector::decide_kind`, routing to
+    // the Codex arm. The model only reaches the session via this path
+    // (`CreateSessionRequest` has no `model` field).
+    let mut settings = SessionSettings::default();
+    settings.model = Some("gpt-4o".to_string());
+    let issue_id = user
+        .create_issue_with_settings(
+            "interactive Codex guard test",
+            IssueType::Task,
+            IssueStatus::Open,
+            None,
+            Some(settings),
+        )
+        .await?;
+
+    // Session: interactive=true triggers the interactive branch in
+    // worker_run; OPENAI_API_KEY=test satisfies Codex::new's env check;
+    // BundleSpec::None keeps mounts minimal (no clone, no build cache).
+    let mut variables = HashMap::new();
+    variables.insert("OPENAI_API_KEY".to_string(), "test".to_string());
+    let request = CreateSessionRequest::new(
+        "interactive Codex guard test".to_string(),
+        None,
+        BundleSpec::None,
+        variables,
+        Some(issue_id),
+        None,
+        true,
+    );
+    let session_id = user.client().create_session(&request).await?.session_id;
+
+    let inner: Arc<dyn HydraClientInterface> = Arc::new(user.client().clone());
+    let wrapper = Arc::new(RelayCallCountingClient::new(inner));
+
+    let temp_dir = tempfile::tempdir()?;
+    let worker_dir = temp_dir.path().to_path_buf();
+    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+
+    let run_result = hydra::command::sessions::worker_run::run(
+        wrapper.clone() as Arc<dyn HydraClientInterface>,
+        session_id,
+        worker_dir,
+        None,
+        true,
+        None,
+        &context,
+    )
+    .await;
+
+    std::env::set_var("PATH", original_path);
+
+    let err = run_result.expect_err("Codex+interactive must return Err");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("interactive") || msg.contains("does not support"),
+        "expected error to mention the interactive guard, got: {msg}"
+    );
+    assert_eq!(
+        wrapper.relay_call_count(),
+        0,
+        "connect_relay_websocket must not be invoked when the Codex interactive guard rejects",
+    );
+
     Ok(())
 }
 
