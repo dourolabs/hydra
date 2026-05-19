@@ -591,17 +591,7 @@ pub async fn setup_local_auth(
     }
 
     // Store CLAUDE_CODE_OAUTH_TOKEN from config into the encrypted secret store.
-    // Skip when the resolved value is empty (e.g., `${CLAUDE_CODE_OAUTH_TOKEN:-}`
-    // substituted to "" on a restart where the env var is unset). Otherwise we
-    // would overwrite a previously-stored real token with an empty value and
-    // every spawned worker would fail validation in `Claude::new` with
-    // "Either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be provided".
-    if let Some(oauth_token) = config
-        .hydra
-        .claude_code_oauth_token
-        .as_deref()
-        .filter(|v| !v.trim().is_empty())
-    {
+    if let Some(oauth_token) = config.hydra.claude_code_oauth_token.as_deref() {
         let encrypted = secret_manager
             .encrypt(oauth_token)
             .context("failed to encrypt CLAUDE_CODE_OAUTH_TOKEN")?;
