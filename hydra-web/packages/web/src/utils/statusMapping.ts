@@ -40,16 +40,6 @@ export function normalizeSessionStatus(status: string): BadgeStatus {
   return "unknown";
 }
 
-/** Normalize a conversation status to a BadgeStatus. */
-export function normalizeConversationStatus(status: string): BadgeStatus {
-  const map: Record<string, BadgeStatus> = {
-    active: "running",
-    idle: "pending",
-    closed: "closed",
-  };
-  return map[status] ?? "unknown";
-}
-
 /** Normalize an issue status to a BadgeStatus. Maps "closed" to "issue-closed" (green). */
 export function normalizeIssueStatus(status: string): BadgeStatus {
   const map: Record<string, BadgeStatus> = {
