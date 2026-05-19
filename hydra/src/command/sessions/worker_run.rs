@@ -34,26 +34,21 @@ const SUBMIT_SESSION_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum number of attempts when submitting the final session status.
 const SUBMIT_SESSION_STATUS_MAX_ATTEMPTS: u32 = 3;
 
-/// Test backdoor: when set, `worker_run::run` dispatches through the legacy
-/// `_commands: &dyn WorkerCommands` parameter instead of `ModelSelector`.
-/// Set only by the integration-test harness so it can mock the model without
-/// requiring real `claude` / `codex` binaries on PATH. Removed in PR 3
-/// along with the trait.
-pub const ENV_HYDRA_TEST_USE_COMMANDS: &str = "HYDRA_TEST_USE_COMMANDS";
-
 pub async fn run(
     client: Arc<dyn HydraClientInterface>,
     session: SessionId,
     dest: PathBuf,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
-    _commands: &dyn WorkerCommands,
+    commands: Option<&dyn WorkerCommands>,
     _context: &CommandContext,
 ) -> Result<()> {
-    // The `_commands` parameter is transitional and will be removed in PR 3
+    // The `commands` parameter is transitional and will be removed in PR 3
     // (it survives this PR so we can drop `ModelAwareCommands` without
-    // touching the trait surface). The live dispatch path goes through
-    // `ModelSelector::from_context` below.
+    // touching the trait surface). Production passes `None`; the integration
+    // test harness passes `Some(&BashCommands)` so it can mock the model
+    // without requiring real `claude` / `codex` binaries on PATH. The live
+    // dispatch path goes through `ModelSelector::from_context` below.
     // Initialize a tracing subscriber so structured `tracing::info!` /
     // `tracing::warn!` / `tracing::error!` calls from worker code (e.g.
     // `hydra/src/worker/interactive.rs` suspend/upload/resume instrumentation)
@@ -141,18 +136,15 @@ pub async fn run(
 
     let agent_start = Instant::now();
 
-    // Test backdoor: when set, dispatch through the legacy `_commands` trait
-    // rather than `ModelSelector`. Used by `hydra/tests/harness/worker.rs` so
-    // the integration tests can mock the model without requiring real
-    // `claude` / `codex` binaries on PATH. Removed in PR 3 along with the
-    // trait.
-    let use_test_commands = std::env::var(ENV_HYDRA_TEST_USE_COMMANDS)
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    let last_message = if use_test_commands {
-        log_status("Phase: agent execution — starting (test backdoor: WorkerCommands trait)");
-        match _commands
+    // When the caller supplies a `commands` impl, dispatch through the legacy
+    // `WorkerCommands` trait rather than `ModelSelector`. Production passes
+    // `None`; the integration-test harness (`hydra/tests/harness/worker.rs`)
+    // passes `Some(&BashCommands)` so it can mock the model without requiring
+    // real `claude` / `codex` binaries on PATH. Both arms are removed in PR 3
+    // when the trait goes away.
+    let last_message = if let Some(commands) = commands {
+        log_status("Phase: agent execution — starting (test path: WorkerCommands trait)");
+        match commands
             .run(
                 &prompt,
                 model.as_deref(),
