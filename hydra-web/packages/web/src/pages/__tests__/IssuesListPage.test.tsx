@@ -8,10 +8,6 @@ import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
 
-vi.mock("../../features/dashboard/HeterogeneousItemList", () => ({
-  HeterogeneousItemList: () => <div data-testid="heterogeneous-item-list" />,
-}));
-
 vi.mock("../../features/dashboard/FilterBar", () => ({
   FilterBar: () => <div data-testid="filter-bar" />,
 }));
