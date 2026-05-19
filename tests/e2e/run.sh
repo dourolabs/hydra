@@ -30,6 +30,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/config/test-config.yaml"
 SERVER_URL="http://localhost:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
+HYDRA_SERVER_PID_FILE="${HYDRA_STATE_DIR}/hydra-server.pid"
 HYDRA_SP="${REPO_ROOT}/target/release/hydra-sp"
 PID_FILE="/tmp/hydra-e2e/server.pid"
 SERVER_PID=""
@@ -106,15 +107,19 @@ ln -sf hydra "${REPO_ROOT}/target/release/hydra-sp"
 echo "    Binary: ${HYDRA_SP}"
 
 # --------------------------------------------------------------------------
-# 5. Initialize and start server
+# 5. Initialize server (which also starts it in-process if not already running)
 # --------------------------------------------------------------------------
 echo "==> Initializing server with test config..."
 "${HYDRA_SP}" server init --config "${CONFIG_PATH}"
 
-echo "==> Starting server..."
-"${HYDRA_SP}" server start &
-SERVER_PID=$!
-
+# `server init` starts the server itself; capture its PID from the server's own
+# pidfile so the cleanup trap and the exported PID file refer to the real
+# process (not the short-lived `init`/`start` CLI invocation).
+if [[ ! -f "${HYDRA_SERVER_PID_FILE}" ]]; then
+  echo "ERROR: Server PID file not found at ${HYDRA_SERVER_PID_FILE} after init" >&2
+  exit 1
+fi
+SERVER_PID="$(cat "${HYDRA_SERVER_PID_FILE}")"
 echo "    Server PID: ${SERVER_PID}"
 echo "==> Waiting for server health check..."
 
@@ -132,9 +137,14 @@ echo "    Server is healthy (waited ${WAITED}s)."
 
 # --------------------------------------------------------------------------
 # 6. Pre-register test fixture repository
+#
+# `env -u HYDRA_TOKEN` drops any inherited token from the caller's shell (the
+# tester agent exports one for talking to production); without it the local
+# CLI would send the wrong token and the local server returns 401. With it
+# unset, the CLI falls back to the auth-token file written by `server init`.
 # --------------------------------------------------------------------------
 echo "==> Registering dourolabs/hydra-test-fixture repository..."
-HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
 echo "    Repository registered."
 
 # --------------------------------------------------------------------------
