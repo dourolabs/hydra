@@ -9,11 +9,14 @@
 # Usage: ./tests/e2e/run.sh
 #
 # Required environment variables:
-#   CLAUDE_CODE_OAUTH_TOKEN  OAuth token for Claude Code (or ANTHROPIC_API_KEY)
-#   ANTHROPIC_API_KEY        Anthropic API key (alternative to CLAUDE_CODE_OAUTH_TOKEN)
+#   CLAUDE_CODE_OAUTH_TOKEN  OAuth token for Claude Code (or CLAUDE_TEST_TOKEN / ANTHROPIC_API_KEY)
+#   CLAUDE_TEST_TOKEN        Fallback name for the Claude OAuth token (used by the e2e tester agent)
+#   ANTHROPIC_API_KEY        Anthropic API key (alternative to the OAuth token)
 #   GH_TOKEN                 GitHub personal access token (repo scope)
 #
-# At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set.
+# At least one of CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_TEST_TOKEN, or ANTHROPIC_API_KEY must be set.
+# CLAUDE_CODE_OAUTH_TOKEN is preferred; CLAUDE_TEST_TOKEN is accepted as a fallback and
+# promoted to CLAUDE_CODE_OAUTH_TOKEN for downstream consumers.
 #
 # On success, the script exits with status 0 and leaves the server running
 # detached in the background. The server PID is written to
@@ -58,8 +61,15 @@ trap cleanup EXIT
 # --------------------------------------------------------------------------
 echo "==> Validating prerequisites..."
 
+# Accept either CLAUDE_CODE_OAUTH_TOKEN (preferred) or CLAUDE_TEST_TOKEN (fallback,
+# used by the e2e tester agent), promoting the fallback so downstream consumers
+# only need to look at CLAUDE_CODE_OAUTH_TOKEN.
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -n "${CLAUDE_TEST_TOKEN:-}" ]]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_TEST_TOKEN}"
+fi
+
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "ERROR: At least one of CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY must be set" >&2
+  echo "ERROR: At least one of CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_TEST_TOKEN, or ANTHROPIC_API_KEY must be set" >&2
   exit 1
 fi
 if [[ -z "${GH_TOKEN:-}" ]]; then
