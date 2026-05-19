@@ -7,6 +7,7 @@ use crate::{PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_json::Value;
 use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,6 +283,38 @@ impl Patch {
             commit_range,
             base_branch,
         }
+    }
+}
+
+impl crate::graph::GraphView for Patch {
+    const KIND: crate::graph::ObjectKind = crate::graph::ObjectKind::Patch;
+
+    fn view_l1(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+        })
+    }
+
+    // The design lists `branch` / `repo` / `review_status` as the L2 fields.
+    // `branch` maps to `branch_name`; `repo` maps to `service_repo_name`.
+    // There is no single `review_status` field on `Patch` today, so L2 emits
+    // the underlying `reviews` array under the key `reviews` — the closest
+    // existing source of truth for "where does this patch stand with
+    // reviewers?". When/if a derived review-status summary lands on the
+    // struct, swap that in here.
+    fn view_l2(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "status": self.status,
+            "branch": self.branch_name,
+            "repo": self.service_repo_name,
+            "reviews": self.reviews,
+        })
+    }
+
+    fn view_l3(&self) -> Value {
+        serde_json::to_value(self).expect("Patch serialization is infallible")
     }
 }
 
@@ -862,5 +895,74 @@ mod tests {
         assert_eq!(summary_record.version, 5);
         assert_eq!(summary_record.patch.title, "fix bug");
         assert_eq!(summary_record.actor, None);
+    }
+
+    mod graph_view {
+        use super::*;
+        use crate::graph::{GraphView, ObjectKind};
+        use serde_json::json;
+
+        #[test]
+        fn kind_is_patch() {
+            assert_eq!(<Patch as GraphView>::KIND, ObjectKind::Patch);
+        }
+
+        #[test]
+        fn view_l1_matches_expected() {
+            let patch = make_test_patch();
+            assert_eq!(
+                patch.view_l1(),
+                json!({
+                    "title": "fix bug",
+                    "status": "Open",
+                })
+            );
+        }
+
+        #[test]
+        fn view_l2_matches_expected() {
+            let patch = make_test_patch();
+            assert_eq!(
+                patch.view_l2(),
+                json!({
+                    "title": "fix bug",
+                    "status": "Open",
+                    "branch": "feature/fix",
+                    "repo": "org/repo",
+                    "reviews": [
+                        {
+                            "contents": "looks good",
+                            "is_approved": true,
+                            "author": "bob",
+                            "submitted_at": null,
+                        },
+                        {
+                            "contents": "needs changes",
+                            "is_approved": false,
+                            "author": "carol",
+                            "submitted_at": null,
+                        },
+                    ],
+                })
+            );
+        }
+
+        #[test]
+        fn view_l3_round_trips_to_original() {
+            let patch = make_test_patch();
+            let value = patch.view_l3();
+            let roundtripped: Patch = serde_json::from_value(value).unwrap();
+            assert_eq!(roundtripped, patch);
+        }
+
+        #[test]
+        fn view_l2_contains_view_l1_keys_with_same_values() {
+            let patch = make_test_patch();
+            let l1 = patch.view_l1();
+            let l2 = patch.view_l2();
+            for (key, expected) in l1.as_object().unwrap() {
+                assert_eq!(l2.get(key), Some(expected), "key {key} mismatch in L2");
+            }
+        }
     }
 }

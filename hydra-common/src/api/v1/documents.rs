@@ -3,6 +3,7 @@ use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separate
 use crate::{DocumentId, DocumentPath, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -36,6 +37,34 @@ impl Document {
             created_by,
             deleted,
         })
+    }
+}
+
+impl crate::graph::GraphView for Document {
+    const KIND: crate::graph::ObjectKind = crate::graph::ObjectKind::Document;
+
+    // Documents have no `status` field, so L1 deviates from the
+    // `{title, status}` shape used by Issue / Patch / Conversation and emits
+    // `{title, path}` instead — `path` is the closest identity-ish summary a
+    // document carries. L2 adds `created_by` (the design calls this
+    // `creator`, but the struct only exposes the originating session id).
+    fn view_l1(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "path": self.path,
+        })
+    }
+
+    fn view_l2(&self) -> Value {
+        serde_json::json!({
+            "title": self.title,
+            "path": self.path,
+            "created_by": self.created_by,
+        })
+    }
+
+    fn view_l3(&self) -> Value {
+        serde_json::to_value(self).expect("Document serialization is infallible")
     }
 }
 
@@ -638,5 +667,72 @@ mod tests {
         assert_eq!(summary_record.version, 2);
         assert_eq!(summary_record.document.title, "Title");
         assert_eq!(summary_record.actor, None);
+    }
+
+    mod graph_view {
+        use super::*;
+        use crate::graph::{GraphView, ObjectKind};
+        use serde_json::json;
+
+        fn sample_document() -> (Document, SessionId) {
+            let created_by = SessionId::new();
+            let document = Document::new(
+                "Design notes".to_string(),
+                "Body markdown content".to_string(),
+                Some("designs/notes.md".to_string()),
+                Some(created_by.clone()),
+                false,
+            )
+            .unwrap();
+            (document, created_by)
+        }
+
+        #[test]
+        fn kind_is_document() {
+            assert_eq!(<Document as GraphView>::KIND, ObjectKind::Document);
+        }
+
+        #[test]
+        fn view_l1_matches_expected() {
+            let (document, _) = sample_document();
+            assert_eq!(
+                document.view_l1(),
+                json!({
+                    "title": "Design notes",
+                    "path": "/designs/notes.md",
+                })
+            );
+        }
+
+        #[test]
+        fn view_l2_matches_expected() {
+            let (document, created_by) = sample_document();
+            assert_eq!(
+                document.view_l2(),
+                json!({
+                    "title": "Design notes",
+                    "path": "/designs/notes.md",
+                    "created_by": created_by,
+                })
+            );
+        }
+
+        #[test]
+        fn view_l3_round_trips_to_original() {
+            let (document, _) = sample_document();
+            let value = document.view_l3();
+            let roundtripped: Document = serde_json::from_value(value).unwrap();
+            assert_eq!(roundtripped, document);
+        }
+
+        #[test]
+        fn view_l2_contains_view_l1_keys_with_same_values() {
+            let (document, _) = sample_document();
+            let l1 = document.view_l1();
+            let l2 = document.view_l2();
+            for (key, expected) in l1.as_object().unwrap() {
+                assert_eq!(l2.get(key), Some(expected), "key {key} mismatch in L2");
+            }
+        }
     }
 }

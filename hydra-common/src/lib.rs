@@ -7,6 +7,7 @@ pub mod build_cache;
 pub mod constants;
 pub mod document_path;
 pub mod github;
+pub mod graph;
 pub mod ids;
 pub mod models;
 pub mod repo_name;
