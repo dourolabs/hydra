@@ -50,5 +50,5 @@ Create an issue via the dashboard assigned to an SWE agent, wait for the agent t
 - The issue detail page shows a complete activity log of the lifecycle
 - The session record exposes a `usage` object whose `input_tokens` and `output_tokens`
   are both strictly positive (this is the assertion added in step 13 — see
-  `hydra/src/worker/report.rs` `RunReport.usage` and `hydra-server` `transition_task_to_completion_with_usage`
+  `hydra/src/worker/report.rs` `RunReport.usage` and `hydra-server` `transition_task_to_completion`
   for where this data is captured and persisted).

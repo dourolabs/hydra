@@ -1154,7 +1154,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         )
         .await?;
     state
-        .transition_task_to_completion(&parent_job_id, Ok(()), None, ActorRef::test())
+        .transition_task_to_completion(&parent_job_id, Ok(()), None, None, ActorRef::test())
         .await?;
     let (ctx_job_id, _) = handles
         .store

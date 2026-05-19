@@ -7312,7 +7312,7 @@ mod tests {
     #[tokio::test]
     async fn task_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task = Session::new(
+        let mut task = Session::new(
             "full test".to_string(),
             BundleSpec::None,
             None,
@@ -7333,6 +7333,12 @@ mod tests {
                 reason: "test error".to_string(),
             }),
         );
+        task.usage = Some(hydra_common::sessions::TokenUsage {
+            input_tokens: 4321,
+            output_tokens: 765,
+            cache_read_input_tokens: 21,
+            cache_creation_input_tokens: 5,
+        });
 
         let now = Utc::now();
         let (task_id, _) = store

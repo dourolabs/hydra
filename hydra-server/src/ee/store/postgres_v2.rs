@@ -5404,6 +5404,12 @@ mod tests {
         session.end_time = Some(truncate_to_micros(
             Utc::now() - chrono::Duration::minutes(5),
         ));
+        session.usage = Some(hydra_common::sessions::TokenUsage {
+            input_tokens: 1234,
+            output_tokens: 567,
+            cache_read_input_tokens: 89,
+            cache_creation_input_tokens: 10,
+        });
         session
     }
 
@@ -5868,7 +5874,13 @@ mod tests {
 
         handles
             .state
-            .transition_task_to_completion(&task_id, Ok(()), Some("done".into()), ActorRef::test())
+            .transition_task_to_completion(
+                &task_id,
+                Ok(()),
+                Some("done".into()),
+                None,
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -5970,7 +5982,13 @@ mod tests {
             .unwrap();
         handles
             .state
-            .transition_task_to_completion(&task3_id, Ok(()), Some("done".into()), ActorRef::test())
+            .transition_task_to_completion(
+                &task3_id,
+                Ok(()),
+                Some("done".into()),
+                None,
+                ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -5992,6 +6010,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "error".to_string(),
                 }),
+                None,
                 None,
                 ActorRef::test(),
             )
