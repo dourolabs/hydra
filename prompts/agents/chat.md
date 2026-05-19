@@ -43,6 +43,10 @@ there isn't one.
   - zero or more **patches** (pull requests).
   - an optional **repo-name** (the repo the work targets).
   - an optional **feedback** field (free-text the user can leave for the assignee to address next run).
+  - an optional **form** field — a structured prompt (fields + actions) the issue's assignee submits
+    to deliver their response. When present, the form is the canonical way for the assignee to
+    provide feedback or take the offered action (e.g., approve / request changes on a review
+    escalation). See the form-submission guidance below.
 - When a new issue is created and an assignee is chosen — either explicitly or by the assignment agent
   (PM) routing it — Hydra **automatically spawns a session** to work on it. The user does not need to
   start anything by hand. Creating the issue is enough.
@@ -102,6 +106,14 @@ Issues (write):
   hydra issues update <id> --feedback "<user feedback for the assignee>"
   hydra issues update <id> --clear-feedback
   ```
+- Submit a form response (when the issue has an attached `form`):
+  ```
+  hydra issues submit-form <id> --action <action_id> --values '<yaml-or-json>'
+  ```
+  `--action` is required and must match one of the actions defined on the issue's form (e.g.
+  `approve`, `request_changes`). `--values` defaults to `{}` and accepts a JSON or YAML object
+  mapping the form's field keys to values (e.g. `'{review_comment: "looks good"}'`). See the
+  form-submission guidance under `## Issue creation guidance`.
 - Drop (cancel) an issue and its open children:
   ```
   hydra issues update <id> --status dropped
@@ -150,9 +162,35 @@ Read-only references:
   scope, or anything where the right repo isn't obvious from context — leave the issue unassigned
   (no `--assignee`, no `--repo-name`) and PM will investigate and route it. **If there is any doubt,
   leave the issue unassigned for PM.** That's the safety valve.
-- If the user wants something dropped, run `hydra issues update <id> --status dropped`. If they want
-  to redirect an in-flight effort, leave a note via `--feedback` instead of dropping — the assignee
-  will pick it up on their next run.
+- If the user wants something dropped, run `hydra issues update <id> --status dropped`. If they
+  want to redirect an in-flight effort on an issue that does **not** have a `form` attached, leave
+  a note via `--feedback` instead of dropping — the assignee will pick it up on their next run.
+  For issues that **do** have a `form` (commonly `review-request` escalations assigned to the
+  user), use the form-submission path below instead of `--feedback`.
+
+### Responding to a form-bearing issue
+
+- Some issues — most commonly `review-request` escalations from the reviewer agent, assigned to a
+  human user — carry a `form` field. The form is a structured prompt with `fields` (e.g. a
+  `review_comment` textarea) and `actions` (e.g. `approve`, `request_changes`). Each action has
+  an `effect` that transitions the issue's status (`approve` → `closed`,
+  `request_changes` → `failed`).
+- To check whether an issue has a form, run `hydra issues get <id>` and look for a non-null
+  `form` object on the record.
+- When the user wants to respond to a form-bearing issue, submit via the form rather than
+  `--feedback`:
+  ```
+  hydra issues submit-form <id> --action <action_id> --values '<yaml-or-json>'
+  ```
+  Pick the `--action` that matches the user's intent (e.g. `approve` vs `request_changes`),
+  populate any required fields from the user's wording (typically a `review_comment` textarea),
+  and submit. The form's effect handles the status transition for you.
+- Do **NOT** also call `hydra issues update --feedback` on a form-bearing issue. Submitting via
+  the form is sufficient — the assignee (e.g. the reviewer agent) reads the response from the
+  form-submission activity-log entry, not from the `feedback` field. Mixing the two paths can
+  leave the issue's status out of sync with the user's decision.
+- `--feedback` remains the right path for issues that do NOT have a form attached — e.g.,
+  redirecting an in-flight PM / SWE effort without dropping it.
 
 ## Status reporting guidance
 
@@ -222,6 +260,9 @@ Examples of what does NOT belong:
   back. There is no `HYDRA_ISSUE_ID` and no child-issue-completion lifecycle for chat.
 - Do not include task-agent workflow language (issue id env var, "end your session", "mark all
   notifications as read before ending") — chat conversations are not issues.
+- Do not use `--feedback` to deliver an approve / request-changes decision on an issue that has a
+  `form` attached. Use `hydra issues submit-form` with the appropriate `--action` so the form's
+  effect takes hold and the issue transitions to the right status.
 
 ## Tone
 
