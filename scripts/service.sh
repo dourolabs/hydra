@@ -95,12 +95,21 @@ fi
 kubectl version >/dev/null
 
 generate_server_config() {
+  # Emit each AI-key line only when the corresponding env var is non-empty.
+  # setup_local_auth rejects an explicitly-empty CLAUDE_CODE_OAUTH_TOKEN, and a
+  # blank OPENAI_API_KEY here would just be dead config; omitting absent keys
+  # lets the deserialized HydraSection field stay `None`.
+  local optional_ai_keys=""
+  if [[ -n "${SERVER_OPENAI_API_KEY}" ]]; then
+    optional_ai_keys+=$'\n  OPENAI_API_KEY: "'"${SERVER_OPENAI_API_KEY}"'"'
+  fi
+  if [[ -n "${SERVER_CLAUDE_CODE_OAUTH_TOKEN}" ]]; then
+    optional_ai_keys+=$'\n  CLAUDE_CODE_OAUTH_TOKEN: "'"${SERVER_CLAUDE_CODE_OAUTH_TOKEN}"'"'
+  fi
   cat <<EOF
 hydra:
   namespace: "${NAMESPACE}"
-  server_hostname: "server.${NAMESPACE}.svc.cluster.local"
-  OPENAI_API_KEY: "${SERVER_OPENAI_API_KEY}"
-  CLAUDE_CODE_OAUTH_TOKEN: "${SERVER_CLAUDE_CODE_OAUTH_TOKEN}"
+  server_hostname: "server.${NAMESPACE}.svc.cluster.local"${optional_ai_keys}
 
 job:
   default_image: "${CLIENT_IMAGE}"

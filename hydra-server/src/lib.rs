@@ -591,7 +591,21 @@ pub async fn setup_local_auth(
     }
 
     // Store CLAUDE_CODE_OAUTH_TOKEN from config into the encrypted secret store.
+    // If the config field is present, it must contain a non-empty value: an empty
+    // string typically comes from a shell substitution like `${CLAUDE_CODE_OAUTH_TOKEN:-}`
+    // when the env var is unset, and silently accepting it would let an invalid
+    // config overwrite a previously-stored real token. Reject it loudly here so
+    // the operator fixes the config (set the env var, or remove the field).
+    // The `set_user_secret` call below is an upsert, so a valid value naturally
+    // overwrites any stale row left over from a prior misconfigured run.
     if let Some(oauth_token) = config.hydra.claude_code_oauth_token.as_deref() {
+        if oauth_token.trim().is_empty() {
+            anyhow::bail!(
+                "config.hydra.claude_code_oauth_token (CLAUDE_CODE_OAUTH_TOKEN) is set to an empty value. \
+                 Set the CLAUDE_CODE_OAUTH_TOKEN environment variable to a real token, or remove the \
+                 field from your config if you don't intend to configure it."
+            );
+        }
         let encrypted = secret_manager
             .encrypt(oauth_token)
             .context("failed to encrypt CLAUDE_CODE_OAUTH_TOKEN")?;

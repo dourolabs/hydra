@@ -2,11 +2,11 @@ use crate::{
     config::AuthConfig,
     domain::{
         actors::AuthToken,
-        secrets::{SECRET_GITHUB_TOKEN, SecretManager},
+        secrets::{SECRET_CLAUDE_CODE_OAUTH_TOKEN, SECRET_GITHUB_TOKEN, SecretManager},
         users::Username,
     },
     setup_local_auth,
-    store::{MemoryStore, ReadOnlyStore},
+    store::{MemoryStore, ReadOnlyStore, Store},
     test_utils::test_app_config,
 };
 use std::sync::Arc;
@@ -265,6 +265,139 @@ async fn setup_local_auth_recreates_deleted_token_file() -> anyhow::Result<()> {
     assert!(
         actor.item.verify_auth_token(&parsed),
         "actor should verify the recreated token"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_rejects_empty_claude_oauth_token() {
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some(String::new());
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    let err = setup_local_auth(&config, store.as_ref(), &sm)
+        .await
+        .expect_err("empty CLAUDE_CODE_OAUTH_TOKEN should be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("claude_code_oauth_token"),
+        "error message should reference the offending config key, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn setup_local_auth_rejects_whitespace_claude_oauth_token() {
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some("   \t\n".to_string());
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    let err = setup_local_auth(&config, store.as_ref(), &sm)
+        .await
+        .expect_err("whitespace-only CLAUDE_CODE_OAUTH_TOKEN should be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("claude_code_oauth_token"),
+        "error message should reference the offending config key, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn setup_local_auth_accepts_missing_claude_oauth_token() -> anyhow::Result<()> {
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = None;
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let username = Username::from("local");
+    let stored = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?;
+    assert!(
+        stored.is_none(),
+        "no CLAUDE_CODE_OAUTH_TOKEN should be stored when config field is absent"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_stores_valid_claude_oauth_token() -> anyhow::Result<()> {
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some("oauth-real-token".to_string());
+
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let username = Username::from("local");
+    let encrypted = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?
+        .expect("CLAUDE_CODE_OAUTH_TOKEN should be stored");
+    assert_eq!(sm.decrypt(&encrypted)?, "oauth-real-token");
+
+    Ok(())
+}
+
+/// A previously-stored CLAUDE_CODE_OAUTH_TOKEN (e.g. from a misconfigured prior
+/// run that wrote an empty value before validation existed) is overwritten by
+/// the validated config value on the next setup_local_auth call.
+#[tokio::test]
+async fn setup_local_auth_overwrites_stale_empty_claude_oauth_token() -> anyhow::Result<()> {
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    let username = Username::from("local");
+
+    // Seed the store with a stale empty value, as p-rersye's downstream-skip
+    // workaround had to compensate for.
+    let stale = sm.encrypt("")?;
+    store
+        .set_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN, &stale, true)
+        .await?;
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    config.hydra.claude_code_oauth_token = Some("oauth-real-token".to_string());
+
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let encrypted = store
+        .get_user_secret(&username, SECRET_CLAUDE_CODE_OAUTH_TOKEN)
+        .await?
+        .expect("CLAUDE_CODE_OAUTH_TOKEN should be stored");
+    assert_eq!(
+        sm.decrypt(&encrypted)?,
+        "oauth-real-token",
+        "stale empty row should have been overwritten by the validated config value"
     );
 
     Ok(())

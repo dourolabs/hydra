@@ -1274,27 +1274,20 @@ github_app:
 
     #[test]
     fn e2e_test_config_parses_as_app_config() {
-        // Verify the E2E test config YAML (with env vars substituted) parses
-        // as a valid AppConfig. This catches drift between the config file and
-        // the struct definition.
+        // Verify the E2E test config template parses as a valid AppConfig.
+        // The template intentionally omits CLAUDE_CODE_OAUTH_TOKEN and
+        // ANTHROPIC_API_KEY (tests/e2e/run.sh injects them at bootstrap time
+        // based on env vars present, to avoid the `Some("")` case that
+        // setup_local_auth now rejects). This test catches drift between the
+        // template and the struct definition; the injected-keys form is
+        // covered by `e2e_test_config_parses_with_injected_keys` below.
         let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
-        // Substitute the env-var placeholders with dummy values. Handle both
-        // the bare ${VAR} form and the ${VAR:-} default-empty form.
-        let substituted = raw
-            .replace("${CLAUDE_CODE_OAUTH_TOKEN:-}", "test-oauth-token")
-            .replace("${ANTHROPIC_API_KEY:-}", "test-anthropic-api-key")
-            .replace("${GH_TOKEN}", "ghp_test_token");
+        let substituted = raw.replace("${GH_TOKEN}", "ghp_test_token");
         let config: AppConfig =
             serde_yaml_ng::from_str(&substituted).expect("E2E test config should parse");
         assert_eq!(config.hydra.namespace, "test");
-        assert_eq!(
-            config.hydra.claude_code_oauth_token.as_deref(),
-            Some("test-oauth-token")
-        );
-        assert_eq!(
-            config.hydra.anthropic_api_key.as_deref(),
-            Some("test-anthropic-api-key")
-        );
+        assert_eq!(config.hydra.claude_code_oauth_token, None);
+        assert_eq!(config.hydra.anthropic_api_key, None);
         assert!(config.auth.is_local());
         assert_eq!(config.auth.local_username(), Some("test-agent"));
         assert!(
@@ -1309,24 +1302,27 @@ github_app:
     }
 
     #[test]
-    fn e2e_test_config_parses_with_only_anthropic_api_key() {
-        // When ANTHROPIC_API_KEY is set but CLAUDE_CODE_OAUTH_TOKEN is unset,
-        // the ${CLAUDE_CODE_OAUTH_TOKEN:-} placeholder resolves to an empty
-        // string. Verify the config still parses and the empty oauth token is
-        // surfaced as Some("") (the system-secret resolver filters empty
-        // strings before injecting into the worker env).
+    fn e2e_test_config_parses_with_injected_keys() {
+        // Simulates what tests/e2e/run.sh emits when both env vars are set:
+        // the template's `hydra:` block is augmented with the two API key
+        // lines before the YAML is handed to `hydra-sp server init`.
         let raw = include_str!("../../../tests/e2e/config/test-config.yaml");
-        let substituted = raw
-            .replace("${CLAUDE_CODE_OAUTH_TOKEN:-}", "")
-            .replace("${ANTHROPIC_API_KEY:-}", "test-anthropic-api-key")
-            .replace("${GH_TOKEN}", "ghp_test_token");
+        let with_keys = raw.replace("${GH_TOKEN}", "ghp_test_token").replace(
+            "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"",
+            "HYDRA_SECRET_ENCRYPTION_KEY: \"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"\n  \
+                 CLAUDE_CODE_OAUTH_TOKEN: \"test-oauth-token\"\n  \
+                 ANTHROPIC_API_KEY: \"test-anthropic-api-key\"",
+        );
         let config: AppConfig =
-            serde_yaml_ng::from_str(&substituted).expect("E2E test config should parse");
+            serde_yaml_ng::from_str(&with_keys).expect("E2E test config should parse with keys");
+        assert_eq!(
+            config.hydra.claude_code_oauth_token.as_deref(),
+            Some("test-oauth-token")
+        );
         assert_eq!(
             config.hydra.anthropic_api_key.as_deref(),
             Some("test-anthropic-api-key")
         );
-        assert_eq!(config.hydra.claude_code_oauth_token.as_deref(), Some(""));
     }
 
     #[test]
