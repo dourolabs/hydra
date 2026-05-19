@@ -227,7 +227,6 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
         worker_dir,
         None,
         true,
-        None,
         &context,
     )
     .await;
