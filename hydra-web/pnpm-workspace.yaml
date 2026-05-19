@@ -7,3 +7,5 @@ onlyBuiltDependencies:
   - "esbuild"
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude: []
+allowBuilds:
+  esbuild: set this to true or false

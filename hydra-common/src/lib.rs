@@ -14,6 +14,7 @@ pub mod models;
 pub mod repo_name;
 pub mod review_utils;
 pub mod rgb;
+pub mod time;
 pub mod util;
 pub mod versioning;
 
