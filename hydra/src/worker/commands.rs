@@ -2,12 +2,15 @@ use std::{collections::HashMap, path::Path, process::Stdio, time::Duration, time
 
 use crate::claude_formatter::StreamFormatter;
 use crate::client::RelayWebSocket;
+use crate::worker::interactive::{extract_session_id, transcript_path, worker_home_dir};
+use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use hydra_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
 };
 use hydra_common::SessionId;
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::{
     fs,
@@ -58,7 +61,7 @@ pub trait WorkerCommands: Send + Sync {
         env: &HashMap<String, String>,
         output_path: &Path,
         mcp_config: Option<&str>,
-    ) -> Result<String>;
+    ) -> Result<RunReport>;
 
     /// Run Claude in interactive mode, bridging a relay WebSocket with Claude's stdin/stdout.
     ///
@@ -77,7 +80,7 @@ pub trait WorkerCommands: Send + Sync {
         env: &HashMap<String, String>,
         idle_timeout: Duration,
         conversation_resume_from: Option<usize>,
-    ) -> Result<String>;
+    ) -> Result<RunReport>;
 }
 
 pub struct CodexCommands;
@@ -247,26 +250,29 @@ impl CodexCommands {
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
-        output_path: &Path,
-    ) -> Result<String> {
-        if let Some(dir) = output_path.parent() {
-            fs::create_dir_all(dir)
-                .await
-                .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
-        }
+    ) -> Result<RunReport> {
+        // Per-call output dir that receives the tee'd `codex exec --json`
+        // stdout as `session.jsonl`. Leak the TempDir so the path survives the
+        // function (worker_run.rs reads it for the `session_state:` log line,
+        // and PR 2's upload follow-up will read it too).
+        //
+        // TODO(PR 2): move ownership to Codex::output_dir so RAII cleanup is
+        // restored when the `Codex` struct is dropped.
+        let output_dir = tempfile::Builder::new()
+            .prefix("codex-session")
+            .tempdir()
+            .context("failed to create codex output tempdir")?;
+        let session_log_path = output_dir.path().join("session.jsonl");
+        // Leak: hand the path out, drop the guard so the directory persists.
+        let _output_dir_path = output_dir.keep();
 
         let mut command = Command::new("codex");
         command
             .args([
                 "exec",
-                "--color",
-                "always",
                 "--skip-git-repo-check",
-                "-o",
-                output_path
-                    .to_str()
-                    .expect("codex output path should be valid UTF-8"),
                 "--dangerously-bypass-approvals-and-sandbox",
+                "--json",
             ])
             .current_dir(working_dir)
             .envs(env);
@@ -276,21 +282,190 @@ impl CodexCommands {
             command.arg("--model");
             command.arg(model);
         }
+        command.arg("--");
         command.arg(prompt);
 
-        let status = command
-            .status()
-            .await
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
             .context("failed to spawn codex command")?;
+        let child_stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture stdout for codex command"))?;
+
+        // Tee child stdout into both the JSONL log file and the in-memory
+        // event-parsing loop. Tee, not redirect — events are parsed on the fly.
+        let log_path = session_log_path.clone();
+        let parse_handle = tokio::spawn(async move {
+            let mut log_file = fs::File::create(&log_path)
+                .await
+                .with_context(|| format!("failed to create codex session log {log_path:?}"))?;
+            let mut reader = BufReader::new(child_stdout);
+            let mut line = String::new();
+            let mut state = CodexParseState::default();
+            loop {
+                line.clear();
+                let read = reader
+                    .read_line(&mut line)
+                    .await
+                    .context("failed to read codex stdout")?;
+                if read == 0 {
+                    break;
+                }
+                // Write the raw line to the on-disk JSONL log first so the
+                // session_state file is complete even if parsing this line
+                // fails.
+                log_file
+                    .write_all(line.as_bytes())
+                    .await
+                    .context("failed to write to codex session log")?;
+                // Also echo to our stdout for the per-session log capture.
+                let mut stdout_writer = io::stdout();
+                let _ = stdout_writer.write_all(line.as_bytes()).await;
+                let _ = stdout_writer.flush().await;
+
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<CodexEvent>(trimmed) {
+                    Ok(event) => state.apply(event),
+                    Err(_) => {
+                        tracing::warn!(line = %trimmed, "unparseable codex --json event");
+                    }
+                }
+            }
+            log_file
+                .flush()
+                .await
+                .context("failed to flush codex session log")?;
+            Ok::<CodexParseState, anyhow::Error>(state)
+        });
+
+        let status = child
+            .wait()
+            .await
+            .context("failed waiting for codex command to finish")?;
+        let state = parse_handle
+            .await
+            .context("failed to join codex stdout parser")??;
 
         if !status.success() {
             return Err(anyhow!("codex command failed with status {status}"));
         }
 
-        fs::read_to_string(output_path)
-            .await
-            .with_context(|| format!("failed to read codex output from {output_path:?}"))
+        let session_state =
+            session_state_if_exists(session_log_path, SessionStateFormat::CodexJsonl);
+
+        Ok(RunReport {
+            last_message: state.last_message.unwrap_or_default(),
+            usage: state.usage,
+            model_session_id: state.session_id,
+            session_state,
+        })
     }
+}
+
+/// Wrap a candidate session-state path into `Some(SessionStateRef)` iff it
+/// exists on disk; return `None` otherwise (and log at debug). The
+/// "file must already exist" rule is per the design's PR-1 acceptance
+/// criteria — callers should never surface a path the consumer will then
+/// fail to read.
+fn session_state_if_exists(
+    local_path: std::path::PathBuf,
+    format: SessionStateFormat,
+) -> Option<SessionStateRef> {
+    if local_path.exists() {
+        Some(SessionStateRef { local_path, format })
+    } else {
+        tracing::debug!(
+            path = %local_path.display(),
+            ?format,
+            "session-state path does not exist; returning None"
+        );
+        None
+    }
+}
+
+/// In-memory state accumulated while parsing the `codex exec --json` JSONL
+/// stream. `usage` is overwritten on each `TokenUsage` event (Codex reports
+/// cumulative totals; last-wins is correct). `last_message` and `session_id`
+/// likewise track the latest observed value.
+#[derive(Default)]
+struct CodexParseState {
+    usage: TokenUsage,
+    session_id: Option<String>,
+    last_message: Option<String>,
+}
+
+impl CodexParseState {
+    fn apply(&mut self, event: CodexEvent) {
+        match event {
+            CodexEvent::ThreadStarted { thread_id } => {
+                self.session_id = Some(thread_id);
+            }
+            CodexEvent::ThreadTokenUsageUpdated { token_usage } => {
+                // Codex reports cumulative totals per event, so we overwrite
+                // rather than sum.
+                self.usage = TokenUsage {
+                    input_tokens: token_usage.input_tokens,
+                    output_tokens: token_usage.output_tokens,
+                    // Codex does not report Claude-shaped cache hits today;
+                    // leave the cache_* fields at 0.
+                    cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                };
+            }
+            CodexEvent::ItemCompleted { item } => {
+                if let CodexItem::AgentMessage { text } = item {
+                    self.last_message = Some(text);
+                }
+            }
+            CodexEvent::Other => {}
+        }
+    }
+}
+
+/// Minimal parser for the subset of `codex exec --json` events the worker
+/// cares about. Variant names are kept Pascal-cased on the Rust side; the
+/// wire-format strings (`thread.started`, `thread.token_usage_updated`,
+/// `item.completed`) match what `codex` 0.130 emits as `{"type":"..."}` tags.
+/// Any other event falls into `Other` via `#[serde(other)]`.
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum CodexEvent {
+    #[serde(rename = "thread.started")]
+    ThreadStarted { thread_id: String },
+    #[serde(rename = "thread.token_usage_updated")]
+    ThreadTokenUsageUpdated { token_usage: CodexTokenUsageRaw },
+    #[serde(rename = "item.completed")]
+    ItemCompleted { item: CodexItem },
+    #[serde(other)]
+    Other,
+}
+
+/// Subset of Codex's `ThreadTokenUsage` struct we care about. Unknown fields
+/// are ignored.
+#[derive(Deserialize, Default)]
+struct CodexTokenUsageRaw {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+}
+
+/// One `item` payload from an `item.completed` event. Codex distinguishes
+/// item kinds via the `item_type` field; we only need the `AgentMessageItem`
+/// variant for `last_message`.
+#[derive(Deserialize)]
+#[serde(tag = "item_type")]
+enum CodexItem {
+    #[serde(rename = "AgentMessageItem")]
+    AgentMessage { text: String },
+    #[serde(other)]
+    Other,
 }
 
 #[async_trait]
@@ -301,9 +476,9 @@ impl WorkerCommands for CodexCommands {
         model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
-        output_path: &Path,
+        _output_path: &Path,
         mcp_config: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         let openai_api_key = env.get(ENV_OPENAI_API_KEY).map(|s| s.as_str());
         self.login(openai_api_key).await?;
 
@@ -318,7 +493,7 @@ impl WorkerCommands for CodexCommands {
             None
         };
 
-        let result = Self::run_codex(prompt, model, working_dir, env, output_path)
+        let result = Self::run_codex(prompt, model, working_dir, env)
             .await
             .with_context(|| "failed to execute codex for worker context");
 
@@ -340,7 +515,7 @@ impl WorkerCommands for CodexCommands {
         _env: &HashMap<String, String>,
         _idle_timeout: Duration,
         _conversation_resume_from: Option<usize>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         Err(anyhow!("interactive mode is not supported for Codex"))
     }
 }
@@ -384,7 +559,7 @@ impl ClaudeCommands {
         env: &HashMap<String, String>,
         output_path: &Path,
         mcp_config_path: Option<&Path>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         if let Some(dir) = output_path.parent() {
             fs::create_dir_all(dir)
                 .await
@@ -454,6 +629,7 @@ impl ClaudeCommands {
             let mut stdout_buf = String::new();
             let mut stdout_writer = io::stdout();
             let mut line = String::new();
+            let mut session_id: Option<String> = None;
             loop {
                 line.clear();
                 let read = reader
@@ -464,6 +640,13 @@ impl ClaudeCommands {
                     let elapsed = spawn_time.elapsed().as_secs_f64();
                     println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
                     break;
+                }
+                // Capture the most-recent session id seen on the stream; same
+                // logic the interactive path uses (the JSONL `session_id`
+                // field). Latest-wins to track id rotations within a single
+                // Claude run.
+                if let Some(sid) = extract_session_id(&line) {
+                    session_id = Some(sid);
                 }
                 for formatted in formatter.handle_line(&line) {
                     stdout_writer
@@ -478,7 +661,13 @@ impl ClaudeCommands {
                 }
             }
             let last_message = formatter.last_assistant_text().map(str::to_owned);
-            Ok::<(String, Option<String>), anyhow::Error>((stdout_buf, last_message))
+            let usage = formatter.aggregated_usage().clone();
+            Ok::<(String, Option<String>, Option<String>, TokenUsage), anyhow::Error>((
+                stdout_buf,
+                last_message,
+                session_id,
+                usage,
+            ))
         });
 
         // Wait for the main claude process to exit.
@@ -494,7 +683,7 @@ impl ClaudeCommands {
 
         // The main process has exited. Give stdout a grace period to reach EOF
         // (it will if no background processes inherited the pipe).
-        let (stdout_buf, last_message) =
+        let (stdout_buf, last_message, session_id, usage) =
             match tokio::time::timeout(PROCESS_GROUP_GRACE_PERIOD, &mut stdout_handle).await {
                 Ok(join_result) => {
                     // stdout finished within the grace period — use the result directly.
@@ -523,7 +712,7 @@ impl ClaudeCommands {
                                 "stdout pipe read timed out after {timeout:?} — \
                                  dropping handle and proceeding with partial output"
                             );
-                            (String::new(), None)
+                            (String::new(), None, None, TokenUsage::default())
                         }
                     }
                 }
@@ -557,7 +746,26 @@ impl ClaudeCommands {
             .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
 
         let last_message = last_message.unwrap_or(stdout_buf);
-        Ok(last_message)
+
+        // Compute the on-disk transcript path Claude is using for this run.
+        // We only surface it as `session_state` if (a) we captured a session
+        // id from the stream and (b) the transcript file actually exists at
+        // the expected path; otherwise the caller sees `None` (logged at
+        // debug level).
+        let session_state = match (&session_id, worker_home_dir()) {
+            (Some(sid), Ok(home_dir)) => session_state_if_exists(
+                transcript_path(&home_dir, working_dir, sid),
+                SessionStateFormat::ClaudeJsonl,
+            ),
+            _ => None,
+        };
+
+        Ok(RunReport {
+            last_message,
+            usage,
+            model_session_id: session_id,
+            session_state,
+        })
     }
 }
 
@@ -571,7 +779,7 @@ impl WorkerCommands for ClaudeCommands {
         env: &HashMap<String, String>,
         output_path: &Path,
         mcp_config: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         // Write MCP config to a temp file if provided. The TempDir handle must
         // stay alive until run_claude completes so the file isn't cleaned up.
         let (_mcp_temp_dir, mcp_config_path) = if let Some(config_json) = mcp_config {
@@ -609,8 +817,8 @@ impl WorkerCommands for ClaudeCommands {
         env: &HashMap<String, String>,
         idle_timeout: Duration,
         conversation_resume_from: Option<usize>,
-    ) -> Result<String> {
-        super::interactive::run_interactive(
+    ) -> Result<RunReport> {
+        let interactive_report = super::interactive::run_interactive(
             ws_stream,
             session_id,
             prompt,
@@ -622,7 +830,25 @@ impl WorkerCommands for ClaudeCommands {
         )
         .await
         .context("interactive claude session failed")?;
-        Ok("Interactive session ended".to_string())
+
+        // Surface the on-disk transcript only when it really exists at the
+        // expected path. The interactive path may end before Claude wrote one
+        // (very short session, no assistant turn, etc.); in that case we
+        // return `None`.
+        let session_state = match &interactive_report.claude_session_id {
+            Some(sid) => session_state_if_exists(
+                transcript_path(&interactive_report.home_dir, working_dir, sid),
+                SessionStateFormat::ClaudeJsonl,
+            ),
+            None => None,
+        };
+
+        Ok(RunReport {
+            last_message: interactive_report.last_assistant_text.unwrap_or_default(),
+            usage: interactive_report.usage,
+            model_session_id: interactive_report.claude_session_id,
+            session_state,
+        })
     }
 }
 
@@ -636,7 +862,7 @@ impl WorkerCommands for ModelAwareCommands {
         env: &HashMap<String, String>,
         output_path: &Path,
         mcp_config: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
@@ -661,7 +887,7 @@ impl WorkerCommands for ModelAwareCommands {
         env: &HashMap<String, String>,
         idle_timeout: Duration,
         conversation_resume_from: Option<usize>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
@@ -811,6 +1037,96 @@ mod tests {
                 "Do something",
             ]
         );
+    }
+
+    #[test]
+    fn session_state_if_exists_returns_some_for_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session.jsonl");
+        std::fs::write(&path, b"line1\n").unwrap();
+        let result = session_state_if_exists(path.clone(), SessionStateFormat::CodexJsonl);
+        let r = result.expect("file exists → Some");
+        assert_eq!(r.local_path, path);
+        assert_eq!(r.format, SessionStateFormat::CodexJsonl);
+    }
+
+    #[test]
+    fn session_state_if_exists_returns_none_for_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope.jsonl");
+        let result = session_state_if_exists(missing, SessionStateFormat::ClaudeJsonl);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn codex_event_token_usage_sets_usage() {
+        let line = r#"{"type":"thread.token_usage_updated","token_usage":{"input_tokens":42,"output_tokens":13,"total_tokens":55}}"#;
+        let event: CodexEvent = serde_json::from_str(line).unwrap();
+        let mut state = CodexParseState::default();
+        state.apply(event);
+        assert_eq!(state.usage.input_tokens, 42);
+        assert_eq!(state.usage.output_tokens, 13);
+        // Codex doesn't report Claude-shaped cache hits today.
+        assert_eq!(state.usage.cache_read_input_tokens, 0);
+        assert_eq!(state.usage.cache_creation_input_tokens, 0);
+    }
+
+    #[test]
+    fn codex_event_thread_started_captures_session_id() {
+        let line = r#"{"type":"thread.started","thread_id":"abc-123"}"#;
+        let event: CodexEvent = serde_json::from_str(line).unwrap();
+        let mut state = CodexParseState::default();
+        state.apply(event);
+        assert_eq!(state.session_id.as_deref(), Some("abc-123"));
+    }
+
+    #[test]
+    fn codex_event_item_completed_with_agent_message_sets_last_message() {
+        let line = r#"{"type":"item.completed","item":{"item_type":"AgentMessageItem","text":"hello world"}}"#;
+        let event: CodexEvent = serde_json::from_str(line).unwrap();
+        let mut state = CodexParseState::default();
+        state.apply(event);
+        assert_eq!(state.last_message.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn codex_event_unknown_variant_does_not_crash() {
+        // `turn.started` / `item.started` / made-up tags must all fall into
+        // the catch-all `Other` arm.
+        for line in [
+            r#"{"type":"turn.started"}"#,
+            r#"{"type":"item.started","item":{"item_type":"Whatever"}}"#,
+            r#"{"type":"some_future_event","details":{"x":1}}"#,
+        ] {
+            let event: CodexEvent =
+                serde_json::from_str(line).expect("should fall through to Other");
+            let mut state = CodexParseState::default();
+            state.apply(event); // no panic
+            assert_eq!(state.usage, TokenUsage::default());
+            assert!(state.session_id.is_none());
+            assert!(state.last_message.is_none());
+        }
+    }
+
+    #[test]
+    fn codex_event_token_usage_overwrites_on_each_event() {
+        // Codex reports cumulative totals per event; last-wins is correct.
+        let mut state = CodexParseState::default();
+        let line1 = r#"{"type":"thread.token_usage_updated","token_usage":{"input_tokens":10,"output_tokens":5}}"#;
+        let line2 = r#"{"type":"thread.token_usage_updated","token_usage":{"input_tokens":40,"output_tokens":12}}"#;
+        state.apply(serde_json::from_str::<CodexEvent>(line1).unwrap());
+        state.apply(serde_json::from_str::<CodexEvent>(line2).unwrap());
+        assert_eq!(state.usage.input_tokens, 40);
+        assert_eq!(state.usage.output_tokens, 12);
+    }
+
+    #[test]
+    fn codex_item_with_non_agent_message_is_ignored() {
+        let line = r#"{"type":"item.completed","item":{"item_type":"WebSearchItem","query":"x"}}"#;
+        let event: CodexEvent = serde_json::from_str(line).unwrap();
+        let mut state = CodexParseState::default();
+        state.apply(event);
+        assert!(state.last_message.is_none());
     }
 
     #[test]

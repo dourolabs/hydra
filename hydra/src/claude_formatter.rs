@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::worker::report::TokenUsage;
+
 const MAX_LINE_LEN: usize = 160;
 const TOOL_SNIPPET_LEN: usize = 400;
 const TEXT_BLOCK_GAP: &str = "\n";
@@ -27,6 +29,7 @@ pub struct StreamFormatter {
     pending_tools: HashMap<String, PendingToolCall>,
     last_assistant_text: Option<String>,
     current_assistant_text: String,
+    aggregated_usage: TokenUsage,
 }
 
 impl StreamFormatter {
@@ -35,11 +38,19 @@ impl StreamFormatter {
             pending_tools: HashMap::new(),
             last_assistant_text: None,
             current_assistant_text: String::new(),
+            aggregated_usage: TokenUsage::default(),
         }
     }
 
     pub fn last_assistant_text(&self) -> Option<&str> {
         self.last_assistant_text.as_deref()
+    }
+
+    /// Token usage summed across every `assistant` line seen so far, drawing
+    /// from each line's `message.usage` block. Lines without a `usage` block
+    /// (or with non-integer values) contribute nothing.
+    pub fn aggregated_usage(&self) -> &TokenUsage {
+        &self.aggregated_usage
     }
 
     pub fn handle_line(&mut self, raw_line: &str) -> Vec<String> {
@@ -61,6 +72,20 @@ impl StreamFormatter {
 
     fn handle_assistant(&mut self, value: &Value) -> Vec<String> {
         let mut renders = Vec::new();
+
+        // Per-turn token usage lives on `message.usage` for `assistant`
+        // stream-json lines. Sum into `aggregated_usage` whenever present;
+        // a missing block is fine (cache_*-style misses or non-usage turns).
+        if let Some(usage) = value.get("message").and_then(|m| m.get("usage")) {
+            let read_u64 =
+                |key: &str| -> u64 { usage.get(key).and_then(Value::as_u64).unwrap_or(0) };
+            self.aggregated_usage.input_tokens += read_u64("input_tokens");
+            self.aggregated_usage.output_tokens += read_u64("output_tokens");
+            self.aggregated_usage.cache_read_input_tokens += read_u64("cache_read_input_tokens");
+            self.aggregated_usage.cache_creation_input_tokens +=
+                read_u64("cache_creation_input_tokens");
+        }
+
         let Some(content) = value
             .get("message")
             .and_then(|message| message.get("content"))
@@ -571,6 +596,85 @@ mod tests {
         });
         formatter.handle_line(&msg.to_string());
         assert_eq!(formatter.last_assistant_text(), Some("Part one\nPart two"));
+    }
+
+    #[test]
+    fn aggregated_usage_sums_per_turn_usage_blocks() {
+        let mut formatter = StreamFormatter::new();
+
+        // Single-turn usage block.
+        let turn1 = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "first"}],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 7,
+                    "cache_creation_input_tokens": 2
+                }
+            }
+        });
+        formatter.handle_line(&turn1.to_string());
+        assert_eq!(
+            formatter.aggregated_usage(),
+            &TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_input_tokens: 7,
+                cache_creation_input_tokens: 2,
+            }
+        );
+
+        // Multi-turn: a second assistant line accumulates (Claude reports
+        // per-turn deltas; we just sum them — the design treats Codex
+        // separately for last-wins).
+        let turn2 = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "second"}],
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                    "cache_read_input_tokens": 1,
+                    "cache_creation_input_tokens": 0
+                }
+            }
+        });
+        formatter.handle_line(&turn2.to_string());
+        assert_eq!(
+            formatter.aggregated_usage(),
+            &TokenUsage {
+                input_tokens: 13,
+                output_tokens: 9,
+                cache_read_input_tokens: 8,
+                cache_creation_input_tokens: 2,
+            }
+        );
+
+        // Missing-usage line: no panic, totals unchanged.
+        let turn3 = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "third"}]
+            }
+        });
+        formatter.handle_line(&turn3.to_string());
+        assert_eq!(
+            formatter.aggregated_usage(),
+            &TokenUsage {
+                input_tokens: 13,
+                output_tokens: 9,
+                cache_read_input_tokens: 8,
+                cache_creation_input_tokens: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn aggregated_usage_starts_zero() {
+        let formatter = StreamFormatter::new();
+        assert_eq!(formatter.aggregated_usage(), &TokenUsage::default());
     }
 
     #[test]

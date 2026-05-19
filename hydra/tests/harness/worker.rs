@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use hydra::client::RelayWebSocket;
 use hydra::command::output::{CommandContext, ResolvedOutputFormat};
 use hydra::worker::commands::WorkerCommands;
+use hydra::worker::report::RunReport;
 use hydra_common::{
     constants::{ENV_HYDRA_ISSUE_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN},
     patches::SearchPatchesQuery,
@@ -126,7 +127,7 @@ impl WorkerCommands for BashCommands {
         env: &HashMap<String, String>,
         _output_path: &Path,
         _mcp_config: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         let mut last_output = String::new();
         for command_string in &self.commands {
             let output = self
@@ -140,7 +141,12 @@ impl WorkerCommands for BashCommands {
             bail!("BashCommands configured to fail after running commands");
         }
 
-        Ok(last_output)
+        Ok(RunReport {
+            last_message: last_output,
+            usage: Default::default(),
+            model_session_id: None,
+            session_state: None,
+        })
     }
 
     async fn run_interactive(
@@ -153,7 +159,7 @@ impl WorkerCommands for BashCommands {
         _env: &HashMap<String, String>,
         _idle_timeout: std::time::Duration,
         _conversation_resume_from: Option<usize>,
-    ) -> Result<String> {
+    ) -> Result<RunReport> {
         Err(anyhow!("interactive mode is not supported in test harness"))
     }
 }
