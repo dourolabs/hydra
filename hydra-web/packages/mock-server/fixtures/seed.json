@@ -1534,6 +1534,12 @@
       "start_time": "2026-03-14T09:01:00.000Z",
       "end_time": "2026-03-14T09:45:00.000Z",
       "last_updated_at": "2026-03-14T09:45:00.000Z",
+      "usage": {
+        "input_tokens": 82400,
+        "output_tokens": 4200,
+        "cache_read_input_tokens": 12500,
+        "cache_creation_input_tokens": 3100
+      },
       "history": [
         {
           "timestamp": "2026-03-14T09:00:00.000Z",
@@ -1572,6 +1578,12 @@
       "creation_time": "2026-03-15T10:30:00.000Z",
       "start_time": "2026-03-15T10:31:00.000Z",
       "last_updated_at": "2026-03-15T10:31:00.000Z",
+      "usage": {
+        "input_tokens": 1200000,
+        "output_tokens": 18400,
+        "cache_read_input_tokens": 980000,
+        "cache_creation_input_tokens": 6200
+      },
       "history": [
         {
           "timestamp": "2026-03-15T10:30:00.000Z",
@@ -1601,7 +1613,13 @@
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T11:00:00.000Z",
-      "start_time": "2026-03-15T11:02:00.000Z"
+      "start_time": "2026-03-15T11:02:00.000Z",
+      "usage": {
+        "input_tokens": 38400,
+        "output_tokens": 2900,
+        "cache_read_input_tokens": 22000,
+        "cache_creation_input_tokens": 1500
+      }
     },
     "t-seed00004": {
       "prompt": "Fix the Redis connection pool memory leak in the rate limiting middleware. Investigate and implement proper connection cleanup.",
@@ -1627,7 +1645,13 @@
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T12:30:00.000Z",
-      "start_time": "2026-03-15T12:31:00.000Z"
+      "start_time": "2026-03-15T12:31:00.000Z",
+      "usage": {
+        "input_tokens": 9200,
+        "output_tokens": 850,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      }
     },
     "t-seed00006": {
       "prompt": "Deploy Apollo Federation v2 gateway with Sessions subgraph. Implement session resolvers and dataloader integration.",
@@ -1636,11 +1660,19 @@
         "name": "acme/api-gateway",
         "rev": "feature/sessions-subgraph"
       },
-      "spawned_from": "i-seed00017",
+      "interactive": {
+        "conversation_id": "c-seed00005"
+      },
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T10:15:00.000Z",
-      "start_time": "2026-03-15T10:16:00.000Z"
+      "start_time": "2026-03-15T10:16:00.000Z",
+      "usage": {
+        "input_tokens": 142000,
+        "output_tokens": 11700,
+        "cache_read_input_tokens": 84000,
+        "cache_creation_input_tokens": 5200
+      }
     },
     "t-seed00007": {
       "prompt": "Review the OAuth2 provider integration patch for security, token handling, and error edge cases.",
@@ -1653,7 +1685,13 @@
       "creator": "reviewer",
       "status": "running",
       "creation_time": "2026-03-15T13:00:00.000Z",
-      "start_time": "2026-03-15T13:01:00.000Z"
+      "start_time": "2026-03-15T13:01:00.000Z",
+      "usage": {
+        "input_tokens": 56000,
+        "output_tokens": 3400,
+        "cache_read_input_tokens": 31000,
+        "cache_creation_input_tokens": 2200
+      }
     },
     "t-seed00008": {
       "prompt": "Review the SSE broadcaster memory leak fix. Verify AbortSignal cleanup approach and check new metrics endpoint.",
@@ -1662,11 +1700,19 @@
         "name": "acme/web-app",
         "rev": "fix/sse-memory-leak"
       },
-      "spawned_from": "i-seed00018",
+      "interactive": {
+        "conversation_id": "c-seed00006"
+      },
       "creator": "reviewer",
       "status": "running",
       "creation_time": "2026-03-15T13:10:00.000Z",
-      "start_time": "2026-03-15T13:11:00.000Z"
+      "start_time": "2026-03-15T13:11:00.000Z",
+      "usage": {
+        "input_tokens": 4500000,
+        "output_tokens": 67000,
+        "cache_read_input_tokens": 4000000,
+        "cache_creation_input_tokens": 14000
+      }
     },
     "t-seed00009": {
       "prompt": "Add GIN index on description column and benchmark search query performance improvement.",
@@ -1679,7 +1725,13 @@
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T09:00:00.000Z",
-      "start_time": "2026-03-15T09:01:00.000Z"
+      "start_time": "2026-03-15T09:01:00.000Z",
+      "usage": {
+        "input_tokens": 18900,
+        "output_tokens": 1450,
+        "cache_read_input_tokens": 8000,
+        "cache_creation_input_tokens": 750
+      }
     },
     "t-seed00010": {
       "prompt": "Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
@@ -1695,6 +1747,12 @@
       "start_time": "2026-03-14T16:01:00.000Z",
       "end_time": "2026-03-14T17:10:00.000Z",
       "last_updated_at": "2026-03-14T17:10:00.000Z",
+      "usage": {
+        "input_tokens": 246000,
+        "output_tokens": 9800,
+        "cache_read_input_tokens": 180000,
+        "cache_creation_input_tokens": 6400
+      },
       "history": [
         {
           "timestamp": "2026-03-14T16:00:00.000Z",
@@ -1727,11 +1785,19 @@
         "name": "acme/web-app",
         "rev": "feature/oauth2-token-refresh"
       },
-      "spawned_from": "i-seed00003",
+      "interactive": {
+        "conversation_id": "c-seed00003"
+      },
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T11:30:00.000Z",
-      "start_time": "2026-03-15T11:31:00.000Z"
+      "start_time": "2026-03-15T11:31:00.000Z",
+      "usage": {
+        "input_tokens": 720,
+        "output_tokens": 95,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0
+      }
     },
     "t-seed00012": {
       "prompt": "Wire the per-client refresh mutex into the HTTP client and add the deadlock regression test.",
@@ -1744,7 +1810,13 @@
       "creator": "swe",
       "status": "running",
       "creation_time": "2026-03-15T14:00:00.000Z",
-      "start_time": "2026-03-15T14:01:00.000Z"
+      "start_time": "2026-03-15T14:01:00.000Z",
+      "usage": {
+        "input_tokens": 64000,
+        "output_tokens": 5100,
+        "cache_read_input_tokens": 28000,
+        "cache_creation_input_tokens": 1900
+      }
     },
     "t-seed00013": {
       "prompt": "Add unit tests for refresh queue mutex: happy path, concurrent callers, and error propagation.",

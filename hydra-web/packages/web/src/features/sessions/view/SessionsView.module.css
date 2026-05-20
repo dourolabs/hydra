@@ -191,6 +191,32 @@
   color: var(--fg-1);
 }
 
+.colTokens {
+  width: 130px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+}
+
+.tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.tokensInput {
+  color: var(--s-open);
+}
+
+.tokensOutput {
+  color: var(--s-progress);
+}
+
+.tokens > span > span {
+  margin-right: 2px;
+  opacity: 0.85;
+}
+
 .agent {
   display: inline-flex;
   align-items: center;

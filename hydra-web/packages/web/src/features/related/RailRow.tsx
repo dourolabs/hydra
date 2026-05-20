@@ -14,6 +14,7 @@ import {
 } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
 import { descriptionSnippet } from "../../utils/text";
+import { formatTokenCount } from "../../utils/tokens";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
 import { shortRelativeTime } from "./relativeTime";
@@ -195,6 +196,21 @@ export function SessionRailRow({ record }: SessionRailRowProps) {
         <div className={styles.title}>{promptText}</div>
         <div className={styles.meta}>
           <span className={styles.agent}>{s.creator}</span>
+          {s.usage && (
+            <span
+              className={styles.tokens}
+              title={`${s.usage.input_tokens} input · ${s.usage.output_tokens} output`}
+            >
+              <span className={styles.tokensInput}>
+                <span aria-hidden="true">↓</span>
+                {formatTokenCount(s.usage.input_tokens)}
+              </span>
+              <span className={styles.tokensOutput}>
+                <span aria-hidden="true">↑</span>
+                {formatTokenCount(s.usage.output_tokens)}
+              </span>
+            </span>
+          )}
           <span className={styles.metaMono}>{getRuntime(s.start_time, s.end_time)}</span>
         </div>
       </div>

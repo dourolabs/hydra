@@ -10,6 +10,7 @@ import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
 import { getRuntime } from "../../../utils/time";
 import { descriptionSnippet } from "../../../utils/text";
+import { formatTokenCount } from "../../../utils/tokens";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { SessionRailRow } from "../../related/RailRow";
 import styles from "./SessionsView.module.css";
@@ -141,8 +142,9 @@ export function SessionsView() {
                   <th className={styles.colAgent}>Agent</th>
                   <th className={styles.colLinked}>Linked</th>
                   <th className={styles.colStatus}>Status</th>
-                  <th className={styles.colStarted}>Started</th>
                   <th className={styles.colDuration}>Duration</th>
+                  <th className={styles.colTokens}>Tokens</th>
+                  <th className={styles.colStarted}>Started</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,10 +182,29 @@ export function SessionsView() {
                       <td className={styles.colStatus}>
                         <Badge status={normalizeSessionStatus(s.status)} />
                       </td>
-                      <td className={styles.colStarted}>{relativeTime(startedTs)}</td>
                       <td className={styles.colDuration}>
                         {getRuntime(s.start_time, s.end_time)}
                       </td>
+                      <td className={styles.colTokens}>
+                        {s.usage ? (
+                          <span
+                            className={styles.tokens}
+                            title={`${s.usage.input_tokens} input · ${s.usage.output_tokens} output`}
+                          >
+                            <span className={styles.tokensInput}>
+                              <span aria-hidden="true">↓</span>
+                              {formatTokenCount(s.usage.input_tokens)}
+                            </span>
+                            <span className={styles.tokensOutput}>
+                              <span aria-hidden="true">↑</span>
+                              {formatTokenCount(s.usage.output_tokens)}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className={styles.dash}>—</span>
+                        )}
+                      </td>
+                      <td className={styles.colStarted}>{relativeTime(startedTs)}</td>
                     </tr>
                   );
                 })}
