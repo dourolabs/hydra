@@ -1,6 +1,6 @@
 use crate::{
     client::HydraClientInterface,
-    command::output::{render_session_records, CommandContext},
+    command::output::{render, CommandContext, SessionRecords},
 };
 use anyhow::Result;
 use hydra_common::SessionId;
@@ -15,7 +15,11 @@ pub async fn run(
     let session = client.get_session(&response.session_id).await?;
 
     let mut buffer = Vec::new();
-    render_session_records(context.output_format, &[session], &mut buffer)?;
+    render(
+        SessionRecords(&[session]),
+        context.output_format,
+        &mut buffer,
+    )?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
 
