@@ -2184,6 +2184,11 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         }
     }
 
+    if let Some(creator) = query.creator.as_deref() {
+        bindings.push(creator.to_string());
+        predicates.push(format!("t.creator = ?{}", bindings.len()));
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -7150,6 +7155,32 @@ mod tests {
             .unwrap();
         let ids: HashSet<_> = tasks.into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, HashSet::from([id1, id2]));
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_by_creator() {
+        let store = create_test_store().await;
+
+        let mut task_alice = spawn_task();
+        task_alice.creator = Username::from("alice");
+        let (alice_id, _) = store
+            .add_session(task_alice, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_bob = spawn_task();
+        task_bob.creator = Username::from("bob");
+        store
+            .add_session(task_bob, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.creator = Some("alice".to_string());
+        let tasks = store.list_sessions(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].0, alice_id);
+        assert_eq!(tasks[0].1.item.creator, Username::from("alice"));
     }
 
     #[tokio::test]

@@ -561,6 +561,9 @@ pub struct SearchSessionsQuery {
     pub spawned_from_ids: Vec<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Filter sessions by creator username.
+    #[serde(default)]
+    pub creator: Option<String>,
     /// Filter sessions by status (comma-separated in query string). When multiple
     /// statuses are provided, a session matches if its status is any of the given values.
     #[serde(
@@ -608,6 +611,7 @@ impl SearchSessionsQuery {
             spawned_from,
             spawned_from_ids: Vec::new(),
             include_deleted,
+            creator: None,
             status,
             limit: None,
             cursor: None,
@@ -646,6 +650,7 @@ mod tests {
             spawned_from: Some(issue_id.clone()),
             spawned_from_ids: vec![],
             include_deleted: None,
+            creator: None,
             status: vec![],
             limit: None,
             cursor: None,
@@ -727,6 +732,22 @@ mod tests {
         assert_eq!(query.spawned_from_ids.len(), 2);
         assert_eq!(query.spawned_from_ids[0].as_ref(), "i-abcd");
         assert_eq!(query.spawned_from_ids[1].as_ref(), "i-efgh");
+    }
+
+    #[test]
+    fn search_sessions_query_round_trips_creator() {
+        let query = SearchSessionsQuery {
+            creator: Some("alice".to_string()),
+            ..SearchSessionsQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("creator").map(String::as_str), Some("alice"));
+
+        let parsed: SearchSessionsQuery = serde_urlencoded::from_str("creator=alice").unwrap();
+        assert_eq!(parsed.creator.as_deref(), Some("alice"));
     }
 
     #[test]
