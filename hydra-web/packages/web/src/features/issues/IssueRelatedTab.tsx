@@ -13,6 +13,7 @@ import {
   PatchRailRow,
   DocumentRailRow,
 } from "../related/RailRow";
+import { usePageIssueTrees } from "../dashboard/usePageIssueTrees";
 import styles from "./IssueRelatedTab.module.css";
 
 interface IssueRelatedTabProps {
@@ -104,6 +105,15 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     [relatedIssuesQuery.data, childIdSet],
   );
 
+  // Hydrate per-card progress data (child statuses + active-session-in-subtree
+  // glow) the same way the issues list does so progress bars render here.
+  // Username is unused by IssueRailRow's progress UI, so leave it empty.
+  const relatedIssuesForTrees = useMemo(
+    () => [...parents, ...children],
+    [parents, children],
+  );
+  const { childStatusMap } = usePageIssueTrees(relatedIssuesForTrees, "");
+
   const isLoading =
     issueLoading ||
     childRelationsQuery.isLoading ||
@@ -150,6 +160,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
                 key={record.issue_id}
                 record={record}
                 sessions={sessionsByIssue.get(record.issue_id)}
+                childStatuses={childStatusMap.get(record.issue_id)}
               />
             ))}
           </div>
@@ -166,6 +177,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
                 key={record.issue_id}
                 record={record}
                 sessions={sessionsByIssue.get(record.issue_id)}
+                childStatuses={childStatusMap.get(record.issue_id)}
               />
             ))}
           </div>

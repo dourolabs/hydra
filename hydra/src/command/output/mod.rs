@@ -435,6 +435,15 @@ fn session_summary_note(job: &SessionSummaryRecord) -> Option<String> {
     if let Some(conversation_id) = job.session.conversation_id.as_ref() {
         parts.push(format!("conversation: {conversation_id}"));
     }
+    if let Some(usage) = job.session.usage.as_ref() {
+        let cache = usage
+            .cache_read_input_tokens
+            .saturating_add(usage.cache_creation_input_tokens);
+        parts.push(format!(
+            "tokens: in={} out={} cache={}",
+            usage.input_tokens, usage.output_tokens, cache
+        ));
+    }
     if parts.is_empty() {
         None
     } else {
@@ -972,6 +981,77 @@ mod tests {
         assert!(rendered.contains("line 19"));
         assert!(rendered.contains("..."));
         assert!(!rendered.contains("line 24"));
+    }
+
+    fn build_summary_record(
+        conversation_id: Option<hydra_common::ConversationId>,
+        usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
+    ) -> SessionSummaryRecord {
+        use hydra_common::api::v1::sessions::{BundleSpec, InteractiveOptions};
+        let mut session = Session::new(
+            "p".to_string(),
+            BundleSpec::None,
+            None,
+            "alice".into(),
+            None,
+            None,
+            std::collections::HashMap::new(),
+            None,
+            None,
+            None,
+            None,
+            conversation_id.map(|id| InteractiveOptions::new(Some(id), None, None)),
+            Status::Complete,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        );
+        session.usage = usage;
+        let summary = SessionSummary::from(&session);
+        let json = serde_json::json!({
+            "session_id": SessionId::new(),
+            "version": 1u64,
+            "timestamp": Utc::now(),
+            "session": serde_json::to_value(&summary).unwrap(),
+        });
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn session_summary_note_renders_tokens_and_combines_with_other_notes() {
+        use hydra_common::api::v1::sessions::TokenUsage;
+        use hydra_common::ConversationId;
+
+        let conv_id = ConversationId::new();
+        let record = build_summary_record(
+            Some(conv_id.clone()),
+            Some(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 20,
+                cache_read_input_tokens: 3,
+                cache_creation_input_tokens: 4,
+            }),
+        );
+
+        let note = session_summary_note(&record).expect("note present");
+        assert!(
+            note.contains(&format!("conversation: {conv_id}")),
+            "expected conversation in {note}"
+        );
+        assert!(
+            note.contains("tokens: in=10 out=20 cache=7"),
+            "expected tokens in {note}"
+        );
+        assert!(note.contains(" | "), "expected separator in {note}");
+    }
+
+    #[test]
+    fn session_summary_note_returns_none_when_nothing_to_show() {
+        let record = build_summary_record(None, None);
+        assert!(session_summary_note(&record).is_none());
     }
 
     #[test]

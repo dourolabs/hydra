@@ -9,6 +9,7 @@ import {
   PatchRailRow,
   DocumentRailRow,
 } from "../related/RailRow";
+import { usePageIssueTrees } from "../dashboard/usePageIssueTrees";
 import { useChatReferencedArtifacts } from "./useChatReferencedArtifacts";
 import styles from "./ChatRelatedTab.module.css";
 
@@ -28,6 +29,11 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
     isFetchingNextPage,
     fetchNextPage,
   } = useChatReferencedArtifacts(conversationId);
+
+  // Hydrate per-card progress data (child statuses + active-session-in-subtree
+  // glow) the same way the issues list does so progress bars render here.
+  // Username is unused by IssueRailRow's progress UI, so leave it empty.
+  const { childStatusMap } = usePageIssueTrees(issues, "");
 
   if (isLoading) {
     return (
@@ -59,6 +65,7 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
                 key={record.issue_id}
                 record={record}
                 sessions={sessionsByIssue.get(record.issue_id)}
+                childStatuses={childStatusMap.get(record.issue_id)}
               />
             ))}
           </div>

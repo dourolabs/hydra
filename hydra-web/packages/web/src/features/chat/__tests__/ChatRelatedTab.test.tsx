@@ -58,6 +58,16 @@ vi.mock("../useChatReferencedArtifacts", () => ({
   },
 }));
 
+vi.mock("../../dashboard/usePageIssueTrees", () => ({
+  usePageIssueTrees: () => ({
+    treeDataMap: new Map(),
+    isActiveMap: new Map(),
+    childStatusMap: new Map(),
+    sessionsByIssue: new Map(),
+    isLoading: false,
+  }),
+}));
+
 vi.mock("../../related/RailRow", () => ({
   IssueRailRow: ({
     record,

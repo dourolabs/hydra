@@ -7,16 +7,15 @@ import type { ConversationEvent } from "@hydra/api";
 //
 // Playwright's Chromium engine resolves env(safe-area-inset-bottom) to 0 — the
 // emulator does not inject a non-zero inset. We therefore override the
-// `--safe-area-bottom` token (which the fix wraps env() in) at the document
+// `--safe-area-bottom` token (which the rule wraps env() in) at the document
 // root and assert that the computed padding-bottom on the AppLayout main
-// scales with the override. On origin/main, padding-bottom is a fixed 56px
-// regardless of the variable, so this test fails. With the fix in place,
-// padding-bottom is calc(56px + var(--safe-area-bottom)) and the override
-// drives the computed value up by the simulated inset.
+// scales with the override. padding-bottom is
+// calc(BREATHING_ROOM_PX + var(--safe-area-bottom)), so the override drives
+// the computed value up by the simulated inset.
 
 const CONVERSATION_ID = "c-mobile-bottom-safe-area";
 const SIMULATED_SAFE_AREA_PX = 34; // iPhone-13-class home indicator height
-const BASE_BUFFER_PX = 56;
+const BREATHING_ROOM_PX = 8;
 
 const conversation = {
   conversation_id: CONVERSATION_ID,
@@ -106,7 +105,7 @@ test.describe("Mobile chat bottom safe-area @mobile:chat-bottom-safe-area", () =
       return parseFloat(window.getComputedStyle(main).paddingBottom);
     });
 
-    expect(paddingBottom).toBeGreaterThanOrEqual(BASE_BUFFER_PX + SIMULATED_SAFE_AREA_PX);
+    expect(paddingBottom).toBeGreaterThanOrEqual(BREATHING_ROOM_PX + SIMULATED_SAFE_AREA_PX);
 
     // User-visible geometry: nothing in the chat pane should poke past the
     // visible viewport, even with the home-indicator inset reserved. This is

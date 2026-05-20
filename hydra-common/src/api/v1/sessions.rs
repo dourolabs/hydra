@@ -385,7 +385,8 @@ impl CreateSessionResponse {
 ///
 /// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
 /// `memory_limit`, `secrets`, `last_message`, and the full `interactive`
-/// options (only the linked `conversation_id` is exposed).
+/// options (only the linked `conversation_id` is exposed). The aggregated
+/// `usage` totals reported by the worker are included.
 /// The `prompt` field is truncated to the first 20 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -410,6 +411,10 @@ pub struct SessionSummary {
     pub start_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_time: Option<DateTime<Utc>>,
+    /// Aggregated token usage reported by the worker at the end of a run.
+    /// `None` until the worker submits a `Complete` status with usage data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl From<&Session> for SessionSummary {
@@ -448,6 +453,7 @@ impl From<&Session> for SessionSummary {
             creation_time: session.creation_time,
             start_time: session.start_time,
             end_time: session.end_time,
+            usage: session.usage.clone(),
         }
     }
 }
@@ -561,6 +567,9 @@ pub struct SearchSessionsQuery {
     pub spawned_from_ids: Vec<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Filter sessions by creator username.
+    #[serde(default)]
+    pub creator: Option<String>,
     /// Filter sessions by status (comma-separated in query string). When multiple
     /// statuses are provided, a session matches if its status is any of the given values.
     #[serde(
@@ -608,6 +617,7 @@ impl SearchSessionsQuery {
             spawned_from,
             spawned_from_ids: Vec::new(),
             include_deleted,
+            creator: None,
             status,
             limit: None,
             cursor: None,
@@ -646,6 +656,7 @@ mod tests {
             spawned_from: Some(issue_id.clone()),
             spawned_from_ids: vec![],
             include_deleted: None,
+            creator: None,
             status: vec![],
             limit: None,
             cursor: None,
@@ -730,6 +741,22 @@ mod tests {
     }
 
     #[test]
+    fn search_sessions_query_round_trips_creator() {
+        let query = SearchSessionsQuery {
+            creator: Some("alice".to_string()),
+            ..SearchSessionsQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("creator").map(String::as_str), Some("alice"));
+
+        let parsed: SearchSessionsQuery = serde_urlencoded::from_str("creator=alice").unwrap();
+        assert_eq!(parsed.creator.as_deref(), Some("alice"));
+    }
+
+    #[test]
     fn search_sessions_query_serializes_empty_query() {
         let query = SearchSessionsQuery::default();
 
@@ -809,6 +836,38 @@ mod tests {
         assert!(summary.end_time.is_none());
         // One-shot session has no `interactive`, so no linked conversation.
         assert!(summary.conversation_id.is_none());
+        // The fixture leaves usage unset.
+        assert!(summary.usage.is_none());
+    }
+
+    #[test]
+    fn session_summary_populates_usage_when_present() {
+        let usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 200,
+            cache_read_input_tokens: 50,
+            cache_creation_input_tokens: 25,
+        };
+        let mut session = make_test_session("prompt");
+        session.usage = Some(usage.clone());
+        let summary = SessionSummary::from(&session);
+        assert_eq!(summary.usage.as_ref(), Some(&usage));
+
+        let value = serde_json::to_value(&summary).unwrap();
+        let usage_value = value.get("usage").expect("usage present in json");
+        assert_eq!(usage_value.get("input_tokens").unwrap(), 100);
+        assert_eq!(usage_value.get("output_tokens").unwrap(), 200);
+        assert_eq!(usage_value.get("cache_read_input_tokens").unwrap(), 50);
+        assert_eq!(usage_value.get("cache_creation_input_tokens").unwrap(), 25);
+    }
+
+    #[test]
+    fn session_summary_omits_usage_when_absent() {
+        let session = make_test_session("prompt");
+        let summary = SessionSummary::from(&session);
+        assert!(summary.usage.is_none());
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("usage").is_none());
     }
 
     #[test]

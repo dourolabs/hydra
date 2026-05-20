@@ -17,6 +17,14 @@ status?: Array<PatchStatus>,
  */
 branch_name?: string | null, 
 /**
+ * Filter patches by exact target repository name (e.g., `dourolabs/hydra`).
+ */
+repo_name?: string | null, 
+/**
+ * Filter patches by creator username (case-insensitive).
+ */
+creator?: string | null, 
+/**
  * Maximum number of results to return. When omitted, all results are returned.
  */
 limit: number | null, 

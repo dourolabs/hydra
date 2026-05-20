@@ -8,7 +8,7 @@ import type { Page } from "@playwright/test";
 // env(safe-area-inset-bottom)).
 
 const SIMULATED_SAFE_AREA_PX = 34;
-const BASE_BUFFER_PX = 56;
+const BREATHING_ROOM_PX = 8;
 
 async function setSidebarHidden(page: Page) {
   await page.addInitScript(() => {
@@ -55,7 +55,7 @@ test.describe("Mobile issue detail bottom safe-area @mobile:issue-detail-bottom-
       return parseFloat(window.getComputedStyle(main).paddingBottom);
     });
 
-    expect(paddingBottom).toBeGreaterThanOrEqual(BASE_BUFFER_PX + SIMULATED_SAFE_AREA_PX);
+    expect(paddingBottom).toBeGreaterThanOrEqual(BREATHING_ROOM_PX + SIMULATED_SAFE_AREA_PX);
 
     // SessionList remains reachable via vertical scroll after the fix; scroll
     // the IssueDetail .main pane to its bottom and assert SessionList is in

@@ -2026,9 +2026,34 @@ fn build_patches_predicates_sqlite(query: &SearchPatchesQuery) -> (Vec<String>, 
         }
     }
 
-    if let Some(ref branch) = query.branch_name {
-        bindings.push(branch.clone());
+    if let Some(branch) = query
+        .branch_name
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(branch.to_string());
         predicates.push(format!("branch_name = ?{}", bindings.len()));
+    }
+
+    if let Some(repo_name) = query
+        .repo_name
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(repo_name.to_string());
+        predicates.push(format!("service_repo_name = ?{}", bindings.len()));
+    }
+
+    if let Some(creator) = query
+        .creator
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(creator.to_lowercase());
+        predicates.push(format!("LOWER(creator) = ?{}", bindings.len()));
     }
 
     if let Some(term) = query
@@ -2167,6 +2192,11 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         for id in &query.spawned_from_ids {
             bindings.push(id.as_ref().to_string());
         }
+    }
+
+    if let Some(creator) = query.creator.as_deref() {
+        bindings.push(creator.to_string());
+        predicates.push(format!("t.creator = ?{}", bindings.len()));
     }
 
     if let Some(term) = query
@@ -6463,6 +6493,157 @@ mod tests {
         assert_eq!(patches[0].1.item.status, PatchStatus::Open);
     }
 
+    #[tokio::test]
+    async fn list_patches_filters_by_repo_name() {
+        use std::str::FromStr;
+        let store = create_test_store().await;
+
+        let mut patch_a = sample_patch();
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) exact repo_name match returns only matching patches.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        let mut filtered: Vec<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        filtered.sort();
+        let mut expected = vec![patch_a_id.clone(), patch_b_id.clone()];
+        expected.sort();
+        assert_eq!(filtered, expected);
+
+        // (b) repo_name AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        query.status = vec![hydra_common::api::v1::patches::PatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching repo_name returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/missing".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_creator() {
+        let store = create_test_store().await;
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("Alice");
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("alice");
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.creator = Username::from("bob");
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) case-insensitive creator match returns both alice patches.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("ALICE".to_string());
+        let mut filtered: Vec<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        filtered.sort();
+        let mut expected = vec![patch_a_id.clone(), patch_b_id.clone()];
+        expected.sort();
+        assert_eq!(filtered, expected);
+
+        // (b) creator AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("alice".to_string());
+        query.status = vec![hydra_common::api::v1::patches::PatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching creator returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("carol".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_empty_string_filter_is_noop() {
+        use std::str::FromStr;
+        let store = create_test_store().await;
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("alice");
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.branch_name = Some("feature/foo".to_string());
+        store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("bob");
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        patch_b.branch_name = Some("feature/bar".to_string());
+        store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let baseline = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap()
+            .len();
+        assert_eq!(baseline, 2);
+
+        // Each empty-string filter individually is a no-op.
+        for field in ["creator", "repo_name", "branch_name"] {
+            let mut query = SearchPatchesQuery::default();
+            match field {
+                "creator" => query.creator = Some(String::new()),
+                "repo_name" => query.repo_name = Some(String::new()),
+                "branch_name" => query.branch_name = Some(String::new()),
+                _ => unreachable!(),
+            }
+            let filtered = store.list_patches(&query).await.unwrap();
+            assert_eq!(filtered.len(), baseline, "empty {field} should be a no-op");
+        }
+
+        // All three empty filters combined is also a no-op.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some(String::new());
+        query.repo_name = Some(String::new());
+        query.branch_name = Some(String::new());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
+
+        // Whitespace-only values are likewise a no-op after trim.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("   ".to_string());
+        query.repo_name = Some("   ".to_string());
+        query.branch_name = Some("   ".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
+    }
+
     /// Patch with every optional field set so serialization round-trip can assert full equality.
     fn sample_patch_all_fields(created_by: Option<SessionId>) -> Patch {
         use crate::domain::patches::GitOid;
@@ -7038,6 +7219,32 @@ mod tests {
             .unwrap();
         let ids: HashSet<_> = tasks.into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, HashSet::from([id1, id2]));
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_by_creator() {
+        let store = create_test_store().await;
+
+        let mut task_alice = spawn_task();
+        task_alice.creator = Username::from("alice");
+        let (alice_id, _) = store
+            .add_session(task_alice, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_bob = spawn_task();
+        task_bob.creator = Username::from("bob");
+        store
+            .add_session(task_bob, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.creator = Some("alice".to_string());
+        let tasks = store.list_sessions(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].0, alice_id);
+        assert_eq!(tasks[0].1.item.creator, Username::from("alice"));
     }
 
     #[tokio::test]

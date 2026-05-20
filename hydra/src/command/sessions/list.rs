@@ -14,11 +14,12 @@ pub async fn run(
     client: &dyn HydraClientInterface,
     limit: usize,
     spawned_from: Option<IssueId>,
+    creator: Option<String>,
     context: &CommandContext,
 ) -> Result<()> {
-    let response = client
-        .list_sessions(&SearchSessionsQuery::new(None, spawned_from, None, vec![]))
-        .await?;
+    let mut query = SearchSessionsQuery::new(None, spawned_from, None, vec![]);
+    query.creator = creator;
+    let response = client.list_sessions(&query).await?;
     let limit = limit.max(1);
     let total_sessions = response.sessions.len();
     let (sessions, truncated) = truncate_sessions(response.sessions, limit);
@@ -153,7 +154,43 @@ mod tests {
 
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
 
-        run(&client, 5, Some(spawned_from.clone()), &context)
+        run(&client, 5, Some(spawned_from.clone()), None, &context)
+            .await
+            .expect("list sessions should succeed");
+
+        mock.assert();
+    }
+
+    fn only_creator_query(request: &HttpMockRequest) -> bool {
+        match &request.query_params {
+            Some(params) => params.len() == 1 && params[0].0 == "creator",
+            None => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_passes_creator_query() {
+        let server = MockServer::start();
+        let client = HydraClient::new(
+            server.base_url(),
+            TEST_HYDRA_TOKEN,
+            &HydraClientTimeouts::default(),
+        )
+        .expect("should construct client");
+
+        let list_response = ListSessionsResponse::new(vec![sample_session("t-job-1")]);
+
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/sessions")
+                .query_param("creator", "alice")
+                .matches(only_creator_query);
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+
+        run(&client, 5, None, Some("alice".to_string()), &context)
             .await
             .expect("list sessions should succeed");
 
