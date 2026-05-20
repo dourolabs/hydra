@@ -12,9 +12,7 @@ use hydra_common::{
 
 use crate::client::HydraClientInterface;
 
-use super::output::{
-    render_conversation_records, render_conversation_summary_records, CommandContext,
-};
+use super::output::{render, CommandContext, ConversationSummaryRecords, ConversationView};
 
 #[derive(Subcommand)]
 pub enum ConversationsCommand {
@@ -119,9 +117,9 @@ pub async fn run(
                 .context("failed to list conversations")?;
 
             let mut buffer = Vec::new();
-            render_conversation_summary_records(
+            render(
+                ConversationSummaryRecords(&conversations),
                 context.output_format,
-                &conversations,
                 &mut buffer,
             )?;
             io::stdout().write_all(&buffer)?;
@@ -138,10 +136,12 @@ pub async fn run(
                 .with_context(|| format!("failed to fetch events for conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(
+            render(
+                ConversationView {
+                    conversation: &conversation,
+                    events: &events,
+                },
                 context.output_format,
-                &conversation,
-                &events,
                 &mut buffer,
             )?;
             io::stdout().write_all(&buffer)?;
@@ -162,7 +162,14 @@ pub async fn run(
                 .context("failed to create conversation")?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
+            render(
+                ConversationView {
+                    conversation: &conversation,
+                    events: &[],
+                },
+                context.output_format,
+                &mut buffer,
+            )?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
@@ -174,7 +181,14 @@ pub async fn run(
                 .with_context(|| format!("failed to update conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
+            render(
+                ConversationView {
+                    conversation: &conversation,
+                    events: &[],
+                },
+                context.output_format,
+                &mut buffer,
+            )?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }
@@ -185,7 +199,14 @@ pub async fn run(
                 .with_context(|| format!("failed to delete conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
-            render_conversation_records(context.output_format, &conversation, &[], &mut buffer)?;
+            render(
+                ConversationView {
+                    conversation: &conversation,
+                    events: &[],
+                },
+                context.output_format,
+                &mut buffer,
+            )?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
         }

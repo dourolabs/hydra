@@ -1,9 +1,6 @@
 use crate::{
     client::HydraClientInterface,
-    command::output::{
-        render_mark_all_read, render_mark_read, render_notifications, render_unread_count,
-        CommandContext,
-    },
+    command::output::{render, CommandContext, MarkReadView},
 };
 use anyhow::{Context, Result};
 use clap::Subcommand;
@@ -51,24 +48,26 @@ pub async fn run(
                 .list_notifications(&query)
                 .await
                 .context("failed to list notifications")?;
-            render_notifications(context.output_format, &response, &mut stdout)?;
+            render(response, context.output_format, &mut stdout)?;
         }
         NotificationsCommand::Count => {
             let response = client
                 .get_unread_notification_count()
                 .await
                 .context("failed to get unread notification count")?;
-            render_unread_count(context.output_format, &response, &mut stdout)?;
+            render(response, context.output_format, &mut stdout)?;
         }
         NotificationsCommand::Read { notification_id } => {
             let response = client
                 .mark_notification_read(&notification_id)
                 .await
                 .context("failed to mark notification as read")?;
-            render_mark_read(
+            render(
+                MarkReadView {
+                    notification_id: &notification_id,
+                    response: &response,
+                },
                 context.output_format,
-                &notification_id,
-                &response,
                 &mut stdout,
             )?;
         }
@@ -77,7 +76,7 @@ pub async fn run(
                 .mark_all_notifications_read(None)
                 .await
                 .context("failed to mark all notifications as read")?;
-            render_mark_all_read(context.output_format, &response, &mut stdout)?;
+            render(response, context.output_format, &mut stdout)?;
         }
     }
     Ok(())

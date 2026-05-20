@@ -1,7 +1,7 @@
 use crate::{
     client::HydraClientInterface,
     command::{
-        output::{render_session_records, CommandContext, ResolvedOutputFormat},
+        output::{render, CommandContext, ResolvedOutputFormat, SessionRecords},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
@@ -205,7 +205,11 @@ async fn get_session(
             .await
             .with_context(|| format!("failed to fetch session '{session_id}'"))?,
     };
-    render_session_records(context.output_format, &[session], &mut std::io::stdout())?;
+    render(
+        SessionRecords(&[session]),
+        context.output_format,
+        &mut std::io::stdout(),
+    )?;
     Ok(())
 }
 

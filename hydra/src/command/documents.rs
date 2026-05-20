@@ -2,7 +2,7 @@ use crate::{
     client::{ConflictError, HydraClientInterface},
     command::{
         output::{
-            render_document_records, render_document_summary_records, CommandContext,
+            render, CommandContext, DocumentRecordsView, DocumentSummaryRecords,
             ResolvedOutputFormat,
         },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
@@ -258,7 +258,14 @@ fn render_documents_to_buffer(
     full_output: bool,
 ) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
-    render_document_records(format, documents, full_output, &mut buffer)?;
+    render(
+        DocumentRecordsView {
+            records: documents,
+            full_output,
+        },
+        format,
+        &mut buffer,
+    )?;
     Ok(buffer)
 }
 
@@ -268,7 +275,7 @@ fn write_document_summaries_output(
 ) -> Result<()> {
     let mut stdout = io::stdout();
     let mut buffer = Vec::new();
-    render_document_summary_records(format, documents, &mut buffer)?;
+    render(DocumentSummaryRecords(documents), format, &mut buffer)?;
     stdout.write_all(&buffer)?;
     stdout.flush()?;
     Ok(())
