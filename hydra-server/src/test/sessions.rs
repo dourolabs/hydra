@@ -479,6 +479,64 @@ async fn list_sessions_returns_empty_list_when_store_is_empty() -> anyhow::Resul
 }
 
 #[tokio::test]
+async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+    let default_image = default_image();
+    let usage = hydra_common::api::v1::sessions::TokenUsage {
+        input_tokens: 1234,
+        output_tokens: 567,
+        cache_read_input_tokens: 89,
+        cache_creation_input_tokens: 12,
+    };
+    let (session_id, _) = store
+        .add_session(
+            Session {
+                prompt: "with-usage".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                creator: Username::from("test-creator"),
+                image: Some(default_image.clone()),
+                model: None,
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mcp_config: None,
+                interactive: None,
+                status: Status::Complete,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+                usage: Some(usage.clone()),
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, store).await?;
+    let client = test_client();
+    let response = client
+        .get(format!("{}/v1/sessions", server.base_url()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: ListSessionsResponse = response.json().await?;
+    let summary = body
+        .sessions
+        .iter()
+        .find(|record| record.session_id == session_id)
+        .expect("expected session in list response");
+    assert_eq!(summary.session.usage.as_ref(), Some(&usage));
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state.clone();
