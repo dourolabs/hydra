@@ -9,7 +9,10 @@ import {
 import { useAuth } from "../features/auth/useAuth";
 import { useAgents } from "../hooks/useAgents";
 import { actorDisplayName } from "../api/auth";
-import { IssuesView } from "../features/issues/view/IssuesView";
+import {
+  IssuesView,
+  type IssuesLayout,
+} from "../features/issues/view/IssuesView";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./IssuesListPage.module.css";
@@ -23,6 +26,28 @@ const LEGACY_SELECTED_VALUES = new Set([
   "all",
   "in_progress",
 ]);
+
+const LAYOUT_STORAGE_KEY = "hydra:issues:layout";
+
+function readLayout(): IssuesLayout {
+  if (typeof window === "undefined") return "table";
+  try {
+    const v = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (v === "board" || v === "table") return v;
+  } catch {
+    /* ignore */
+  }
+  return "table";
+}
+
+function writeLayout(layout: IssuesLayout): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, layout);
+  } catch {
+    /* ignore */
+  }
+}
 
 interface FilterState {
   status: IssueStatus | null;
@@ -164,6 +189,12 @@ export function IssuesListPage() {
   const { rootId, title, eyebrowPrefix } = describeFilters(filterState, currentUser);
   useBreadcrumbs([{ label: "Workspace", to: "/" }], title);
 
+  const [layout, setLayout] = useState<IssuesLayout>(readLayout);
+  useEffect(() => {
+    writeLayout(layout);
+  }, [layout]);
+  const isTable = layout === "table";
+
   const [searchValue, setSearchValue] = useState(searchParams.get("q") ?? "");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -238,7 +269,7 @@ export function IssuesListPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters, true);
+  } = usePaginatedIssues(serverFilters, isTable);
 
   const { data: totalCount } = useIssueCount(serverFilters);
 
@@ -253,7 +284,12 @@ export function IssuesListPage() {
 
   const displayCount = totalCount ?? issues.length;
 
-  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(issues, currentUser);
+  // Table layout uses the flat issue list for tree expansion. In board layout
+  // the board owns its own tree expansion over the per-column issue union.
+  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
+    isTable ? issues : [],
+    currentUser,
+  );
 
   // Strip any unrecognised `?selected=…` values left by old links.
   useEffect(() => {
@@ -276,10 +312,14 @@ export function IssuesListPage() {
   return (
     <div className={styles.page}>
       <IssuesView
+        layout={layout}
+        onLayoutChange={setLayout}
         issues={issues}
         childStatusMap={childStatusMap}
         sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
+        baseFilters={serverFilters}
+        username={currentUser}
         filterRootId={rootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}

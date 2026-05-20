@@ -1,29 +1,22 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, TypeChip } from "@hydra/ui";
-import type { IssueStatus, IssueSummaryRecord } from "@hydra/api";
+import type { IssueStatus } from "@hydra/api";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import {
+  BOARD_STATUSES,
+  usePaginatedIssuesByStatus,
+  type IssueFilters,
+} from "../usePaginatedIssues";
+import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
-  issues: IssueSummaryRecord[];
-  childStatusMap: Map<string, ChildStatus[]>;
+  baseFilters: IssueFilters;
+  username: string;
   filterRootId: string | null;
 }
-
-interface BoardColumn {
-  status: IssueStatus;
-  label: string;
-}
-
-const COLUMNS: BoardColumn[] = [
-  { status: "open", label: "Open" },
-  { status: "in-progress", label: "In progress" },
-  { status: "failed", label: "Failed" },
-  { status: "closed", label: "Closed" },
-  { status: "dropped", label: "Dropped" },
-];
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -49,19 +42,24 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((done / total) * 100);
 }
 
-export function IssuesBoard({ issues, childStatusMap, filterRootId }: IssuesBoardProps) {
+export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoardProps) {
   const navigate = useNavigate();
+  const columns = usePaginatedIssuesByStatus(baseFilters);
 
-  const grouped = useMemo(() => {
-    const map = new Map<IssueStatus, IssueSummaryRecord[]>();
-    for (const col of COLUMNS) map.set(col.status, []);
-    for (const rec of issues) {
-      const s = rec.issue.status as IssueStatus;
-      if (!map.has(s)) continue;
-      map.get(s)!.push(rec);
+  const boardIssuesUnion = useMemo(() => {
+    const seen = new Set<string>();
+    const out = [];
+    for (const status of BOARD_STATUSES) {
+      for (const rec of columns[status].issues) {
+        if (seen.has(rec.issue_id)) continue;
+        seen.add(rec.issue_id);
+        out.push(rec);
+      }
     }
-    return map;
-  }, [issues]);
+    return out;
+  }, [columns]);
+
+  const { childStatusMap } = usePageIssueTrees(boardIssuesUnion, username);
 
   const handleCardClick = (id: string) => {
     const params = new URLSearchParams({
@@ -73,16 +71,21 @@ export function IssuesBoard({ issues, childStatusMap, filterRootId }: IssuesBoar
 
   return (
     <div className={styles.kanban}>
-      {COLUMNS.map((col) => {
-        const colIssues = grouped.get(col.status) ?? [];
+      {BOARD_STATUSES.map((status) => {
+        const col = columns[status];
+        const colIssues = col.issues;
+        const showInitialLoading = col.isLoading && colIssues.length === 0;
         return (
-          <div key={col.status} className={styles.col}>
+          <div key={status} className={styles.col}>
             <div className={styles.colHead}>
-              <Badge status={normalizeIssueStatus(col.status)} />
+              <Badge status={normalizeIssueStatus(status as IssueStatus)} />
               <span className={styles.colCount}>{colIssues.length}</span>
             </div>
             <div className={styles.colBody}>
-              {colIssues.length === 0 && (
+              {showInitialLoading && (
+                <div className={styles.colEmpty}>Loading…</div>
+              )}
+              {!showInitialLoading && colIssues.length === 0 && (
                 <div className={styles.colEmpty}>No issues</div>
               )}
               {colIssues.map((rec) => {
@@ -116,6 +119,19 @@ export function IssuesBoard({ issues, childStatusMap, filterRootId }: IssuesBoar
                   </div>
                 );
               })}
+              {col.hasNextPage && (
+                <div className={styles.colLoadMore}>
+                  <button
+                    type="button"
+                    className={styles.colLoadMoreButton}
+                    onClick={col.fetchNextPage}
+                    disabled={col.isFetchingNextPage}
+                    data-testid={`issues-board-load-more-${status}`}
+                  >
+                    {col.isFetchingNextPage ? "Loading…" : "Load more"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );

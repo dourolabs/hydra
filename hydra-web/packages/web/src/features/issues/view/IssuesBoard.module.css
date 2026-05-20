@@ -59,7 +59,9 @@
   border-radius: var(--radius-sm);
   padding: 10px;
   cursor: pointer;
-  transition: border-color var(--tx-fast), background var(--tx-fast);
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast);
 }
 
 .card:hover {
@@ -125,4 +127,37 @@
   font-size: var(--t-sm);
   text-align: center;
   font-style: italic;
+}
+
+.colLoadMore {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+.colLoadMoreButton {
+  height: 26px;
+  padding: 0 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.colLoadMoreButton:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.colLoadMoreButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
