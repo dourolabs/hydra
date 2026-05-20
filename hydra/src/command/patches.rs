@@ -238,12 +238,14 @@ pub async fn run(
         } => {
             list_patches(
                 client,
-                id,
-                query,
-                include_deleted,
-                repo_name,
-                creator,
-                context.output_format,
+                ListPatchesArgs {
+                    id,
+                    query,
+                    include_deleted,
+                    repo_name,
+                    creator,
+                    output_format: context.output_format,
+                },
             )
             .await
         }
@@ -404,44 +406,38 @@ impl PatchAssetOutput {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn list_patches(
-    client: &dyn HydraClientInterface,
+#[derive(Debug)]
+struct ListPatchesArgs {
     id: Option<PatchId>,
     query: Option<String>,
     include_deleted: bool,
     repo_name: Option<String>,
     creator: Option<String>,
     output_format: ResolvedOutputFormat,
-) -> Result<()> {
+}
+
+async fn list_patches(client: &dyn HydraClientInterface, args: ListPatchesArgs) -> Result<()> {
     let mut buffer = Vec::new();
-    list_patches_with_writer(
-        client,
+    list_patches_with_writer(client, args, &mut buffer).await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
+async fn list_patches_with_writer(
+    client: &dyn HydraClientInterface,
+    args: ListPatchesArgs,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let ListPatchesArgs {
         id,
         query,
         include_deleted,
         repo_name,
         creator,
         output_format,
-        &mut buffer,
-    )
-    .await?;
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
-    Ok(())
-}
+    } = args;
 
-#[allow(clippy::too_many_arguments)]
-async fn list_patches_with_writer(
-    client: &dyn HydraClientInterface,
-    id: Option<PatchId>,
-    query: Option<String>,
-    include_deleted: bool,
-    repo_name: Option<String>,
-    creator: Option<String>,
-    output_format: ResolvedOutputFormat,
-    writer: &mut impl Write,
-) -> Result<()> {
     if let Some(id) = id {
         if query.is_some() {
             bail!("--id and --query cannot be combined");
@@ -1372,12 +1368,14 @@ mod tests {
 
         list_patches(
             &client,
-            None,
-            Some("login".to_string()),
-            false,
-            None,
-            None,
-            ResolvedOutputFormat::Jsonl,
+            ListPatchesArgs {
+                id: None,
+                query: Some("login".to_string()),
+                include_deleted: false,
+                repo_name: None,
+                creator: None,
+                output_format: ResolvedOutputFormat::Jsonl,
+            },
         )
         .await?;
 
@@ -1400,12 +1398,14 @@ mod tests {
 
         list_patches(
             &client,
-            None,
-            None,
-            false,
-            Some("dourolabs/hydra".to_string()),
-            Some("alice".to_string()),
-            ResolvedOutputFormat::Jsonl,
+            ListPatchesArgs {
+                id: None,
+                query: None,
+                include_deleted: false,
+                repo_name: Some("dourolabs/hydra".to_string()),
+                creator: Some("alice".to_string()),
+                output_format: ResolvedOutputFormat::Jsonl,
+            },
         )
         .await?;
 
@@ -1426,12 +1426,14 @@ mod tests {
         let mut output = Vec::new();
         list_patches_with_writer(
             &client,
-            None,
-            None,
-            false,
-            None,
-            None,
-            ResolvedOutputFormat::Jsonl,
+            ListPatchesArgs {
+                id: None,
+                query: None,
+                include_deleted: false,
+                repo_name: None,
+                creator: None,
+                output_format: ResolvedOutputFormat::Jsonl,
+            },
             &mut output,
         )
         .await?;
