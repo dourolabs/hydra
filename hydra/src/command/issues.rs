@@ -5,17 +5,13 @@ use crate::{
             render_issue_records, render_issue_summary_records, CommandContext,
             ResolvedOutputFormat,
         },
-        utils::{
-            changelog::{summarize_activity_log, write_changelog_pretty},
-            resolve_username,
-        },
+        utils::resolve_username,
     },
 };
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
-    activity_log_for_issue_versions,
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
@@ -25,7 +21,7 @@ use hydra_common::{
         UpsertIssueRequest,
     },
     users::Username,
-    HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName, Versioned,
+    HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName,
 };
 use std::{
     io::{self, Write},
@@ -332,16 +328,6 @@ pub enum IssueCommands {
         #[arg(long, value_name = "JSON_OR_YAML", default_value = "{}")]
         values: String,
     },
-    /// Show changelog for an issue (most recent first).
-    Changelog {
-        /// Issue ID to show changelog for.
-        #[arg(value_name = "ISSUE_ID")]
-        id: IssueId,
-
-        /// Maximum number of changelog entries to show.
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-    },
 }
 
 pub async fn run(
@@ -510,62 +496,7 @@ pub async fn run(
         IssueCommands::SubmitForm { id, action, values } => {
             submit_form(client, id, action, values, context.output_format).await
         }
-        IssueCommands::Changelog { id, limit } => {
-            changelog_issue(client, id, context.output_format, limit).await
-        }
     }
-}
-
-async fn changelog_issue(
-    client: &dyn HydraClientInterface,
-    id: IssueId,
-    output_format: ResolvedOutputFormat,
-    limit: usize,
-) -> Result<()> {
-    let issue_versions = fetch_issue_versions(client, &id).await?;
-    let entries = activity_log_for_issue_versions(id, &issue_versions);
-    let mut summaries = summarize_activity_log(&entries)?;
-    summaries.reverse();
-    summaries.truncate(limit);
-
-    let mut buffer = Vec::new();
-    match output_format {
-        ResolvedOutputFormat::Pretty => {
-            write_changelog_pretty(&summaries, &mut buffer)?;
-        }
-        ResolvedOutputFormat::Jsonl => {
-            for entry in &summaries {
-                serde_json::to_writer(&mut buffer, entry)?;
-                buffer.write_all(b"\n")?;
-            }
-        }
-    }
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
-
-    Ok(())
-}
-
-async fn fetch_issue_versions(
-    client: &dyn HydraClientInterface,
-    issue_id: &IssueId,
-) -> Result<Vec<Versioned<Issue>>> {
-    let response = client
-        .list_issue_versions(issue_id)
-        .await
-        .with_context(|| format!("failed to fetch versions for issue '{issue_id}'"))?;
-    Ok(response
-        .versions
-        .into_iter()
-        .map(|record| {
-            Versioned::new(
-                record.issue,
-                record.version,
-                record.timestamp,
-                record.creation_time,
-            )
-        })
-        .collect())
 }
 
 /// Resolve a single issue, handling `--version` (positive, negative, or absent)
