@@ -45,6 +45,7 @@ function toSummaryRecord(
   const summary: SessionSummary = {
     prompt: task.prompt.slice(0, 100),
     spawned_from: task.spawned_from,
+    conversation_id: task.interactive?.conversation_id ?? null,
     creator: task.creator,
     status: task.status,
     error: task.error,
@@ -52,6 +53,7 @@ function toSummaryRecord(
     creation_time: task.creation_time,
     start_time: task.start_time,
     end_time: task.end_time,
+    usage: task.usage,
   };
   return {
     session_id: sessionId,
