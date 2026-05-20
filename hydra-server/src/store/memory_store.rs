@@ -329,6 +329,16 @@ impl MemoryStore {
                     return None;
                 }
             }
+            if let Some(ref repo_name) = query.repo_name {
+                if latest.item.service_repo_name.as_str() != repo_name.as_str() {
+                    return None;
+                }
+            }
+            if let Some(ref creator) = query.creator {
+                if latest.item.creator.as_str().to_lowercase() != creator.to_lowercase() {
+                    return None;
+                }
+            }
             if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
                 return None;
             }
@@ -5937,6 +5947,106 @@ mod tests {
         let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_repo_name() {
+        use hydra_common::api::v1::patches::PatchStatus as ApiPatchStatus;
+
+        let store = MemoryStore::new();
+
+        let mut patch_a = sample_patch();
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) exact repo_name match returns only those patches.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        let mut filtered: Vec<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        filtered.sort();
+        let mut expected = vec![patch_a_id.clone(), patch_b_id.clone()];
+        expected.sort();
+        assert_eq!(filtered, expected);
+
+        // (b) repo_name AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        query.status = vec![ApiPatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching repo_name returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/missing".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_creator() {
+        use hydra_common::api::v1::patches::PatchStatus as ApiPatchStatus;
+
+        let store = MemoryStore::new();
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("Alice");
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("alice");
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.creator = Username::from("bob");
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) case-insensitive creator match returns both alice patches.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("ALICE".to_string());
+        let mut filtered: Vec<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        filtered.sort();
+        let mut expected = vec![patch_a_id.clone(), patch_b_id.clone()];
+        expected.sort();
+        assert_eq!(filtered, expected);
+
+        // (b) creator AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("alice".to_string());
+        query.status = vec![ApiPatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching creator returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("carol".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
     }
 
     // ---- Notification tests ----

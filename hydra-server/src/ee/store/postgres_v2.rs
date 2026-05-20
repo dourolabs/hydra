@@ -1810,6 +1810,23 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
         bindings.push(branch.clone());
     }
 
+    if let Some(ref repo_name) = query.repo_name {
+        let idx = bindings.len() + 1;
+        predicates.push(format!("service_repo_name = ${idx}"));
+        bindings.push(repo_name.clone());
+    }
+
+    if let Some(creator) = query
+        .creator
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        let idx = bindings.len() + 1;
+        predicates.push(format!("LOWER(creator) = ${idx}"));
+        bindings.push(creator.to_lowercase());
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -6582,6 +6599,104 @@ mod tests {
         let returned: HashSet<PatchId> = pair.into_iter().map(|(id, _)| id).collect();
         let expected: HashSet<PatchId> = [ids[0].clone(), ids[2].clone()].into_iter().collect();
         assert_eq!(returned, expected);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_patches_filters_by_repo_name_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let mut patch_a = sample_patch();
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) exact repo_name match returns only matching patches.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        let returned: HashSet<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let expected: HashSet<PatchId> = [patch_a_id.clone(), patch_b_id.clone()]
+            .into_iter()
+            .collect();
+        assert_eq!(returned, expected);
+
+        // (b) repo_name AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        query.status = vec![hydra_common::api::v1::patches::PatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching repo_name returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.repo_name = Some("dourolabs/missing".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_patches_filters_by_creator_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("Alice");
+        patch_a.status = PatchStatus::Open;
+        let (patch_a_id, _) = store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("alice");
+        patch_b.status = PatchStatus::Closed;
+        let (patch_b_id, _) = store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let mut patch_c = sample_patch();
+        patch_c.creator = Username::from("bob");
+        store.add_patch(patch_c, &ActorRef::test()).await.unwrap();
+
+        // (a) case-insensitive creator match returns both alice patches.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("ALICE".to_string());
+        let returned: HashSet<PatchId> = store
+            .list_patches(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let expected: HashSet<PatchId> = [patch_a_id.clone(), patch_b_id.clone()]
+            .into_iter()
+            .collect();
+        assert_eq!(returned, expected);
+
+        // (b) creator AND-intersects with status.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("alice".to_string());
+        query.status = vec![hydra_common::api::v1::patches::PatchStatus::Open];
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, patch_a_id);
+
+        // (c) non-matching creator returns nothing.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("carol".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert!(filtered.is_empty());
     }
 
     // ---- Notification tests ----
