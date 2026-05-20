@@ -3185,7 +3185,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.mcp_config, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
-             t.creation_time, t.start_time, t.end_time, t.usage \
+             t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
