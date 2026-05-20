@@ -61,8 +61,9 @@ fn integration_state() -> (AppState, Arc<dyn Store>) {
 }
 
 /// Count the sessions linked to `conversation_id` via the store. The HTTP
-/// `ListSessionsResponse.sessions` carries `SessionSummary` records which omit
-/// `interactive`, so we can't filter on conversation_id over the wire.
+/// `ListSessionsResponse.sessions` does expose `conversation_id` on each
+/// `SessionSummary`, but going through the store keeps these helpers
+/// independent of the HTTP layer.
 async fn session_count_for_conversation(
     store: &Arc<dyn Store>,
     conversation_id: &ConversationId,
@@ -160,6 +161,26 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     assert!(
         !sessions.sessions.is_empty(),
         "expected create_conversation to create a session"
+    );
+    let summary = sessions
+        .sessions
+        .iter()
+        .find(|record| record.session.conversation_id.as_ref() == Some(&conversation.conversation_id))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected one of the listed session summaries to expose conversation_id={}, got {:?}",
+                conversation.conversation_id,
+                sessions
+                    .sessions
+                    .iter()
+                    .map(|r| (r.session_id.as_ref(), r.session.conversation_id.as_ref()))
+                    .collect::<Vec<_>>(),
+            )
+        });
+    assert_eq!(
+        summary.session.conversation_id.as_ref(),
+        Some(&conversation.conversation_id),
+        "summary.conversation_id should match the linked conversation",
     );
 
     Ok(())
