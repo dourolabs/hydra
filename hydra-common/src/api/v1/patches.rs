@@ -440,6 +440,12 @@ pub struct SearchPatchesQuery {
     /// Filter patches by exact branch name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Filter patches by exact target repository name (e.g., `dourolabs/hydra`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+    /// Filter patches by creator username (case-insensitive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
     /// Maximum number of results to return. When omitted, all results are returned.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -464,6 +470,8 @@ impl SearchPatchesQuery {
             include_deleted,
             status,
             branch_name,
+            repo_name: None,
+            creator: None,
             limit: None,
             cursor: None,
             count: None,
@@ -693,6 +701,8 @@ mod tests {
             include_deleted: None,
             status: Vec::new(),
             branch_name: None,
+            repo_name: None,
+            creator: None,
             limit: None,
             cursor: None,
             count: None,
@@ -713,6 +723,61 @@ mod tests {
             params.is_empty(),
             "expected empty SearchPatchesQuery to produce no parameters"
         );
+    }
+
+    #[test]
+    fn search_patches_query_serializes_repo_name_and_creator() {
+        let query = SearchPatchesQuery {
+            repo_name: Some("dourolabs/hydra".to_string()),
+            creator: Some("alice".to_string()),
+            ..SearchPatchesQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("repo_name").map(String::as_str),
+            Some("dourolabs/hydra")
+        );
+        assert_eq!(params.get("creator").map(String::as_str), Some("alice"));
+    }
+
+    #[test]
+    fn search_patches_query_deserializes_repo_name_and_creator() {
+        let query: SearchPatchesQuery =
+            serde_urlencoded::from_str("repo_name=dourolabs%2Fhydra&creator=alice").unwrap();
+        assert_eq!(query.repo_name.as_deref(), Some("dourolabs/hydra"));
+        assert_eq!(query.creator.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn search_patches_query_omits_empty_repo_name_and_creator() {
+        let query = SearchPatchesQuery::default();
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(
+            !params.contains_key("repo_name"),
+            "absent repo_name should be omitted from serialization"
+        );
+        assert!(
+            !params.contains_key("creator"),
+            "absent creator should be omitted from serialization"
+        );
+    }
+
+    #[test]
+    fn search_patches_query_json_round_trips_repo_name_and_creator() {
+        let query = SearchPatchesQuery {
+            repo_name: Some("dourolabs/hydra".to_string()),
+            creator: Some("alice".to_string()),
+            ..SearchPatchesQuery::default()
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: SearchPatchesQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.repo_name.as_deref(), Some("dourolabs/hydra"));
+        assert_eq!(parsed.creator.as_deref(), Some("alice"));
     }
 
     #[test]

@@ -52,6 +52,14 @@ pub enum PatchesCommand {
         /// Include deleted patches in the listing.
         #[arg(long = "include-deleted")]
         include_deleted: bool,
+
+        /// Filter patches by exact target repository name (e.g., dourolabs/hydra).
+        #[arg(long = "repo-name", value_name = "REPO_NAME")]
+        repo_name: Option<String>,
+
+        /// Filter patches by creator username (case-insensitive).
+        #[arg(long = "creator", value_name = "CREATOR")]
+        creator: Option<String>,
     },
 
     /// Get the full details of a single patch by ID. Returns the complete patch including diff, description, and reviews.
@@ -225,7 +233,20 @@ pub async fn run(
             id,
             query,
             include_deleted,
-        } => list_patches(client, id, query, include_deleted, context.output_format).await,
+            repo_name,
+            creator,
+        } => {
+            list_patches(
+                client,
+                id,
+                query,
+                include_deleted,
+                repo_name,
+                creator,
+                context.output_format,
+            )
+            .await
+        }
         PatchesCommand::Get { id, version } => {
             get_patch_by_version(client, &id, version, context.output_format).await
         }
@@ -383,11 +404,14 @@ impl PatchAssetOutput {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list_patches(
     client: &dyn HydraClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
     include_deleted: bool,
+    repo_name: Option<String>,
+    creator: Option<String>,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let mut buffer = Vec::new();
@@ -396,6 +420,8 @@ async fn list_patches(
         id,
         query,
         include_deleted,
+        repo_name,
+        creator,
         output_format,
         &mut buffer,
     )
@@ -405,11 +431,14 @@ async fn list_patches(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list_patches_with_writer(
     client: &dyn HydraClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
     include_deleted: bool,
+    repo_name: Option<String>,
+    creator: Option<String>,
     output_format: ResolvedOutputFormat,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -426,7 +455,7 @@ async fn list_patches_with_writer(
         return Ok(());
     }
 
-    let patches = fetch_patches(client, query, include_deleted).await?;
+    let patches = fetch_patches(client, query, include_deleted, repo_name, creator).await?;
 
     render_patch_summary_records(output_format, &patches, writer)?;
 
@@ -460,15 +489,15 @@ async fn fetch_patches(
     client: &dyn HydraClientInterface,
     query: Option<String>,
     include_deleted: bool,
+    repo_name: Option<String>,
+    creator: Option<String>,
 ) -> Result<Vec<PatchSummaryRecord>> {
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
+    let mut search_query = SearchPatchesQuery::new(query, include_deleted_opt, vec![], None);
+    search_query.repo_name = repo_name;
+    search_query.creator = creator;
     let response = client
-        .list_patches(&SearchPatchesQuery::new(
-            query,
-            include_deleted_opt,
-            vec![],
-            None,
-        ))
+        .list_patches(&search_query)
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)
@@ -1346,6 +1375,36 @@ mod tests {
             None,
             Some("login".to_string()),
             false,
+            None,
+            None,
+            ResolvedOutputFormat::Jsonl,
+        )
+        .await?;
+
+        mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_patches_sends_repo_name_and_creator_filters() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/patches")
+                .query_param("repo_name", "dourolabs/hydra")
+                .query_param("creator", "alice");
+            then.status(200)
+                .json_body_obj(&ListPatchesResponse::new(Vec::new()));
+        });
+
+        list_patches(
+            &client,
+            None,
+            None,
+            false,
+            Some("dourolabs/hydra".to_string()),
+            Some("alice".to_string()),
             ResolvedOutputFormat::Jsonl,
         )
         .await?;
@@ -1370,6 +1429,8 @@ mod tests {
             None,
             None,
             false,
+            None,
+            None,
             ResolvedOutputFormat::Jsonl,
             &mut output,
         )
