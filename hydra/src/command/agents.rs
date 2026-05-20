@@ -1,6 +1,6 @@
 use crate::{
     client::HydraClientInterface,
-    command::output::{render_agent_records, CommandContext},
+    command::output::{render, AgentRecords, CommandContext},
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -158,23 +158,23 @@ pub async fn run(
     match command {
         AgentsCommand::List => {
             let agents = fetch_agents(client).await?;
-            render_agent_records(context.output_format, &agents, &mut stdout)?;
+            render(AgentRecords(&agents), context.output_format, &mut stdout)?;
         }
         AgentsCommand::Get { name } => {
             let agent = get_agent(client, &name).await?;
-            render_agent_records(context.output_format, &[agent], &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
         }
         AgentsCommand::Create(args) => {
             let agent = create_agent(client, args).await?;
-            render_agent_records(context.output_format, &[agent], &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
         }
         AgentsCommand::Update(args) => {
             let agent = update_agent(client, args).await?;
-            render_agent_records(context.output_format, &[agent], &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
         }
         AgentsCommand::Delete { name } => {
             let deleted = delete_agent(client, &name).await?;
-            render_agent_records(context.output_format, &[deleted], &mut stdout)?;
+            render(AgentRecords(&[deleted]), context.output_format, &mut stdout)?;
         }
     }
 
@@ -363,7 +363,7 @@ mod tests {
     use super::*;
     use crate::{
         client::HydraClient,
-        command::output::{render_agent_records, ResolvedOutputFormat},
+        command::output::{render, AgentRecords, ResolvedOutputFormat},
     };
     use httpmock::prelude::*;
     use hydra_common::agents::{
@@ -425,7 +425,11 @@ mod tests {
         mock.assert();
 
         let mut output = Vec::new();
-        render_agent_records(ResolvedOutputFormat::Jsonl, &agents, &mut output)?;
+        render(
+            AgentRecords(&agents),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
         let output = String::from_utf8(output)?;
         assert!(output.contains("\"name\":\"alpha\""));
         assert!(output.contains("\"name\":\"beta\""));
@@ -449,7 +453,11 @@ mod tests {
         )];
         let mut output = Vec::new();
 
-        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
+        render(
+            AgentRecords(&agents),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
         let output = String::from_utf8(output)?;
 
         assert!(output.contains("alpha"));
@@ -1404,7 +1412,11 @@ mod tests {
         )];
         let mut output = Vec::new();
 
-        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
+        render(
+            AgentRecords(&agents),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
         let output = String::from_utf8(output)?;
 
         assert!(output.contains("secrets: OPENAI_API_KEY, GH_TOKEN"));
@@ -2036,7 +2048,11 @@ mod tests {
         )];
         let mut output = Vec::new();
 
-        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
+        render(
+            AgentRecords(&agents),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
         let output = String::from_utf8(output)?;
 
         assert!(output.contains("mcp_config_path: /agents/worker/mcp-config.json"));

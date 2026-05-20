@@ -4,7 +4,6 @@ use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use hydra_common::{
-    agents::AgentRecord,
     api::v1::conversations::{
         Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
         ConversationSummary as ApiConversationSummary,
@@ -13,9 +12,6 @@ use hydra_common::{
         ListNotificationsResponse, MarkReadResponse, NotificationResponse, UnreadCountResponse,
     },
     documents::{DocumentSummaryRecord, DocumentVersionRecord},
-    issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
-    patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
-    repositories::RepositoryRecord,
     sessions::{Session, SessionSummary, SessionSummaryRecord, SessionVersionRecord},
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
@@ -27,9 +23,16 @@ use textwrap::{termwidth, Options, WrapAlgorithm};
 use crate::client::HydraClientInterface;
 use crate::util::{format_duration, truncate_lines};
 
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const RESET: &str = "\x1b[0m";
+mod agents;
+mod issues;
+mod patches;
+mod repositories;
+
+pub use agents::AgentRecords;
+pub use issues::{IssueRecords, IssueSummaryRecords};
+pub use patches::{PatchRecords, PatchSummaryRecords};
+pub use repositories::RepositoryRecords;
+
 const NAME_WIDTH: usize = 48;
 const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
@@ -63,6 +66,22 @@ impl CommandContext {
     }
 }
 
+pub trait Render {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()>;
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()>;
+}
+
+pub fn render<R: Render, W: Write>(
+    value: R,
+    format: ResolvedOutputFormat,
+    writer: &mut W,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => value.render_jsonl(writer),
+        ResolvedOutputFormat::Pretty => value.render_pretty(writer),
+    }
+}
+
 pub async fn resolve_output_format(
     client: &dyn HydraClientInterface,
     output_format: OutputFormat,
@@ -71,50 +90,6 @@ pub async fn resolve_output_format(
         OutputFormat::Auto => resolve_auto_output_format(client).await,
         OutputFormat::Jsonl => Ok(ResolvedOutputFormat::Jsonl),
         OutputFormat::Pretty => Ok(ResolvedOutputFormat::Pretty),
-    }
-}
-
-pub fn render_issue_records(
-    format: ResolvedOutputFormat,
-    issues: &[IssueVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_issue_records_jsonl(issues, writer),
-        ResolvedOutputFormat::Pretty => render_issue_records_pretty(issues, writer),
-    }
-}
-
-pub fn render_issue_summary_records(
-    format: ResolvedOutputFormat,
-    issues: &[IssueSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_issue_summary_records_jsonl(issues, writer),
-        ResolvedOutputFormat::Pretty => render_issue_summary_records_pretty(issues, writer),
-    }
-}
-
-pub fn render_patch_records(
-    format: ResolvedOutputFormat,
-    patches: &[PatchVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_patch_records_jsonl(patches, writer),
-        ResolvedOutputFormat::Pretty => render_patch_records_pretty(patches, writer),
-    }
-}
-
-pub fn render_patch_summary_records(
-    format: ResolvedOutputFormat,
-    patches: &[PatchSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_patch_summary_records_jsonl(patches, writer),
-        ResolvedOutputFormat::Pretty => render_patch_summary_records_pretty(patches, writer),
     }
 }
 
@@ -137,28 +112,6 @@ pub fn render_session_summary_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_session_summary_records_jsonl(jobs, writer),
         ResolvedOutputFormat::Pretty => render_session_summary_records_pretty(jobs, writer),
-    }
-}
-
-pub fn render_agent_records(
-    format: ResolvedOutputFormat,
-    agents: &[AgentRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_agent_records_jsonl(agents, writer),
-        ResolvedOutputFormat::Pretty => render_agent_records_pretty(agents, writer),
-    }
-}
-
-pub fn render_repository_records(
-    format: ResolvedOutputFormat,
-    repositories: &[RepositoryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Jsonl => render_repository_records_jsonl(repositories, writer),
-        ResolvedOutputFormat::Pretty => render_repository_records_pretty(repositories, writer),
     }
 }
 
@@ -196,277 +149,6 @@ async fn resolve_auto_output_format(
         ActorIdentity::Session { .. } => ResolvedOutputFormat::Jsonl,
         _ => ResolvedOutputFormat::Jsonl,
     })
-}
-
-fn render_issue_records_jsonl(
-    issues: &[IssueVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for issue in issues {
-        serde_json::to_writer(&mut *writer, issue)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_issue_records_pretty(
-    issues: &[IssueVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for (index, issue_record) in issues.iter().enumerate() {
-        let Issue {
-            issue_type,
-            title,
-            description,
-            creator,
-            progress,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } = &issue_record.issue;
-
-        writeln!(
-            writer,
-            "Issue {} ({issue_type}, {status})",
-            issue_record.issue_id
-        )?;
-        if !title.is_empty() {
-            writeln!(writer, "Title: {title}")?;
-        }
-        writeln!(writer, "Creator: {}", creator.as_ref())?;
-        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
-        writeln!(writer, "Description:")?;
-        if description.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in description.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        writeln!(writer, "Progress:")?;
-        if progress.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in progress.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        if dependencies.is_empty() {
-            writeln!(writer, "Dependencies: none")?;
-        } else {
-            writeln!(writer, "Dependencies:")?;
-            for dependency in dependencies {
-                writeln!(
-                    writer,
-                    "  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
-        }
-
-        if index + 1 < issues.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_issue_summary_records_jsonl(
-    issues: &[IssueSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for issue in issues {
-        serde_json::to_writer(&mut *writer, issue)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_issue_summary_records_pretty(
-    issues: &[IssueSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for (index, issue_record) in issues.iter().enumerate() {
-        let IssueSummary {
-            issue_type,
-            title,
-            description,
-            creator,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } = &issue_record.issue;
-
-        writeln!(
-            writer,
-            "Issue {} ({issue_type}, {status})",
-            issue_record.issue_id
-        )?;
-        if !title.is_empty() {
-            writeln!(writer, "Title: {title}")?;
-        }
-        writeln!(writer, "Creator: {}", creator.as_ref())?;
-        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
-        writeln!(writer, "Description:")?;
-        if description.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in description.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        if dependencies.is_empty() {
-            writeln!(writer, "Dependencies: none")?;
-        } else {
-            writeln!(writer, "Dependencies:")?;
-            for dependency in dependencies {
-                writeln!(
-                    writer,
-                    "  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
-        }
-
-        if index + 1 < issues.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_patch_records_jsonl(
-    patches: &[PatchVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for patch in patches {
-        serde_json::to_writer(&mut *writer, patch)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_patch_records_pretty(
-    patches: &[PatchVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for patch in patches {
-        write_patch_record_pretty(patch, writer)?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_patch_record_pretty(record: &PatchVersionRecord, writer: &mut impl Write) -> Result<()> {
-    let title = extract_patch_title(record);
-    let status = extract_patch_status(record);
-    let description = extract_patch_description(record);
-    writeln!(
-        writer,
-        "Patch {} [{}]: {}",
-        record.patch_id,
-        format_patch_status(status),
-        title
-    )?;
-    writeln!(
-        writer,
-        "Repository: {}",
-        record.patch.service_repo_name.as_str()
-    )?;
-    if !description.trim().is_empty() {
-        writeln!(writer, "{description}")?;
-    }
-    if record.patch.diff.trim().is_empty() {
-        writeln!(writer, "[no diff available]")?;
-    } else {
-        writeln!(writer)?;
-        pretty_print_patch(&record.patch.diff, writer)?;
-    }
-    writeln!(writer)?;
-    Ok(())
-}
-
-fn pretty_print_patch(patch: &str, writer: &mut impl Write) -> Result<()> {
-    for line in patch.lines() {
-        if line.starts_with('+') && !line.starts_with("+++") {
-            writeln!(writer, "{GREEN}{line}{RESET}")?;
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            writeln!(writer, "{RED}{line}{RESET}")?;
-        } else {
-            writeln!(writer, "{line}")?;
-        }
-    }
-    Ok(())
-}
-
-fn extract_patch_title(record: &PatchVersionRecord) -> &str {
-    record.patch.title.as_str()
-}
-
-fn extract_patch_status(record: &PatchVersionRecord) -> PatchStatus {
-    record.patch.status
-}
-
-fn extract_patch_description(record: &PatchVersionRecord) -> &str {
-    record.patch.description.as_str()
-}
-
-fn render_patch_summary_records_jsonl(
-    patches: &[PatchSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for patch in patches {
-        serde_json::to_writer(&mut *writer, patch)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_patch_summary_records_pretty(
-    patches: &[PatchSummaryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for record in patches {
-        writeln!(
-            writer,
-            "Patch {} [{}]: {}",
-            record.patch_id,
-            format_patch_status(record.patch.status),
-            record.patch.title
-        )?;
-        writeln!(
-            writer,
-            "Repository: {}",
-            record.patch.service_repo_name.as_str()
-        )?;
-        if let Some(ref branch) = record.patch.branch_name {
-            writeln!(writer, "Branch: {branch}")?;
-        }
-        writeln!(writer)?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn format_patch_status(status: PatchStatus) -> &'static str {
-    match status {
-        PatchStatus::Open => "open",
-        PatchStatus::Closed => "closed",
-        PatchStatus::Merged => "merged",
-        PatchStatus::ChangesRequested => "changes requested",
-        _ => "unknown",
-    }
 }
 
 fn render_session_records_jsonl(
@@ -570,127 +252,6 @@ fn render_session_summary_records_pretty(
         }
     }
     writer.flush()?;
-    Ok(())
-}
-
-fn render_agent_records_jsonl(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
-    for agent in agents {
-        serde_json::to_writer(&mut *writer, agent)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_agent_records_pretty(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
-    if agents.is_empty() {
-        writeln!(writer, "No agents configured.")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    for (index, agent) in agents.iter().enumerate() {
-        write_agent_details(agent, writer)?;
-        if index + 1 < agents.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_agent_details(agent: &AgentRecord, writer: &mut impl Write) -> Result<()> {
-    writeln!(writer, "- {}", agent.name)?;
-    if !agent.prompt_path.is_empty() {
-        writeln!(writer, "  prompt_path: {}", agent.prompt_path)?;
-    }
-    if !agent.prompt.is_empty() {
-        writeln!(writer, "  prompt: {}", agent.prompt)?;
-    }
-    if let Some(mcp_config_path) = &agent.mcp_config_path {
-        writeln!(writer, "  mcp_config_path: {mcp_config_path}")?;
-    }
-    writeln!(writer, "  max_tries: {}", agent.max_tries)?;
-    writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
-    writeln!(
-        writer,
-        "  is_assignment_agent: {}",
-        agent.is_assignment_agent
-    )?;
-    writeln!(
-        writer,
-        "  is_default_conversation_agent: {}",
-        agent.is_default_conversation_agent
-    )?;
-    if !agent.secrets.is_empty() {
-        writeln!(writer, "  secrets: {}", agent.secrets.join(", "))?;
-    }
-    Ok(())
-}
-
-fn render_repository_records_jsonl(
-    repositories: &[RepositoryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for repository in repositories {
-        serde_json::to_writer(&mut *writer, repository)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn render_repository_records_pretty(
-    repositories: &[RepositoryRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    if repositories.is_empty() {
-        writeln!(writer, "No repositories configured.")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    for (index, repository) in repositories.iter().enumerate() {
-        write_repository_details(repository, writer)?;
-        if index + 1 < repositories.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Write) -> Result<()> {
-    let config = &repository.repository;
-    writeln!(writer, "- {}", repository.name)?;
-    writeln!(writer, "  remote_url: {}", config.remote_url)?;
-    writeln!(
-        writer,
-        "  default_branch: {}",
-        config.default_branch.as_deref().unwrap_or("<none>")
-    )?;
-    writeln!(
-        writer,
-        "  default_image: {}",
-        config.default_image.as_deref().unwrap_or("<none>")
-    )?;
-    if let Some(ref pw) = config.patch_workflow {
-        if !pw.review_requests.is_empty() {
-            let reviewers: Vec<&str> = pw
-                .review_requests
-                .iter()
-                .map(|r| r.assignee.as_str())
-                .collect();
-            writeln!(writer, "  reviewers: {}", reviewers.join(", "))?;
-        }
-        if let Some(ref mr) = pw.merge_request {
-            writeln!(
-                writer,
-                "  merger: {}",
-                mr.assignee.as_deref().unwrap_or("<none>")
-            )?;
-        }
-    }
     Ok(())
 }
 

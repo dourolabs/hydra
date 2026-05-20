@@ -30,10 +30,7 @@ use crate::git::{
 use crate::{
     client::HydraClientInterface,
     command::{
-        output::{
-            render_patch_records, render_patch_summary_records, CommandContext,
-            ResolvedOutputFormat,
-        },
+        output::{render, CommandContext, PatchRecords, PatchSummaryRecords, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
@@ -422,13 +419,13 @@ async fn list_patches_with_writer(
             .get_patch(&id)
             .await
             .with_context(|| format!("failed to fetch patch '{id}'"))?;
-        render_patch_records(output_format, &[patch], writer)?;
+        render(PatchRecords(&[patch]), output_format, writer)?;
         return Ok(());
     }
 
     let patches = fetch_patches(client, query, include_deleted).await?;
 
-    render_patch_summary_records(output_format, &patches, writer)?;
+    render(PatchSummaryRecords(&patches), output_format, writer)?;
 
     Ok(())
 }
@@ -452,7 +449,11 @@ async fn get_patch_by_version(
             .await
             .with_context(|| format!("failed to fetch patch '{patch_id}'"))?,
     };
-    render_patch_records(output_format, &[patch], &mut std::io::stdout())?;
+    render(
+        PatchRecords(&[patch]),
+        output_format,
+        &mut std::io::stdout(),
+    )?;
     Ok(())
 }
 
@@ -570,7 +571,11 @@ fn write_patch_output(
     patch: &PatchVersionRecord,
 ) -> Result<()> {
     let mut buffer = Vec::new();
-    render_patch_records(output_format, std::slice::from_ref(patch), &mut buffer)?;
+    render(
+        PatchRecords(std::slice::from_ref(patch)),
+        output_format,
+        &mut buffer,
+    )?;
     std::io::stdout().write_all(&buffer)?;
     std::io::stdout().flush()?;
     Ok(())
