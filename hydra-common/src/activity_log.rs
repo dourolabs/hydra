@@ -1,5 +1,5 @@
 use crate::{
-    DocumentId, HydraId, IssueId, PatchId, SessionId, VersionNumber, Versioned, actor_ref::ActorRef,
+    DocumentId, HydraId, PatchId, SessionId, VersionNumber, Versioned, actor_ref::ActorRef,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -53,13 +53,6 @@ pub struct ActivityLogEntry {
     pub object: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
-}
-
-pub fn activity_log_for_issue_versions(
-    issue_id: IssueId,
-    versions: &[Versioned<crate::api::v1::issues::Issue>],
-) -> Vec<ActivityLogEntry> {
-    activity_log_from_versions(issue_id.into(), ActivityObjectKind::Issue, versions)
 }
 
 pub fn activity_log_for_patch_versions(
@@ -189,70 +182,13 @@ fn normalize_path(path: &str) -> String {
 mod tests {
     use super::{
         ActivityEvent, ActivityObjectKind, activity_log_for_document_versions,
-        activity_log_for_issue_versions, activity_log_for_patch_versions,
+        activity_log_for_patch_versions,
     };
     use crate::api::v1::documents::Document;
-    use crate::api::v1::issues::{Issue, IssueStatus, IssueType};
     use crate::api::v1::patches::{Patch, PatchStatus};
     use crate::api::v1::users::Username;
-    use crate::{DocumentId, IssueId, PatchId, RepoName, Versioned};
+    use crate::{DocumentId, PatchId, RepoName, Versioned};
     use chrono::{TimeZone, Utc};
-
-    #[test]
-    fn activity_log_records_create_and_update_changes() {
-        let issue_id = IssueId::new();
-        let base_issue = Issue {
-            issue_type: IssueType::Task,
-            title: String::new(),
-            description: "Initial".to_string(),
-            creator: "alice".into(),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            session_settings: Default::default(),
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-            deleted: false,
-            form: None,
-            form_response: None,
-            feedback: None,
-        };
-        let updated_issue = Issue {
-            description: "Updated".to_string(),
-            ..base_issue.clone()
-        };
-
-        let versions = vec![
-            Versioned::new(
-                base_issue,
-                1,
-                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
-                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
-            ),
-            Versioned::new(
-                updated_issue,
-                2,
-                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
-                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
-            ),
-        ];
-
-        let log = activity_log_for_issue_versions(issue_id, &versions);
-        assert_eq!(log.len(), 2);
-        assert_eq!(log[0].object_kind, ActivityObjectKind::Issue);
-        assert!(matches!(log[0].event, ActivityEvent::Created));
-        match &log[1].event {
-            ActivityEvent::Updated { changes } => {
-                assert_eq!(changes.len(), 1);
-                let change = &changes[0];
-                assert_eq!(change.path, "/description");
-                assert_eq!(change.before, "Initial");
-                assert_eq!(change.after, "Updated");
-            }
-            _ => panic!("expected updated event"),
-        }
-    }
 
     #[test]
     fn activity_log_orders_by_timestamp_then_version() {
@@ -304,25 +240,24 @@ mod tests {
     #[test]
     fn activity_log_includes_actor_from_versioned() {
         use crate::actor_ref::{ActorId, ActorRef};
-        use crate::api::v1::users::Username;
 
-        let issue_id = IssueId::new();
-        let base_issue = Issue {
-            issue_type: IssueType::Task,
-            title: String::new(),
-            description: "Initial".to_string(),
-            creator: "alice".into(),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            session_settings: Default::default(),
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
+        let patch_id = PatchId::new();
+        let repo_name = RepoName::new("acme", "repo").unwrap();
+        let base_patch = Patch {
+            title: "v1".to_string(),
+            description: "first".to_string(),
+            diff: String::new(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: None,
+            creator: Username::from("test-creator"),
+            reviews: Vec::new(),
+            service_repo_name: repo_name,
+            github: None,
             deleted: false,
-            form: None,
-            form_response: None,
-            feedback: None,
+            branch_name: None,
+            commit_range: None,
+            base_branch: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -331,15 +266,15 @@ mod tests {
 
         let versions = vec![
             Versioned::new(
-                base_issue.clone(),
+                base_patch.clone(),
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
             ),
             Versioned::with_actor(
-                Issue {
-                    description: "Updated".to_string(),
-                    ..base_issue
+                Patch {
+                    title: "v2".to_string(),
+                    ..base_patch
                 },
                 2,
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
@@ -348,7 +283,7 @@ mod tests {
             ),
         ];
 
-        let log = activity_log_for_issue_versions(issue_id, &versions);
+        let log = activity_log_for_patch_versions(patch_id, &versions);
         assert_eq!(log.len(), 2);
         assert_eq!(
             log[0].actor, None,

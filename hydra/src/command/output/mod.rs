@@ -428,7 +428,18 @@ fn session_note(job: &SessionVersionRecord) -> Option<String> {
 }
 
 fn session_summary_note(job: &SessionSummaryRecord) -> Option<String> {
-    job.session.error.as_ref().map(format_task_error)
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(error) = job.session.error.as_ref() {
+        parts.push(format_task_error(error));
+    }
+    if let Some(conversation_id) = job.session.conversation_id.as_ref() {
+        parts.push(format!("conversation: {conversation_id}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
 }
 
 fn format_task_error(error: &TaskError) -> String {

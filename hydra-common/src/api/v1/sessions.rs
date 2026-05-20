@@ -384,7 +384,8 @@ impl CreateSessionResponse {
 /// Lightweight summary of a session for list views.
 ///
 /// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
-/// `memory_limit`, `secrets`, and `last_message`.
+/// `memory_limit`, `secrets`, `last_message`, and the full `interactive`
+/// options (only the linked `conversation_id` is exposed).
 /// The `prompt` field is truncated to the first 20 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -394,6 +395,8 @@ pub struct SessionSummary {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
     pub creator: Username,
     #[serde(default = "default_status")]
     pub status: Status,
@@ -434,6 +437,10 @@ impl From<&Session> for SessionSummary {
         SessionSummary {
             prompt,
             spawned_from: session.spawned_from.clone(),
+            conversation_id: session
+                .interactive
+                .as_ref()
+                .and_then(|i| i.conversation_id.clone()),
             creator: session.creator.clone(),
             status: session.status,
             error,
@@ -800,6 +807,44 @@ mod tests {
         assert!(summary.creation_time.is_some());
         assert!(summary.start_time.is_some());
         assert!(summary.end_time.is_none());
+        // One-shot session has no `interactive`, so no linked conversation.
+        assert!(summary.conversation_id.is_none());
+    }
+
+    #[test]
+    fn session_summary_includes_conversation_id_from_interactive() {
+        let conv_id = crate::ConversationId::new();
+        let mut session = make_test_session("interactive prompt");
+        session.interactive = Some(InteractiveOptions::new(
+            Some(conv_id.clone()),
+            Some(600),
+            None,
+        ));
+        let summary = SessionSummary::from(&session);
+        assert_eq!(summary.conversation_id.as_ref(), Some(&conv_id));
+
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(
+            value.get("conversation_id").and_then(|v| v.as_str()),
+            Some(conv_id.as_ref())
+        );
+    }
+
+    #[test]
+    fn session_summary_omits_conversation_id_when_absent() {
+        let session = make_test_session("one-shot prompt");
+        let summary = SessionSummary::from(&session);
+        assert!(summary.conversation_id.is_none());
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("conversation_id").is_none());
+    }
+
+    #[test]
+    fn session_summary_omits_conversation_id_when_interactive_unlinked() {
+        let mut session = make_test_session("interactive without conv");
+        session.interactive = Some(InteractiveOptions::new(None, Some(600), None));
+        let summary = SessionSummary::from(&session);
+        assert!(summary.conversation_id.is_none());
     }
 
     #[test]
