@@ -436,6 +436,12 @@ impl MemoryStore {
                 }
             }
 
+            if let Some(expected_creator) = query.creator.as_deref() {
+                if latest.item.creator.as_ref() != expected_creator {
+                    return None;
+                }
+            }
+
             if !query.status.is_empty() {
                 let status_filter: Vec<Status> = query
                     .status
@@ -5387,6 +5393,36 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, HashSet::from([task_a_id, task_b_id]));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filters_by_creator() {
+        let store = MemoryStore::new();
+
+        let mut task_alice = spawn_task();
+        task_alice.creator = Username::from("alice");
+        let (alice_id, _) = store
+            .add_session(task_alice, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_bob = spawn_task();
+        task_bob.creator = Username::from("bob");
+        store
+            .add_session(task_bob, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.creator = Some("alice".to_string());
+        let tasks: HashSet<_> = store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, HashSet::from([alice_id]));
     }
 
     #[tokio::test]

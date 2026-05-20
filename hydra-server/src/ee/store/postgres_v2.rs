@@ -1941,6 +1941,11 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         }
     }
 
+    if let Some(creator) = query.creator.as_deref() {
+        predicates.push(format!("creator = ${}", bindings.len() + 1));
+        bindings.push(creator.to_string());
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -8478,6 +8483,41 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(sessions, HashSet::from([task_a_id, task_b_id]));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_sessions_filters_by_creator(pool: PgStorePool) {
+        let store = Arc::new(PostgresStoreV2::new(pool));
+        let handles = test_state_with_store(store.clone());
+
+        let mut task_alice = sample_session();
+        task_alice.creator = Username::from("alice");
+        let (alice_id, _) = handles
+            .store
+            .add_session(task_alice, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_bob = sample_session();
+        task_bob.creator = Username::from("bob");
+        handles
+            .store
+            .add_session(task_bob, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.creator = Some("alice".to_string());
+        let sessions: HashSet<_> = handles
+            .store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(sessions, HashSet::from([alice_id]));
     }
 
     #[sqlx::test(migrations = "./migrations")]

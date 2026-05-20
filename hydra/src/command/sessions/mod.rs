@@ -75,6 +75,9 @@ pub enum SessionsCommand {
         /// Filter sessions that were spawned from a specific issue.
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
+        /// Filter sessions by creator username.
+        #[arg(long = "creator", value_name = "CREATOR")]
+        creator: Option<String>,
     },
     /// Get the full details of a single session by ID. Returns the complete session record including the full prompt, context, and configuration.
     Get {
@@ -160,7 +163,8 @@ pub async fn run(
         SessionsCommand::List {
             limit,
             spawned_from,
-        } => list::run(client.as_ref(), limit, spawned_from, context).await?,
+            creator,
+        } => list::run(client.as_ref(), limit, spawned_from, creator, context).await?,
         SessionsCommand::Get { id, version } => {
             get_session(client.as_ref(), &id, version, context).await?
         }
