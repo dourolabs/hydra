@@ -1,6 +1,6 @@
 use crate::{
     client::HydraClientInterface,
-    command::output::{render_repository_records, CommandContext},
+    command::output::{render, CommandContext, RepositoryRecords},
     git::clone_repo,
 };
 use anyhow::{bail, Context, Result};
@@ -163,19 +163,35 @@ pub async fn run(
     match command {
         ReposCommand::List(args) => {
             let repositories = fetch_repositories(client, args.include_deleted).await?;
-            render_repository_records(context.output_format, &repositories, &mut stdout)?;
+            render(
+                RepositoryRecords(&repositories),
+                context.output_format,
+                &mut stdout,
+            )?;
         }
         ReposCommand::Create(args) => {
             let repository = create_repository(client, args).await?;
-            render_repository_records(context.output_format, &[repository], &mut stdout)?;
+            render(
+                RepositoryRecords(&[repository]),
+                context.output_format,
+                &mut stdout,
+            )?;
         }
         ReposCommand::Update(args) => {
             let repository = update_repository(client, args).await?;
-            render_repository_records(context.output_format, &[repository], &mut stdout)?;
+            render(
+                RepositoryRecords(&[repository]),
+                context.output_format,
+                &mut stdout,
+            )?;
         }
         ReposCommand::Delete(args) => {
             let repository = delete_repository(client, args).await?;
-            render_repository_records(context.output_format, &[repository], &mut stdout)?;
+            render(
+                RepositoryRecords(&[repository]),
+                context.output_format,
+                &mut stdout,
+            )?;
         }
         ReposCommand::Clone(args) => {
             clone_repository(client, args).await?;
@@ -469,7 +485,7 @@ mod tests {
     use super::*;
     use crate::{
         client::HydraClient,
-        command::output::{render_repository_records, ResolvedOutputFormat},
+        command::output::{render, RepositoryRecords, ResolvedOutputFormat},
     };
     use httpmock::prelude::*;
     use hydra_common::repositories::{ListRepositoriesResponse, UpsertRepositoryResponse};
@@ -547,8 +563,12 @@ mod tests {
 
         let repositories = fetch_repositories(&client, false).await.unwrap();
         let mut output = Vec::new();
-        render_repository_records(ResolvedOutputFormat::Pretty, &repositories, &mut output)
-            .unwrap();
+        render(
+            RepositoryRecords(&repositories),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
 
         assert!(output.contains("dourolabs/hydra"));
@@ -598,8 +618,12 @@ mod tests {
         let repository = create_repository(&client, args.clone()).await.unwrap();
 
         let mut output = Vec::new();
-        render_repository_records(ResolvedOutputFormat::Pretty, &[repository], &mut output)
-            .unwrap();
+        render(
+            RepositoryRecords(&[repository]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("dourolabs/hydra"));
 
@@ -658,8 +682,12 @@ mod tests {
         let repository = update_repository(&client, args.clone()).await.unwrap();
 
         let mut output = Vec::new();
-        render_repository_records(ResolvedOutputFormat::Pretty, &[repository], &mut output)
-            .unwrap();
+        render(
+            RepositoryRecords(&[repository]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("default_branch: <none>"));
 
@@ -1162,7 +1190,12 @@ mod tests {
         repo_info.repository.patch_workflow = Some(sample_workflow_config());
 
         let mut output = Vec::new();
-        render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
+        render(
+            RepositoryRecords(&[repo_info]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
 
         assert!(output.contains("reviewers: alice"));
@@ -1175,7 +1208,12 @@ mod tests {
         let repo_info = sample_repository_info(&repo_name);
 
         let mut output = Vec::new();
-        render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
+        render(
+            RepositoryRecords(&[repo_info]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
 
         assert!(!output.contains("reviewers:"));

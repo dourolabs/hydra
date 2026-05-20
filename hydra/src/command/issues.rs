@@ -1,10 +1,7 @@
 use crate::{
     client::HydraClientInterface,
     command::{
-        output::{
-            render_issue_records, render_issue_summary_records, CommandContext,
-            ResolvedOutputFormat,
-        },
+        output::{render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat},
         utils::resolve_username,
     },
 };
@@ -1131,7 +1128,7 @@ async fn update_issue(
 
 fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueVersionRecord]) -> Result<()> {
     let mut buffer = Vec::new();
-    render_issue_records(format, issues, &mut buffer)?;
+    render(IssueRecords(issues), format, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
     Ok(())
@@ -1142,7 +1139,7 @@ fn write_issue_summary_records(
     issues: &[IssueSummaryRecord],
 ) -> Result<()> {
     let mut buffer = Vec::new();
-    render_issue_summary_records(format, issues, &mut buffer)?;
+    render(IssueSummaryRecords(issues), format, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
     Ok(())
@@ -1397,7 +1394,12 @@ mod tests {
         assert_eq!(list_mock.hits(), 1);
 
         let mut output = Vec::new();
-        render_issue_summary_records(ResolvedOutputFormat::Jsonl, &issues, &mut output).unwrap();
+        render(
+            IssueSummaryRecords(&issues),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
         let first_id = issue_id("i-1").to_string();
         let second_id = issue_id("i-2").to_string();
@@ -2676,7 +2678,12 @@ mod tests {
         ];
 
         let mut output = Vec::new();
-        render_issue_records(ResolvedOutputFormat::Pretty, &issues, &mut output).unwrap();
+        render(
+            IssueRecords(&issues),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
         let rendered = String::from_utf8(output).unwrap();
         let first_issue = issue_id("i-1").to_string();
         let dependency_id = issue_id("i-99").to_string();
