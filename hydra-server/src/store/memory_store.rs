@@ -324,17 +324,32 @@ impl MemoryStore {
             if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
                 return None;
             }
-            if let Some(ref branch) = query.branch_name {
-                if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
+            if let Some(branch) = query
+                .branch_name
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
+                if latest.item.branch_name.as_deref() != Some(branch) {
                     return None;
                 }
             }
-            if let Some(ref repo_name) = query.repo_name {
-                if latest.item.service_repo_name.as_str() != repo_name.as_str() {
+            if let Some(repo_name) = query
+                .repo_name
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
+                if latest.item.service_repo_name.as_str() != repo_name {
                     return None;
                 }
             }
-            if let Some(ref creator) = query.creator {
+            if let Some(creator) = query
+                .creator
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
                 if latest.item.creator.as_str().to_lowercase() != creator.to_lowercase() {
                     return None;
                 }
@@ -6083,6 +6098,59 @@ mod tests {
         query.creator = Some("carol".to_string());
         let filtered = store.list_patches(&query).await.unwrap();
         assert!(filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_empty_string_filter_is_noop() {
+        let store = MemoryStore::new();
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("alice");
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.branch_name = Some("feature/foo".to_string());
+        store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("bob");
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        patch_b.branch_name = Some("feature/bar".to_string());
+        store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let baseline = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap()
+            .len();
+        assert_eq!(baseline, 2);
+
+        // Each empty-string filter individually is a no-op.
+        for field in ["creator", "repo_name", "branch_name"] {
+            let mut query = SearchPatchesQuery::default();
+            match field {
+                "creator" => query.creator = Some(String::new()),
+                "repo_name" => query.repo_name = Some(String::new()),
+                "branch_name" => query.branch_name = Some(String::new()),
+                _ => unreachable!(),
+            }
+            let filtered = store.list_patches(&query).await.unwrap();
+            assert_eq!(filtered.len(), baseline, "empty {field} should be a no-op");
+        }
+
+        // All three empty filters combined is also a no-op.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some(String::new());
+        query.repo_name = Some(String::new());
+        query.branch_name = Some(String::new());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
+
+        // Whitespace-only values are likewise a no-op after trim.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("   ".to_string());
+        query.repo_name = Some("   ".to_string());
+        query.branch_name = Some("   ".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
     }
 
     // ---- Notification tests ----

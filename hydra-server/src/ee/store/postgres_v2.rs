@@ -1804,16 +1804,26 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
         }
     }
 
-    if let Some(ref branch) = query.branch_name {
+    if let Some(branch) = query
+        .branch_name
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         let idx = bindings.len() + 1;
         predicates.push(format!("branch_name = ${idx}"));
-        bindings.push(branch.clone());
+        bindings.push(branch.to_string());
     }
 
-    if let Some(ref repo_name) = query.repo_name {
+    if let Some(repo_name) = query
+        .repo_name
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         let idx = bindings.len() + 1;
         predicates.push(format!("service_repo_name = ${idx}"));
-        bindings.push(repo_name.clone());
+        bindings.push(repo_name.to_string());
     }
 
     if let Some(creator) = query
@@ -6702,6 +6712,60 @@ mod tests {
         query.creator = Some("carol".to_string());
         let filtered = store.list_patches(&query).await.unwrap();
         assert!(filtered.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_patches_empty_string_filter_is_noop_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let mut patch_a = sample_patch();
+        patch_a.creator = Username::from("alice");
+        patch_a.service_repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        patch_a.branch_name = Some("feature/foo".to_string());
+        store.add_patch(patch_a, &ActorRef::test()).await.unwrap();
+
+        let mut patch_b = sample_patch();
+        patch_b.creator = Username::from("bob");
+        patch_b.service_repo_name = RepoName::from_str("dourolabs/other").unwrap();
+        patch_b.branch_name = Some("feature/bar".to_string());
+        store.add_patch(patch_b, &ActorRef::test()).await.unwrap();
+
+        let baseline = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap()
+            .len();
+        assert_eq!(baseline, 2);
+
+        // Each empty-string filter individually is a no-op.
+        for field in ["creator", "repo_name", "branch_name"] {
+            let mut query = SearchPatchesQuery::default();
+            match field {
+                "creator" => query.creator = Some(String::new()),
+                "repo_name" => query.repo_name = Some(String::new()),
+                "branch_name" => query.branch_name = Some(String::new()),
+                _ => unreachable!(),
+            }
+            let filtered = store.list_patches(&query).await.unwrap();
+            assert_eq!(filtered.len(), baseline, "empty {field} should be a no-op");
+        }
+
+        // All three empty filters combined is also a no-op.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some(String::new());
+        query.repo_name = Some(String::new());
+        query.branch_name = Some(String::new());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
+
+        // Whitespace-only values are likewise a no-op after trim.
+        let mut query = SearchPatchesQuery::default();
+        query.creator = Some("   ".to_string());
+        query.repo_name = Some("   ".to_string());
+        query.branch_name = Some("   ".to_string());
+        let filtered = store.list_patches(&query).await.unwrap();
+        assert_eq!(filtered.len(), baseline);
     }
 
     // ---- Notification tests ----
