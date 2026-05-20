@@ -95,7 +95,6 @@ there isn't one.
 Issues (read):
 - `hydra issues list [--status <s>] [--assignee <a>] [--repo-name <r>] [--type <t>] [--label <l>]`
 - `hydra issues get <id>` — single issue, flat view.
-- `hydra issues changelog <id>` — history of changes to an issue.
 
 Issues (write):
 - Create:

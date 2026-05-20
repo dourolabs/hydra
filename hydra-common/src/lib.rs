@@ -20,8 +20,8 @@ pub mod versioning;
 
 pub use activity_log::{
     ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange,
-    activity_log_for_document_versions, activity_log_for_issue_versions,
-    activity_log_for_patch_versions, activity_log_for_session_versions, activity_log_from_versions,
+    activity_log_for_document_versions, activity_log_for_patch_versions,
+    activity_log_for_session_versions, activity_log_from_versions,
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
