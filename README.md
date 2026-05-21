@@ -1,8 +1,8 @@
 # Hydra
 
-Hydra is an open-source AI orchestration layer that lets developers coordinate dozens of agents working simultaneously across tasks, issues, and environments.
-You assign work through an issue tracker, and Hydra automatically spins up agents to implement it.
-You survey their progress, review their work, and offer course corrections as needed.
+Hydra is an open-source AI orchestration layer. You open a chat, you say what you want, and a fleet of agents goes off and does the work — filing issues, writing code, opening PRs, and reporting back.
+
+Chat is the surface. The PM, SWE, and reviewer agents — plus the underlying issue and patch model — are the backend it orchestrates; you don't drive them by hand.
 
 ![Hydra Dashboard](docs/images/readme-dashboard-2.gif)
 
@@ -51,36 +51,59 @@ hydra server init
 
 This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT.
 When Docker is selected as the job engine, the init command automatically builds a Docker image for agents to run in.
-When it finishes, the server is running and the CLI is configured to talk to it.
+When it finishes, the server is running and the dashboard is configured to talk to it.
 You can use the `hydra server` command to start/stop/check the status of the server.
 
 ⚠️ **Warning:** Hydra runs agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine.
 Don't blame me if you choose local and Claude `rm -rf`s your machine.
 
-### 3. Add a git repository
+### 3. Open the dashboard and start a chat
 
-Open the frontend at http://localhost:8080/ and click "Create Issue".
-Tell the agent "add the git repo (git url)".
-The agent will register the repo in the system and additionally work on a Dockerfile with the dependencies your repo needs.
-The agent will also set up a github action to publish the image, configure your git repo to use the image, and then validate that the image has everything you need.
+Open <http://localhost:8080/> in your browser and click **New chat**.
 
-You can repeat this step anytime to register additional git repositories.
-You can see what repositories are currently configured on the Settings page.
+Type what you want in plain English — register a repository, fix a bug, add a feature. Chat translates your request into an issue and confirms with the issue ID. PM picks it up, decomposes it if needed, and routes the work to SWE.
 
-### 4. Start Working
+Example:
 
-Simply click "Create Issue" and describe what you want done.
-The agents will automatically break down your issue into subtasks, identify the right repositories for each one, make changes and submit PRs.
-When agents have work for you to review, they'll make issues assigned to you.
+```text
+You:  Add the metis-cluster repo at https://github.com/dourolabs/metis-cluster.
+Chat: Created `i-abc123` (assigned to pm) to register metis-cluster.
 
-## Core Concepts
+You:  Then add a CI status badge to its README.
+Chat: Created `i-def456` (assigned to pm) for the README badge — blocked on `i-abc123`.
+```
 
-A core design principle of Hydra is that *agents and humans have equal access*.
-All of the functionality described below is available to your agents.
+That's the whole loop. When agents finish work or need your input (a PR to review, a question to answer), they file issues assigned to you and the dashboard surfaces them.
+
+## How chat fits in
+
+Chat is your point of contact. Three other agents do the actual work:
+
+- **`pm`** — receives unassigned issues, investigates, and decomposes them into PR-sized tasks for `swe`.
+- **`swe`** — implements code changes and submits patches (pull requests).
+- **`reviewer`** — reviews patches and either approves them or requests changes. Can escalate to you.
+
+What chat does:
+
+- Translates your intent into **issue actions** — create, update, drop.
+- **Synthesizes status** from issues, patches, and notifications when you ask ("what changed since yesterday?").
+- Can **reconfigure existing agents** — prompts, MCP servers, secrets, retry / concurrency knobs.
+
+What chat does **not** do:
+
+- It does not modify code or repo files directly. It files an issue and SWE does the work.
+- It is read-only on patches — it can show you a PR's status, but it can't merge, close, or comment on one.
+- It does not start or kill sessions. Hydra spawns a session automatically when an issue gets assigned.
+
+## Advanced / power users
+
+The dashboard and the CLI are equivalent surfaces: anything you can do in chat, you can also do directly through `hydra <subcommand>` — and so can the agents. A core design principle of Hydra is that *agents and humans have equal access*.
+
+If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens a conversation with the chat agent directly. Pass `--prompt "<message>"` for one-shot use, or omit it for an interactive REPL.
 
 ### Issues
 
-All work in Hydra is represented by issues. Issues can be assigned to either agents or users. 
+All work in Hydra is represented by issues. Issues can be assigned to either agents or users.
 Issues have a status, which is one of:
 
 - `Open` -- work has not started
@@ -99,8 +122,9 @@ that are ready for work.
 
 ### Agents
 
-Hydra comes with three default agents, created automatically during `hydra server init`:
+Hydra comes with four default agents, created automatically during `hydra server init`:
 
+- **`chat`** -- Conversational interface. Your default point of contact; translates intent into issue actions.
 - **`swe`** -- Software engineering agent. Implements code changes, submits patches, and responds to review feedback.
 - **`pm`** -- Product manager agent. Breaks down complex features into smaller subtasks and assigns them.
 - **`reviewer`** -- Code review agent. Reviews patches and provides feedback.
