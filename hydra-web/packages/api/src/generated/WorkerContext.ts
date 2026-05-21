@@ -2,6 +2,7 @@
 import type { BuildCacheContext } from "./BuildCacheContext";
 import type { Bundle } from "./Bundle";
 import type { InteractiveOptions } from "./InteractiveOptions";
+import type { MountSpec } from "./MountSpec";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 export type WorkerContext = { request_context: Bundle, prompt: string, model?: string | null, variables: { [key in string]: string }, build_cache?: BuildCacheContext | null, mcp_config?: JsonValue | null, 
@@ -9,4 +10,10 @@ export type WorkerContext = { request_context: Bundle, prompt: string, model?: s
  * Interactive-only settings. `Some` when the worker should run in
  * interactive mode; `None` for a one-shot session.
  */
-interactive?: InteractiveOptions | null, };
+interactive?: InteractiveOptions | null, 
+/**
+ * Server-supplied mount layout. `Some` when the server has populated a
+ * spec; `None` for older servers, where the worker falls back to the
+ * legacy `request_context` + `build_cache` derivation.
+ */
+mount_spec?: MountSpec | null, };

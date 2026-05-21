@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 
 /// MCP (Model Context Protocol) server configuration.
 ///
@@ -323,6 +324,204 @@ impl<'de> Deserialize<'de> for Bundle {
     }
 }
 
+/// A relative, non-traversing filesystem path used in [`MountSpec`] /
+/// [`MountItem`] to describe where mounts land under the worker's per-job
+/// `dest` directory. Construction and deserialization reject absolute paths
+/// and any `..` component, so a server payload cannot point the worker at
+/// `/etc` or `../escape`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
+#[serde(transparent)]
+pub struct RelativePath(PathBuf);
+
+/// Error returned when a [`RelativePath`] fails validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelativePathError {
+    /// Path is absolute (e.g. `/etc`).
+    Absolute,
+    /// Path contains a `..` component (e.g. `foo/../bar`).
+    ParentTraversal,
+    /// Path is empty.
+    Empty,
+}
+
+impl std::fmt::Display for RelativePathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Absolute => f.write_str("path must be relative, not absolute"),
+            Self::ParentTraversal => f.write_str("path must not contain `..` components"),
+            Self::Empty => f.write_str("path must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for RelativePathError {}
+
+impl RelativePath {
+    /// Build a `RelativePath`, rejecting absolute paths and any `..` component.
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, RelativePathError> {
+        let path = path.into();
+        if path.as_os_str().is_empty() {
+            return Err(RelativePathError::Empty);
+        }
+        if path.is_absolute() {
+            return Err(RelativePathError::Absolute);
+        }
+        for component in path.components() {
+            match component {
+                Component::Normal(_) | Component::CurDir => {}
+                Component::ParentDir => return Err(RelativePathError::ParentTraversal),
+                Component::Prefix(_) | Component::RootDir => {
+                    return Err(RelativePathError::Absolute);
+                }
+            }
+        }
+        Ok(Self(path))
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for RelativePath {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for RelativePath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        RelativePath::new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Server-side description of the worker's filesystem layout.
+///
+/// `working_dir` is where the agent's CWD will live (relative to the worker's
+/// `dest` root); `mounts` is the ordered list of mounts to set up before the
+/// agent runs and tear down / persist after it finishes. One [`MountItem`] in
+/// this vec corresponds to one mount on the worker side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct MountSpec {
+    pub working_dir: RelativePath,
+    pub mounts: Vec<MountItem>,
+}
+
+impl MountSpec {
+    pub fn new(working_dir: RelativePath, mounts: Vec<MountItem>) -> Self {
+        Self {
+            working_dir,
+            mounts,
+        }
+    }
+}
+
+/// One mount's worth of server-supplied configuration.
+///
+/// Each variant carries the full set of inputs the corresponding `Mount`
+/// constructor needs, including session metadata (`session_id`,
+/// `issue_branch_id`) the server already knows at spec construction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
+pub enum MountItem {
+    /// Materialize a bundle (git repo or empty) at `target` under the worker
+    /// dest dir.
+    Bundle {
+        target: RelativePath,
+        bundle: Bundle,
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        issue_branch_id: Option<String>,
+    },
+
+    /// Apply / upload the nearest build cache against `repo_target`.
+    BuildCache {
+        repo_target: RelativePath,
+        service_repo_name: RepoName,
+        context: BuildCacheContext,
+        session_id: SessionId,
+    },
+
+    /// Sync / push the Hydra document store into `target`.
+    Documents { target: RelativePath },
+
+    /// Forward-compat fallback. Old clients reading a spec that contains an
+    /// unrecognized item tag deserialize the item as `Unknown` so the rest of
+    /// the vec is still understood. The worker treats any `Unknown` item as a
+    /// fatal "client is too old for this spec" error.
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
+enum MountItemHelper {
+    Bundle {
+        target: RelativePath,
+        bundle: Bundle,
+        session_id: SessionId,
+        #[serde(default)]
+        issue_branch_id: Option<String>,
+    },
+    BuildCache {
+        repo_target: RelativePath,
+        service_repo_name: RepoName,
+        context: BuildCacheContext,
+        session_id: SessionId,
+    },
+    Documents {
+        target: RelativePath,
+    },
+}
+
+impl<'de> Deserialize<'de> for MountItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<MountItemHelper>(value) {
+            Ok(MountItemHelper::Bundle {
+                target,
+                bundle,
+                session_id,
+                issue_branch_id,
+            }) => Ok(MountItem::Bundle {
+                target,
+                bundle,
+                session_id,
+                issue_branch_id,
+            }),
+            Ok(MountItemHelper::BuildCache {
+                repo_target,
+                service_repo_name,
+                context,
+                session_id,
+            }) => Ok(MountItem::BuildCache {
+                repo_target,
+                service_repo_name,
+                context,
+                session_id,
+            }),
+            Ok(MountItemHelper::Documents { target }) => Ok(MountItem::Documents { target }),
+            Err(_) => Ok(MountItem::Unknown),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -342,6 +541,11 @@ pub struct WorkerContext {
     /// interactive mode; `None` for a one-shot session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactive: Option<InteractiveOptions>,
+    /// Server-supplied mount layout. `Some` when the server has populated a
+    /// spec; `None` for older servers, where the worker falls back to the
+    /// legacy `request_context` + `build_cache` derivation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_spec: Option<MountSpec>,
 }
 
 impl WorkerContext {
@@ -353,6 +557,7 @@ impl WorkerContext {
         build_cache: Option<BuildCacheContext>,
         mcp_config: Option<McpConfig>,
         interactive: Option<InteractiveOptions>,
+        mount_spec: Option<MountSpec>,
     ) -> Self {
         Self {
             request_context,
@@ -362,6 +567,7 @@ impl WorkerContext {
             build_cache,
             mcp_config,
             interactive,
+            mount_spec,
         }
     }
 }
@@ -1066,6 +1272,7 @@ mod tests {
             None,
             Some(mcp_config.clone()),
             None,
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1086,6 +1293,7 @@ mod tests {
             None,
             None,
             Some(opts.clone()),
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1107,9 +1315,205 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
         assert!(json.get("interactive").is_none());
+    }
+
+    #[test]
+    fn relative_path_accepts_simple_paths() {
+        assert!(RelativePath::new("repo").is_ok());
+        assert!(RelativePath::new("documents").is_ok());
+        assert!(RelativePath::new("a/b/c").is_ok());
+        assert!(RelativePath::new("foo/bar").is_ok());
+    }
+
+    #[test]
+    fn relative_path_rejects_absolute_paths() {
+        assert_eq!(
+            RelativePath::new("/abs/path").unwrap_err(),
+            RelativePathError::Absolute
+        );
+    }
+
+    #[test]
+    fn relative_path_rejects_parent_traversal() {
+        assert_eq!(
+            RelativePath::new("..").unwrap_err(),
+            RelativePathError::ParentTraversal
+        );
+        assert_eq!(
+            RelativePath::new("foo/../bar").unwrap_err(),
+            RelativePathError::ParentTraversal
+        );
+        assert_eq!(
+            RelativePath::new("foo/..").unwrap_err(),
+            RelativePathError::ParentTraversal
+        );
+    }
+
+    #[test]
+    fn relative_path_rejects_empty() {
+        assert_eq!(RelativePath::new("").unwrap_err(), RelativePathError::Empty);
+    }
+
+    #[test]
+    fn relative_path_serializes_as_string() {
+        let path = RelativePath::new("a/b/c").unwrap();
+        let json = serde_json::to_value(&path).unwrap();
+        assert_eq!(json, serde_json::json!("a/b/c"));
+    }
+
+    #[test]
+    fn relative_path_deserialize_rejects_absolute() {
+        let result: Result<RelativePath, _> = serde_json::from_value(serde_json::json!("/etc"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn relative_path_deserialize_rejects_parent_traversal() {
+        let result: Result<RelativePath, _> =
+            serde_json::from_value(serde_json::json!("foo/../bar"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn relative_path_round_trips() {
+        let path = RelativePath::new("repo").unwrap();
+        let json = serde_json::to_value(&path).unwrap();
+        let parsed: RelativePath = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, path);
+    }
+
+    fn standard_mount_spec(with_build_cache: bool) -> MountSpec {
+        use crate::build_cache::{BuildCacheSettings, BuildCacheStorageConfig};
+
+        let repo_target = RelativePath::new("repo").unwrap();
+        let docs_target = RelativePath::new("documents").unwrap();
+        let session_id = SessionId::new();
+        let bundle = Bundle::GitRepository {
+            url: "https://example.test/repo.git".to_string(),
+            rev: "main".to_string(),
+        };
+        let mut mounts = vec![MountItem::Bundle {
+            target: repo_target.clone(),
+            bundle,
+            session_id: session_id.clone(),
+            issue_branch_id: Some("hydra/i-abcd/head".to_string()),
+        }];
+        if with_build_cache {
+            let cache_context = BuildCacheContext {
+                storage: BuildCacheStorageConfig::FileSystem {
+                    root_dir: "/tmp/cache".to_string(),
+                },
+                settings: BuildCacheSettings::default(),
+            };
+            mounts.push(MountItem::BuildCache {
+                repo_target: repo_target.clone(),
+                service_repo_name: RepoName::try_from("acme/widgets".to_string()).unwrap(),
+                context: cache_context,
+                session_id: session_id.clone(),
+            });
+        }
+        mounts.push(MountItem::Documents {
+            target: docs_target,
+        });
+        MountSpec::new(RelativePath::new("repo").unwrap(), mounts)
+    }
+
+    #[test]
+    fn mount_spec_round_trips_three_item_layout() {
+        let spec = standard_mount_spec(true);
+        let json = serde_json::to_value(&spec).unwrap();
+        let parsed: MountSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, spec);
+        assert_eq!(parsed.mounts.len(), 3);
+    }
+
+    #[test]
+    fn mount_spec_round_trips_two_item_layout() {
+        let spec = standard_mount_spec(false);
+        let json = serde_json::to_value(&spec).unwrap();
+        let parsed: MountSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, spec);
+        assert_eq!(parsed.mounts.len(), 2);
+        // First item is Bundle, second is Documents.
+        assert!(matches!(parsed.mounts[0], MountItem::Bundle { .. }));
+        assert!(matches!(parsed.mounts[1], MountItem::Documents { .. }));
+    }
+
+    #[test]
+    fn mount_item_unknown_tag_maps_to_unknown_variant() {
+        let session_id = SessionId::new();
+        let json = serde_json::json!({
+            "working_dir": "repo",
+            "mounts": [
+                {
+                    "type": "bundle",
+                    "target": "repo",
+                    "bundle": {"type": "none"},
+                    "session_id": session_id.to_string(),
+                },
+                {
+                    "type": "future_secrets_mount",
+                    "target": "secrets",
+                    "irrelevant": 42
+                },
+                {"type": "documents", "target": "documents"}
+            ]
+        });
+        let parsed: MountSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.mounts.len(), 3);
+        assert!(matches!(parsed.mounts[0], MountItem::Bundle { .. }));
+        assert!(matches!(parsed.mounts[1], MountItem::Unknown));
+        assert!(matches!(parsed.mounts[2], MountItem::Documents { .. }));
+    }
+
+    #[test]
+    fn worker_context_deserializes_without_mount_spec() {
+        let json = serde_json::json!({
+            "request_context": {"type": "none"},
+            "prompt": "hello",
+            "variables": {},
+        });
+        let ctx: WorkerContext = serde_json::from_value(json).unwrap();
+        assert!(ctx.mount_spec.is_none());
+    }
+
+    #[test]
+    fn worker_context_omits_mount_spec_when_none() {
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(json.get("mount_spec").is_none());
+    }
+
+    #[test]
+    fn worker_context_serializes_mount_spec_when_present() {
+        let spec = standard_mount_spec(true);
+        let context = WorkerContext::new(
+            Bundle::None,
+            "test prompt".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Some(spec.clone()),
+        );
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(json.get("mount_spec").is_some());
+        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.mount_spec, Some(spec));
     }
 }
