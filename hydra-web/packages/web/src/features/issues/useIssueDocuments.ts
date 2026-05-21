@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { DocumentSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -20,6 +20,7 @@ export function useIssueDocuments(issueId: string) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -36,6 +37,7 @@ export function useIssueDocuments(issueId: string) {
     select: (resp): DocumentSummaryRecord[] => resp.documents,
     enabled: documentIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const orderedDocuments = useMemo(() => {

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
@@ -79,6 +79,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
       }),
     enabled: !!conversationId,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -102,6 +103,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: issueIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const issues = useMemo(
@@ -119,6 +121,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     queryFn: () => apiClient.listSessions({ spawned_from_ids: sessionsIdsParam }),
     enabled: fetchedIssueIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.sessions,
   });
 
@@ -135,6 +138,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const patches = useMemo(
@@ -155,6 +159,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: documentIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const documents = useMemo(
