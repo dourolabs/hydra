@@ -2,9 +2,11 @@ import { useNavigate } from "react-router-dom";
 import { Icons, TypeChip } from "@hydra/ui";
 import type { BadgeStatus } from "@hydra/ui";
 import type {
+  ConversationSummary,
   DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
+  RepositoryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
 import {
@@ -14,12 +16,11 @@ import {
 } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
+import { conversationTitle } from "../chat/conversationTitle";
+import { workflowSummary } from "../repositories/workflowSummary";
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
-import {
-  useSessionDuration,
-  useSingleSessionDuration,
-} from "../dashboard/useSessionDuration";
+import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
 import styles from "./RailRow.module.css";
 
@@ -38,6 +39,9 @@ const STATUS_DOT_CLASS: Partial<Record<BadgeStatus, string>> = {
   "changes-requested": styles.toneRejected,
   rejected: styles.toneRejected,
   merged: styles.toneClosed,
+  "conv-active": styles.toneInProgress,
+  "conv-idle": styles.toneOpen,
+  "conv-closed": styles.toneClosed,
 };
 
 function StatusDot({ status }: { status: BadgeStatus }) {
@@ -125,9 +129,7 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
   const navigate = useNavigate();
   const p = record.patch;
   const status: BadgeStatus =
-    p.status === "Open" && p.review_summary.approved
-      ? "approved"
-      : normalizePatchStatus(p.status);
+    p.status === "Open" && p.review_summary.approved ? "approved" : normalizePatchStatus(p.status);
   const to = `/patches/${record.patch_id}${linkSearch ?? ""}`;
 
   return (
@@ -252,10 +254,68 @@ export function DocumentRailRow({ record }: DocumentRailRowProps) {
       <div className={styles.body}>
         <div className={styles.title}>{documentTitle(record)}</div>
         <div className={styles.meta}>
-          {record.document.path && (
-            <span className={styles.metaMono}>{record.document.path}</span>
-          )}
+          {record.document.path && <span className={styles.metaMono}>{record.document.path}</span>}
           <AgoTime iso={record.timestamp} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface ChatRailRowProps {
+  conversation: ConversationSummary;
+}
+
+export function ChatRailRow({ conversation }: ChatRailRowProps) {
+  const navigate = useNavigate();
+  const status: BadgeStatus = `conv-${conversation.status}`;
+  const messageLabel =
+    conversation.event_count === 1 ? "1 msg" : `${conversation.event_count} msgs`;
+  const to = `/chat/${conversation.conversation_id}`;
+
+  return (
+    <div
+      className={styles.row}
+      onClick={() => navigate(to)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          navigate(to);
+        }
+      }}
+      data-testid={`related-rail-row-chat-${conversation.conversation_id}`}
+    >
+      <StatusDot status={status} />
+      <div className={styles.body}>
+        <div className={styles.title}>{conversationTitle(conversation)}</div>
+        <div className={styles.meta}>
+          <span className={styles.metaMono}>{conversation.creator}</span>
+          <span className={styles.metaMono}>{messageLabel}</span>
+          <AgoTime iso={conversation.updated_at} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface RepositoryRailRowProps {
+  record: RepositoryRecord;
+}
+
+export function RepositoryRailRow({ record }: RepositoryRailRowProps) {
+  const workflow = workflowSummary(record);
+  return (
+    <div className={styles.row} data-testid={`related-rail-row-repository-${record.name}`}>
+      <Icons.IconRepo size={14} className={styles.docIcon} aria-hidden="true" />
+      <div className={styles.body}>
+        <div className={styles.title}>{record.name}</div>
+        <div className={styles.meta}>
+          {record.repository.default_branch && (
+            <span className={styles.metaMono}>{record.repository.default_branch}</span>
+          )}
+          {workflow && <span className={styles.metaMono}>{workflow}</span>}
         </div>
       </div>
     </div>

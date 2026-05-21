@@ -184,53 +184,27 @@
   flex: 1;
 }
 
-/* Mobile */
-@media (max-width: 768px) {
-  .table,
-  .table tbody {
-    display: block;
-    width: 100%;
-  }
+/* Mobile — vertical card list of RepositoryRailRow + inline Edit/Delete. */
+.mobileList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
-  .table thead {
-    display: none;
-  }
+.mobileItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
 
-  .table tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "name actions"
-      "meta meta";
-    column-gap: 10px;
-    row-gap: 6px;
-    align-items: center;
-    padding: 12px var(--pad-x);
-    height: auto;
-  }
+.mobileItem:last-child {
+  border-bottom: none;
+}
 
-  .table tbody td {
-    display: block;
-    padding: 0;
-    height: auto;
-    overflow: visible;
-    white-space: normal;
-    width: auto;
-  }
-
-  .table tbody td.colName {
-    grid-area: name;
-  }
-
-  .table tbody td.colActions {
-    grid-area: actions;
-    text-align: right;
-  }
-
-  .table tbody td.colRemote,
-  .table tbody td.colBranch,
-  .table tbody td.colImage,
-  .table tbody td.colWorkflow {
-    grid-area: auto;
-  }
+.mobileActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }

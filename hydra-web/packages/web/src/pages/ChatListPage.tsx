@@ -9,9 +9,13 @@ import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
 import { AgoTime } from "../components/Runtime/Runtime";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { ChatRailRow } from "../features/related/RailRow";
 import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
+
+const MOBILE_QUERY = "(max-width: 768px)";
 
 type Scope = "mine" | "all";
 
@@ -27,6 +31,7 @@ export function ChatListPage() {
   const displayName = user ? actorDisplayName(user.actor) : null;
   const [searchParams, setSearchParams] = useSearchParams();
   const scope = parseScope(searchParams.get("scope"));
+  const isMobile = useMediaQuery(MOBILE_QUERY);
 
   const query = useMemo<Partial<SearchConversationsQuery> | undefined>(() => {
     if (scope === "mine" && displayName) return { creator: displayName };
@@ -119,21 +124,25 @@ export function ChatListPage() {
       )}
 
       {error && (
-        <div className={styles.errorBanner}>
-          Failed to load conversations: {error.message}
-        </div>
+        <div className={styles.errorBanner}>Failed to load conversations: {error.message}</div>
       )}
 
       <div className={styles.body}>
-        {isLoading && sorted.length === 0 && (
-          <div className={styles.empty}>Loading chats…</div>
-        )}
+        {isLoading && sorted.length === 0 && <div className={styles.empty}>Loading chats…</div>}
 
         {!isLoading && !error && sorted.length === 0 && (
           <div className={styles.empty}>No conversations yet.</div>
         )}
 
-        {sorted.length > 0 && (
+        {sorted.length > 0 && isMobile && (
+          <div className={styles.mobileList} data-testid="chats-list">
+            {sorted.map((c) => (
+              <ChatRailRow key={c.conversation_id} conversation={c} />
+            ))}
+          </div>
+        )}
+
+        {sorted.length > 0 && !isMobile && (
           <div className={styles.tableWrap}>
             <table className={styles.table} data-testid="chats-list">
               <thead>
