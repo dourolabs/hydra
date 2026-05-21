@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { PatchSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -20,6 +20,7 @@ export function useIssuePatches(issueId: string) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -35,6 +36,7 @@ export function useIssuePatches(issueId: string) {
     select: (resp): PatchSummaryRecord[] => resp.patches,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   const orderedPatches = useMemo(() => {

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
 import type { SessionSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -40,6 +40,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -59,6 +60,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     queryFn: () => apiClient.listIssues({ ids: idsParam }),
     enabled: allRelatedIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.issues,
   });
 
@@ -69,6 +71,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     queryFn: () => apiClient.listSessions({ spawned_from_ids: idsParam }),
     enabled: allRelatedIds.length > 0,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     select: (data) => data.sessions,
   });
 
