@@ -7,6 +7,7 @@ use hydra_common::{
         ConversationStatus, CreateConversationRequest, SearchConversationsQuery,
         UpdateConversationRequest,
     },
+    constants::ENV_HYDRA_CONVERSATION_ID,
     ConversationId,
 };
 
@@ -40,8 +41,8 @@ pub enum ConversationsCommand {
     },
     /// Get conversation details and full chat transcript.
     Get {
-        /// Conversation identifier.
-        #[arg(value_name = "CONVERSATION_ID")]
+        /// Conversation identifier (defaults to HYDRA_CONVERSATION_ID).
+        #[arg(value_name = "CONVERSATION_ID", env = ENV_HYDRA_CONVERSATION_ID)]
         id: ConversationId,
     },
     /// Create a new conversation.
@@ -56,8 +57,8 @@ pub enum ConversationsCommand {
     },
     /// Update a conversation's title.
     Update {
-        /// Conversation identifier.
-        #[arg(value_name = "CONVERSATION_ID")]
+        /// Conversation identifier (defaults to HYDRA_CONVERSATION_ID).
+        #[arg(value_name = "CONVERSATION_ID", env = ENV_HYDRA_CONVERSATION_ID)]
         id: ConversationId,
 
         /// New title for the conversation.
@@ -66,8 +67,8 @@ pub enum ConversationsCommand {
     },
     /// Soft-delete a conversation.
     Delete {
-        /// Conversation identifier.
-        #[arg(value_name = "CONVERSATION_ID")]
+        /// Conversation identifier (defaults to HYDRA_CONVERSATION_ID).
+        #[arg(value_name = "CONVERSATION_ID", env = ENV_HYDRA_CONVERSATION_ID)]
         id: ConversationId,
     },
 }
