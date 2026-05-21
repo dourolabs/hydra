@@ -1433,3 +1433,377 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
     assert_eq!(interactive.idle_timeout_secs, Some(expected_idle_timeout));
     Ok(())
 }
+
+// --- MountSpec population tests ----------------------------------------------
+
+fn mount_spec_test_config_with_build_cache() -> crate::config::AppConfig {
+    let mut config = test_app_config();
+    config.build_cache = BuildCacheSection {
+        storage: Some(BuildCacheStorageConfig::FileSystem {
+            root_dir: "/tmp/hydra-build-cache".to_string(),
+        }),
+        include: Vec::new(),
+        exclude: Vec::new(),
+        home_include: Vec::new(),
+        home_exclude: Vec::new(),
+        max_entries_per_repo: Some(5),
+    };
+    config
+}
+
+fn make_session_with_service_repo(
+    repo_name: hydra_common::RepoName,
+    env_vars: HashMap<String, String>,
+) -> Session {
+    Session {
+        prompt: "prompt".to_string(),
+        context: BundleSpec::ServiceRepository {
+            name: repo_name,
+            rev: None,
+        },
+        spawned_from: None,
+        creator: Username::from("test-creator"),
+        image: Some(default_image()),
+        model: None,
+        env_vars,
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        mcp_config: None,
+        interactive: None,
+        status: Status::Created,
+        last_message: None,
+        error: None,
+        deleted: false,
+        creation_time: None,
+        start_time: None,
+        end_time: None,
+        usage: None,
+    }
+}
+
+fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
+    Session {
+        prompt: "prompt".to_string(),
+        context: BundleSpec::None,
+        spawned_from: None,
+        creator: Username::from("test-creator"),
+        image: Some(default_image()),
+        model: None,
+        env_vars,
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        mcp_config: None,
+        interactive: None,
+        status: Status::Created,
+        last_message: None,
+        error: None,
+        deleted: false,
+        creation_time: None,
+        start_time: None,
+        end_time: None,
+        usage: None,
+    }
+}
+
+async fn fetch_worker_context(
+    server: &crate::test_utils::TestServer,
+    session_id: &hydra_common::SessionId,
+) -> anyhow::Result<v1::sessions::WorkerContext> {
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{}/context",
+            server.base_url(),
+            session_id.as_ref()
+        ))
+        .send()
+        .await?;
+    assert!(response.status().is_success());
+    Ok(response.json().await?)
+}
+
+#[tokio::test]
+async fn get_session_context_populates_three_item_mount_spec_for_standard_session()
+-> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let config = mount_spec_test_config_with_build_cache();
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+    let (repo_name, repo) = service_repository();
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
+
+    let (session_id, _) = store
+        .add_session(
+            make_session_with_service_repo(repo_name.clone(), HashMap::new()),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, store).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    // Legacy fields are still populated.
+    assert_eq!(
+        context.request_context,
+        v1::sessions::Bundle::GitRepository {
+            url: repo.remote_url.clone(),
+            rev: "develop".to_string(),
+        }
+    );
+    let legacy_cache = context.build_cache.as_ref().expect("legacy build_cache");
+    assert_eq!(
+        legacy_cache.storage,
+        BuildCacheStorageConfig::FileSystem {
+            root_dir: "/tmp/hydra-build-cache".to_string(),
+        }
+    );
+
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
+    assert_eq!(spec.mounts.len(), 3);
+    match &spec.mounts[0] {
+        MountItem::Bundle {
+            target,
+            bundle,
+            session_id: bundle_session_id,
+            issue_branch_id,
+        } => {
+            assert_eq!(target.as_path().to_str(), Some("repo"));
+            assert_eq!(
+                bundle,
+                &v1::sessions::Bundle::GitRepository {
+                    url: repo.remote_url.clone(),
+                    rev: "develop".to_string(),
+                }
+            );
+            assert_eq!(bundle_session_id, &session_id);
+            assert!(issue_branch_id.is_none());
+        }
+        other => panic!("expected Bundle item first, got {other:?}"),
+    }
+    match &spec.mounts[1] {
+        MountItem::BuildCache {
+            repo_target,
+            service_repo_name,
+            context: cache_context,
+            session_id: cache_session_id,
+        } => {
+            assert_eq!(repo_target.as_path().to_str(), Some("repo"));
+            assert_eq!(service_repo_name, &repo_name);
+            assert_eq!(cache_session_id, &session_id);
+            assert_eq!(
+                cache_context.storage,
+                BuildCacheStorageConfig::FileSystem {
+                    root_dir: "/tmp/hydra-build-cache".to_string(),
+                }
+            );
+        }
+        other => panic!("expected BuildCache item second, got {other:?}"),
+    }
+    match &spec.mounts[2] {
+        MountItem::Documents { target } => {
+            assert_eq!(target.as_path().to_str(), Some("documents"));
+        }
+        other => panic!("expected Documents item last, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let handles = test_state_handles();
+    let state = handles.state;
+    let (repo_name, repo) = service_repository();
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
+
+    let (session_id, _) = handles
+        .store
+        .add_session(
+            make_session_with_service_repo(repo_name, HashMap::new()),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    // No build cache configured -> legacy build_cache None too.
+    assert!(context.build_cache.is_none());
+
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    assert_eq!(spec.mounts.len(), 2);
+    assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
+    assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let config = mount_spec_test_config_with_build_cache();
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+
+    // Session uses a raw git_repository bundle (no service_repo_name available).
+    let session = Session {
+        prompt: "prompt".to_string(),
+        context: BundleSpec::GitRepository {
+            url: "https://example.com/repo.git".to_string(),
+            rev: "main".to_string(),
+        },
+        spawned_from: None,
+        creator: Username::from("test-creator"),
+        image: Some(default_image()),
+        model: None,
+        env_vars: HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        mcp_config: None,
+        interactive: None,
+        status: Status::Created,
+        last_message: None,
+        error: None,
+        deleted: false,
+        creation_time: None,
+        start_time: None,
+        end_time: None,
+        usage: None,
+    };
+    let (session_id, _) = store
+        .add_session(session, Utc::now(), &ActorRef::test())
+        .await?;
+
+    let server = spawn_test_server_with_state(state, store).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    // Build cache is still emitted on the legacy field (it's a server-wide config).
+    assert!(context.build_cache.is_some());
+
+    // But the spec has no BuildCache item because there's no service repo name.
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    assert_eq!(spec.mounts.len(), 2);
+    assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
+    assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let handles = test_state_handles();
+    let state = handles.state;
+    let (session_id, _) = handles
+        .store
+        .add_session(
+            make_session_no_bundle(HashMap::new()),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    assert_eq!(spec.mounts.len(), 2);
+    match &spec.mounts[0] {
+        MountItem::Bundle {
+            bundle,
+            session_id: bundle_session_id,
+            ..
+        } => {
+            assert_eq!(bundle, &v1::sessions::Bundle::None);
+            assert_eq!(bundle_session_id, &session_id);
+        }
+        other => panic!("expected Bundle item first, got {other:?}"),
+    }
+    assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_propagates_issue_branch_id_into_bundle_item() -> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let handles = test_state_handles();
+    let state = handles.state;
+    let env_vars = HashMap::from([(
+        hydra_common::constants::ENV_HYDRA_ISSUE_ID.to_string(),
+        "i-abcdefg".to_string(),
+    )]);
+    let (session_id, _) = handles
+        .store
+        .add_session(
+            make_session_no_bundle(env_vars),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    match &spec.mounts[0] {
+        MountItem::Bundle {
+            issue_branch_id, ..
+        } => {
+            assert_eq!(issue_branch_id.as_deref(), Some("i-abcdefg"));
+        }
+        other => panic!("expected Bundle item first, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_context_bundle_issue_branch_id_absent_when_env_var_missing()
+-> anyhow::Result<()> {
+    use hydra_common::api::v1::sessions::MountItem;
+
+    let handles = test_state_handles();
+    let state = handles.state;
+    let (session_id, _) = handles
+        .store
+        .add_session(
+            make_session_no_bundle(HashMap::new()),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+    let context = fetch_worker_context(&server, &session_id).await?;
+
+    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    match &spec.mounts[0] {
+        MountItem::Bundle {
+            issue_branch_id, ..
+        } => assert!(issue_branch_id.is_none()),
+        other => panic!("expected Bundle item first, got {other:?}"),
+    }
+    Ok(())
+}
