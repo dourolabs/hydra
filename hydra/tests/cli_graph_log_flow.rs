@@ -8,7 +8,8 @@
 //! - `--limit` truncation
 //! - conversation log going through the event-stream fold
 //! - `--verbosity` controlling which field changes surface in `changes`
-//! - `--since` after `--until` (exit 2) and missing `--since` (exit 2)
+//! - `--since` after `--until` (exit 2)
+//! - omitted `--since` falls back to the Unix epoch ("from the beginning of time")
 //! - `--max-nodes` cap (exit 2) and empty selection (exit 2)
 
 mod harness;
@@ -314,19 +315,30 @@ async fn log_l1_hides_description_change_visible_at_l3() -> Result<()> {
 }
 
 #[tokio::test]
-async fn log_missing_since_exits_code_two() -> Result<()> {
+async fn log_without_since_defaults_to_epoch() -> Result<()> {
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
-    let parent = user.create_issue("log-ms-parent").await?;
 
+    let parent = user.create_issue("log-ms-parent").await?;
+    let _child = user.create_child_issue(&parent, "log-ms-child").await?;
+
+    // No --since: should succeed (epoch default covers all history) and
+    // surface the parent's `created` event.
     let output = user
-        .cli_expect_failure(&["graph", "log", "--object", parent.as_ref()])
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            "--object",
+            parent.as_ref(),
+        ])
         .await?;
-    assert_eq!(output.status.code(), Some(2));
+    let records = parse_jsonl(&output.stdout);
+    let matched = records_for_id(&records, parent.as_ref());
     assert!(
-        output.stderr.contains("--since"),
-        "expected clap error about --since: {}",
-        output.stderr,
+        matched.iter().any(|r| r["event"] == "created"),
+        "expected created event for parent in {records:?}",
     );
     Ok(())
 }

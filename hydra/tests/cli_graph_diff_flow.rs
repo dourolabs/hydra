@@ -7,7 +7,8 @@
 //! - `removed` records for soft-deleted issues
 //! - conversation diffs going through the event-stream fold
 //! - `--verbosity` controlling which field changes surface
-//! - `--max-nodes` cap (exit 2) and missing `--since` (exit 2)
+//! - `--max-nodes` cap (exit 2)
+//! - omitted `--since` falls back to the Unix epoch ("from the beginning of time")
 
 mod harness;
 
@@ -322,20 +323,29 @@ async fn diff_max_nodes_one_exits_code_two() -> Result<()> {
 }
 
 #[tokio::test]
-async fn diff_missing_since_exits_code_two() -> Result<()> {
+async fn diff_without_since_defaults_to_epoch() -> Result<()> {
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
-    let parent = user.create_issue("ms-parent").await?;
 
+    let parent = user.create_issue("ms-parent").await?;
+    let _child = user.create_child_issue(&parent, "ms-child").await?;
+
+    // No --since: should succeed (epoch default covers all history) and
+    // surface the parent as an Added record.
     let output = user
-        .cli_expect_failure(&["graph", "diff", "--object", parent.as_ref()])
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "diff",
+            "--object",
+            parent.as_ref(),
+        ])
         .await?;
-    assert_eq!(output.status.code(), Some(2));
-    assert!(
-        output.stderr.contains("--since"),
-        "expected clap error about --since: {}",
-        output.stderr
-    );
+    let records = parse_jsonl(&output.stdout);
+    let record = find_record(&records, parent.as_ref())
+        .unwrap_or_else(|| panic!("expected record for parent in {records:?}"));
+    assert_eq!(record["change"], "added");
     Ok(())
 }
 
