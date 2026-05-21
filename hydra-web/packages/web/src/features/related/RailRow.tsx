@@ -208,7 +208,11 @@ export function SessionRailRow({ record, display }: SessionRailRowProps) {
             >
               <span className={styles.tokensInput}>
                 <span aria-hidden="true">↓</span>
-                {formatTokenCount(s.usage.input_tokens)}
+                {formatTokenCount(
+                  s.usage.input_tokens +
+                    s.usage.cache_read_input_tokens +
+                    s.usage.cache_creation_input_tokens,
+                )}
               </span>
               <span className={styles.tokensOutput}>
                 <span aria-hidden="true">↑</span>
