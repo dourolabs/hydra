@@ -64,13 +64,13 @@ pub async fn run(
         build_cache,
         mcp_config,
         interactive,
+        mount_spec,
         ..
     } = client.get_session_context(&job).await?;
     let mcp_config_json = mcp_config
         .map(|c| serde_json::to_string(&c))
         .transpose()
         .context("failed to serialize MCP config")?;
-    let service_repo_name = resolve_service_repo_name(client.as_ref(), Some(&job)).await?;
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
         let tmp_path = tmp.keep();
@@ -89,29 +89,63 @@ pub async fn run(
         .or_else(|| execution_env.get(ENV_HYDRA_ISSUE_ID).cloned());
     let github_token = client.get_github_token().await.ok();
 
-    // Pre-flight: compute the per-mount destination paths and pin the
-    // agent's `HYDRA_DOCUMENTS_DIR` to the path `DocumentsMount` targets,
-    // before any mount runs. Each mount creates its own directory at
-    // `setup` time, so we deliberately do **not** `mkdir` either path here.
-    let repo_path = dest.join("repo");
-    let documents_path = dest.join("documents");
-    execution_env.insert(
-        ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-        documents_path.to_string_lossy().into_owned(),
-    );
+    // Pre-flight: compute the agent CWD and the per-mount list, and pin the
+    // agent's `HYDRA_DOCUMENTS_DIR` before any mount runs. Each mount creates
+    // its own directory at `setup` time, so we deliberately do **not**
+    // `mkdir` here.
+    //
+    // - `Some(spec)` → the server populated a `MountSpec`; honor it. Errors
+    //   (e.g. an unsupported item) are fatal — no fallback to legacy.
+    // - `None` → legacy `build_mounts` path. Old servers (or transitional
+    //   payloads that omit the field) still work unchanged.
+    let (repo_path, mut mounts) = match mount_spec.as_ref() {
+        Some(spec) => {
+            if let Some(docs_target) = mounts::spec::find_documents_dir(spec) {
+                execution_env.insert(
+                    ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+                    dest.join(docs_target).to_string_lossy().into_owned(),
+                );
+            }
 
-    let mut mounts = mounts::build_mounts(
-        &repo_path,
-        &documents_path,
-        Arc::clone(&client),
-        &request_context,
-        build_cache.as_ref(),
-        service_repo_name.as_ref(),
-        github_token,
-        issue_branch_id,
-        worker_home_dir.clone(),
-        job.clone(),
-    )?;
+            let mounts::spec::InstantiatedMounts {
+                working_dir,
+                mounts,
+            } = mounts::spec::instantiate(
+                spec,
+                mounts::spec::InstantiateInputs {
+                    github_token: github_token.clone(),
+                    worker_home_dir: worker_home_dir.clone(),
+                    dest: &dest,
+                    client: Arc::clone(&client),
+                },
+            )
+            .map_err(|err| anyhow!("failed to instantiate MountSpec: {err}"))?;
+            (working_dir, mounts)
+        }
+        None => {
+            let repo_path = dest.join("repo");
+            let documents_path = dest.join("documents");
+            execution_env.insert(
+                ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+                documents_path.to_string_lossy().into_owned(),
+            );
+
+            let service_repo_name = resolve_service_repo_name(client.as_ref(), Some(&job)).await?;
+            let mounts = mounts::build_mounts(
+                &repo_path,
+                &documents_path,
+                Arc::clone(&client),
+                &request_context,
+                build_cache.as_ref(),
+                service_repo_name.as_ref(),
+                github_token,
+                issue_branch_id,
+                worker_home_dir.clone(),
+                job.clone(),
+            )?;
+            (repo_path, mounts)
+        }
+    };
 
     let mut errors = Vec::new();
 

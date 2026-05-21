@@ -21,6 +21,7 @@ pub mod build_cache;
 pub mod bundle;
 pub mod documents;
 pub mod orchestrator;
+pub mod spec;
 
 #[cfg(test)]
 mod orchestration_tests;
