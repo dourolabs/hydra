@@ -13,6 +13,7 @@
   padding: 18px 24px 14px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .headLeft {
@@ -64,7 +65,9 @@
   color: var(--fg-2);
   cursor: pointer;
   border-radius: var(--radius-xs, 3px);
-  transition: background var(--tx-fast), color var(--tx-fast);
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
 }
 
 .scopeOption:hover {
@@ -204,9 +207,11 @@
   width: 84px;
 }
 
-@media (max-width: 768px) {
-  .colCreator,
-  .colMessages {
-    display: none;
-  }
+.mobileList {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px var(--pad-x);
 }
