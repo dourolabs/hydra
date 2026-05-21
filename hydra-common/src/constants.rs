@@ -9,6 +9,7 @@ pub const ENV_HYDRA_SERVER_URL: &str = "HYDRA_SERVER_URL";
 pub const ENV_HYDRA_API_ORIGIN: &str = "HYDRA_API_ORIGIN";
 pub const ENV_HYDRA_ID: &str = "HYDRA_ID";
 pub const ENV_HYDRA_ISSUE_ID: &str = "HYDRA_ISSUE_ID";
+pub const ENV_HYDRA_CONVERSATION_ID: &str = "HYDRA_CONVERSATION_ID";
 pub const ENV_HYDRA_TOKEN: &str = "HYDRA_TOKEN";
 pub const ENV_HYDRA_DOCUMENTS_DIR: &str = "HYDRA_DOCUMENTS_DIR";
 pub const ENV_BROWSER: &str = "BROWSER";

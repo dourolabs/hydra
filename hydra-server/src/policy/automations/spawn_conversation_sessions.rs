@@ -8,6 +8,7 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
 use hydra_common::api::v1::sessions::{BundleSpec, CreateSessionRequest};
+use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
 
@@ -185,11 +186,17 @@ async fn spawn_session(
         triggered_by: Some(Box::new(ctx.actor().clone())),
     };
 
+    let mut env_vars = HashMap::new();
+    env_vars.insert(
+        ENV_HYDRA_CONVERSATION_ID.to_string(),
+        conversation_id.to_string(),
+    );
+
     let request = CreateSessionRequest::new(
         agent_prompt,
         None,
         BundleSpec::None,
-        HashMap::new(),
+        env_vars,
         None,
         Some(conversation_id.clone()),
         true,
@@ -883,6 +890,86 @@ mod tests {
 
         automation.execute(&ctx).await.unwrap();
         assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
+    }
+
+    async fn spawned_session_env_vars(
+        state: &AppState,
+        conversation_id: &ConversationId,
+    ) -> Option<HashMap<String, String>> {
+        let sessions = state
+            .list_sessions_with_query(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        sessions
+            .into_iter()
+            .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
+            .map(|(_, s)| s.item.env_vars.clone())
+    }
+
+    #[tokio::test]
+    async fn fresh_spawn_sets_conversation_id_env_var() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        let conversation = make_conversation(Some("swe"));
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let env_vars = spawned_session_env_vars(&state, &conversation_id)
+            .await
+            .expect("expected a session for the conversation");
+        assert_eq!(
+            env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_spawn_sets_conversation_id_env_var() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        let conversation = make_conversation_with_status(Some("swe"), ConversationStatus::Closed);
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_updated_event(
+            conversation_id.clone(),
+            conversation,
+            make_conversation(Some("swe")),
+        );
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let env_vars = spawned_session_env_vars(&state, &conversation_id)
+            .await
+            .expect("expected a session for the conversation");
+        assert_eq!(
+            env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string())
+        );
     }
 
     #[tokio::test]
