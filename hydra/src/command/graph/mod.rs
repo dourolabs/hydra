@@ -29,7 +29,11 @@ pub const DEFAULT_MAX_NODES: usize = 10_000;
 pub const DEFAULT_HYDRATION_CONCURRENCY: usize = 32;
 
 /// Default cap on the number of log events emitted by `hydra graph log`.
-pub const DEFAULT_LOG_LIMIT: usize = 200;
+pub const DEFAULT_LOG_LIMIT: usize = 50;
+
+/// Default `--since` value (Unix epoch, i.e. "from the beginning of time")
+/// used when the user omits the flag on `diff` / `log`.
+pub const DEFAULT_SINCE: &str = "1970-01-01T00:00:00Z";
 
 #[derive(Debug, Subcommand)]
 pub enum GraphCommand {
@@ -76,8 +80,14 @@ pub enum GraphCommand {
     /// Show what changed between two timestamps for the matched nodes.
     Diff {
         /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
-        /// relative duration, or 'now'). Required.
-        #[arg(long, value_name = "TS", allow_hyphen_values = true)]
+        /// relative duration, or 'now'). Optional; when omitted, defaults to
+        /// the Unix epoch (i.e. "from the beginning of time").
+        #[arg(
+            long,
+            value_name = "TS",
+            default_value = DEFAULT_SINCE,
+            allow_hyphen_values = true,
+        )]
         since: HydraTime,
 
         /// End of the time window (same syntax as --since). Defaults to 'now'.
@@ -131,8 +141,14 @@ pub enum GraphCommand {
     /// the matched nodes.
     Log {
         /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
-        /// relative duration, or 'now'). Required.
-        #[arg(long, value_name = "TS", allow_hyphen_values = true)]
+        /// relative duration, or 'now'). Optional; when omitted, defaults to
+        /// the Unix epoch (i.e. "from the beginning of time").
+        #[arg(
+            long,
+            value_name = "TS",
+            default_value = DEFAULT_SINCE,
+            allow_hyphen_values = true,
+        )]
         since: HydraTime,
 
         /// End of the time window (same syntax as --since). Defaults to 'now'.
@@ -178,7 +194,7 @@ pub enum GraphCommand {
         #[arg(long, value_name = "LEVEL", default_value = "1")]
         verbosity: VerbosityArg,
 
-        /// Maximum number of events to emit (most recent first).
+        /// Maximum number of events to emit (most recent first). Defaults to 50.
         #[arg(long, value_name = "N", default_value_t = DEFAULT_LOG_LIMIT)]
         limit: usize,
 
@@ -327,6 +343,81 @@ pub async fn run(
                 context,
             )
             .await
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{Cli, Commands};
+    use chrono::{DateTime, Utc};
+    use clap::Parser;
+
+    fn parse_graph(args: &[&str]) -> GraphCommand {
+        let mut full = vec!["hydra", "graph"];
+        full.extend_from_slice(args);
+        let cli = Cli::try_parse_from(full).expect("parse");
+        match cli.command.expect("command") {
+            Commands::Graph { command } => command,
+            _ => panic!("expected Graph subcommand"),
+        }
+    }
+
+    fn epoch() -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(0, 0).unwrap()
+    }
+
+    #[test]
+    fn log_default_since_is_unix_epoch() {
+        let cmd = parse_graph(&["log"]);
+        match cmd {
+            GraphCommand::Log { since, .. } => {
+                assert_eq!(since.into_inner(), epoch());
+            }
+            other => panic!("expected Log, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_default_since_is_unix_epoch() {
+        let cmd = parse_graph(&["diff"]);
+        match cmd {
+            GraphCommand::Diff { since, .. } => {
+                assert_eq!(since.into_inner(), epoch());
+            }
+            other => panic!("expected Diff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_default_limit_is_50() {
+        let cmd = parse_graph(&["log"]);
+        match cmd {
+            GraphCommand::Log { limit, .. } => assert_eq!(limit, 50),
+            other => panic!("expected Log, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_explicit_since_overrides_default() {
+        let cmd = parse_graph(&["log", "--since", "2026-05-01T00:00:00Z"]);
+        match cmd {
+            GraphCommand::Log { since, .. } => {
+                let expected: DateTime<Utc> =
+                    "2026-05-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+                assert_eq!(since.into_inner(), expected);
+            }
+            other => panic!("expected Log, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_explicit_limit_overrides_default() {
+        let cmd = parse_graph(&["log", "--limit", "200"]);
+        match cmd {
+            GraphCommand::Log { limit, .. } => assert_eq!(limit, 200),
+            other => panic!("expected Log, got {other:?}"),
         }
     }
 }

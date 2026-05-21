@@ -61,14 +61,15 @@ Safety:
 
 ## Time-window flags (`diff` / `log` only)
 
-`--since <TS>` is required on both subcommands; `--until <TS>` defaults to
-`now`. Each accepts:
+`--since <TS>` is optional on both subcommands; when omitted, it defaults to
+the Unix epoch (`1970-01-01T00:00:00Z`), i.e. "from the beginning of time".
+`--until <TS>` defaults to `now`. Each accepts:
 
 - RFC 3339 timestamps (`2026-05-19T12:00:00Z`).
 - Relative durations (`-2h`, `-7d`, `-30m`).
 - The literal `now`.
 
-`hydra graph log` also accepts `--limit <N>` (default 200) to cap the number
+`hydra graph log` also accepts `--limit <N>` (default 50) to cap the number
 of events emitted, most recent first.
 
 ## Examples
