@@ -1,6 +1,7 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, ResolvedOutputFormat, SessionRecords},
+    output_writer::{write_stderr, write_stdout},
 };
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -10,11 +11,7 @@ use hydra_common::{
     task_status::{Status, TaskError},
     IssueId, RepoName, SessionId,
 };
-use std::{
-    io::{self, Write},
-    str::FromStr,
-    time::Duration,
-};
+use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
 pub async fn run(
@@ -68,8 +65,7 @@ pub async fn run(
         context.output_format,
         &mut buffer,
     )?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     if wait {
         if context.output_format == ResolvedOutputFormat::Pretty {
@@ -99,10 +95,6 @@ pub(crate) async fn stream_session_logs_via_server(
     output: LogOutputTarget,
 ) -> Result<()> {
     let query = LogsQuery::new(Some(watch), None);
-    let mut writer: Box<dyn Write + Send> = match output {
-        LogOutputTarget::Stdout => Box::new(io::stdout()),
-        LogOutputTarget::Stderr => Box::new(io::stderr()),
-    };
 
     let mut log_stream = client
         .get_session_logs(session_id, &query)
@@ -111,8 +103,10 @@ pub(crate) async fn stream_session_logs_via_server(
 
     while let Some(line) = log_stream.next().await {
         let line = line?;
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
+        match output {
+            LogOutputTarget::Stdout => write_stdout(line.as_bytes())?,
+            LogOutputTarget::Stderr => write_stderr(line.as_bytes())?,
+        }
     }
 
     Ok(())

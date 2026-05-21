@@ -8867,6 +8867,72 @@ mod tests {
         }
     }
 
+    async fn insert_dummy_latest_patches(store: &PostgresStoreV2, start: usize, count: usize) {
+        for i in start..(start + count) {
+            let id = format!("p-dumyaa{i:08}");
+            sqlx::query(&format!(
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, deleted, is_latest)
+                 VALUES ($1, 1, '', '', '', 'Open', false, '', 'dourolabs/sample', false, true)"
+            ))
+            .bind(&id)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_patch_grows_id_suffix_with_table_size(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // pg_class.reltuples is only refreshed by ANALYZE — see the
+        // sibling session test for the rationale.
+        sqlx::query(&format!("ANALYZE {TABLE_PATCHES_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            6,
+            "fresh table should use default suffix length"
+        );
+
+        insert_dummy_latest_patches(&store, 0, 26).await; // total = 27
+        sqlx::query(&format!("ANALYZE {TABLE_PATCHES_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            6,
+            "27 rows should still use default 6-char suffix"
+        );
+
+        insert_dummy_latest_patches(&store, 26, 649).await; // total = 677
+        sqlx::query(&format!("ANALYZE {TABLE_PATCHES_V2}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            7,
+            "677 rows should bump suffix length to 7"
+        );
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn add_session_grows_id_suffix_with_table_size(pool: PgStorePool) {

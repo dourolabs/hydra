@@ -6,7 +6,7 @@
 //! `removed` / `modified` records.
 
 use std::collections::BTreeMap;
-use std::io::{self, Write};
+use std::io::Write;
 use std::process;
 
 use anyhow::{anyhow, Context, Result};
@@ -25,6 +25,7 @@ use crate::command::graph::dispatch::{fetch_versions, VersionView, VersionedNode
 use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
+use crate::output_writer::write_stdout;
 
 /// Selection and rendering inputs for `hydra graph diff`.
 #[derive(Debug, Clone)]
@@ -105,8 +106,9 @@ pub async fn run_diff(
     )
     .await?;
 
-    let mut stdout = io::stdout().lock();
-    render(context.output_format, &records, &mut stdout)?;
+    let mut buffer = Vec::new();
+    render(context.output_format, &records, &mut buffer)?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 

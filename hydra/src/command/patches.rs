@@ -1,5 +1,7 @@
 use std::{io::Write, path::Path, path::PathBuf};
 
+use crate::output_writer::write_stdout;
+
 use super::utils::resolve_username;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -338,8 +340,7 @@ async fn create_patch_asset(
         &mut buffer,
     )
     .await?;
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -416,8 +417,7 @@ struct ListPatchesArgs {
 async fn list_patches(client: &dyn HydraClientInterface, args: ListPatchesArgs) -> Result<()> {
     let mut buffer = Vec::new();
     list_patches_with_writer(client, args, &mut buffer).await?;
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -474,11 +474,9 @@ async fn get_patch_by_version(
             .await
             .with_context(|| format!("failed to fetch patch '{patch_id}'"))?,
     };
-    render(
-        PatchRecords(&[patch]),
-        output_format,
-        &mut std::io::stdout(),
-    )?;
+    let mut buffer = Vec::new();
+    render(PatchRecords(&[patch]), output_format, &mut buffer)?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -601,8 +599,7 @@ fn write_patch_output(
         output_format,
         &mut buffer,
     )?;
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -1171,8 +1168,7 @@ async fn changelog_patch(
             }
         }
     }
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     Ok(())
 }
@@ -2475,6 +2471,359 @@ mod tests {
 
         let result = resolve_base_ref(&client, None, None).await?;
         assert_eq!(result, "origin/main");
+        Ok(())
+    }
+
+    // ---- Regression tests for silent EXIT 0 in `hydra patches create`.
+    //
+    // Background (issue i-hhnekayg): when the server connection dropped
+    // mid-response, reqwest's hyper transport could surface a BrokenPipe
+    // somewhere in the anyhow error chain. The old `is_broken_pipe` walked
+    // the entire chain for ANY io::ErrorKind::BrokenPipe and exited 0
+    // silently, causing real submission failures to look like clean
+    // successes. These tests pin down the contract:
+    //
+    //   (a) success path: Ok and a real patch record is returned.
+    //   (b) server 5xx:  Err with a descriptive message, NOT tagged as
+    //                    a stdout BrokenPipe.
+    //   (c) connection dropped mid-response: Err, NOT tagged as a stdout
+    //                                        BrokenPipe.
+
+    #[tokio::test]
+    async fn create_patch_returns_patch_record_on_success() -> Result<()> {
+        // (a) Happy path — succeeds with a populated PatchVersionRecord.
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let branch_name = current_branch(&repo_path)?;
+        let job_id = task_id("t-job-success");
+        let job_record = SessionVersionRecord::new(
+            job_id.clone(),
+            0,
+            Utc::now(),
+            Session::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                None,
+                Username::from("test-creator"),
+                None,
+                None,
+                Default::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Status::Created,
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+        let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
+        let patch_payload = Patch::new(
+            "happy".to_string(),
+            "happy desc".to_string(),
+            diff,
+            PatchStatus::Open,
+            false,
+            Some(job_id.clone()),
+            Username::from("test-user"),
+            Vec::new(),
+            sample_repo_name(),
+            None,
+            false,
+            Some(branch_name),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
+        );
+        let response = UpsertPatchResponse::new(patch_id("p-happy"), 0);
+        let patch_record = PatchVersionRecord::new(
+            patch_id("p-happy"),
+            0,
+            Utc::now(),
+            patch_payload.clone(),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        mock_get_session(&server, job_record);
+        mock_create_patch(&server, UpsertPatchRequest::new(patch_payload), response);
+        mock_get_patch(&server, patch_record);
+        mock_get_github_token_failure(&server);
+        mock_whoami(&server);
+
+        let result = create_patch(
+            &client,
+            "happy".to_string(),
+            "happy desc".to_string(),
+            Some(job_id),
+            false,
+            false,
+            "origin/main",
+            Some(&repo_path),
+        )
+        .await?;
+
+        assert_eq!(result.patch_id, patch_id("p-happy"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_returns_descriptive_error_on_server_5xx() -> Result<()> {
+        // (b) When the server returns 5xx the CLI must propagate a
+        // descriptive error AND must NOT classify it as a stdout
+        // BrokenPipe (which would silently exit 0).
+        use crate::cli::is_broken_pipe;
+
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let job_id = task_id("t-job-5xx");
+        let job_record = SessionVersionRecord::new(
+            job_id.clone(),
+            0,
+            Utc::now(),
+            Session::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                None,
+                Username::from("test-creator"),
+                None,
+                None,
+                Default::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Status::Created,
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        mock_get_session(&server, job_record);
+        mock_get_github_token_failure(&server);
+        mock_whoami(&server);
+        let _patch_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/patches");
+            then.status(500).body("upstream is on fire");
+        });
+
+        let result = create_patch(
+            &client,
+            "fivexx".to_string(),
+            "fivexx desc".to_string(),
+            Some(job_id),
+            false,
+            false,
+            "origin/main",
+            Some(&repo_path),
+        )
+        .await;
+
+        let err = result.expect_err("server 5xx must surface as an Err");
+        let chain_text = format!("{err:#}");
+        assert!(
+            chain_text.contains("500") || chain_text.contains("upstream is on fire"),
+            "5xx error message should be descriptive, got: {chain_text}"
+        );
+        assert!(
+            !is_broken_pipe(&err),
+            "server 5xx error must not be misclassified as a stdout BrokenPipe (would exit 0 silently): {chain_text}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_error_not_treated_as_pipe_close_when_server_drops_connection(
+    ) -> Result<()> {
+        // (c) When the server accepts the TCP connection but drops it
+        // without responding, reqwest's hyper transport can surface a
+        // BrokenPipe (or related) IO error deep in the error chain.
+        // The CLI's `is_broken_pipe` MUST NOT classify that as the
+        // stdout-pipe-close case, or `hydra patches create` will exit 0
+        // silently and the agent will never know its patch wasn't saved.
+        //
+        // (This is the exact failure mode reported in production: session
+        // s-kkouueui's `hydra patches create` invocations all exited 0
+        // with empty stdout/stderr and no Patch row persisted, leading
+        // the agent to fall back to `gh pr create`.)
+        use crate::cli::is_broken_pipe;
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let job_id = task_id("t-job-drop");
+        let job_record = SessionVersionRecord::new(
+            job_id.clone(),
+            0,
+            Utc::now(),
+            Session::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                None,
+                Username::from("test-creator"),
+                None,
+                None,
+                Default::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Status::Created,
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+
+        // First, run the pre-create RPCs (get_session, github_token, whoami)
+        // against a normal mock server so they succeed; then aim
+        // `client.create_patch` at a separate URL that drops connections.
+        //
+        // We do that by completing all the pre-flight calls with the mock,
+        // then swapping the client's base URL to a connection-dropping
+        // listener for the actual `POST /v1/patches`. The simplest shape
+        // is to do the whole thing via a single client whose base URL
+        // points at the dropping listener, but that breaks pre-flight.
+        // Instead, we mount BOTH endpoints on the same TCP listener:
+        // - reads a request line ("GET /v1/...." -> respond 200 with the
+        //   appropriate JSON body)
+        // - on POST /v1/patches, simply close the connection.
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let local_addr: SocketAddr = listener.local_addr()?;
+        let job_id_clone = job_id.clone();
+        let session_json = serde_json::to_string(&job_record)?;
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(value) => value,
+                    Err(_) => return,
+                };
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                // Read up to the end of the request headers (\r\n\r\n) or 16 KiB.
+                let mut buf = vec![0u8; 16 * 1024];
+                let mut filled = 0;
+                loop {
+                    match socket.read(&mut buf[filled..]).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            filled += n;
+                            if buf[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                            if filled == buf.len() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let request = std::str::from_utf8(&buf[..filled]).unwrap_or("");
+                let first_line = request.lines().next().unwrap_or("");
+                let is_post_patches =
+                    first_line.starts_with("POST /v1/patches ") && !first_line.contains("/assets");
+                if is_post_patches {
+                    // Drop the connection without responding.
+                    let _ = socket.shutdown().await;
+                    drop(socket);
+                    continue;
+                }
+                let (body, content_type): (String, &str) = if first_line
+                    .contains(&format!("/v1/sessions/{}", job_id_clone.as_ref()))
+                {
+                    (session_json.clone(), "application/json")
+                } else if first_line.contains("/v1/whoami") {
+                    (
+                        serde_json::to_string(&WhoAmIResponse::new(ActorIdentity::User {
+                            username: Username::from("test-user"),
+                        }))
+                        .unwrap(),
+                        "application/json",
+                    )
+                } else if first_line.contains("/v1/github/token") {
+                    // Return 401 so the client falls back without a token.
+                    let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    continue;
+                } else {
+                    // Default 404 for anything unexpected.
+                    let response =
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    continue;
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let base_url = format!("http://{local_addr}");
+        let client = HydraClient::with_http_client(&base_url, TEST_HYDRA_TOKEN, HttpClient::new())
+            .expect("failed to create hydra client");
+
+        let result = create_patch(
+            &client,
+            "drop".to_string(),
+            "drop desc".to_string(),
+            Some(job_id),
+            false,
+            false,
+            "origin/main",
+            Some(&repo_path),
+        )
+        .await;
+
+        let err = result.expect_err("dropped connection must surface as an Err");
+        assert!(
+            !is_broken_pipe(&err),
+            "transport BrokenPipe from dropped server connection must NOT be classified as a stdout pipe close (would exit 0 silently). Error chain: {err:#}"
+        );
+
+        // Replay the legacy chain-walking logic to demonstrate the bug it
+        // produced. If reqwest/hyper happen to surface an io::Error with
+        // BrokenPipe anywhere in the chain (which they often do when a
+        // server drops the connection mid-write on Linux), the OLD
+        // `is_broken_pipe` would have returned true and the CLI would have
+        // exited 0 silently. The NEW implementation deliberately ignores
+        // raw io::Error(BrokenPipe) — only its tagged `StdoutBrokenPipe`
+        // sentinel triggers the silent-exit path.
+        let _legacy_would_fire = err.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .map(|io_err| io_err.kind() == std::io::ErrorKind::BrokenPipe)
+                .unwrap_or(false)
+        });
+        // We deliberately do NOT assert on `_legacy_would_fire` because the
+        // OS-level error kind depends on timing and platform — but the
+        // production failure showed it firing in real life.
         Ok(())
     }
 }

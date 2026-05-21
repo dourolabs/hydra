@@ -4,6 +4,7 @@ use crate::{
         output::{render, CommandContext, ResolvedOutputFormat, SessionRecords},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
+    output_writer::write_stdout,
 };
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -11,11 +12,7 @@ use hydra_common::{
     activity_log_for_session_versions, constants::ENV_HYDRA_ISSUE_ID, sessions::Session, HydraId,
     IssueId, RelativeVersionNumber, SessionId, Versioned,
 };
-use std::{
-    io::{self, Write},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{io::Write, path::PathBuf, sync::Arc};
 
 pub mod create;
 pub mod kill;
@@ -205,11 +202,13 @@ async fn get_session(
             .await
             .with_context(|| format!("failed to fetch session '{session_id}'"))?,
     };
+    let mut buffer = Vec::new();
     render(
         SessionRecords(&[session]),
         context.output_format,
-        &mut std::io::stdout(),
+        &mut buffer,
     )?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -252,8 +251,7 @@ async fn changelog_session(
             }
         }
     }
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     Ok(())
 }

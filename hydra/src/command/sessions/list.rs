@@ -1,13 +1,13 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, ResolvedOutputFormat, SessionSummaryRecords},
+    output_writer::write_stdout,
 };
 use anyhow::Result;
 use hydra_common::{
     sessions::{SearchSessionsQuery, SessionSummaryRecord},
     IssueId,
 };
-use std::io::{self, Write};
 pub const DEFAULT_SESSION_LIMIT: usize = 10;
 
 pub async fn run(
@@ -30,8 +30,7 @@ pub async fn run(
         context.output_format,
         &mut buffer,
     )?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     if truncated && context.output_format == ResolvedOutputFormat::Pretty {
         println!("Showing {limit} of {total_sessions} sessions. Use --limit to display more.");

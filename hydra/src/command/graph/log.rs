@@ -7,7 +7,7 @@
 //! most-recent-first, then truncated to `--limit`.
 
 use std::collections::{BTreeMap, HashSet};
-use std::io::{self, Write};
+use std::io::Write;
 use std::process;
 
 use anyhow::{anyhow, Context, Result};
@@ -28,6 +28,7 @@ use crate::command::graph::dispatch::{fetch_versions, VersionedNode};
 use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
+use crate::output_writer::write_stdout;
 
 /// Selection and rendering inputs for `hydra graph log`.
 #[derive(Debug, Clone)]
@@ -116,8 +117,9 @@ pub async fn run_log(
 
     sort_and_truncate(&mut events, params.limit);
 
-    let mut stdout = io::stdout().lock();
-    render(context.output_format, &events, &mut stdout)?;
+    let mut buffer = Vec::new();
+    render(context.output_format, &events, &mut buffer)?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 

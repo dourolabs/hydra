@@ -7,6 +7,7 @@ use crate::{
         },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
+    output_writer::write_stdout,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -236,10 +237,12 @@ fn write_documents_output(
     documents: &[DocumentVersionRecord],
     full_output: bool,
 ) -> Result<()> {
-    let mut stdout = io::stdout();
-    write_documents_output_with_writer(format, documents, full_output, &mut stdout)
+    let buffer = render_documents_to_buffer(format, documents, full_output)?;
+    write_stdout(&buffer)?;
+    Ok(())
 }
 
+#[cfg(test)]
 fn write_documents_output_with_writer(
     format: ResolvedOutputFormat,
     documents: &[DocumentVersionRecord],
@@ -273,11 +276,9 @@ fn write_document_summaries_output(
     format: ResolvedOutputFormat,
     documents: &[DocumentSummaryRecord],
 ) -> Result<()> {
-    let mut stdout = io::stdout();
     let mut buffer = Vec::new();
     render(DocumentSummaryRecords(documents), format, &mut buffer)?;
-    stdout.write_all(&buffer)?;
-    stdout.flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -379,8 +380,7 @@ async fn changelog_document(
             }
         }
     }
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     Ok(())
 }
