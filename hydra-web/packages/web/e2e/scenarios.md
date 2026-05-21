@@ -78,6 +78,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:chat-bottom-safe-area` — At mobile widths the chat detail composer sits clear of the iOS Safari home-indicator: the AppLayout main scroll container's bottom padding scales with `env(safe-area-inset-bottom)`
 - `@mobile:issue-detail-bottom-safe-area` — At mobile widths the issue detail SessionList sits clear of the iOS Safari home-indicator: the AppLayout main scroll container's bottom padding scales with `env(safe-area-inset-bottom)`, and the list remains reachable via vertical scroll
 - `@mobile:documents-single-pane` — At ≤768px the documents page collapses to a single pane (the reader pane); the left document tree (`aside[aria-label="Document tree"]`) is hidden via `display: none`
+- `@mobile:chat-header-meta` — At mobile widths the chat-details subheading renders "started Xm ago" with a visible space and the meta row wraps cleanly (no separator at line edges, no overlapping characters)
 
 ## Responsive Layout
 

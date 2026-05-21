@@ -13,7 +13,7 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
     <div className={styles.header}>
       <div className={styles.inner}>
         <h1 className={styles.title}>{title}</h1>
-        <div className={styles.meta}>
+        <div className={styles.meta} data-testid="chat-header-meta">
           {conversation.agent_name && (
             <>
               <span>with {conversation.agent_name}</span>
@@ -22,8 +22,9 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
           )}
           <span>opened by {conversation.creator}</span>
           <span className={styles.sep}>·</span>
-          <span>started</span>
-          <AgoTime iso={conversation.created_at} />
+          <span data-testid="chat-header-started">
+            started <AgoTime iso={conversation.created_at} />
+          </span>
           <span className={styles.sep}>·</span>
           <span>{conversation.status}</span>
         </div>
