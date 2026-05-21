@@ -4,6 +4,7 @@ use crate::{
         output::{render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat},
         utils::resolve_username,
     },
+    output_writer::write_stdout,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -20,10 +21,7 @@ use hydra_common::{
     users::Username,
     HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName,
 };
-use std::{
-    io::{self, Write},
-    str::FromStr,
-};
+use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
@@ -1129,8 +1127,7 @@ async fn update_issue(
 fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueVersionRecord]) -> Result<()> {
     let mut buffer = Vec::new();
     render(IssueRecords(issues), format, &mut buffer)?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -1140,8 +1137,7 @@ fn write_issue_summary_records(
 ) -> Result<()> {
     let mut buffer = Vec::new();
     render(IssueSummaryRecords(issues), format, &mut buffer)?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 

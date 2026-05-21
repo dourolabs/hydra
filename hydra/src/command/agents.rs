@@ -1,11 +1,11 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, AgentRecords, CommandContext},
+    output_writer::write_stdout,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::agents::{AgentRecord, UpsertAgentRequest};
-use std::io;
 
 #[derive(Debug, Subcommand)]
 pub enum AgentsCommand {
@@ -154,29 +154,30 @@ pub async fn run(
     command: AgentsCommand,
     context: &CommandContext,
 ) -> Result<()> {
-    let mut stdout = io::stdout().lock();
+    let mut buffer = Vec::new();
     match command {
         AgentsCommand::List => {
             let agents = fetch_agents(client).await?;
-            render(AgentRecords(&agents), context.output_format, &mut stdout)?;
+            render(AgentRecords(&agents), context.output_format, &mut buffer)?;
         }
         AgentsCommand::Get { name } => {
             let agent = get_agent(client, &name).await?;
-            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut buffer)?;
         }
         AgentsCommand::Create(args) => {
             let agent = create_agent(client, args).await?;
-            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut buffer)?;
         }
         AgentsCommand::Update(args) => {
             let agent = update_agent(client, args).await?;
-            render(AgentRecords(&[agent]), context.output_format, &mut stdout)?;
+            render(AgentRecords(&[agent]), context.output_format, &mut buffer)?;
         }
         AgentsCommand::Delete { name } => {
             let deleted = delete_agent(client, &name).await?;
-            render(AgentRecords(&[deleted]), context.output_format, &mut stdout)?;
+            render(AgentRecords(&[deleted]), context.output_format, &mut buffer)?;
         }
     }
+    write_stdout(&buffer)?;
 
     Ok(())
 }

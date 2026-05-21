@@ -1,9 +1,10 @@
 use super::utils::resolve_username;
 use crate::client::HydraClientInterface;
+use crate::output_writer::with_stdout;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use hydra_common::whoami::ActorIdentity;
-use std::io::{self, Write};
+use std::io::Write;
 
 #[derive(Debug, Subcommand)]
 pub enum UsersCommand {
@@ -85,12 +86,14 @@ async fn show_user_info(client: &dyn HydraClientInterface, username: Option<Stri
         .await
         .with_context(|| format!("failed to fetch user info for '{target_username}'"))?;
 
-    let mut stdout = io::stdout().lock();
-    writeln!(stdout, "username: {}", user_info.username)?;
-    match user_info.github_user_id {
-        Some(id) => writeln!(stdout, "github_user_id: {id}")?,
-        None => writeln!(stdout, "github_user_id: N/A")?,
-    }
+    with_stdout(|stdout| {
+        writeln!(stdout, "username: {}", user_info.username)?;
+        match user_info.github_user_id {
+            Some(id) => writeln!(stdout, "github_user_id: {id}")?,
+            None => writeln!(stdout, "github_user_id: N/A")?,
+        }
+        Ok(())
+    })?;
 
     Ok(())
 }

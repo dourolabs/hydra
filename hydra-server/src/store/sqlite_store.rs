@@ -10107,6 +10107,25 @@ mod tests {
         store.bump_row_count_for_test(TABLE_TASKS_V2, count as i64);
     }
 
+    async fn insert_dummy_latest_patches(store: &SqliteStore, start: usize, count: usize) {
+        // Inflate the patches_v2 latest count cheaply without exercising the
+        // full add_patch pipeline. See `insert_dummy_latest_sessions` for the
+        // pattern; this is the parallel for patches and is used by
+        // `add_patch_grows_id_suffix_with_table_size`.
+        for i in start..(start + count) {
+            let id = format!("p-dumyaa{i:08}");
+            sqlx::query(&format!(
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, deleted, is_latest)
+                 VALUES (?1, 1, '', '', '', 'Open', 0, '', 'dourolabs/sample', 0, 1)"
+            ))
+            .bind(&id)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        }
+        store.bump_row_count_for_test(TABLE_PATCHES_V2, count as i64);
+    }
+
     async fn insert_dummy_undeleted_labels(store: &SqliteStore, count: usize) -> Vec<LabelId> {
         // Insert minimal label rows with deleted = 0 to inflate the count
         // cheaply without exercising the full add_label pipeline. Generates
@@ -10164,6 +10183,52 @@ mod tests {
             post.as_ref().len() - LabelId::prefix().len(),
             6,
             "soft-deleted labels must not inflate the suffix length"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_patch_grows_id_suffix_with_table_size() {
+        // Mirrors `add_session_grows_id_suffix_with_table_size` for the
+        // patches_v2 table. The dynamic-length HydraId rollout means
+        // `next_patch_id` widens the random suffix once the live row count
+        // crosses each `random_len_for_count` threshold; if it ever
+        // regressed and panicked at the `.expect("length within bounds")`
+        // inside `add_patch`, the only visible signal would be a hyper
+        // RST-stream on the CLI side. This pins the boundary down.
+        let store = create_test_store().await;
+
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            6,
+            "fresh table should use default suffix length"
+        );
+
+        // 27 patches → ceil(log_26) = 2 → still 6.
+        insert_dummy_latest_patches(&store, 0, 26).await;
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            6,
+            "27 rows should still use default 6-char suffix"
+        );
+
+        // Inflate to 677 total → bumps to 7.
+        insert_dummy_latest_patches(&store, 26, 649).await;
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(
+            id.as_ref().len() - PatchId::prefix().len(),
+            7,
+            "677 rows should bump suffix length to 7"
         );
     }
 

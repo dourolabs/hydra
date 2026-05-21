@@ -1,10 +1,10 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, SessionRecords},
+    output_writer::write_stdout,
 };
 use anyhow::Result;
 use hydra_common::SessionId;
-use std::io::{self, Write};
 
 pub async fn run(
     client: &dyn HydraClientInterface,
@@ -20,8 +20,7 @@ pub async fn run(
         context.output_format,
         &mut buffer,
     )?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     Ok(())
 }

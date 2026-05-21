@@ -1,6 +1,7 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, ResolvedOutputFormat, SessionRecords},
+    output_writer::write_stdout,
 };
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -68,8 +69,7 @@ pub async fn run(
         context.output_format,
         &mut buffer,
     )?;
-    io::stdout().write_all(&buffer)?;
-    io::stdout().flush()?;
+    write_stdout(&buffer)?;
 
     if wait {
         if context.output_format == ResolvedOutputFormat::Pretty {

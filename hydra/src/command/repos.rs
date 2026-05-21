@@ -2,6 +2,7 @@ use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, RepositoryRecords},
     git::clone_repo,
+    output_writer::write_stdout,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -10,7 +11,6 @@ use hydra_common::repositories::{
     ReviewRequestConfig, SearchRepositoriesQuery, UpdateRepositoryRequest,
 };
 use hydra_common::RepoName;
-use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
@@ -159,14 +159,14 @@ pub async fn run(
     command: ReposCommand,
     context: &CommandContext,
 ) -> Result<()> {
-    let mut stdout = io::stdout().lock();
+    let mut buffer = Vec::new();
     match command {
         ReposCommand::List(args) => {
             let repositories = fetch_repositories(client, args.include_deleted).await?;
             render(
                 RepositoryRecords(&repositories),
                 context.output_format,
-                &mut stdout,
+                &mut buffer,
             )?;
         }
         ReposCommand::Create(args) => {
@@ -174,7 +174,7 @@ pub async fn run(
             render(
                 RepositoryRecords(&[repository]),
                 context.output_format,
-                &mut stdout,
+                &mut buffer,
             )?;
         }
         ReposCommand::Update(args) => {
@@ -182,7 +182,7 @@ pub async fn run(
             render(
                 RepositoryRecords(&[repository]),
                 context.output_format,
-                &mut stdout,
+                &mut buffer,
             )?;
         }
         ReposCommand::Delete(args) => {
@@ -190,13 +190,14 @@ pub async fn run(
             render(
                 RepositoryRecords(&[repository]),
                 context.output_format,
-                &mut stdout,
+                &mut buffer,
             )?;
         }
         ReposCommand::Clone(args) => {
             clone_repository(client, args).await?;
         }
     }
+    write_stdout(&buffer)?;
 
     Ok(())
 }

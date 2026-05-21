@@ -1,11 +1,11 @@
 use crate::{
     client::HydraClientInterface,
     command::output::{render, CommandContext, MarkReadView},
+    output_writer::write_stdout,
 };
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use hydra_common::{api::v1::notifications::ListNotificationsQuery, NotificationId};
-use std::io;
 
 #[derive(Debug, Subcommand)]
 pub enum NotificationsCommand {
@@ -36,7 +36,7 @@ pub async fn run(
     command: NotificationsCommand,
     context: &CommandContext,
 ) -> Result<()> {
-    let mut stdout = io::stdout().lock();
+    let mut buffer = Vec::new();
     match command {
         NotificationsCommand::List { unread, limit } => {
             let mut query = ListNotificationsQuery::default();
@@ -48,14 +48,14 @@ pub async fn run(
                 .list_notifications(&query)
                 .await
                 .context("failed to list notifications")?;
-            render(response, context.output_format, &mut stdout)?;
+            render(response, context.output_format, &mut buffer)?;
         }
         NotificationsCommand::Count => {
             let response = client
                 .get_unread_notification_count()
                 .await
                 .context("failed to get unread notification count")?;
-            render(response, context.output_format, &mut stdout)?;
+            render(response, context.output_format, &mut buffer)?;
         }
         NotificationsCommand::Read { notification_id } => {
             let response = client
@@ -68,7 +68,7 @@ pub async fn run(
                     response: &response,
                 },
                 context.output_format,
-                &mut stdout,
+                &mut buffer,
             )?;
         }
         NotificationsCommand::ReadAll => {
@@ -76,8 +76,9 @@ pub async fn run(
                 .mark_all_notifications_read(None)
                 .await
                 .context("failed to mark all notifications as read")?;
-            render(response, context.output_format, &mut stdout)?;
+            render(response, context.output_format, &mut buffer)?;
         }
     }
+    write_stdout(&buffer)?;
     Ok(())
 }

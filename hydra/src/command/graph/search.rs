@@ -6,7 +6,7 @@
 //! projected through the per-kind `GraphView::view_lN` impl.
 
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::Write;
 use std::process;
 
 use anyhow::{Context, Result};
@@ -22,6 +22,7 @@ use crate::command::graph::dispatch::{hydrate_by_id, HydratedNode};
 use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
+use crate::output_writer::write_stdout;
 
 /// Top-level entry point for `hydra graph search`.
 ///
@@ -52,13 +53,14 @@ pub async fn run_search(
     apply_kind_filter(&mut nodes, &selection.kinds);
     nodes.sort_by(|a, b| a.id().as_ref().cmp(b.id().as_ref()));
 
-    let mut stdout = io::stdout().lock();
+    let mut buffer = Vec::new();
     render(
         context.output_format,
         &nodes,
         selection.verbosity,
-        &mut stdout,
+        &mut buffer,
     )?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 

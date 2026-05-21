@@ -1,5 +1,6 @@
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
 use crate::config;
+use crate::output_writer::with_stdout;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Subcommand};
 use git2::Repository;
@@ -293,96 +294,95 @@ fn build_storage_client(args: &CacheStorageArgs) -> Result<Arc<dyn StorageClient
 }
 
 fn render_cache_paths(format: ResolvedOutputFormat, paths: &[PathBuf]) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    match format {
-        ResolvedOutputFormat::Jsonl => {
-            for path in paths {
-                let record = CachePathOutput {
-                    path: path.to_string_lossy().to_string(),
-                };
-                write_json_line(&record, &mut stdout)?;
-            }
-        }
-        ResolvedOutputFormat::Pretty => {
-            if paths.is_empty() {
-                writeln!(stdout, "No cache entries matched the configured patterns.")?;
-            } else {
+    with_stdout(|stdout| {
+        match format {
+            ResolvedOutputFormat::Jsonl => {
                 for path in paths {
-                    let path = path.to_string_lossy();
-                    writeln!(stdout, "{path}")?;
+                    let record = CachePathOutput {
+                        path: path.to_string_lossy().to_string(),
+                    };
+                    write_json_line_io(&record, stdout)?;
+                }
+            }
+            ResolvedOutputFormat::Pretty => {
+                if paths.is_empty() {
+                    writeln!(stdout, "No cache entries matched the configured patterns.")?;
+                } else {
+                    for path in paths {
+                        let path = path.to_string_lossy();
+                        writeln!(stdout, "{path}")?;
+                    }
                 }
             }
         }
-    }
-    stdout.flush()?;
-    Ok(())
+        stdout.flush()
+    })
 }
 
 fn render_cache_entries(format: ResolvedOutputFormat, entries: &[BuildCacheEntry]) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    match format {
-        ResolvedOutputFormat::Jsonl => {
-            for entry in entries {
-                let record = CacheListOutput::from_entry(entry);
-                write_json_line(&record, &mut stdout)?;
-            }
-        }
-        ResolvedOutputFormat::Pretty => {
-            if entries.is_empty() {
-                writeln!(stdout, "No cache entries found.")?;
-            } else {
+    with_stdout(|stdout| {
+        match format {
+            ResolvedOutputFormat::Jsonl => {
                 for entry in entries {
-                    let last_modified = entry
-                        .last_modified
-                        .as_ref()
-                        .map(format_system_time)
-                        .unwrap_or_else(|| "-".to_string());
-                    let key = &entry.key;
-                    writeln!(stdout, "{key}\t{last_modified}")?;
+                    let record = CacheListOutput::from_entry(entry);
+                    write_json_line_io(&record, stdout)?;
+                }
+            }
+            ResolvedOutputFormat::Pretty => {
+                if entries.is_empty() {
+                    writeln!(stdout, "No cache entries found.")?;
+                } else {
+                    for entry in entries {
+                        let last_modified = entry
+                            .last_modified
+                            .as_ref()
+                            .map(format_system_time)
+                            .unwrap_or_else(|| "-".to_string());
+                        let key = &entry.key;
+                        writeln!(stdout, "{key}\t{last_modified}")?;
+                    }
                 }
             }
         }
-    }
-    stdout.flush()?;
-    Ok(())
+        stdout.flush()
+    })
 }
 
 fn render_cache_build(format: ResolvedOutputFormat, key: &BuildCacheKey) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    let record = CacheBuildOutput::new(key);
-    match format {
-        ResolvedOutputFormat::Jsonl => write_json_line(&record, &mut stdout)?,
-        ResolvedOutputFormat::Pretty => {
-            let object_key = key.object_key();
-            writeln!(stdout, "Uploaded cache {object_key}")?;
+    with_stdout(|stdout| {
+        let record = CacheBuildOutput::new(key);
+        match format {
+            ResolvedOutputFormat::Jsonl => write_json_line_io(&record, stdout)?,
+            ResolvedOutputFormat::Pretty => {
+                let object_key = key.object_key();
+                writeln!(stdout, "Uploaded cache {object_key}")?;
+            }
         }
-    }
-    stdout.flush()?;
-    Ok(())
+        stdout.flush()
+    })
 }
 
 fn render_cache_apply(format: ResolvedOutputFormat, output: CacheApplyOutput) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    match format {
-        ResolvedOutputFormat::Jsonl => write_json_line(&output, &mut stdout)?,
-        ResolvedOutputFormat::Pretty => {
-            if output.applied {
-                if let Some(key) = output.key.as_ref() {
-                    writeln!(stdout, "Applied cache {key}")?;
+    with_stdout(|stdout| {
+        match format {
+            ResolvedOutputFormat::Jsonl => write_json_line_io(&output, stdout)?,
+            ResolvedOutputFormat::Pretty => {
+                if output.applied {
+                    if let Some(key) = output.key.as_ref() {
+                        writeln!(stdout, "Applied cache {key}")?;
+                    }
+                } else {
+                    writeln!(stdout, "No cache entry found to apply.")?;
                 }
-            } else {
-                writeln!(stdout, "No cache entry found to apply.")?;
             }
         }
-    }
-    stdout.flush()?;
-    Ok(())
+        stdout.flush()
+    })
 }
 
-fn write_json_line<T: Serialize>(record: &T, writer: &mut impl Write) -> Result<()> {
-    serde_json::to_writer(&mut *writer, record)?;
-    writer.write_all(b"\n")?;
-    Ok(())
+fn write_json_line_io<T: Serialize>(record: &T, writer: &mut impl Write) -> io::Result<()> {
+    serde_json::to_writer(&mut *writer, record).map_err(io::Error::other)?;
+    writer.write_all(b"\n")
 }
 
 fn format_system_time(time: &std::time::SystemTime) -> String {

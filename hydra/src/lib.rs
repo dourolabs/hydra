@@ -9,6 +9,7 @@ pub mod config;
 pub mod constants;
 pub mod git;
 pub mod github_device_flow;
+pub mod output_writer;
 pub mod util;
 pub mod worker;
 

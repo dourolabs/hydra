@@ -1,5 +1,4 @@
 use std::{
-    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -15,6 +14,7 @@ use crate::{
     },
     config::{self, empty_app_config, AppConfig},
     constants, github_device_flow,
+    output_writer::StdoutBrokenPipe,
 };
 use hydra_common::constants::{
     ENV_BROWSER, ENV_HYDRA_HTTP_CONNECT_TIMEOUT_SECS, ENV_HYDRA_HTTP_POOL_IDLE_TIMEOUT_SECS,
@@ -227,18 +227,18 @@ pub async fn run(cli: Cli) -> Result<()> {
     result
 }
 
-/// Check whether any error in the `anyhow` chain is an `io::ErrorKind::BrokenPipe`.
-/// We walk the full chain because serialization layers (e.g. `serde_json::Error`)
-/// may wrap the underlying I/O error.
+/// Check whether the error chain contains a [`StdoutBrokenPipe`] sentinel,
+/// indicating that writing to stdout/stderr hit `ErrorKind::BrokenPipe`
+/// (typically a downstream pipe like `head` closing early).
+///
+/// We deliberately do NOT walk the chain for raw `io::Error` BrokenPipe values:
+/// reqwest/hyper or git subprocesses can surface BrokenPipe deep in their own
+/// error chains for unrelated reasons (server connection drop, etc.), and we
+/// must not silently swallow those — that would let real submission failures
+/// appear as silent successful exits.
 pub fn is_broken_pipe(err: &anyhow::Error) -> bool {
-    for cause in err.chain() {
-        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
-            if io_err.kind() == ErrorKind::BrokenPipe {
-                return true;
-            }
-        }
-    }
-    false
+    err.chain()
+        .any(|cause| cause.downcast_ref::<StdoutBrokenPipe>().is_some())
 }
 
 pub async fn resolve_client(
@@ -423,17 +423,33 @@ mod tests {
     }
 
     #[test]
-    fn is_broken_pipe_detects_direct_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
-        let err: anyhow::Error = io_err.into();
+    fn is_broken_pipe_detects_stdout_broken_pipe_sentinel() {
+        let err: anyhow::Error = StdoutBrokenPipe.into();
         assert!(is_broken_pipe(&err));
     }
 
     #[test]
-    fn is_broken_pipe_detects_wrapped_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
-        let err = anyhow::Error::new(io_err).context("writing output");
+    fn is_broken_pipe_detects_stdout_broken_pipe_in_wrapped_chain() {
+        let err = anyhow::Error::new(StdoutBrokenPipe).context("writing output");
         assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_returns_false_for_raw_io_broken_pipe() {
+        // A raw io::Error(BrokenPipe) coming from anywhere in the chain (e.g.
+        // reqwest's hyper transport when the server connection drops) must NOT
+        // be treated as a stdout pipe-close. Otherwise we'd silently exit 0 on
+        // real network failures (see issue i-hhnekayg).
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        let err: anyhow::Error = io_err.into();
+        assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_returns_false_for_wrapped_raw_io_broken_pipe() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        let err = anyhow::Error::new(io_err).context("submitting create patch request");
+        assert!(!is_broken_pipe(&err));
     }
 
     #[test]

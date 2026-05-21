@@ -1,5 +1,3 @@
-use std::io::{self, Write};
-
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use hydra_common::{
@@ -11,7 +9,7 @@ use hydra_common::{
     ConversationId,
 };
 
-use crate::client::HydraClientInterface;
+use crate::{client::HydraClientInterface, output_writer::write_stdout};
 
 use super::output::{render, CommandContext, ConversationSummaryRecords, ConversationView};
 
@@ -123,8 +121,7 @@ pub async fn run(
                 context.output_format,
                 &mut buffer,
             )?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_stdout(&buffer)?;
         }
         ConversationsCommand::Get { id } => {
             let conversation = client
@@ -145,8 +142,7 @@ pub async fn run(
                 context.output_format,
                 &mut buffer,
             )?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_stdout(&buffer)?;
         }
         ConversationsCommand::Create {
             message,
@@ -171,8 +167,7 @@ pub async fn run(
                 context.output_format,
                 &mut buffer,
             )?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_stdout(&buffer)?;
         }
         ConversationsCommand::Update { id, title } => {
             let request = UpdateConversationRequest { title: Some(title) };
@@ -190,8 +185,7 @@ pub async fn run(
                 context.output_format,
                 &mut buffer,
             )?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_stdout(&buffer)?;
         }
         ConversationsCommand::Delete { id } => {
             let conversation = client
@@ -208,8 +202,7 @@ pub async fn run(
                 context.output_format,
                 &mut buffer,
             )?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_stdout(&buffer)?;
         }
     }
     Ok(())
