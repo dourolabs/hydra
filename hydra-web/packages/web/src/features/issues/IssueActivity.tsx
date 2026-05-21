@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge } from "@hydra/ui";
+import { Badge, issueTypeDisplayLabel } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { apiClient } from "../../api/client";
@@ -234,7 +234,7 @@ function CreationSubItems({ version }: { version: IssueVersionRecord }) {
     <div className={styles.creationSubItems}>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Type:</span>
-        {issue.type}
+        {issueTypeDisplayLabel(issue.type)}
       </span>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Status:</span>
