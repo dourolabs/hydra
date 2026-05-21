@@ -1521,14 +1521,14 @@
   },
   "sessions": {
     "t-seed00001": {
-      "prompt": "Run the database migration scripts for the v2.0 schema update. Execute all pending migrations in order and verify data integrity.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Run the database migration scripts for the v2.0 schema update. Execute all pending migrations in order and verify data integrity.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "main"
       },
       "spawned_from": "i-seed00005",
-      "creator": "swe",
+      "creator": "alice",
       "status": "complete",
       "creation_time": "2026-03-14T09:00:00.000Z",
       "start_time": "2026-03-14T09:01:00.000Z",
@@ -1544,14 +1544,14 @@
         {
           "timestamp": "2026-03-14T09:00:00.000Z",
           "patch": {
-            "prompt": "Run the database migration scripts for the v2.0 schema update. Execute all pending migrations in order and verify data integrity.",
+            "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Run the database migration scripts for the v2.0 schema update. Execute all pending migrations in order and verify data integrity.",
             "context": {
               "type": "service_repository",
               "name": "acme/web-app",
               "rev": "main"
             },
             "spawned_from": "i-seed00005",
-            "creator": "swe",
+            "creator": "alice",
             "status": "pending",
             "creation_time": "2026-03-14T09:00:00.000Z"
           }
@@ -1566,14 +1566,14 @@
       ]
     },
     "t-seed00002": {
-      "prompt": "Implement OAuth2 token refresh logic with concurrent request queuing and automatic retry.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Implement OAuth2 token refresh logic with concurrent request queuing and automatic retry.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/oauth2-token-refresh"
       },
       "spawned_from": "i-seed00002",
-      "creator": "swe",
+      "creator": "alice",
       "status": "running",
       "creation_time": "2026-03-15T10:30:00.000Z",
       "start_time": "2026-03-15T10:31:00.000Z",
@@ -1588,14 +1588,14 @@
         {
           "timestamp": "2026-03-15T10:30:00.000Z",
           "patch": {
-            "prompt": "Implement OAuth2 token refresh logic with concurrent request queuing and automatic retry.",
+            "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Implement OAuth2 token refresh logic with concurrent request queuing and automatic retry.",
             "context": {
               "type": "service_repository",
               "name": "acme/web-app",
               "rev": "feature/oauth2-token-refresh"
             },
             "spawned_from": "i-seed00002",
-            "creator": "swe",
+            "creator": "alice",
             "status": "pending",
             "creation_time": "2026-03-15T10:30:00.000Z"
           }
@@ -1603,14 +1603,14 @@
       ]
     },
     "t-seed00003": {
-      "prompt": "Implement the WebSocket ConnectionManager class with JWT auth, heartbeat, and reconnection logic.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Implement the WebSocket ConnectionManager class with JWT auth, heartbeat, and reconnection logic.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/ws-connection-manager"
       },
       "spawned_from": "i-seed00013",
-      "creator": "swe",
+      "creator": "alice",
       "status": "running",
       "creation_time": "2026-03-15T11:00:00.000Z",
       "start_time": "2026-03-15T11:02:00.000Z",
@@ -1622,27 +1622,27 @@
       }
     },
     "t-seed00004": {
-      "prompt": "Fix the Redis connection pool memory leak in the rate limiting middleware. Investigate and implement proper connection cleanup.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Fix the Redis connection pool memory leak in the rate limiting middleware. Investigate and implement proper connection cleanup.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "fix/rate-limiter-pool-leak"
       },
       "spawned_from": "i-seed00006",
-      "creator": "swe",
+      "creator": "alice",
       "status": "running",
       "creation_time": "2026-03-15T12:00:00.000Z",
       "start_time": "2026-03-15T12:01:00.000Z"
     },
     "t-seed00005": {
-      "prompt": "Fix the TOCTOU race condition in session cleanup worker by implementing a distributed lock using Redis SETNX.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Fix the TOCTOU race condition in session cleanup worker by implementing a distributed lock using Redis SETNX.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "fix/session-cleanup-race"
       },
       "spawned_from": "i-seed00015",
-      "creator": "swe",
+      "creator": "dev-user",
       "status": "running",
       "creation_time": "2026-03-15T12:30:00.000Z",
       "start_time": "2026-03-15T12:31:00.000Z",
@@ -1654,7 +1654,7 @@
       }
     },
     "t-seed00006": {
-      "prompt": "Deploy Apollo Federation v2 gateway with Sessions subgraph. Implement session resolvers and dataloader integration.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Deploy Apollo Federation v2 gateway with Sessions subgraph. Implement session resolvers and dataloader integration.",
       "context": {
         "type": "service_repository",
         "name": "acme/api-gateway",
@@ -1663,7 +1663,7 @@
       "interactive": {
         "conversation_id": "c-seed00005"
       },
-      "creator": "swe",
+      "creator": "carol",
       "status": "running",
       "creation_time": "2026-03-15T10:15:00.000Z",
       "start_time": "2026-03-15T10:16:00.000Z",
@@ -1675,14 +1675,14 @@
       }
     },
     "t-seed00007": {
-      "prompt": "Review the OAuth2 provider integration patch for security, token handling, and error edge cases.",
+      "prompt": "You are an agent specializing in code review. You evaluate patches for correctness, security, test coverage, and adherence to the project's conventions. Read the linked issue, the patch diff, and any relevant files before submitting a review with specific, actionable feedback.\n\nTask: Review the OAuth2 provider integration patch for security, token handling, and error edge cases.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/oauth2-provider"
       },
       "spawned_from": "i-seed00011",
-      "creator": "reviewer",
+      "creator": "bob",
       "status": "running",
       "creation_time": "2026-03-15T13:00:00.000Z",
       "start_time": "2026-03-15T13:01:00.000Z",
@@ -1694,7 +1694,7 @@
       }
     },
     "t-seed00008": {
-      "prompt": "Review the SSE broadcaster memory leak fix. Verify AbortSignal cleanup approach and check new metrics endpoint.",
+      "prompt": "You are an agent specializing in code review. You evaluate patches for correctness, security, test coverage, and adherence to the project's conventions. Read the linked issue, the patch diff, and any relevant files before submitting a review with specific, actionable feedback.\n\nTask: Review the SSE broadcaster memory leak fix. Verify AbortSignal cleanup approach and check new metrics endpoint.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
@@ -1703,7 +1703,7 @@
       "interactive": {
         "conversation_id": "c-seed00006"
       },
-      "creator": "reviewer",
+      "creator": "dev-user",
       "status": "running",
       "creation_time": "2026-03-15T13:10:00.000Z",
       "start_time": "2026-03-15T13:11:00.000Z",
@@ -1715,14 +1715,14 @@
       }
     },
     "t-seed00009": {
-      "prompt": "Add GIN index on description column and benchmark search query performance improvement.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Add GIN index on description column and benchmark search query performance improvement.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "perf/search-index"
       },
       "spawned_from": "i-seed00009",
-      "creator": "swe",
+      "creator": "alice",
       "status": "running",
       "creation_time": "2026-03-15T09:00:00.000Z",
       "start_time": "2026-03-15T09:01:00.000Z",
@@ -1734,14 +1734,14 @@
       }
     },
     "t-seed00010": {
-      "prompt": "Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/crdt-sync"
       },
       "spawned_from": "i-seed00014",
-      "creator": "swe",
+      "creator": "bob",
       "status": "complete",
       "creation_time": "2026-03-14T16:00:00.000Z",
       "start_time": "2026-03-14T16:01:00.000Z",
@@ -1757,14 +1757,14 @@
         {
           "timestamp": "2026-03-14T16:00:00.000Z",
           "patch": {
-            "prompt": "Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
+            "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
             "context": {
               "type": "service_repository",
               "name": "acme/web-app",
               "rev": "feature/crdt-sync"
             },
             "spawned_from": "i-seed00014",
-            "creator": "swe",
+            "creator": "bob",
             "status": "pending",
             "creation_time": "2026-03-14T16:00:00.000Z"
           }
@@ -1779,7 +1779,7 @@
       ]
     },
     "t-seed00011": {
-      "prompt": "Implement OAuth2 token refresh with concurrent request queuing. First attempt - investigating approach.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Implement OAuth2 token refresh with concurrent request queuing. First attempt - investigating approach.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
@@ -1788,7 +1788,7 @@
       "interactive": {
         "conversation_id": "c-seed00003"
       },
-      "creator": "swe",
+      "creator": "alice",
       "status": "running",
       "creation_time": "2026-03-15T11:30:00.000Z",
       "start_time": "2026-03-15T11:31:00.000Z",
@@ -1800,14 +1800,14 @@
       }
     },
     "t-seed00012": {
-      "prompt": "Wire the per-client refresh mutex into the HTTP client and add the deadlock regression test.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Wire the per-client refresh mutex into the HTTP client and add the deadlock regression test.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/refresh-queue-mutex"
       },
       "spawned_from": "i-seed00020",
-      "creator": "swe",
+      "creator": "bob",
       "status": "running",
       "creation_time": "2026-03-15T14:00:00.000Z",
       "start_time": "2026-03-15T14:01:00.000Z",
@@ -1819,14 +1819,14 @@
       }
     },
     "t-seed00013": {
-      "prompt": "Add unit tests for refresh queue mutex: happy path, concurrent callers, and error propagation.",
+      "prompt": "You are an agent specializing in software engineering. You operate inside an ephemeral sandbox with read-write access to the repository, a working terminal, and the project's test runner. Follow the conventions documented in the repo, run the relevant tests after each change, and submit a patch with a clear summary of what changed and why.\n\nTask: Add unit tests for refresh queue mutex: happy path, concurrent callers, and error propagation.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
         "rev": "feature/refresh-queue-tests"
       },
       "spawned_from": "i-seed00021",
-      "creator": "swe",
+      "creator": "bob",
       "status": "running",
       "creation_time": "2026-03-15T15:30:00.000Z",
       "start_time": "2026-03-15T15:31:00.000Z"

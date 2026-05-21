@@ -60,6 +60,13 @@ vi.mock("../../features/sessions/usePaginatedSessions", () => ({
   }),
 }));
 
+vi.mock("../../features/sessions/useSessionLinks", () => ({
+  useSessionLinks: () => ({
+    issueMap: new Map(),
+    conversationMap: new Map(),
+  }),
+}));
+
 vi.mock("@hydra/ui", () => ({
   Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   Badge: ({ status }: { status: string }) => (
