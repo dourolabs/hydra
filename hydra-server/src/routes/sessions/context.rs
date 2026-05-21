@@ -1,9 +1,14 @@
 use crate::{
     app::{AppState, rewrite_local_bundle_url},
+    domain::sessions::BundleSpec,
     routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
-use hydra_common::{api::v1, constants::ENV_HYDRA_ID};
+use hydra_common::{
+    api::v1,
+    api::v1::sessions::{MountItem, MountSpec, RelativePath},
+    constants::{ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
+};
 use tracing::{error, info};
 
 pub async fn get_session_context(
@@ -39,16 +44,66 @@ pub async fn get_session_context(
             opts.conversation_resume_from,
         )
     });
+
+    let bundle: v1::sessions::Bundle = resolved.context.bundle.clone().into();
+    let service_repo_name = match &task.context {
+        BundleSpec::ServiceRepository { name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let issue_branch_id = env_vars.get(ENV_HYDRA_ISSUE_ID).cloned();
+    let mount_spec = build_mount_spec(
+        bundle.clone(),
+        build_cache.clone(),
+        service_repo_name,
+        session_id.clone(),
+        issue_branch_id,
+    );
+
     let context = v1::sessions::WorkerContext::new(
-        resolved.context.bundle.into(),
+        bundle,
         task.prompt,
         task.model.clone(),
         env_vars,
         build_cache,
         task.mcp_config.clone(),
         interactive,
-        None,
+        Some(mount_spec),
     );
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
+}
+
+/// Build the standard 3-item (or 2-item, when no build cache) mount spec for a
+/// session. The order is `[Bundle, BuildCache?, Documents]`, matching the
+/// gating in the worker's legacy `mounts::build_mounts`. `working_dir` is
+/// always `"repo"` for the current standard layout.
+fn build_mount_spec(
+    bundle: v1::sessions::Bundle,
+    build_cache: Option<hydra_common::BuildCacheContext>,
+    service_repo_name: Option<hydra_common::RepoName>,
+    session_id: hydra_common::SessionId,
+    issue_branch_id: Option<String>,
+) -> MountSpec {
+    let repo_target = RelativePath::new("repo").expect("static `repo` path is valid");
+    let docs_target = RelativePath::new("documents").expect("static `documents` path is valid");
+
+    let mut mounts = Vec::with_capacity(3);
+    mounts.push(MountItem::Bundle {
+        target: repo_target.clone(),
+        bundle,
+        session_id: session_id.clone(),
+        issue_branch_id,
+    });
+    if let (Some(name), Some(cache)) = (service_repo_name, build_cache) {
+        mounts.push(MountItem::BuildCache {
+            repo_target: repo_target.clone(),
+            service_repo_name: name,
+            context: cache,
+            session_id,
+        });
+    }
+    mounts.push(MountItem::Documents {
+        target: docs_target,
+    });
+    MountSpec::new(repo_target, mounts)
 }
