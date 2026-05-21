@@ -1,0 +1,212 @@
+/* ============================================================
+   RunTime / AgoTime
+   --------------------------------------------------------------
+   Semantic split:
+     RunTime = a measurement (a span; often live and ticking).
+               → instrument-feeling: tabular MM:SS, optional chrome,
+                 live dot when status=in_progress.
+     AgoTime = an index (a single point, relative to now, decaying).
+               → annotation-feeling: smaller, lighter weight,
+                 sans-serif, no chrome.
+   ============================================================ */
+
+.mono {
+  font-family: var(--f-mono);
+}
+
+.rt,
+.at {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.rt[data-size="sm"],
+.at[data-size="sm"] {
+  font-size: var(--t-xs);
+}
+
+/* ─── RunTime: "instrument" — pill chip + status dot ─── */
+.rtInstrument {
+  gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border-radius: 999px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  color: var(--fg-0);
+  font-weight: 500;
+}
+
+.rtInstrument .rtNum {
+  font-size: var(--t-xs);
+  letter-spacing: 0.01em;
+}
+
+.rtInstrument .rtDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-3);
+  flex-shrink: 0;
+}
+
+.rtInstrument.isLive {
+  background: color-mix(in oklch, var(--s-progress) 14%, transparent);
+  border-color: color-mix(in oklch, var(--s-progress) 35%, transparent);
+  color: var(--s-progress);
+}
+
+.rtInstrument.isLive .rtDot {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--s-progress) 22%, transparent);
+  animation: rt-pulse 1.6s ease-in-out infinite;
+}
+
+.rtInstrument.isFailed {
+  color: var(--s-failed);
+  border-color: color-mix(in oklch, var(--s-failed) 30%, transparent);
+}
+
+.rtInstrument.isFailed .rtDot {
+  background: var(--s-failed);
+}
+
+@keyframes rt-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--s-progress) 25%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklch, var(--s-progress) 6%, transparent);
+  }
+}
+
+/* ─── RunTime: "stopwatch" — clock icon + mono numbers ─── */
+.rtStopwatch {
+  gap: 5px;
+  color: var(--fg-1);
+}
+
+.rtStopwatch .rtIcon {
+  color: var(--fg-2);
+  display: inline-flex;
+}
+
+.rtStopwatch .rtNum {
+  font-weight: 500;
+}
+
+.rtStopwatch.isLive {
+  color: var(--s-progress);
+}
+
+.rtStopwatch.isLive .rtIcon {
+  color: var(--s-progress);
+  animation: rt-tick 2s steps(2) infinite;
+  transform-origin: 50% 50%;
+}
+
+.rtStopwatch.isFailed {
+  color: var(--s-failed);
+}
+
+.rtStopwatch.isFailed .rtIcon {
+  color: var(--s-failed);
+}
+
+@keyframes rt-tick {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(180deg);
+  }
+}
+
+/* ─── RunTime: "bracketed" — [0:19] ─── */
+.rtBracketed {
+  gap: 1px;
+  color: var(--fg-1);
+  font-weight: 500;
+}
+
+.rtBracketed .rtBracket {
+  color: var(--fg-3);
+}
+
+.rtBracketed.isLive {
+  color: var(--s-progress);
+}
+
+.rtBracketed.isLive .rtBracket {
+  color: color-mix(in oklch, var(--s-progress) 55%, transparent);
+}
+
+.rtBracketed.isFailed {
+  color: var(--s-failed);
+}
+
+.rtBracketed.isFailed .rtBracket {
+  color: color-mix(in oklch, var(--s-failed) 60%, transparent);
+}
+
+/* ─── RunTime: "typographic" — bare, color does the work ─── */
+.rtTypographic {
+  color: var(--fg-0);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.rtTypographic.isLive {
+  color: var(--s-progress);
+}
+
+.rtTypographic.isLive::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--s-progress);
+  margin-right: 5px;
+  animation: rt-pulse 1.6s ease-in-out infinite;
+}
+
+.rtTypographic.isFailed {
+  color: var(--s-failed);
+}
+
+/* ─── AgoTime — readable but unmistakably an annotation ─── */
+.at {
+  font-family: var(--f-sans);
+  color: var(--fg-1);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  gap: 4px;
+}
+
+.atBare .atSuffix {
+  color: var(--fg-2);
+}
+
+.atLoose {
+  gap: 0;
+}
+
+.atLoose .atTilde {
+  color: var(--fg-2);
+  margin-right: 1px;
+}
+
+.atItalic {
+  font-style: italic;
+}
+
+.atTypographic {
+  font-family: var(--f-sans);
+  color: var(--fg-1);
+  font-size: var(--t-xs);
+}

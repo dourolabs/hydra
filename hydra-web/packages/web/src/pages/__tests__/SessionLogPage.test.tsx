@@ -122,6 +122,10 @@ vi.mock("../../utils/statusMapping", () => ({
 
 vi.mock("../../utils/time", () => ({
   getRuntime: () => "1m",
+  formatDuration: () => "1m",
+  formatTimestamp: (s: string) => s,
+  formatRelativeTime: (s: string) => s,
+  shortRelativeTime: (s: string) => s,
 }));
 
 const useBreadcrumbsMock = vi.fn();

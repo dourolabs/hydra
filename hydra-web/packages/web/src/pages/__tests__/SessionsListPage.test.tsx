@@ -73,6 +73,10 @@ vi.mock("../../utils/statusMapping", () => ({
 
 vi.mock("../../utils/time", () => ({
   getRuntime: () => "—",
+  formatDuration: () => "—",
+  formatTimestamp: (ts: string) => ts,
+  formatRelativeTime: () => "now",
+  shortRelativeTime: () => "now",
 }));
 
 vi.mock("../../utils/text", () => ({

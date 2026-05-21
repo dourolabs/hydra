@@ -4,7 +4,7 @@ import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@hydra
 import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
-import { formatRelativeTime } from "../../utils/time";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./IssueRow.module.css";
 
 const typeChipClass: Record<IssueType, string> = {
@@ -81,7 +81,9 @@ export function IssueRow({
         <span className={styles.bottomRow}>
           {showId && <span className={styles.issueId}>{record.issue_id}</span>}
           {showTimestamp && record.timestamp && (
-            <span className={styles.timestamp}>{formatRelativeTime(record.timestamp)}</span>
+            <span className={styles.timestamp}>
+              <AgoTime iso={record.timestamp} />
+            </span>
           )}
         </span>
       )}

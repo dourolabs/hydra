@@ -10,27 +10,13 @@ import {
   type IssueFilters,
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
+import { AgoTime } from "../../../components/Runtime/Runtime";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
   baseFilters: IssueFilters;
   username: string;
   filterRootId: string | null;
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (sec < 60) return "now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo`;
 }
 
 function progressFraction(children: ChildStatus[] | undefined): number {
@@ -108,7 +94,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
                     <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
                     <div className={styles.cardFoot}>
                       {issue.assignee && <Avatar name={issue.assignee} kind="human" size="md" />}
-                      <span>{relativeTime(rec.timestamp)}</span>
+                      <AgoTime iso={rec.timestamp} />
                       <span className={styles.cardFootSpacer} />
                       {children && children.length > 0 && (
                         <div className={styles.progress} title={`${pct}%`}>

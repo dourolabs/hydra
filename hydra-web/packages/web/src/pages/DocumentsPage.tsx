@@ -10,7 +10,7 @@ import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumen
 import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useDocumentsByIds } from "../features/documents/useDocumentsByIds";
 import { getDocumentDisplayTitle } from "../features/documents/utils";
-import { formatRelativeTime } from "../utils/time";
+import { AgoTime } from "../components/Runtime/Runtime";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentsPage.module.css";
 
@@ -332,7 +332,9 @@ function ReaderPane({ activePath, onSelectFolder, getChildren, pathsLoading }: R
               <Icons.IconDoc size={14} />
             </span>
             <span className={styles.docRowTitle}>{getDocumentDisplayTitle(doc)}</span>
-            <span className={styles.docRowDate}>{formatRelativeTime(doc.timestamp)}</span>
+            <span className={styles.docRowDate}>
+              <AgoTime iso={doc.timestamp} />
+            </span>
           </Link>
         ))}
       </div>

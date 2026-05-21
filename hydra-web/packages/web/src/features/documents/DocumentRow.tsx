@@ -7,7 +7,7 @@ import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import { DocumentIcon } from "../../components/icons/DocumentIcon";
-import { formatRelativeTime } from "../../utils/time";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import { getDocumentDisplayTitle } from "./utils";
 import styles from "./DocumentRow.module.css";
 
@@ -50,7 +50,9 @@ export function DocumentRow({ doc, depth }: DocumentRowProps) {
         <span className={styles.docTitle}>{getDocumentDisplayTitle(doc)}</span>
         <div className={styles.docMeta}>
           {doc.document.path && <span className={styles.docPath}>{doc.document.path}</span>}
-          <span className={styles.docTime}>{formatRelativeTime(doc.timestamp)}</span>
+          <span className={styles.docTime}>
+            <AgoTime iso={doc.timestamp} />
+          </span>
         </div>
       </Link>
       <Button

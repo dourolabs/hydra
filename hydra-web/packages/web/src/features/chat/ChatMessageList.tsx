@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { MarkdownViewer } from "@hydra/ui";
 import type { ConversationEvent } from "@hydra/api";
-import { formatRelativeTime, formatTimestamp } from "../../utils/time";
+import { formatTimestamp } from "../../utils/time";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./ChatMessageList.module.css";
 
 function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
@@ -20,7 +21,7 @@ function renderEvent(event: ConversationEvent, index: number, agentName: string)
           <div className={styles.userHead}>
             <span className={styles.msgAuthor}>You</span>
             <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
-              {formatRelativeTime(event.timestamp)}
+              <AgoTime iso={event.timestamp} />
             </span>
           </div>
           <div className={styles.userBubble}>{event.content}</div>
@@ -32,7 +33,7 @@ function renderEvent(event: ConversationEvent, index: number, agentName: string)
           <div className={styles.agentHead}>
             <span className={styles.msgAuthor}>{agentName}</span>
             <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
-              {formatRelativeTime(event.timestamp)}
+              <AgoTime iso={event.timestamp} />
             </span>
           </div>
           <div className={styles.agentBody}>

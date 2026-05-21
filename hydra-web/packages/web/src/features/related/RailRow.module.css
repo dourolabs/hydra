@@ -161,20 +161,6 @@
   }
 }
 
-.runtimeActive {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  color: var(--s-progress);
-  white-space: nowrap;
-}
-
-.runtimeIdle {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  color: var(--fg-2);
-  white-space: nowrap;
-}
-
 .tokens {
   display: inline-flex;
   align-items: center;
@@ -189,7 +175,7 @@
 }
 
 .tokensOutput {
-  color: var(--s-progress);
+  color: var(--c-violet);
 }
 
 .tokens > span > span {

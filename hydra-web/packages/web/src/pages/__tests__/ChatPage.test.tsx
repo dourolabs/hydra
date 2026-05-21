@@ -155,6 +155,7 @@ vi.mock("../../components/MobileTabBar.module.css", () => ({ default: cssProxy }
 vi.mock("../../utils/time", () => ({
   formatTimestamp: (s: string) => s,
   formatRelativeTime: (s: string) => s,
+  shortRelativeTime: (s: string) => s,
 }));
 
 vi.mock("../../layout/useBreadcrumbs", () => ({

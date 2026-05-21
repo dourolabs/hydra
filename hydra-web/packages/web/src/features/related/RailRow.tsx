@@ -12,12 +12,14 @@ import {
   normalizePatchStatus,
   normalizeSessionStatus,
 } from "../../utils/statusMapping";
-import { getRuntime } from "../../utils/time";
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
-import { useSessionDuration } from "../dashboard/useSessionDuration";
+import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
+import {
+  useSessionDuration,
+  useSingleSessionDuration,
+} from "../dashboard/useSessionDuration";
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
-import { shortRelativeTime } from "./relativeTime";
 import styles from "./RailRow.module.css";
 
 const STATUS_DOT_CLASS: Partial<Record<BadgeStatus, string>> = {
@@ -74,7 +76,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
   const status: BadgeStatus = hasActive ? "in-progress" : normalized;
   const pct = progressFraction(childStatuses);
   const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
-  const { durationText, isRunning } = useSessionDuration(sessions);
+  const { durationText, status: runtimeStatus } = useSessionDuration(sessions);
   const to = `/issues/${record.issue_id}${linkSearch ?? ""}`;
 
   return (
@@ -104,14 +106,8 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
               />
             </span>
           )}
-          {durationText !== "—" && (
-            <span
-              className={isRunning ? styles.runtimeActive : styles.runtimeIdle}
-              data-testid={isRunning ? "rail-runtime-active" : "rail-runtime-idle"}
-            >
-              {durationText}
-            </span>
-          )}
+          {durationText !== "—" && <RunTime value={durationText} status={runtimeStatus} />}
+          <AgoTime iso={record.timestamp} />
         </div>
       </div>
     </div>
@@ -160,7 +156,7 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
               {p.review_summary.approved ? " ✓" : ""}
             </span>
           )}
-          <span className={styles.metaMono}>{shortRelativeTime(record.timestamp)}</span>
+          <AgoTime iso={record.timestamp} />
         </div>
       </div>
     </div>
@@ -176,6 +172,7 @@ export function SessionRailRow({ record }: SessionRailRowProps) {
   const s = record.session;
   const status: BadgeStatus = normalizeSessionStatus(s.status);
   const promptText = descriptionSnippet(s.prompt) || "(no prompt)";
+  const { durationText, status: runtimeStatus } = useSingleSessionDuration(record);
 
   return (
     <div
@@ -211,7 +208,8 @@ export function SessionRailRow({ record }: SessionRailRowProps) {
               </span>
             </span>
           )}
-          <span className={styles.metaMono}>{getRuntime(s.start_time, s.end_time)}</span>
+          {durationText !== "—" && <RunTime value={durationText} status={runtimeStatus} />}
+          <AgoTime iso={record.timestamp} />
         </div>
       </div>
     </div>
@@ -251,7 +249,7 @@ export function DocumentRailRow({ record }: DocumentRailRowProps) {
           {record.document.path && (
             <span className={styles.metaMono}>{record.document.path}</span>
           )}
-          <span className={styles.metaMono}>{shortRelativeTime(record.timestamp)}</span>
+          <AgoTime iso={record.timestamp} />
         </div>
       </div>
     </div>

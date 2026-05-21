@@ -1,5 +1,5 @@
 import type { Conversation } from "@hydra/api";
-import { formatRelativeTime } from "../../utils/time";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./ChatHeader.module.css";
 
 interface ChatHeaderProps {
@@ -8,7 +8,6 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ conversation }: ChatHeaderProps) {
   const title = conversation.title || "Untitled conversation";
-  const created = formatRelativeTime(conversation.created_at);
 
   return (
     <div className={styles.header}>
@@ -23,7 +22,8 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
           )}
           <span>opened by {conversation.creator}</span>
           <span className={styles.sep}>·</span>
-          <span>started {created}</span>
+          <span>started</span>
+          <AgoTime iso={conversation.created_at} />
           <span className={styles.sep}>·</span>
           <span>{conversation.status}</span>
         </div>

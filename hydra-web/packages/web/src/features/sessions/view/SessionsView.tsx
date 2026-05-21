@@ -8,10 +8,11 @@ import {
 } from "../usePaginatedSessions";
 import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
-import { getRuntime } from "../../../utils/time";
 import { descriptionSnippet } from "../../../utils/text";
 import { formatTokenCount } from "../../../utils/tokens";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
+import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
+import { useSingleSessionDuration } from "../../dashboard/useSessionDuration";
 import { SessionRailRow } from "../../related/RailRow";
 import styles from "./SessionsView.module.css";
 
@@ -30,20 +31,10 @@ const STATUS_FILTERS: StatusFilter[] = [
   { key: "failed", label: "Failed" },
 ];
 
-function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "—";
-  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (sec < 60) return "now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo`;
+function SessionRuntimeCell({ record }: { record: SessionSummaryRecord }) {
+  const { durationText, status } = useSingleSessionDuration(record);
+  if (durationText === "—") return <span className={styles.dash}>—</span>;
+  return <RunTime value={durationText} status={status} />;
 }
 
 export function SessionsView() {
@@ -183,7 +174,7 @@ export function SessionsView() {
                         <Badge status={normalizeSessionStatus(s.status)} />
                       </td>
                       <td className={styles.colDuration}>
-                        {getRuntime(s.start_time, s.end_time)}
+                        <SessionRuntimeCell record={rec} />
                       </td>
                       <td className={styles.colTokens}>
                         {s.usage ? (
@@ -204,7 +195,9 @@ export function SessionsView() {
                           <span className={styles.dash}>—</span>
                         )}
                       </td>
-                      <td className={styles.colStarted}>{relativeTime(startedTs)}</td>
+                      <td className={styles.colStarted}>
+                        <AgoTime iso={startedTs} />
+                      </td>
                     </tr>
                   );
                 })}

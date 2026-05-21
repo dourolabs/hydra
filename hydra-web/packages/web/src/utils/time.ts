@@ -31,6 +31,24 @@ export function formatRelativeTime(ts: string): string {
   return `${months}mo ago`;
 }
 
+/** Format an ISO timestamp as a compact relative value without an "ago" suffix
+ *  (e.g. "5m", "2h", "1d", or "now"). The AgoTime component adds the suffix. */
+export function shortRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "—";
+  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (sec < 60) return "now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d`;
+  const mo = Math.floor(day / 30);
+  return `${mo}mo`;
+}
+
 /** Compute runtime from start_time to end_time (or now). */
 export function getRuntime(
   startTime: string | null | undefined,

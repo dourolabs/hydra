@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, TypeChip } from "@hydra/ui";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
-import { formatDuration } from "../../../utils/time";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
+import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import { useSessionDuration } from "../../dashboard/useSessionDuration";
 import { IssueRailRow } from "../../related/RailRow";
 import styles from "./IssuesTable.module.css";
 
@@ -18,21 +18,6 @@ interface IssuesTableProps {
   filterRootId: string | null;
 }
 
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (sec < 60) return "now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo`;
-}
-
 function progressFraction(children: ChildStatus[] | undefined): number {
   if (!children || children.length === 0) return 0;
   const total = children.length;
@@ -42,82 +27,10 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((projected / total) * 100);
 }
 
-function isActiveSession(s: SessionSummaryRecord): boolean {
-  return s.session.status === "running" || s.session.status === "pending";
-}
-
-function pickActiveSession(
-  sessions: SessionSummaryRecord[] | undefined,
-): SessionSummaryRecord | undefined {
-  if (!sessions || sessions.length === 0) return undefined;
-  return sessions.find(isActiveSession);
-}
-
-function pickLatestCompletedSession(
-  sessions: SessionSummaryRecord[] | undefined,
-): SessionSummaryRecord | undefined {
-  if (!sessions || sessions.length === 0) return undefined;
-  let best: SessionSummaryRecord | undefined;
-  let bestTs = -Infinity;
-  for (const s of sessions) {
-    if (isActiveSession(s)) continue;
-    const ts = s.session.end_time
-      ? new Date(s.session.end_time).getTime()
-      : new Date(s.timestamp).getTime();
-    if (Number.isFinite(ts) && ts > bestTs) {
-      bestTs = ts;
-      best = s;
-    }
-  }
-  return best;
-}
-
-function useElapsed(startIso: string | null | undefined, active: boolean): string {
-  const compute = () => {
-    if (!startIso) return "0s";
-    return formatDuration(Date.now() - new Date(startIso).getTime());
-  };
-  const [text, setText] = useState<string>(compute);
-
-  useEffect(() => {
-    if (!active || !startIso) {
-      setText(compute());
-      return;
-    }
-    setText(compute());
-    const id = setInterval(() => setText(compute()), 1000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, startIso]);
-
-  return text;
-}
-
 function RuntimeCell({ sessions }: { sessions: SessionSummaryRecord[] | undefined }) {
-  const active = pickActiveSession(sessions);
-  const startIso = active?.session.start_time ?? active?.session.creation_time ?? null;
-  const elapsed = useElapsed(startIso, !!active);
-
-  if (active) {
-    return (
-      <span className={styles.runtimeActive} data-testid="runtime-active">
-        {elapsed}
-      </span>
-    );
-  }
-
-  const completed = pickLatestCompletedSession(sessions);
-  if (completed && completed.session.start_time) {
-    const start = new Date(completed.session.start_time).getTime();
-    const end = completed.session.end_time ? new Date(completed.session.end_time).getTime() : start;
-    return (
-      <span className={styles.runtimeIdle} data-testid="runtime-idle">
-        {formatDuration(end - start)}
-      </span>
-    );
-  }
-
-  return <span className={styles.dash}>—</span>;
+  const { durationText, status } = useSessionDuration(sessions);
+  if (durationText === "—") return <span className={styles.dash}>—</span>;
+  return <RunTime value={durationText} status={status} />;
 }
 
 export function IssuesTable({
@@ -224,7 +137,9 @@ export function IssuesTable({
                 <td className={styles.colRuntime}>
                   <RuntimeCell sessions={sessionsByIssue.get(id)} />
                 </td>
-                <td className={styles.colUpdated}>{relativeTime(rec.timestamp)}</td>
+                <td className={styles.colUpdated}>
+                  <AgoTime iso={rec.timestamp} />
+                </td>
               </tr>
             );
           })}
