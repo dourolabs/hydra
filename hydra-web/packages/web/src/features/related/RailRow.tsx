@@ -17,6 +17,7 @@ import {
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
 import { conversationTitle } from "../chat/conversationTitle";
+import { workflowSummary } from "../repositories/workflowSummary";
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
@@ -267,7 +268,7 @@ interface ChatRailRowProps {
 
 export function ChatRailRow({ conversation }: ChatRailRowProps) {
   const navigate = useNavigate();
-  const status: BadgeStatus = `conv-${conversation.status}` as BadgeStatus;
+  const status: BadgeStatus = `conv-${conversation.status}`;
   const messageLabel =
     conversation.event_count === 1 ? "1 msg" : `${conversation.event_count} msgs`;
   const to = `/chat/${conversation.conversation_id}`;
@@ -303,20 +304,8 @@ interface RepositoryRailRowProps {
   record: RepositoryRecord;
 }
 
-function repositoryWorkflowSummary(record: RepositoryRecord): string | null {
-  const pw = record.repository.patch_workflow;
-  const reviewerCount = pw?.review_requests?.length ?? 0;
-  const hasMerge = !!pw?.merge_request?.assignee;
-  const parts: string[] = [];
-  if (reviewerCount > 0) {
-    parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
-  }
-  if (hasMerge) parts.push("merge");
-  return parts.length > 0 ? parts.join(", ") : null;
-}
-
 export function RepositoryRailRow({ record }: RepositoryRailRowProps) {
-  const workflow = repositoryWorkflowSummary(record);
+  const workflow = workflowSummary(record);
   return (
     <div className={styles.row} data-testid={`related-rail-row-repository-${record.name}`}>
       <Icons.IconRepo size={14} className={styles.docIcon} aria-hidden="true" />

@@ -13,6 +13,7 @@ import { RepositoryRailRow } from "../related/RailRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
+import { workflowSummary } from "./workflowSummary";
 import styles from "./RepositoriesSection.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -20,18 +21,6 @@ const MOBILE_QUERY = "(max-width: 768px)";
 interface RepositoriesSectionProps {
   createOpen: boolean;
   onCreateOpenChange: (open: boolean) => void;
-}
-
-function workflowSummary(repo: RepositoryRecord): string | null {
-  const pw = repo.repository.patch_workflow;
-  const reviewerCount = pw?.review_requests?.length ?? 0;
-  const hasMerge = !!pw?.merge_request?.assignee;
-  const parts: string[] = [];
-  if (reviewerCount > 0) {
-    parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
-  }
-  if (hasMerge) parts.push("merge");
-  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 export function RepositoriesSection({ createOpen, onCreateOpenChange }: RepositoriesSectionProps) {
