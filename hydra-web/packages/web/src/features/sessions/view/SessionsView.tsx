@@ -8,12 +8,13 @@ import {
 } from "../usePaginatedSessions";
 import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
-import { descriptionSnippet } from "../../../utils/text";
 import { formatTokenCount } from "../../../utils/tokens";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
 import { useSingleSessionDuration } from "../../dashboard/useSessionDuration";
 import { SessionRailRow } from "../../related/RailRow";
+import { useSessionLinks } from "../useSessionLinks";
+import { resolveSessionDisplay } from "../sessionDisplay";
 import styles from "./SessionsView.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -66,6 +67,8 @@ export function SessionsView() {
     }
     return sortSessions(deduped);
   }, [paginatedData]);
+
+  const { issueMap, conversationMap } = useSessionLinks(rows);
 
   const handleRowClick = (id: string) => {
     navigate(`/sessions/${id}`);
@@ -120,7 +123,11 @@ export function SessionsView() {
         {rows.length > 0 && isMobile && (
           <div className={styles.mobileList} data-testid="sessions-list">
             {rows.map((rec) => (
-              <SessionRailRow key={rec.session_id} record={rec} />
+              <SessionRailRow
+                key={rec.session_id}
+                record={rec}
+                display={resolveSessionDisplay(rec, issueMap, conversationMap)}
+              />
             ))}
           </div>
         )}
@@ -130,9 +137,9 @@ export function SessionsView() {
             <table className={styles.table} data-testid="sessions-list">
               <thead>
                 <tr>
-                  <th className={styles.colAgent}>Agent</th>
                   <th className={styles.colLinked}>Linked</th>
                   <th className={styles.colStatus}>Status</th>
+                  <th className={styles.colAgent}>Agent</th>
                   <th className={styles.colDuration}>Duration</th>
                   <th className={styles.colTokens}>Tokens</th>
                   <th className={styles.colStarted}>Started</th>
@@ -142,36 +149,62 @@ export function SessionsView() {
                 {rows.map((rec) => {
                   const s = rec.session;
                   const startedTs = s.start_time ?? s.creation_time ?? rec.timestamp;
-                  const promptText = descriptionSnippet(s.prompt);
+                  const display = resolveSessionDisplay(
+                    rec,
+                    issueMap,
+                    conversationMap,
+                  );
                   return (
                     <tr
                       key={rec.session_id}
                       onClick={() => handleRowClick(rec.session_id)}
                       data-testid={`sessions-list-row-${rec.session_id}`}
                     >
-                      <td className={styles.colAgent}>
-                        <span className={styles.agent}>
-                          <Avatar name={s.creator} kind="agent" size="md" />
-                          <span className={styles.agentName}>{s.creator}</span>
-                        </span>
-                      </td>
                       <td className={styles.colLinked}>
                         <div className={styles.linkedCell}>
-                          <span className={styles.linkedText}>{promptText}</span>
-                          {s.spawned_from && (
+                          <span className={styles.linkedText}>
+                            {display.title}
+                          </span>
+                          {display.issueId && (
                             <Link
-                              to={`/issues/${s.spawned_from}`}
+                              to={`/issues/${display.issueId}`}
                               className={styles.linkedIssueLink}
                               onClick={(e) => e.stopPropagation()}
-                              title={s.spawned_from}
+                              title={display.issueId}
                             >
-                              {s.spawned_from}
+                              {display.issueId}
+                            </Link>
+                          )}
+                          {display.conversationId && (
+                            <Link
+                              to={`/chat/${display.conversationId}`}
+                              className={styles.linkedIssueLink}
+                              onClick={(e) => e.stopPropagation()}
+                              title={display.conversationId}
+                            >
+                              {display.conversationId}
                             </Link>
                           )}
                         </div>
                       </td>
                       <td className={styles.colStatus}>
                         <Badge status={normalizeSessionStatus(s.status)} />
+                      </td>
+                      <td className={styles.colAgent}>
+                        {display.agentName ? (
+                          <span className={styles.agent}>
+                            <Avatar
+                              name={display.agentName}
+                              kind="agent"
+                              size="md"
+                            />
+                            <span className={styles.agentName}>
+                              {display.agentName}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className={styles.dash}>—</span>
+                        )}
                       </td>
                       <td className={styles.colDuration}>
                         <SessionRuntimeCell record={rec} />

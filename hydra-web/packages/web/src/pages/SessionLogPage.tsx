@@ -116,8 +116,8 @@ export function SessionLogPage() {
             <div className={styles.headerInner}>
               <div className={styles.headerTop}>
                 <span className={styles.agentName}>
-                  <Avatar name={record.session.creator} kind="agent" size="md" />
-                  <span className={styles.agentLabel}>Agent</span>
+                  <Avatar name={record.session.creator} kind="human" size="md" />
+                  <span className={styles.agentLabel}>Creator</span>
                   {record.session.creator}
                 </span>
                 <Badge status={normalizeSessionStatus(record.session.status)} />

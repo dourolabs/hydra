@@ -14,6 +14,7 @@ import {
 } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
+import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import {
   useSessionDuration,
@@ -165,13 +166,18 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
 
 interface SessionRailRowProps {
   record: SessionSummaryRecord;
+  /** Linked-entity display data resolved by the caller (title + agent
+   *  derived from the linked issue or conversation). Optional so callers
+   *  that don't resolve linked entities can fall back to the raw prompt. */
+  display?: SessionDisplay;
 }
 
-export function SessionRailRow({ record }: SessionRailRowProps) {
+export function SessionRailRow({ record, display }: SessionRailRowProps) {
   const navigate = useNavigate();
   const s = record.session;
   const status: BadgeStatus = normalizeSessionStatus(s.status);
-  const promptText = descriptionSnippet(s.prompt) || "(no prompt)";
+  const title = display?.title || descriptionSnippet(s.prompt) || "(no prompt)";
+  const agentName = display?.agentName ?? null;
   const { durationText, status: runtimeStatus } = useSingleSessionDuration(record);
 
   return (
@@ -190,9 +196,9 @@ export function SessionRailRow({ record }: SessionRailRowProps) {
     >
       <StatusDot status={status} />
       <div className={styles.body}>
-        <div className={styles.title}>{promptText}</div>
+        <div className={styles.title}>{title}</div>
         <div className={styles.meta}>
-          <span className={styles.agent}>{s.creator}</span>
+          {agentName && <span className={styles.agent}>{agentName}</span>}
           {s.usage && (
             <span
               className={styles.tokens}
