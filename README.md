@@ -1,6 +1,5 @@
 # Hydra
 
-<!-- workflow-test-readme-v4 branch -->
 Hydra is an open-source AI orchestration layer that lets developers coordinate dozens of agents working simultaneously across tasks, issues, and environments.
 You assign work through an issue tracker, and Hydra automatically spins up agents to implement it.
 You survey their progress, review their work, and offer course corrections as needed.
@@ -11,6 +10,14 @@ You survey their progress, review their work, and offer course corrections as ne
 
 Hydra ships a single-player mode that bundles the CLI, server, and web dashboard into one binary (`hydra-single-player`). This is the easiest way to get started.
 
+### Prerequisites
+
+- **Rust** (stable toolchain) — install via [rustup](https://rustup.rs/).
+- **Docker** (recommended) — needed for the Docker job engine. See <https://docs.docker.com/get-docker/>.
+- **Linux build deps:** `pkg-config` and OpenSSL headers (e.g. `apt install pkg-config libssl-dev`).
+
+Audited on Linux x86_64 (Debian 12).
+
 ### 1. Clone and build
 
 ```bash
@@ -19,12 +26,21 @@ cd hydra
 cargo build -p hydra-single-player
 ```
 
+The build links the React dashboard into the binary, so no separate frontend setup is needed.
+
 Add the binary to your path:
 
 ```bash
+mkdir -p ~/.local/bin
 cp target/debug/hydra ~/.local/bin/hydra
 # or
 export PATH="$PATH:$(realpath ./target/debug/)"
+```
+
+Verify it's on your path:
+
+```bash
+hydra --version
 ```
 
 ### 2. Initialize the server
