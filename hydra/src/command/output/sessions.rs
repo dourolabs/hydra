@@ -3,13 +3,14 @@ use std::io::Write;
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use hydra_common::{
+    api::v1::sessions::TokenUsage,
     sessions::{Session, SessionSummary, SessionSummaryRecord, SessionVersionRecord},
     task_status::{Status, TaskError},
 };
 use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
-use crate::util::{format_duration, truncate_lines};
+use crate::util::{format_duration, format_thousands, truncate_lines};
 
 use super::Render;
 
@@ -178,7 +179,12 @@ fn format_status(status: &Status) -> &'static str {
 }
 
 fn session_note(job: &SessionVersionRecord) -> Option<String> {
-    job.session.error.as_ref().map(format_task_error)
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(error) = job.session.error.as_ref() {
+        parts.push(format_task_error(error));
+    }
+    parts.push(format_token_usage_segment(job.session.usage.as_ref()));
+    Some(parts.join(" | "))
 }
 
 fn session_summary_note(job: &SessionSummaryRecord) -> Option<String> {
@@ -189,20 +195,27 @@ fn session_summary_note(job: &SessionSummaryRecord) -> Option<String> {
     if let Some(conversation_id) = job.session.conversation_id.as_ref() {
         parts.push(format!("conversation: {conversation_id}"));
     }
-    if let Some(usage) = job.session.usage.as_ref() {
-        let cache = usage
-            .cache_read_input_tokens
-            .saturating_add(usage.cache_creation_input_tokens);
-        parts.push(format!(
-            "tokens: in={} out={} cache={}",
-            usage.input_tokens, usage.output_tokens, cache
-        ));
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" | "))
-    }
+    parts.push(format_token_usage_segment(job.session.usage.as_ref()));
+    Some(parts.join(" | "))
+}
+
+fn format_token_usage_segment(usage: Option<&TokenUsage>) -> String {
+    let Some(usage) = usage else {
+        return "tokens: —".to_string();
+    };
+    let total = usage
+        .input_tokens
+        .saturating_add(usage.output_tokens)
+        .saturating_add(usage.cache_read_input_tokens)
+        .saturating_add(usage.cache_creation_input_tokens);
+    format!(
+        "tokens: total={} | input={} out={} cache_read={} cache_create={}",
+        format_thousands(total),
+        format_thousands(usage.input_tokens),
+        format_thousands(usage.output_tokens),
+        format_thousands(usage.cache_read_input_tokens),
+        format_thousands(usage.cache_creation_input_tokens),
+    )
 }
 
 fn format_task_error(error: &TaskError) -> String {
@@ -400,10 +413,10 @@ mod tests {
         assert_eq!(format_status(&Status::Failed), "failed");
     }
 
-    fn build_summary_record(
+    fn build_session(
         conversation_id: Option<hydra_common::ConversationId>,
         usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
-    ) -> SessionSummaryRecord {
+    ) -> Session {
         use hydra_common::api::v1::sessions::{BundleSpec, InteractiveOptions};
         let mut session = Session::new(
             "p".to_string(),
@@ -427,12 +440,33 @@ mod tests {
             None,
         );
         session.usage = usage;
+        session
+    }
+
+    fn build_summary_record(
+        conversation_id: Option<hydra_common::ConversationId>,
+        usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
+    ) -> SessionSummaryRecord {
+        let session = build_session(conversation_id, usage);
         let summary = SessionSummary::from(&session);
         let json = serde_json::json!({
             "session_id": SessionId::new(),
             "version": 1u64,
             "timestamp": Utc::now(),
             "session": serde_json::to_value(&summary).unwrap(),
+        });
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn build_version_record(
+        usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
+    ) -> SessionVersionRecord {
+        let session = build_session(None, usage);
+        let json = serde_json::json!({
+            "session_id": SessionId::new(),
+            "version": 1u64,
+            "timestamp": Utc::now(),
+            "session": serde_json::to_value(&session).unwrap(),
         });
         serde_json::from_value(json).unwrap()
     }
@@ -446,10 +480,10 @@ mod tests {
         let record = build_summary_record(
             Some(conv_id.clone()),
             Some(TokenUsage {
-                input_tokens: 10,
-                output_tokens: 20,
-                cache_read_input_tokens: 3,
-                cache_creation_input_tokens: 4,
+                input_tokens: 1_000,
+                output_tokens: 2_000,
+                cache_read_input_tokens: 3_000,
+                cache_creation_input_tokens: 4_000,
             }),
         );
 
@@ -459,15 +493,43 @@ mod tests {
             "expected conversation in {note}"
         );
         assert!(
-            note.contains("tokens: in=10 out=20 cache=7"),
-            "expected tokens in {note}"
+            note.contains(
+                "tokens: total=10,000 | input=1,000 out=2,000 cache_read=3,000 cache_create=4,000"
+            ),
+            "expected new-shape tokens in {note}"
         );
         assert!(note.contains(" | "), "expected separator in {note}");
     }
 
     #[test]
-    fn session_summary_note_returns_none_when_nothing_to_show() {
+    fn session_summary_note_renders_em_dash_when_usage_missing() {
         let record = build_summary_record(None, None);
-        assert!(session_summary_note(&record).is_none());
+        let note = session_summary_note(&record).expect("note present");
+        assert_eq!(note, "tokens: —");
+    }
+
+    #[test]
+    fn session_note_renders_tokens_when_usage_present() {
+        use hydra_common::api::v1::sessions::TokenUsage;
+
+        let record = build_version_record(Some(TokenUsage {
+            input_tokens: 33_947_111,
+            output_tokens: 250_000,
+            cache_read_input_tokens: 1_500_000,
+            cache_creation_input_tokens: 50_000,
+        }));
+
+        let note = session_note(&record).expect("note present");
+        assert!(
+            note.contains("tokens: total=35,747,111 | input=33,947,111 out=250,000 cache_read=1,500,000 cache_create=50,000"),
+            "expected new-shape tokens in {note}"
+        );
+    }
+
+    #[test]
+    fn session_note_renders_em_dash_when_usage_missing() {
+        let record = build_version_record(None);
+        let note = session_note(&record).expect("note present");
+        assert_eq!(note, "tokens: —");
     }
 }

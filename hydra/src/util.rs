@@ -47,6 +47,20 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
+/// Formats an integer with comma thousands separators (e.g. `1234567` -> `1,234,567`).
+pub(crate) fn format_thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let bytes = digits.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    out
+}
+
 /// Formats a duration without spaces (e.g. `5m04s`) for compact column output.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn format_compact_duration(duration: ChronoDuration) -> String {
@@ -99,6 +113,15 @@ mod tests {
             format_duration(ChronoDuration::seconds(3661)),
             "1h 01m 01s".to_string()
         );
+    }
+
+    #[test]
+    fn format_thousands_inserts_commas_every_three_digits() {
+        assert_eq!(format_thousands(0), "0");
+        assert_eq!(format_thousands(123), "123");
+        assert_eq!(format_thousands(1234), "1,234");
+        assert_eq!(format_thousands(1_234_567), "1,234,567");
+        assert_eq!(format_thousands(u64::MAX), "18,446,744,073,709,551,615");
     }
 
     #[test]
