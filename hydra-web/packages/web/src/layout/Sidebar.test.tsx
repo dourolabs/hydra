@@ -61,6 +61,11 @@ vi.mock("../features/sessions/useActiveSessionCount", () => ({
   useActiveSessionCount: (...args: unknown[]) => activeSessionCountMock(...args),
 }));
 
+const sessionLinksMock = vi.fn();
+vi.mock("../features/sessions/useSessionLinks", () => ({
+  useSessionLinks: (...args: unknown[]) => sessionLinksMock(...args),
+}));
+
 const getVersionMock = vi.fn();
 vi.mock("../api/client", () => ({
   apiClient: {
@@ -116,6 +121,7 @@ beforeEach(() => {
   issueCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
   activeSessionsMock.mockReturnValue({ data: [], isLoading: false, error: null });
   activeSessionCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
+  sessionLinksMock.mockReturnValue({ issueMap: new Map(), conversationMap: new Map() });
   getVersionMock.mockResolvedValue({ version: "0.0.0" });
 
   Object.defineProperty(window, "matchMedia", {
@@ -202,21 +208,21 @@ describe("Sidebar", () => {
 
   it("workspace items navigate to the expected routes", () => {
     renderSidebar();
-    expect(
-      (screen.getByTestId("sidebar-patches") as HTMLAnchorElement).getAttribute("href"),
-    ).toBe("/patches");
-    expect(
-      (screen.getByTestId("sidebar-sessions") as HTMLAnchorElement).getAttribute("href"),
-    ).toBe("/sessions");
-    expect(
-      (screen.getByTestId("sidebar-chats") as HTMLAnchorElement).getAttribute("href"),
-    ).toBe("/chat");
+    expect((screen.getByTestId("sidebar-patches") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/patches",
+    );
+    expect((screen.getByTestId("sidebar-sessions") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/sessions",
+    );
+    expect((screen.getByTestId("sidebar-chats") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/chat",
+    );
     expect(
       (screen.getByTestId("sidebar-documents") as HTMLAnchorElement).getAttribute("href"),
     ).toBe("/documents");
-    expect(
-      (screen.getByTestId("sidebar-agents") as HTMLAnchorElement).getAttribute("href"),
-    ).toBe("/agents");
+    expect((screen.getByTestId("sidebar-agents") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/agents",
+    );
     expect(
       (screen.getByTestId("sidebar-context-repositories") as HTMLAnchorElement).getAttribute(
         "href",
@@ -412,5 +418,97 @@ describe("Sidebar", () => {
     activeSessionCountMock.mockReturnValue({ data: 0, isLoading: false, error: null });
     renderSidebar();
     expect(screen.queryByTestId("sidebar-active-sessions-count")).toBeNull();
+  });
+
+  it("labels a session by its linked issue title when spawned_from resolves", () => {
+    activeSessionsMock.mockReturnValue({
+      data: [
+        {
+          session_id: "s-1",
+          version: 1n,
+          timestamp: new Date().toISOString(),
+          session: {
+            prompt: "raw prompt that should be hidden",
+            creator: "alice",
+            status: "running",
+            start_time: new Date(Date.now() - 60_000).toISOString(),
+            spawned_from: "i-X",
+          },
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    sessionLinksMock.mockReturnValue({
+      issueMap: new Map([
+        [
+          "i-X",
+          {
+            issue_id: "i-X",
+            version: 1n,
+            timestamp: new Date().toISOString(),
+            issue: { title: "Migrate OAuth" },
+          },
+        ],
+      ]),
+      conversationMap: new Map(),
+    });
+    renderSidebar();
+    const row = screen.getByTestId("sidebar-session-row-s-1") as HTMLAnchorElement;
+    expect(row.textContent).toContain("Migrate OAuth");
+    expect(row.getAttribute("title")).toBe("Migrate OAuth");
+  });
+
+  it("labels a session by its linked conversation title when only conversation_id resolves", () => {
+    activeSessionsMock.mockReturnValue({
+      data: [
+        {
+          session_id: "s-2",
+          version: 1n,
+          timestamp: new Date().toISOString(),
+          session: {
+            prompt: "raw prompt that should be hidden",
+            creator: "alice",
+            status: "running",
+            start_time: new Date(Date.now() - 60_000).toISOString(),
+            conversation_id: "c-X",
+          },
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    sessionLinksMock.mockReturnValue({
+      issueMap: new Map(),
+      conversationMap: new Map([["c-X", { conversation_id: "c-X", title: "Auth sync" }]]),
+    });
+    renderSidebar();
+    const row = screen.getByTestId("sidebar-session-row-s-2") as HTMLAnchorElement;
+    expect(row.textContent).toContain("Auth sync");
+    expect(row.getAttribute("title")).toBe("Auth sync");
+  });
+
+  it("falls back to the prompt snippet when neither linked entity is resolvable", () => {
+    activeSessionsMock.mockReturnValue({
+      data: [
+        {
+          session_id: "s-3",
+          version: 1n,
+          timestamp: new Date().toISOString(),
+          session: {
+            prompt: "Run regression suite",
+            creator: "alice",
+            status: "running",
+            start_time: new Date(Date.now() - 60_000).toISOString(),
+          },
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    renderSidebar();
+    const row = screen.getByTestId("sidebar-session-row-s-3") as HTMLAnchorElement;
+    expect(row.textContent).toContain("Run regression suite");
+    expect(row.getAttribute("title")).toBe("Run regression suite");
   });
 });
