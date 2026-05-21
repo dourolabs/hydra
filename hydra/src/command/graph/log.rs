@@ -23,7 +23,7 @@ use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
-use crate::command::graph::diff::{check_window, diff_json, FieldChange};
+use crate::command::graph::diff::{check_window, diff_json, write_view_fields, FieldChange};
 use crate::command::graph::dispatch::{fetch_versions, VersionedNode};
 use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
 use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
@@ -339,7 +339,7 @@ fn render_pretty(events: &[LogEvent], writer: &mut impl Write) -> Result<()> {
                 version,
                 ts,
                 actor,
-                ..
+                object,
             } => {
                 writeln!(
                     writer,
@@ -349,6 +349,7 @@ fn render_pretty(events: &[LogEvent], writer: &mut impl Write) -> Result<()> {
                     id = id.as_ref(),
                     actor = actor_display(actor),
                 )?;
+                write_view_fields(writer, object)?;
             }
             LogEvent::Updated {
                 kind,
@@ -750,6 +751,56 @@ mod tests {
         assert_eq!(value["version"], 1);
         assert!(value["actor"].is_object());
         assert_eq!(value["object"]["title"], "t");
+    }
+
+    #[test]
+    fn render_pretty_created_includes_view_fields() {
+        let id_a: HydraId = "i-aaaaaa".parse::<IssueId>().unwrap().into();
+        let events = vec![LogEvent::Created {
+            kind: ObjectKind::Issue,
+            id: id_a.clone(),
+            version: 1,
+            ts: ts(10),
+            actor: Some(session_actor("s-abcdef")),
+            object: serde_json::json!({
+                "title": "first issue",
+                "status": "open",
+            }),
+        }];
+        let mut buf = Vec::new();
+        render_pretty(&events, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-aaaaaa v1 CREATED"), "got: {out}");
+        assert!(out.contains("  title: \"first issue\""), "got: {out}");
+        assert!(out.contains("  status: \"open\""), "got: {out}");
+    }
+
+    #[test]
+    fn render_pretty_updated_keeps_change_list() {
+        let id_a: HydraId = "i-aaaaaa".parse::<IssueId>().unwrap().into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            "status".to_string(),
+            FieldChange {
+                before: serde_json::json!("open"),
+                after: serde_json::json!("in-progress"),
+            },
+        );
+        let events = vec![LogEvent::Updated {
+            kind: ObjectKind::Issue,
+            id: id_a.clone(),
+            version: 2,
+            ts: ts(20),
+            actor: None,
+            changes,
+        }];
+        let mut buf = Vec::new();
+        render_pretty(&events, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-aaaaaa v2 UPDATED"), "got: {out}");
+        assert!(out.contains("status"), "got: {out}");
+        assert!(out.contains("open"), "got: {out}");
+        assert!(out.contains("in-progress"), "got: {out}");
     }
 
     #[test]

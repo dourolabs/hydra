@@ -361,11 +361,18 @@ impl crate::graph::GraphView for Issue {
     }
 
     fn view_l2(&self) -> Value {
+        let progress = if self.progress.chars().count() > 200 {
+            let mut truncated: String = self.progress.chars().take(200).collect();
+            truncated.push_str("...");
+            truncated
+        } else {
+            self.progress.clone()
+        };
         serde_json::json!({
             "title": self.title,
             "status": self.status,
             "assignee": self.assignee,
-            "progress": self.progress,
+            "progress": progress,
             "dependencies": self.dependencies,
         })
     }
@@ -1254,6 +1261,65 @@ mod tests {
                         "issue_id": "i-parent",
                     }],
                 })
+            );
+        }
+
+        #[test]
+        fn view_l2_truncates_progress_over_200_chars() {
+            let mut issue = sample_issue();
+            issue.progress = "a".repeat(250);
+            let l2 = issue.view_l2();
+            let progress = l2.get("progress").and_then(|v| v.as_str()).unwrap();
+            assert_eq!(progress.chars().count(), 203);
+            assert!(progress.ends_with("..."));
+            assert_eq!(&progress[..200], &"a".repeat(200));
+        }
+
+        #[test]
+        fn view_l2_does_not_truncate_progress_at_or_under_200_chars() {
+            let mut issue = sample_issue();
+            issue.progress = "a".repeat(200);
+            let l2 = issue.view_l2();
+            assert_eq!(
+                l2.get("progress").and_then(|v| v.as_str()).unwrap(),
+                &"a".repeat(200)
+            );
+
+            issue.progress = "short".to_string();
+            let l2 = issue.view_l2();
+            assert_eq!(
+                l2.get("progress").and_then(|v| v.as_str()).unwrap(),
+                "short"
+            );
+        }
+
+        #[test]
+        fn view_l2_truncation_is_char_based_for_multibyte() {
+            let mut issue = sample_issue();
+            // Each emoji is 1 char / 4 bytes — 250 emojis is well over 200 bytes.
+            issue.progress = "\u{1F600}".repeat(250);
+            let l2 = issue.view_l2();
+            let progress = l2.get("progress").and_then(|v| v.as_str()).unwrap();
+            assert_eq!(progress.chars().count(), 203);
+            assert!(progress.ends_with("..."));
+        }
+
+        #[test]
+        fn view_l1_does_not_emit_progress() {
+            let mut issue = sample_issue();
+            issue.progress = "a".repeat(500);
+            let l1 = issue.view_l1();
+            assert!(l1.get("progress").is_none());
+        }
+
+        #[test]
+        fn view_l3_preserves_full_progress() {
+            let mut issue = sample_issue();
+            issue.progress = "a".repeat(500);
+            let l3 = issue.view_l3();
+            assert_eq!(
+                l3.get("progress").and_then(|v| v.as_str()).unwrap().len(),
+                500
             );
         }
 
