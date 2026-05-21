@@ -39,8 +39,8 @@ const TYPE_OPTIONS: TypeOption[] = [
   { value: "bug", label: "Bug" },
   { value: "feature", label: "Feature" },
   { value: "chore", label: "Chore" },
-  { value: "merge-request", label: "Merge request" },
-  { value: "review-request", label: "Review request" },
+  { value: "merge-request", label: "Merge" },
+  { value: "review-request", label: "Review" },
 ];
 
 function typeLabel(value: IssueType | null): string {

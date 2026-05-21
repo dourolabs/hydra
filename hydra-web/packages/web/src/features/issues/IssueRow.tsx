@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Avatar, Badge, SessionStatusIndicator } from "@hydra/ui";
+import { Avatar, Badge, SessionStatusIndicator, issueTypeDisplayLabel } from "@hydra/ui";
 import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@hydra/api";
 import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
@@ -57,7 +57,7 @@ export function IssueRow({
     <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
         <Badge status={normalizeIssueStatus(issue.status)} />
-        <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
+        <span className={`${styles.typeChip} ${chipClass}`}>{issueTypeDisplayLabel(issue.type)}</span>
         {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
         <span className={styles.desc}>
           {issue.title ? (
