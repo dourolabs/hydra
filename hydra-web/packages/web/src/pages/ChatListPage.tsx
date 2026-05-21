@@ -8,7 +8,7 @@ import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
-import { formatRelativeTime } from "../utils/time";
+import { AgoTime } from "../components/Runtime/Runtime";
 import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./ChatListPage.module.css";
@@ -162,7 +162,9 @@ export function ChatListPage() {
                     </td>
                     <td className={styles.colCreator}>{c.creator}</td>
                     <td className={styles.colMessages}>{c.event_count}</td>
-                    <td className={styles.colUpdated}>{formatRelativeTime(c.updated_at)}</td>
+                    <td className={styles.colUpdated}>
+                      <AgoTime iso={c.updated_at} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

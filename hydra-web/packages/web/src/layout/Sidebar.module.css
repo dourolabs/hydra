@@ -240,7 +240,7 @@
   flex-shrink: 0;
 }
 
-/* ─── Chat row (with status dot + time) ───────────────────────── */
+/* ─── Chat row (with status dot) ──────────────────────────────── */
 .chatRow {
   display: flex;
   align-items: center;
@@ -301,13 +301,6 @@
   white-space: nowrap;
 }
 
-.chatTime {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  color: var(--fg-3);
-  flex-shrink: 0;
-}
-
 /* ─── Active session row ──────────────────────────────────────── */
 .sessionRow {
   display: flex;
@@ -361,13 +354,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sessionWhen {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  color: var(--fg-3);
-  flex-shrink: 0;
 }
 
 .sectionEmpty {

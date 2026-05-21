@@ -168,6 +168,7 @@ vi.mock("../../components/EmptyState/EmptyState", () => ({
 
 vi.mock("../../utils/time", () => ({
   formatRelativeTime: (s: string) => s,
+  shortRelativeTime: (s: string) => s,
 }));
 
 vi.mock("../ChatListPage.module.css", () => ({

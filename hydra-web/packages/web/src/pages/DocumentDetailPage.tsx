@@ -6,7 +6,7 @@ import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
 import { useToast } from "../features/toast/useToast";
-import { formatRelativeTime } from "../utils/time";
+import { AgoTime } from "../components/Runtime/Runtime";
 import type { BreadcrumbItem } from "../layout/Breadcrumbs";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentDetailPage.module.css";
@@ -139,7 +139,9 @@ function DocumentDetail({ record }: DocumentDetailProps) {
         )}
         <span className={styles.metaItem}>
           <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>{formatRelativeTime(record.timestamp)}</span>
+          <span className={styles.metaValue}>
+            <AgoTime iso={record.timestamp} />
+          </span>
         </span>
       </div>
 

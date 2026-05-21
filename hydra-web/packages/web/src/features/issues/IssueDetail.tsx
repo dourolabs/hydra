@@ -12,6 +12,7 @@ import { SessionList } from "../sessions/SessionList";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
 import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./IssueDetail.module.css";
 
 type MobileTabKey = "overview" | IssueRightPanelTabKey;
@@ -22,21 +23,6 @@ const MOBILE_TABS: MobileTabBarItem[] = [
   { key: "activity", label: "Activity" },
   { key: "details", label: "Details" },
 ];
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (sec < 60) return "now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo ago`;
-}
 
 function BlockedItemLink({ issueId }: { issueId: string }) {
   const { data: record } = useIssue(issueId);
@@ -131,7 +117,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
                 <span className={styles.metaSep}>·</span>
               </>
             )}
-            <span>{relativeTime(record.creation_time)}</span>
+            <AgoTime iso={record.creation_time} />
             {settings?.repo_name && (
               <>
                 <span className={styles.metaSep}>·</span>

@@ -5,6 +5,7 @@ import type { PatchStatus, PatchSummaryRecord } from "@hydra/api";
 import { usePaginatedPatches, usePatchCount } from "../../dashboard/usePaginatedPatches";
 import { normalizePatchStatus } from "../../../utils/statusMapping";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
+import { AgoTime } from "../../../components/Runtime/Runtime";
 import { PatchRailRow } from "../../related/RailRow";
 import styles from "./PatchesView.module.css";
 
@@ -22,21 +23,6 @@ const STATUS_FILTERS: StatusFilter[] = [
   { key: "Merged", label: "Merged" },
   { key: "Closed", label: "Closed" },
 ];
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (sec < 60) return "now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo`;
-}
 
 export function PatchesView() {
   const navigate = useNavigate();
@@ -177,7 +163,9 @@ export function PatchesView() {
                         </span>
                       </td>
                       <td className={styles.colRepo}>{p.service_repo_name}</td>
-                      <td className={styles.colUpdated}>{relativeTime(rec.timestamp)}</td>
+                      <td className={styles.colUpdated}>
+                        <AgoTime iso={rec.timestamp} />
+                      </td>
                       <td className={styles.colReviews}>
                         {p.review_summary.count > 0 ? (
                           <span

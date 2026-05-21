@@ -435,7 +435,7 @@ describe("IssuesListPage IssuesTable rendering", () => {
 
     const cell = screen.getByTestId("runtime-active");
     expect(cell).toBeDefined();
-    expect(cell.className).toContain("runtimeActive");
+    expect(cell.className).toContain("isLive");
     // Elapsed >= 5 seconds — format starts with a digit and ends with "s".
     expect(cell.textContent).toMatch(/^\d+s$/);
   });
@@ -459,7 +459,8 @@ describe("IssuesListPage IssuesTable rendering", () => {
 
     const cell = screen.getByTestId("runtime-idle");
     expect(cell).toBeDefined();
-    expect(cell.className).toContain("runtimeIdle");
+    expect(cell.className).toContain("rtInstrument");
+    expect(cell.className).not.toContain("isLive");
     expect(cell.textContent).toBe("42s");
   });
 

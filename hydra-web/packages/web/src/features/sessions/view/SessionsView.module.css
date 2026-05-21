@@ -178,17 +178,11 @@
 }
 
 .colStarted {
-  width: 80px;
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-1);
+  width: 84px;
 }
 
 .colDuration {
-  width: 90px;
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-1);
+  width: 120px;
 }
 
 .colTokens {
@@ -209,7 +203,7 @@
 }
 
 .tokensOutput {
-  color: var(--s-progress);
+  color: var(--c-violet);
 }
 
 .tokens > span > span {

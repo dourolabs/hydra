@@ -36,21 +36,6 @@ const CONNECTION_LABELS: Record<SSEConnectionState, string> = {
   disconnected: "Disconnected",
 };
 
-function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (diffSec < 60) return `${diffSec}s`;
-  const min = Math.floor(diffSec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d`;
-  const mo = Math.floor(day / 30);
-  return `${mo}mo`;
-}
-
 function chatDotClass(status: ConversationSummary["status"]): string {
   if (status === "active") return styles.chatDotActive!;
   if (status === "closed") return styles.chatDotClosed!;
@@ -323,7 +308,6 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               >
                 <span className={`${styles.chatDot} ${chatDotClass(c.status)}`} />
                 <span className={styles.chatTitle}>{title}</span>
-                <span className={styles.chatTime}>{formatRelativeTime(c.updated_at)}</span>
               </NavLink>
             );
           })}
@@ -408,7 +392,6 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
           )}
           {(activeSessions ?? []).map((s) => {
             const title = sessionTitle(s.session);
-            const startedAt = s.session.start_time ?? s.session.creation_time ?? s.timestamp;
             return (
               <NavLink
                 key={s.session_id}
@@ -421,9 +404,6 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               >
                 <span className={`${styles.sessionDot}`} />
                 <span className={styles.sessionTitle}>{title}</span>
-                {startedAt && (
-                  <span className={styles.sessionWhen}>{formatRelativeTime(startedAt)}</span>
-                )}
               </NavLink>
             );
           })}
