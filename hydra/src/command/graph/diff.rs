@@ -404,7 +404,7 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                 kind,
                 id,
                 to_version,
-                ..
+                end_view,
             } => {
                 writeln!(
                     writer,
@@ -413,12 +413,13 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                     id.as_ref(),
                     to_version,
                 )?;
+                write_view_fields(writer, end_view)?;
             }
             DiffRecord::Removed {
                 kind,
                 id,
                 from_version,
-                ..
+                start_view,
             } => {
                 writeln!(
                     writer,
@@ -427,6 +428,7 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
                     id.as_ref(),
                     from_version,
                 )?;
+                write_view_fields(writer, start_view)?;
             }
             DiffRecord::Modified {
                 kind,
@@ -455,6 +457,19 @@ fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> 
         }
     }
     writer.flush()?;
+    Ok(())
+}
+
+/// Render the top-level fields of a `view_lN` projection one per line.
+///
+/// Non-object views (or empty objects) emit nothing — diff records always
+/// have a header line that conveys the kind + id + version.
+pub(crate) fn write_view_fields(writer: &mut impl Write, view: &Value) -> Result<()> {
+    if let Some(map) = view.as_object() {
+        for (key, value) in map {
+            writeln!(writer, "  {key}: {value}")?;
+        }
+    }
     Ok(())
 }
 
@@ -706,6 +721,68 @@ mod tests {
         assert!(out.contains_key("b.c"), "got: {out:?}");
         assert_eq!(out["b.c"].before, Value::Null);
         assert_eq!(out["b.c"].after, serde_json::json!(2));
+    }
+
+    #[test]
+    fn render_pretty_added_and_removed_include_view_fields() {
+        let id_added: HydraId = "i-aaaaaa".parse::<IssueId>().unwrap().into();
+        let id_removed: HydraId = "i-bbbbbb".parse::<IssueId>().unwrap().into();
+        let records = vec![
+            DiffRecord::Added {
+                kind: ObjectKind::Issue,
+                id: id_added.clone(),
+                to_version: 1,
+                end_view: serde_json::json!({
+                    "title": "new issue",
+                    "status": "open",
+                }),
+            },
+            DiffRecord::Removed {
+                kind: ObjectKind::Issue,
+                id: id_removed.clone(),
+                from_version: 3,
+                start_view: serde_json::json!({
+                    "title": "old issue",
+                    "status": "closed",
+                }),
+            },
+        ];
+        let mut buf = Vec::new();
+        render_pretty(&records, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-aaaaaa (v1): + NEW"), "got: {out}");
+        assert!(out.contains("  title: \"new issue\""), "got: {out}");
+        assert!(out.contains("  status: \"open\""), "got: {out}");
+        assert!(out.contains("issue i-bbbbbb (v3): - REMOVED"), "got: {out}");
+        assert!(out.contains("  title: \"old issue\""), "got: {out}");
+        assert!(out.contains("  status: \"closed\""), "got: {out}");
+    }
+
+    #[test]
+    fn render_pretty_modified_keeps_field_change_list() {
+        let id: HydraId = "i-cccccc".parse::<IssueId>().unwrap().into();
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "status".to_string(),
+            FieldChange {
+                before: serde_json::json!("open"),
+                after: serde_json::json!("in-progress"),
+            },
+        );
+        let records = vec![DiffRecord::Modified {
+            kind: ObjectKind::Issue,
+            id: id.clone(),
+            from_version: 1,
+            to_version: 2,
+            fields,
+        }];
+        let mut buf = Vec::new();
+        render_pretty(&records, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-cccccc (v1 -> v2):"), "got: {out}");
+        assert!(out.contains("status"), "got: {out}");
+        assert!(out.contains("open"), "got: {out}");
+        assert!(out.contains("in-progress"), "got: {out}");
     }
 
     #[test]
