@@ -411,13 +411,21 @@ fn try_primary_resume(
     })
 }
 
-/// Feed catch-up events into the generic input channel. Mirrors the
-/// historical `feed_catch_up` behavior:
+/// Feed catch-up events into the generic input channel.
+///
 /// * When `using_resumed_transcript` is true (primary path), only trailing
 ///   pending `UserMessage`s are forwarded — the prior history is already
 ///   restored on disk.
-/// * Otherwise (primer path) a single context primer wrapping the prior
-///   transcript is sent first, then any pending `UserMessage`s follow.
+/// * Otherwise (primer path) we build a context primer wrapping the prior
+///   transcript and merge it with the first pending `UserMessage` into a
+///   single `WorkerInputMessage`, so the model sees prior context and the
+///   actual question as one turn. Without this merge, sending the primer
+///   as its own input elicits a content-free meta-ack (e.g. "Ready when
+///   you are.") because the primer alone has no question to answer.
+/// * If the primer path runs but there are no pending user messages
+///   (e.g. `/resume` without an attached message), the primer is deferred
+///   via [`PromptPrepend::defer_primer`] and prepended to the first
+///   relay-loop user message instead.
 async fn feed_catch_up_to_channel(
     input_tx: &mpsc::Sender<WorkerInputMessage>,
     events: &[ConversationEvent],
@@ -427,19 +435,41 @@ async fn feed_catch_up_to_channel(
 ) -> Result<()> {
     let (past_context, pending_user_messages) = partition_events(events);
 
-    if !using_resumed_transcript && !past_context.is_empty() {
-        let primer = build_context_primer(prompt, &past_context);
-        input_tx
-            .send(WorkerInputMessage { content: primer })
-            .await
-            .context("failed to send context primer to model input channel")?;
-        println!(
-            "Sent context primer ({} prior events) to model input channel",
-            past_context.len()
-        );
+    let primer = if !using_resumed_transcript && !past_context.is_empty() {
+        Some(build_context_primer(prompt, &past_context))
+    } else {
+        None
+    };
+
+    let mut pending_iter = pending_user_messages.into_iter();
+
+    if let Some(primer) = primer {
+        match pending_iter.next() {
+            Some(first) => {
+                let combined = format!("{primer}\n\n{first}");
+                input_tx
+                    .send(WorkerInputMessage { content: combined })
+                    .await
+                    .context(
+                        "failed to send merged primer + first pending user message \
+                         to model input channel",
+                    )?;
+                println!(
+                    "Sent merged primer ({} prior events) + first pending user message to model input channel",
+                    past_context.len()
+                );
+            }
+            None => {
+                prompt_prepend.defer_primer(primer);
+                println!(
+                    "Deferred primer ({} prior events) until first relay user message",
+                    past_context.len()
+                );
+            }
+        }
     }
 
-    for content in pending_user_messages {
+    for content in pending_iter {
         let to_send = prompt_prepend.apply(content);
         input_tx
             .send(WorkerInputMessage { content: to_send })
@@ -451,12 +481,22 @@ async fn feed_catch_up_to_channel(
     Ok(())
 }
 
-/// Tracks the agent-prompt prepend across `feed_catch_up_to_channel` and the
-/// relay loop.
+/// Tracks one-shot prepends applied to the next user message reaching the
+/// model input channel.
+///
+/// Two kinds of prepends are possible, but never both on the same input:
+/// * `agent_prompt_pending` — the `<agent-prompt>` wrapper applied to the
+///   first user message in a fresh conversation.
+/// * `primer_pending` — a prior-context primer queued by
+///   `feed_catch_up_to_channel` when we resumed without a usable
+///   transcript and the catch-up carried no trailing pending user
+///   message. The primer already embeds the `<agent-prompt>` wrapper, so
+///   queuing one suppresses the separate agent-prompt prepend.
 #[derive(Debug)]
 struct PromptPrepend {
     prompt: String,
-    pending: bool,
+    agent_prompt_pending: bool,
+    primer_pending: Option<String>,
 }
 
 impl PromptPrepend {
@@ -464,16 +504,28 @@ impl PromptPrepend {
         let has_assistant = catch_up_events
             .iter()
             .any(|e| matches!(e, ConversationEvent::AssistantMessage { .. }));
-        let pending = !prompt.is_empty() && !has_assistant;
+        let agent_prompt_pending = !prompt.is_empty() && !has_assistant;
         Self {
             prompt: prompt.to_string(),
-            pending,
+            agent_prompt_pending,
+            primer_pending: None,
         }
     }
 
+    /// Defer a primer until the next user message arrives. Because the
+    /// primer already embeds `<agent-prompt>`, this also suppresses the
+    /// agent-prompt prepend so the wrapper isn't applied twice.
+    fn defer_primer(&mut self, primer: String) {
+        self.primer_pending = Some(primer);
+        self.agent_prompt_pending = false;
+    }
+
     fn apply(&mut self, content: &str) -> String {
-        if self.pending {
-            self.pending = false;
+        if let Some(primer) = self.primer_pending.take() {
+            self.agent_prompt_pending = false;
+            format!("{primer}\n\n{content}")
+        } else if self.agent_prompt_pending {
+            self.agent_prompt_pending = false;
             format!("{}\n\n{content}", self.prompt)
         } else {
             content.to_string()
@@ -774,5 +826,123 @@ mod tests {
         assert!(primer.starts_with("<agent-prompt>"));
         assert!(primer.contains("agent text"));
         assert!(primer.contains("<prior-conversation>"));
+    }
+
+    async fn drain(rx: &mut mpsc::Receiver<WorkerInputMessage>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(msg) = rx.recv().await {
+            out.push(msg.content);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn feed_catch_up_merges_primer_with_first_pending_user_message() -> Result<()> {
+        let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
+        let events = vec![
+            user_msg("u1"),
+            assistant_msg("a1"),
+            user_msg("new question"),
+        ];
+        let mut prepend = PromptPrepend::new("agent", &events);
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
+        drop(tx);
+
+        let received = drain(&mut rx).await;
+        assert_eq!(
+            received.len(),
+            1,
+            "expected exactly one merged input, got {received:?}"
+        );
+        assert!(
+            received[0].contains("<prior-conversation>"),
+            "merged input must include the primer"
+        );
+        assert!(
+            received[0].contains("new question"),
+            "merged input must include the pending user message"
+        );
+        assert!(
+            prepend.primer_pending.is_none(),
+            "primer must not also be deferred when it was merged"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feed_catch_up_with_multiple_pending_sends_merged_first_then_rest() -> Result<()> {
+        let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
+        let events = vec![
+            user_msg("u1"),
+            assistant_msg("a1"),
+            user_msg("first pending"),
+            user_msg("second pending"),
+        ];
+        let mut prepend = PromptPrepend::new("agent", &events);
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
+        drop(tx);
+
+        let received = drain(&mut rx).await;
+        assert_eq!(received.len(), 2, "expected 2 inputs, got {received:?}");
+        assert!(received[0].contains("<prior-conversation>"));
+        assert!(received[0].contains("first pending"));
+        assert!(
+            !received[1].contains("<prior-conversation>"),
+            "second pending must not carry the primer"
+        );
+        assert_eq!(received[1], "second pending");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feed_catch_up_with_empty_pending_defers_primer_until_first_relay_message() -> Result<()>
+    {
+        let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
+        let events = vec![user_msg("u1"), assistant_msg("a1")];
+        let mut prepend = PromptPrepend::new("agent", &events);
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
+        drop(tx);
+
+        let received = drain(&mut rx).await;
+        assert!(
+            received.is_empty(),
+            "no input must be sent during catch-up when pending is empty; got {received:?}"
+        );
+
+        let first = prepend.apply("relay msg");
+        assert!(
+            first.contains("<prior-conversation>"),
+            "primer must be prepended to the first relay-loop user message"
+        );
+        assert!(first.contains("relay msg"));
+
+        let second = prepend.apply("another relay msg");
+        assert_eq!(
+            second, "another relay msg",
+            "primer must only fire on the first relay-loop user message"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn feed_catch_up_primary_resume_path_unchanged() -> Result<()> {
+        let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
+        let events = vec![user_msg("u1"), assistant_msg("a1"), user_msg("pending msg")];
+        let mut prepend = PromptPrepend::new("agent", &events);
+        feed_catch_up_to_channel(&tx, &events, true, "agent", &mut prepend).await?;
+        drop(tx);
+
+        let received = drain(&mut rx).await;
+        assert_eq!(received.len(), 1, "expected 1 input, got {received:?}");
+        assert!(
+            !received[0].contains("<prior-conversation>"),
+            "primary resume must not emit the primer"
+        );
+        assert_eq!(received[0], "pending msg");
+        assert!(
+            prepend.primer_pending.is_none(),
+            "primary resume must not defer a primer"
+        );
+        Ok(())
     }
 }
