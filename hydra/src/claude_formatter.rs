@@ -678,6 +678,76 @@ mod tests {
     }
 
     #[test]
+    fn aggregated_usage_matches_captured_stream_json_fixture() {
+        // Fixture shape: leading `system` envelope, then 3 tool-use turns
+        // (each bundling thinking + tool_use blocks + interleaved user
+        // tool_result lines), then 1 text-only turn, then a trailing
+        // `result` envelope. The `result` envelope's `usage` field equals
+        // the four-bucket totals — if the accumulator wrongly summed it
+        // alongside the per-turn assistant usage, totals would double, so
+        // matching the expected sums also implicitly checks the envelope
+        // is ignored.
+        const FIXTURE: &str = include_str!("testdata/claude_stream_multi_turn.jsonl");
+
+        let mut formatter = StreamFormatter::new();
+        for line in FIXTURE.lines() {
+            formatter.handle_line(line);
+        }
+
+        assert_eq!(
+            formatter.aggregated_usage(),
+            &TokenUsage {
+                input_tokens: 9,
+                output_tokens: 928,
+                cache_read_input_tokens: 139_397,
+                cache_creation_input_tokens: 17_070,
+            }
+        );
+        assert_eq!(
+            formatter.last_assistant_text(),
+            Some("All checks passed. The refactor is complete.")
+        );
+    }
+
+    #[test]
+    fn aggregated_usage_does_not_double_count_when_one_turn_has_many_content_blocks() {
+        // Regression guard: the accumulator must read `message.usage`
+        // exactly once per assistant line, NOT once per content block in
+        // `message.content`. If a future refactor moved the `+=` inside
+        // the per-content-block loop, this single turn (3 content blocks)
+        // would inflate the totals by 3×.
+        let mut formatter = StreamFormatter::new();
+
+        let turn = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "thinking", "text": "thinking through the change"},
+                    {"type": "text", "text": "Here is the plan"},
+                    {"type": "tool_use", "id": "tool_1", "name": "Bash", "input": {"command": "ls"}}
+                ],
+                "usage": {
+                    "input_tokens": 7,
+                    "output_tokens": 11,
+                    "cache_read_input_tokens": 13,
+                    "cache_creation_input_tokens": 17
+                }
+            }
+        });
+        formatter.handle_line(&turn.to_string());
+
+        assert_eq!(
+            formatter.aggregated_usage(),
+            &TokenUsage {
+                input_tokens: 7,
+                output_tokens: 11,
+                cache_read_input_tokens: 13,
+                cache_creation_input_tokens: 17,
+            }
+        );
+    }
+
+    #[test]
     fn last_assistant_text_not_updated_by_user_messages() {
         let mut formatter = StreamFormatter::new();
 
