@@ -58,6 +58,14 @@ pub fn write_stdout(buffer: &[u8]) -> Result<()> {
     })
 }
 
+/// Write `buffer` to stderr and flush; tag BrokenPipe via [`StdoutBrokenPipe`].
+pub fn write_stderr(buffer: &[u8]) -> Result<()> {
+    with_stderr(|w| {
+        w.write_all(buffer)?;
+        w.flush()
+    })
+}
+
 fn convert_pipe_error<R>(result: std::io::Result<R>) -> Result<R> {
     match result {
         Ok(value) => Ok(value),
