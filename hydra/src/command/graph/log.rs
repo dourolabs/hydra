@@ -274,6 +274,23 @@ fn render_jsonl(events: &[LogEvent], writer: &mut impl Write) -> Result<()> {
     Ok(())
 }
 
+/// JSON serialization for the `actor` field on JSONL log records.
+///
+/// Returns `Value::Null` when no actor is recorded, otherwise the short-form
+/// string produced by [`ActorRef::display_name`]. The mapping per variant is:
+/// - `Authenticated(Username(u))` → `"<username>"`
+/// - `Authenticated(Session(s))`  → `"s-…"`
+/// - `Authenticated(Issue(i))`    → `"i-…"`
+/// - `Authenticated(Service(n))`  → `"svc-<name>"`
+/// - `System { worker_name, on_behalf_of }`      → `"<worker_name>"` (with " (on behalf of …)" if present)
+/// - `Automation { automation_name, triggered_by }` → `"<automation_name>"` (with " (triggered by …)" if present)
+fn actor_json(actor: &Option<ActorRef>) -> Value {
+    match actor {
+        Some(a) => Value::String(a.display_name()),
+        None => Value::Null,
+    }
+}
+
 fn event_to_json(event: &LogEvent) -> Value {
     match event {
         LogEvent::Created {
@@ -289,7 +306,7 @@ fn event_to_json(event: &LogEvent) -> Value {
             "id": id.as_ref(),
             "version": version,
             "ts": ts.to_rfc3339(),
-            "actor": actor,
+            "actor": actor_json(actor),
             "object": object,
         }),
         LogEvent::Updated {
@@ -320,7 +337,7 @@ fn event_to_json(event: &LogEvent) -> Value {
                 "id": id.as_ref(),
                 "version": version,
                 "ts": ts.to_rfc3339(),
-                "actor": actor,
+                "actor": actor_json(actor),
                 "changes": changes_value,
             })
         }
@@ -748,7 +765,7 @@ mod tests {
         assert_eq!(value["kind"], "issue");
         assert_eq!(value["id"], id_a.as_ref());
         assert_eq!(value["version"], 1);
-        assert!(value["actor"].is_object());
+        assert_eq!(value["actor"], "s-abcdef");
         assert_eq!(value["object"]["title"], "t");
     }
 
@@ -776,5 +793,24 @@ mod tests {
         assert_eq!(value["changes"]["status"]["before"], "open");
         assert_eq!(value["changes"]["status"]["after"], "in-progress");
         assert!(value["actor"].is_null());
+    }
+
+    #[test]
+    fn event_to_json_actor_for_system_variant_uses_worker_name() {
+        let id_a: HydraId = "i-aaaaaa".parse::<IssueId>().unwrap().into();
+        let actor = ActorRef::System {
+            worker_name: "worker".to_string(),
+            on_behalf_of: None,
+        };
+        let event = LogEvent::Created {
+            kind: ObjectKind::Issue,
+            id: id_a,
+            version: 1,
+            ts: ts(10),
+            actor: Some(actor),
+            object: serde_json::json!({}),
+        };
+        let value = event_to_json(&event);
+        assert_eq!(value["actor"], "worker");
     }
 }
