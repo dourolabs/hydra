@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { HydraMark, Avatar, Kbd, Icons, Tooltip } from "@hydra/ui";
-import type {
-  ConversationSummary,
-  SessionSummaryRecord,
-  VersionResponse,
-} from "@hydra/api";
+import type { ConversationSummary, VersionResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
@@ -15,6 +11,8 @@ import { compareConversationsByBucketThenUpdated } from "../utils/conversationOr
 import { useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useActiveSessions } from "../features/sessions/useActiveSessions";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
+import { useSessionLinks } from "../features/sessions/useSessionLinks";
+import { resolveSessionDisplay } from "../features/sessions/sessionDisplay";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./Sidebar.module.css";
@@ -40,14 +38,6 @@ function chatDotClass(status: ConversationSummary["status"]): string {
   if (status === "active") return styles.chatDotActive!;
   if (status === "closed") return styles.chatDotClosed!;
   return styles.chatDotIdle!;
-}
-
-function sessionTitle(s: SessionSummaryRecord["session"]): string {
-  const prompt = (s.prompt || "").trim();
-  if (prompt.length === 0) {
-    return s.spawned_from ?? "Session";
-  }
-  return prompt.length > 50 ? `${prompt.slice(0, 50)}…` : prompt;
 }
 
 interface NavItem {
@@ -91,12 +81,8 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // URL params used by the Workspace sidebar's links. Encoding the username
   // explicitly keeps the route shareable without a server-side lookup, but
   // means the `Issues` and `Assigned to me` links are computed per-user.
-  const yourIssuesHref = displayName
-    ? `/?creator=${encodeURIComponent(displayName)}`
-    : "/";
-  const assignedHref = displayName
-    ? `/?assignee=${encodeURIComponent(displayName)}`
-    : "/";
+  const yourIssuesHref = displayName ? `/?creator=${encodeURIComponent(displayName)}` : "/";
+  const assignedHref = displayName ? `/?assignee=${encodeURIComponent(displayName)}` : "/";
   const inProgressHref = "/?status=in-progress";
 
   // Active-link logic: the link is active iff the current URL matches the
@@ -127,13 +113,9 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // A bare `/` means "all issues" (no filter applied), so the All issues
   // link is the one that lights up there. The Issues link is active only
   // when the URL carries the current user's creator filter.
-  const isYourIssuesActive = displayName
-    ? isOnlyParam("creator", displayName)
-    : false;
+  const isYourIssuesActive = displayName ? isOnlyParam("creator", displayName) : false;
   const isAllIssuesActive = isNoFilters();
-  const isAssignedActive = displayName
-    ? isOnlyParam("assignee", displayName)
-    : false;
+  const isAssignedActive = displayName ? isOnlyParam("assignee", displayName) : false;
   const isInProgressActive = isOnlyParam("status", "in-progress");
 
   // ── Recent chats ──
@@ -158,6 +140,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // the true total (matching the top nav) so it doesn't appear to plateau at 6.
   const { data: activeSessions } = useActiveSessions(SESSIONS_SECTION_LIMIT);
   const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  const { issueMap, conversationMap } = useSessionLinks(activeSessions ?? []);
 
   // On mobile, close drawer when navigating.
   const handleNavClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -281,18 +264,14 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
           <NavLink
             to="/chat"
             end
-            className={({ isActive }) =>
-              `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`
-            }
+            className={({ isActive }) => `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`}
             data-testid="sidebar-chats"
           >
             <span className={styles.itemIcon}>
               <Icons.IconChat />
             </span>
             <span className={styles.itemLabel}>My chats</span>
-            {conversations && (
-              <span className={styles.itemMeta}>{conversations.length}</span>
-            )}
+            {conversations && <span className={styles.itemMeta}>{conversations.length}</span>}
           </NavLink>
           {recentChats.map((c) => {
             const title = conversationTitle(c);
@@ -329,9 +308,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             </div>
             <NavLink
               to={yourIssuesHref}
-              className={() =>
-                `${styles.item}${isYourIssuesActive ? ` ${styles.itemActive}` : ""}`
-              }
+              className={() => `${styles.item}${isYourIssuesActive ? ` ${styles.itemActive}` : ""}`}
               data-testid="sidebar-issues-your-issues"
             >
               <span className={styles.itemIcon}>
@@ -341,9 +318,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             </NavLink>
             <NavLink
               to={assignedHref}
-              className={() =>
-                `${styles.item}${isAssignedActive ? ` ${styles.itemActive}` : ""}`
-              }
+              className={() => `${styles.item}${isAssignedActive ? ` ${styles.itemActive}` : ""}`}
               data-testid="sidebar-issues-assigned"
             >
               <span className={styles.itemIcon}>
@@ -358,18 +333,14 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             </NavLink>
             <NavLink
               to={inProgressHref}
-              className={() =>
-                `${styles.item}${isInProgressActive ? ` ${styles.itemActive}` : ""}`
-              }
+              className={() => `${styles.item}${isInProgressActive ? ` ${styles.itemActive}` : ""}`}
               data-testid="sidebar-issues-in-progress"
             >
               <span className={styles.itemIcon}>
                 <Icons.IconTime />
               </span>
               <span className={styles.itemLabel}>In progress</span>
-              {inProgressCount > 0 && (
-                <span className={styles.itemMeta}>{inProgressCount}</span>
-              )}
+              {inProgressCount > 0 && <span className={styles.itemMeta}>{inProgressCount}</span>}
             </NavLink>
           </div>
         )}
@@ -379,10 +350,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
           <div className={styles.sectionHead}>
             <span>Active sessions</span>
             {activeSessionCount > 0 && (
-              <span
-                className={styles.itemMeta}
-                data-testid="sidebar-active-sessions-count"
-              >
+              <span className={styles.itemMeta} data-testid="sidebar-active-sessions-count">
                 {activeSessionCount}
               </span>
             )}
@@ -391,7 +359,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             <div className={styles.sectionEmpty}>No active sessions.</div>
           )}
           {(activeSessions ?? []).map((s) => {
-            const title = sessionTitle(s.session);
+            const { title } = resolveSessionDisplay(s, issueMap, conversationMap);
             return (
               <NavLink
                 key={s.session_id}
