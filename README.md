@@ -99,7 +99,7 @@ What chat does **not** do:
 
 The dashboard and the CLI are equivalent surfaces: anything you can do in chat, you can also do directly through `hydra <subcommand>` — and so can the agents. A core design principle of Hydra is that *agents and humans have equal access*.
 
-If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens a conversation with the chat agent directly. Pass a message as a positional argument for one-shot use, or omit it for an interactive REPL.
+If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens a conversation with the chat agent directly. Pass `--prompt "<message>"` for one-shot use, or omit it for an interactive REPL.
 
 ### Issues
 
