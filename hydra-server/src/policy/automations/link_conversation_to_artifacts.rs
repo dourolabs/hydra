@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::collections::HashSet;
 
 use crate::app::event_bus::{EventType, ServerEvent};
-use crate::domain::actors::{ActorId, ActorRef};
+use crate::domain::actors::ActorId;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::{ObjectKind, RelationshipType};
@@ -98,11 +98,13 @@ impl Automation for LinkConversationToArtifactsAutomation {
         let actor = ctx.actor();
         let mut conversation_ids: HashSet<ConversationId> = HashSet::new();
 
-        match actor {
-            ActorRef::Authenticated {
-                actor_id: ActorId::Session(session_id),
-            } => {
-                let session = match ctx.store.get_session(session_id, false).await {
+        // Unwrap Automation/System wrappers to the underlying principal actor so
+        // artifacts created by automations (e.g. the patch workflow creating a
+        // review-request issue on behalf of a session) still link back to the
+        // originating conversation.
+        match actor.on_behalf_of() {
+            Some(ActorId::Session(session_id)) => {
+                let session = match ctx.store.get_session(&session_id, false).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(
@@ -125,10 +127,8 @@ impl Automation for LinkConversationToArtifactsAutomation {
                     }
                 }
             }
-            ActorRef::Authenticated {
-                actor_id: ActorId::Issue(issue_id),
-            } => {
-                if let Some(cids) = Self::conversations_referencing_issue(ctx, issue_id).await {
+            Some(ActorId::Issue(issue_id)) => {
+                if let Some(cids) = Self::conversations_referencing_issue(ctx, &issue_id).await {
                     conversation_ids.extend(cids);
                 }
             }
@@ -172,6 +172,7 @@ impl Automation for LinkConversationToArtifactsAutomation {
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::patches::{Patch, PatchStatus};
     use crate::domain::sessions::{BundleSpec, InteractiveOptions, Session};
@@ -790,6 +791,97 @@ mod tests {
 
         let source: HydraId = cid.into();
         let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::RefersTo),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn links_patch_when_actor_is_automation_wrapping_session() {
+        // Regression: the patch workflow creates auto-issues using
+        // ActorRef::Automation { triggered_by: Some(session_actor) }. We must
+        // still link those issues back to the session's conversation.
+        let handles = test_utils::test_state_handles();
+        let cid = ConversationId::new();
+        let session_id = add_session_to_store(&handles, None, Some(cid.clone())).await;
+
+        let wrapping_actor = ActorRef::Automation {
+            automation_name: "patch_workflow".into(),
+            triggered_by: Some(Box::new(session_actor(&session_id))),
+        };
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &wrapping_actor)
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), wrapping_actor);
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = cid.into();
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::RefersTo),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn links_issue_when_actor_is_nested_automation_wrapping_issue() {
+        // Regression: traversal must work through multiple levels of
+        // Automation wrappers.
+        let handles = test_utils::test_state_handles();
+        let cid = ConversationId::new();
+        let parent_issue_id = add_issue(&handles).await;
+        seed_conversation_references_issue(&handles, &cid, &parent_issue_id).await;
+
+        let nested_actor = ActorRef::Automation {
+            automation_name: "outer".into(),
+            triggered_by: Some(Box::new(ActorRef::Automation {
+                automation_name: "inner".into(),
+                triggered_by: Some(Box::new(issue_actor(&parent_issue_id))),
+            })),
+        };
+
+        let (new_issue_id, _) = handles
+            .store
+            .add_issue(make_issue(), &nested_actor)
+            .await
+            .unwrap();
+
+        let event = issue_created_event(new_issue_id.clone(), nested_actor);
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = cid.into();
+        let target: HydraId = new_issue_id.into();
         let relations = handles
             .store
             .get_relationships(

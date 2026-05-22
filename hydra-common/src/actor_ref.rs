@@ -95,6 +95,23 @@ impl ActorRef {
             on_behalf_of: None,
         }
     }
+
+    /// Resolve this actor reference to the underlying principal `ActorId`.
+    ///
+    /// `Authenticated` returns its own `actor_id`. `System` returns its
+    /// `on_behalf_of` actor if set. `Automation` recursively resolves through
+    /// its `triggered_by` chain so a chain like
+    /// `Automation -> Automation -> Authenticated(u-alice)` resolves to
+    /// `Username("alice")`.
+    pub fn on_behalf_of(&self) -> Option<ActorId> {
+        match self {
+            ActorRef::Authenticated { actor_id } => Some(actor_id.clone()),
+            ActorRef::System { on_behalf_of, .. } => on_behalf_of.clone(),
+            ActorRef::Automation { triggered_by, .. } => {
+                triggered_by.as_ref().and_then(|t| t.on_behalf_of())
+            }
+        }
+    }
 }
 
 /// Parse a user-facing shorthand string into an `ActorId`.
@@ -485,5 +502,93 @@ mod tests {
             actor_id: ActorId::Service("bff".to_string()),
         };
         assert_eq!(actor_ref.display_name(), "svc-bff");
+    }
+
+    #[test]
+    fn on_behalf_of_authenticated_returns_actor_id() {
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+        };
+        assert_eq!(
+            actor_ref.on_behalf_of(),
+            Some(ActorId::Username(Username::from("alice")))
+        );
+    }
+
+    #[test]
+    fn on_behalf_of_system_returns_on_behalf_of_actor() {
+        let actor_ref = ActorRef::System {
+            worker_name: "task-spawner".into(),
+            on_behalf_of: Some(ActorId::Username(Username::from("bob"))),
+        };
+        assert_eq!(
+            actor_ref.on_behalf_of(),
+            Some(ActorId::Username(Username::from("bob")))
+        );
+    }
+
+    #[test]
+    fn on_behalf_of_system_without_principal_returns_none() {
+        let actor_ref = ActorRef::System {
+            worker_name: "background".into(),
+            on_behalf_of: None,
+        };
+        assert_eq!(actor_ref.on_behalf_of(), None);
+    }
+
+    #[test]
+    fn on_behalf_of_automation_unwraps_triggered_by() {
+        let actor_ref = ActorRef::Automation {
+            automation_name: "patch_workflow".into(),
+            triggered_by: Some(Box::new(ActorRef::Authenticated {
+                actor_id: ActorId::Username(Username::from("carol")),
+            })),
+        };
+        assert_eq!(
+            actor_ref.on_behalf_of(),
+            Some(ActorId::Username(Username::from("carol")))
+        );
+    }
+
+    #[test]
+    fn on_behalf_of_automation_recurses_through_nested_automations() {
+        // Automation -> Automation -> Authenticated(dave)
+        let inner = ActorRef::Automation {
+            automation_name: "patch_workflow".into(),
+            triggered_by: Some(Box::new(ActorRef::Authenticated {
+                actor_id: ActorId::Username(Username::from("dave")),
+            })),
+        };
+        let outer = ActorRef::Automation {
+            automation_name: "link_conversation_to_artifacts".into(),
+            triggered_by: Some(Box::new(inner)),
+        };
+        assert_eq!(
+            outer.on_behalf_of(),
+            Some(ActorId::Username(Username::from("dave")))
+        );
+    }
+
+    #[test]
+    fn on_behalf_of_automation_recurses_into_system_on_behalf_of() {
+        // Automation -> System(on_behalf_of=session)
+        let session_id = SessionId::from_str("s-abcdef").unwrap();
+        let actor_ref = ActorRef::Automation {
+            automation_name: "patch_workflow".into(),
+            triggered_by: Some(Box::new(ActorRef::System {
+                worker_name: "task-spawner".into(),
+                on_behalf_of: Some(ActorId::Session(session_id.clone())),
+            })),
+        };
+        assert_eq!(actor_ref.on_behalf_of(), Some(ActorId::Session(session_id)));
+    }
+
+    #[test]
+    fn on_behalf_of_automation_without_trigger_returns_none() {
+        let actor_ref = ActorRef::Automation {
+            automation_name: "standalone".into(),
+            triggered_by: None,
+        };
+        assert_eq!(actor_ref.on_behalf_of(), None);
     }
 }
