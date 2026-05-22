@@ -136,6 +136,7 @@ export type { Status } from "./generated/Status";
 export type { TaskError } from "./generated/TaskError";
 export type { TaskId } from "./generated/TaskId";
 export type { TodoItem } from "./generated/TodoItem";
+export type { TokenUsage } from "./generated/TokenUsage";
 export type { TodoListResponse } from "./generated/TodoListResponse";
 export type { UnreadCountResponse } from "./generated/UnreadCountResponse";
 export type { UpdateRepositoryRequest } from "./generated/UpdateRepositoryRequest";

@@ -4,6 +4,7 @@ import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
 import { LoadingState } from "../../components/LoadingState/LoadingState";
 import { ErrorState } from "../../components/ErrorState/ErrorState";
+import { TokensCell } from "./TokensCell";
 import { useSessionsByIssue } from "./useSessionsByIssue";
 import styles from "./SessionList.module.css";
 
@@ -11,7 +12,7 @@ interface SessionListProps {
   issueId: string;
 }
 
-const COLUMN_COUNT = 5;
+const COLUMN_COUNT = 6;
 
 export function SessionList({ issueId }: SessionListProps) {
   const { data: sessions, isLoading, error, refetch } = useSessionsByIssue(issueId);
@@ -40,6 +41,7 @@ export function SessionList({ issueId }: SessionListProps) {
             <th className={styles.th}>Session ID</th>
             <th className={styles.th}>Created</th>
             <th className={styles.th}>Runtime</th>
+            <th className={styles.th}>Tokens</th>
             <th className={styles.th}>Logs</th>
           </tr>
         </thead>
@@ -75,6 +77,9 @@ export function SessionList({ issueId }: SessionListProps) {
                   <span className={styles.time}>
                     {getRuntime(record.session.start_time, record.session.end_time)}
                   </span>
+                </td>
+                <td className={styles.td}>
+                  <TokensCell usage={record.session.usage} />
                 </td>
                 <td className={styles.td}>
                   <Link
