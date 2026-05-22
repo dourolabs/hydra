@@ -15,8 +15,6 @@ Hydra ships a single-player mode that bundles the CLI, server, and web dashboard
 - **Docker** (recommended) — needed for the Docker job engine. See <https://docs.docker.com/get-docker/>.
 - **Linux build deps:** `pkg-config` and OpenSSL headers (e.g. `apt install pkg-config libssl-dev`).
 
-Audited on Linux x86_64 (Debian 12).
-
 ### 1. Clone and build
 
 ```bash
