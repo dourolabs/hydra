@@ -1,8 +1,6 @@
 # Hydra
 
-Hydra is an open-source AI orchestration layer. You open a chat, you say what you want, and a fleet of agents goes off and does the work — filing issues, writing code, opening PRs, and reporting back.
-
-Chat is the surface. The PM, SWE, and reviewer agents — plus the underlying issue and patch model — are the backend it orchestrates; you don't drive them by hand.
+Hydra is an open-source AI orchestration layer. You open a chat, you say what you want, and a fleet of agents goes off and does the work — filing issues, writing documents and code, opening PRs, and reporting back.
 
 ![Hydra Dashboard](docs/images/readme-dashboard-2.gif)
 
@@ -13,6 +11,7 @@ Hydra ships a single-player mode that bundles the CLI, server, and web dashboard
 ### Prerequisites
 
 - **Rust** (stable toolchain) — install via [rustup](https://rustup.rs/).
+- **pnpm** - installation instructions [here](https://pnpm.io/installation).
 - **Docker** (recommended) — needed for the Docker job engine. See <https://docs.docker.com/get-docker/>.
 - **Linux build deps:** `pkg-config` and OpenSSL headers (e.g. `apt install pkg-config libssl-dev`).
 
@@ -61,7 +60,7 @@ Don't blame me if you choose local and Claude `rm -rf`s your machine.
 
 Open <http://localhost:8080/> in your browser and click **New chat**.
 
-Type what you want in plain English — register a repository, fix a bug, add a feature. Chat translates your request into an issue and confirms with the issue ID. PM picks it up, decomposes it if needed, and routes the work to SWE.
+Type what you want in plain English — register a repository, fix a bug, add a feature. Chat translates your request into an issue and confirms with the issue ID. The PM agent picks it up, decomposes it if needed, and routes the work to SWE.
 
 Example:
 
@@ -89,12 +88,6 @@ What chat does:
 - **Synthesizes status** from issues, patches, and notifications when you ask ("what changed since yesterday?").
 - Can **reconfigure existing agents** — prompts, MCP servers, secrets, retry / concurrency knobs.
 
-What chat does **not** do:
-
-- It does not modify code or repo files directly. It files an issue and SWE does the work.
-- It is read-only on patches — it can show you a PR's status, but it can't merge, close, or comment on one.
-- It does not start or kill sessions. Hydra spawns a session automatically when an issue gets assigned.
-
 ## Advanced / power users
 
 The dashboard and the CLI are equivalent surfaces: anything you can do in chat, you can also do directly through `hydra <subcommand>` — and so can the agents. A core design principle of Hydra is that *agents and humans have equal access*.
@@ -103,22 +96,9 @@ If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens 
 
 ### Issues
 
-All work in Hydra is represented by issues. Issues can be assigned to either agents or users.
-Issues have a status, which is one of:
+All work in Hydra is represented by issues. Issues can be assigned to either agents or users. If assigned to agents, the system will automatically spawn sessions to work on the issue. Issues have a progress field that agents automatically update with the current status of the work.
 
-- `Open` -- work has not started
-- `InProgress` -- work has started
-- `Closed` -- work has completed successfully. This status also means "yes/accept" for any approvals escalated to you.
-- `Failed` -- work has completed unsuccessfully. This status also means "no/reject" for any approvals escalated to you.
-- `Dropped` -- work is no longer required. Use this status to flag issues that do not need to be completed.
-- `Rejected` -- work is still required, but the approach is wrong. Use this status to trigger replanning.
-
-Issues also have a progress field which agents automatically update with the current status of the work.
-If you manually update the status of an issue, you should also update the progress with commentary.
-For example, if you set the status to Rejected, explain in the progress field what the agent should do differently.
-
-Issues have child-of / blocked-on relationships between them. Hydra uses these to automatically spawn agents for issues
-that are ready for work.
+Issues have child-of / blocked-on relationships between them. Hydra uses these to track which issues are ready to be worked on. 
 
 ### Agents
 
