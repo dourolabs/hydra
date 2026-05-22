@@ -8,7 +8,7 @@ import {
 } from "../usePaginatedSessions";
 import { sortSessions } from "../sortSessions";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
-import { formatTokenCount } from "../../../utils/tokens";
+import { TokensCell } from "../TokensCell";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
 import { useSingleSessionDuration } from "../../dashboard/useSessionDuration";
@@ -210,27 +210,7 @@ export function SessionsView() {
                         <SessionRuntimeCell record={rec} />
                       </td>
                       <td className={styles.colTokens}>
-                        {s.usage ? (
-                          <span
-                            className={styles.tokens}
-                            title={`${s.usage.input_tokens} input · ${s.usage.cache_read_input_tokens} cache read · ${s.usage.cache_creation_input_tokens} cache creation · ${s.usage.output_tokens} output`}
-                          >
-                            <span className={styles.tokensInput}>
-                              <span aria-hidden="true">↓</span>
-                              {formatTokenCount(
-                                s.usage.input_tokens +
-                                  s.usage.cache_read_input_tokens +
-                                  s.usage.cache_creation_input_tokens,
-                              )}
-                            </span>
-                            <span className={styles.tokensOutput}>
-                              <span aria-hidden="true">↑</span>
-                              {formatTokenCount(s.usage.output_tokens)}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className={styles.dash}>—</span>
-                        )}
+                        <TokensCell usage={s.usage} />
                       </td>
                       <td className={styles.colStarted}>
                         <AgoTime iso={startedTs} />

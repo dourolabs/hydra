@@ -1,0 +1,25 @@
+.tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+}
+
+.tokensInput {
+  color: var(--s-open);
+}
+
+.tokensOutput {
+  color: var(--c-violet);
+}
+
+.tokens > span > span {
+  margin-right: 2px;
+  opacity: 0.85;
+}
+
+.dash {
+  color: var(--fg-3);
+}
