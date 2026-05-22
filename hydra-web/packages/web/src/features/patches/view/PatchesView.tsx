@@ -162,7 +162,21 @@ export function PatchesView() {
                           <span className={styles.authorName}>{p.creator}</span>
                         </span>
                       </td>
-                      <td className={styles.colRepo}>{p.service_repo_name}</td>
+                      <td className={styles.colRepo}>
+                        {p.github?.url ? (
+                          <a
+                            href={p.github.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={styles.repoLink}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {p.github.owner}/{p.github.repo}#{String(p.github.number)}
+                          </a>
+                        ) : (
+                          p.service_repo_name
+                        )}
+                      </td>
                       <td className={styles.colUpdated}>
                         <AgoTime iso={rec.timestamp} />
                       </td>
