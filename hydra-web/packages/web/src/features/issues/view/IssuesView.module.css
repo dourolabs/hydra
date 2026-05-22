@@ -228,8 +228,14 @@
     padding: 8px 16px;
   }
 
+  /* Force the search box onto its own row instead of letting it squeeze into
+     whatever space is left on row 1. With 4 narrow Pickers + a flex spacer,
+     row 1 fills to within a few pixels of the viewport and the trailing Kbd
+     hint (`/`) cannot shrink — the result is a 2-3px inner horizontal
+     scrollbar on AppLayout's `main` (overflow-x: auto), even though the
+     document itself doesn't overflow. */
   .searchBox {
     min-width: 0;
-    flex: 1;
+    flex: 1 1 100%;
   }
 }
