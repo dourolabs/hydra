@@ -263,6 +263,16 @@
   color: var(--fg-1);
 }
 
+.repoLink {
+  color: var(--acc);
+  text-decoration: none;
+}
+
+.repoLink:hover {
+  color: var(--acc-bright);
+  text-decoration: underline;
+}
+
 .colUpdated {
   width: 84px;
 }

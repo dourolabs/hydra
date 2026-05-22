@@ -25,6 +25,21 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     ).toBeVisible();
   });
 
+  test("patches list Repo column links to the linked GitHub PR @patches:view-detail", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/patches");
+    await expect(page.getByRole("heading", { name: "Patches" })).toBeVisible();
+
+    // p-seed00001 is linked to acme/web-app#142.
+    const prLink = page.getByRole("link", { name: "acme/web-app#142" });
+    await expect(prLink).toBeVisible();
+    await expect(prLink).toHaveAttribute("href", "https://github.com/acme/web-app/pull/142");
+    await expect(prLink).toHaveAttribute("target", "_blank");
+    await expect(prLink).toHaveAttribute("rel", /noopener/);
+    await expect(prLink).toHaveAttribute("rel", /noreferrer/);
+  });
+
   test("can navigate to a patch from an issue's Related tab @patches:navigate", async ({
     authenticatedPage: page,
   }) => {
