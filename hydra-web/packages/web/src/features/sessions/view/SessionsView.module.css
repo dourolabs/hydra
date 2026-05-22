@@ -238,10 +238,14 @@
 }
 
 /* ─── Load more ─── */
+/* Footer-bar pattern, mirrored from the chat page's .composer footer. */
 .loadMore {
   display: flex;
   justify-content: center;
-  padding: 16px 20px 24px;
+  padding: 14px 28px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
+  flex-shrink: 0;
 }
 
 .loadMoreButton {
@@ -278,4 +282,10 @@
   min-height: 0;
   overflow: auto;
   padding: 12px var(--pad-x);
+}
+
+@media (max-width: 768px) {
+  .loadMore {
+    padding: 12px 16px 14px;
+  }
 }
