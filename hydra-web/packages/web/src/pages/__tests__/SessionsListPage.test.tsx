@@ -258,4 +258,26 @@ describe("SessionsListPage", () => {
 
     expect(screen.getByText(/2 SESSIONS/)).toBeDefined();
   });
+
+  it("token hover shows the three input buckets + output, reconciling with the summed cell value", () => {
+    const r = rec("t-1", "complete");
+    r.session.usage = {
+      input_tokens: 1000n,
+      cache_read_input_tokens: 2000n,
+      cache_creation_input_tokens: 500n,
+      output_tokens: 750n,
+    };
+    setSessions([r]);
+
+    render(<SessionsListPage />);
+
+    const row = screen.getByTestId("sessions-list-row-t-1");
+    const tokens = row.querySelector("[title]") as HTMLElement | null;
+    expect(tokens).not.toBeNull();
+    const title = tokens!.getAttribute("title") ?? "";
+    expect(title).toContain("1000 input");
+    expect(title).toContain("2000 cache read");
+    expect(title).toContain("500 cache creation");
+    expect(title).toContain("750 output");
+  });
 });

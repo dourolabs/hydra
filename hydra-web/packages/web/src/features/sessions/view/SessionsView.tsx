@@ -213,7 +213,7 @@ export function SessionsView() {
                         {s.usage ? (
                           <span
                             className={styles.tokens}
-                            title={`${s.usage.input_tokens} input · ${s.usage.output_tokens} output`}
+                            title={`${s.usage.input_tokens} input · ${s.usage.cache_read_input_tokens} cache read · ${s.usage.cache_creation_input_tokens} cache creation · ${s.usage.output_tokens} output`}
                           >
                             <span className={styles.tokensInput}>
                               <span aria-hidden="true">↓</span>
