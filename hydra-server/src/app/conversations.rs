@@ -36,6 +36,8 @@ pub enum SendMessageError {
         #[source]
         source: StoreError,
     },
+    #[error("principal '{principal}' is not the conversation creator")]
+    Forbidden { principal: Username },
 }
 
 #[derive(Debug, Error)]
@@ -98,7 +100,7 @@ impl AppState {
             title: None,
             agent_name,
             status: ConversationStatus::Active,
-            creator,
+            creator: creator.clone(),
             session_settings,
             deleted: false,
         };
@@ -120,10 +122,21 @@ impl AppState {
         // first-`UserMessage` branch in the relay loop consumes the agent
         // prompt prepend from there.
         if let Some(content) = message {
-            self.send_message(&conversation_id, content, actor_ref)
+            self.send_message(&conversation_id, content, actor_ref, creator)
                 .await
                 .map_err(|err| match err {
                     SendMessageError::Store { source } => CreateConversationError::Store { source },
+                    // Unreachable: we just created the conversation with
+                    // `creator`, so the creator-match check inside
+                    // `send_message` will pass on this immediate follow-up
+                    // call.
+                    SendMessageError::Forbidden { principal } => {
+                        CreateConversationError::Store {
+                            source: StoreError::Internal(format!(
+                                "unexpected forbidden during create_conversation follow-up send_message for principal '{principal}'",
+                            )),
+                        }
+                    }
                 })?;
         }
 
@@ -142,12 +155,21 @@ impl AppState {
         conversation_id: &ConversationId,
         content: String,
         actor_ref: ActorRef,
+        principal: Username,
     ) -> Result<api_conversations::ConversationEvent, SendMessageError> {
         let versioned = self
             .store()
             .get_conversation(conversation_id, false)
             .await
             .map_err(|source| SendMessageError::Store { source })?;
+
+        // Creator-only gate: a conversation may only be appended to by the
+        // user that created it. The check lives here (rather than in the
+        // route handler) so any future internal caller of `send_message` is
+        // also covered.
+        if versioned.item.creator != principal {
+            return Err(SendMessageError::Forbidden { principal });
+        }
 
         // If not Active, transparently flip to Active before recording the
         // new message. The companion session — and the corresponding Resumed
@@ -829,11 +851,21 @@ mod tests {
 
         // Send a couple of messages to add events.
         state
-            .send_message(&conversation_id, "first".to_string(), ActorRef::test())
+            .send_message(
+                &conversation_id,
+                "first".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
             .await
             .unwrap();
         state
-            .send_message(&conversation_id, "second".to_string(), ActorRef::test())
+            .send_message(
+                &conversation_id,
+                "second".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
             .await
             .unwrap();
 
@@ -903,7 +935,12 @@ mod tests {
         let count_before = events_before.len();
 
         state
-            .send_message(&conversation_id, "second".to_string(), ActorRef::test())
+            .send_message(
+                &conversation_id,
+                "second".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
             .await
             .unwrap();
 
@@ -978,6 +1015,7 @@ mod tests {
                 &conversation_id,
                 "hello-again".to_string(),
                 ActorRef::test(),
+                Username::from("creator"),
             )
             .await
             .unwrap();
@@ -1057,6 +1095,7 @@ mod tests {
                 &conversation_id,
                 "hello-again".to_string(),
                 ActorRef::test(),
+                Username::from("creator"),
             )
             .await
             .unwrap();
@@ -1367,6 +1406,145 @@ mod tests {
                 .get(AGENT_NAME_ENV_VAR)
                 .map(String::as_str),
             Some("swe")
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_as_creator_succeeds() {
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        let _initial = session_for_conversation(&state, &conversation_id).await;
+
+        let events_before = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let count_before = events_before.len();
+
+        state
+            .send_message(
+                &conversation_id,
+                "from-creator".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .expect("creator should be allowed to send a message");
+
+        let events_after = poll_until(POLL_TIMEOUT, || async {
+            let events = state
+                .store()
+                .get_conversation_events(&conversation_id)
+                .await
+                .unwrap();
+            (events.len() > count_before).then_some(events)
+        })
+        .await
+        .expect("expected the new UserMessage to be appended");
+        let last = events_after.last().expect("expected at least one event");
+        assert!(
+            matches!(
+                last.item,
+                ConversationEvent::UserMessage { ref content, .. } if content == "from-creator"
+            ),
+            "expected the trailing event to be the new UserMessage, got {:?}",
+            last.item
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_as_non_creator_is_forbidden_and_does_not_mutate() {
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        // Wait for the spawn to settle so the event log is in a stable state
+        // before we assert on it.
+        let _initial = session_for_conversation(&state, &conversation_id).await;
+
+        let events_before = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        let versioned_before = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+
+        let result = state
+            .send_message(
+                &conversation_id,
+                "intruder".to_string(),
+                ActorRef::test(),
+                Username::from("not-the-creator"),
+            )
+            .await;
+
+        match result {
+            Err(crate::app::SendMessageError::Forbidden { principal }) => {
+                assert_eq!(principal, Username::from("not-the-creator"));
+            }
+            other => panic!(
+                "expected Forbidden, got {:?}",
+                other.as_ref().err().map(|e| e.to_string())
+            ),
+        }
+
+        // Give a brief window for any (unintended) async work to surface,
+        // then verify the conversation log and the conversation record are
+        // unchanged.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let events_after = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            events_after.len(),
+            events_before.len(),
+            "forbidden send_message must not append events",
+        );
+        assert!(
+            !events_after.iter().any(|e| matches!(
+                &e.item,
+                ConversationEvent::UserMessage { content, .. } if content == "intruder"
+            )),
+            "intruder message must not be present in the event log",
+        );
+
+        let versioned_after = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            versioned_after.item, versioned_before.item,
+            "forbidden send_message must not mutate the conversation",
         );
     }
 }
