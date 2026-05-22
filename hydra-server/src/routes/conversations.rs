@@ -172,8 +172,9 @@ pub async fn send_message(
     info!(conversation_id = %conversation_id, "send_message invoked");
 
     let actor_ref = ActorRef::from(&actor);
+    let principal = actor.creator.clone();
     let api_event = state
-        .send_message(&conversation_id, payload.content, actor_ref)
+        .send_message(&conversation_id, payload.content, actor_ref, principal)
         .await
         .map_err(map_send_message_error)?;
 
@@ -303,6 +304,9 @@ fn map_conversation_error(err: StoreError) -> ApiError {
 fn map_send_message_error(err: SendMessageError) -> ApiError {
     match err {
         SendMessageError::Store { source } => map_conversation_error(source),
+        SendMessageError::Forbidden { principal } => ApiError::forbidden(format!(
+            "user '{principal}' is not the creator of this conversation",
+        )),
     }
 }
 
