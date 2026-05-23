@@ -22,6 +22,8 @@ const ENTITY_EVENT_TYPES = [
   "patch_deleted",
   "session_created",
   "session_updated",
+  "session_event_created",
+  "session_state_updated",
   "document_created",
   "document_updated",
   "document_deleted",
@@ -206,8 +208,10 @@ export function useSSE(): SSEConnectionState {
     (eventType: string, data: EntityEventData) => {
       const { entity_type, entity_id, entity } = data;
 
-      // Ignore events without entity data (e.g., if the server failed to serialize)
-      if (entity == null) return;
+      // `session_state` events deliberately carry no entity payload (the
+      // state blob is fetched separately via `get_session_state`); every
+      // other entity type requires `entity` to be present.
+      if (entity == null && entity_type !== "session_state") return;
 
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
@@ -238,7 +242,23 @@ export function useSSE(): SSEConnectionState {
         // referencedPatches, referencedDocuments (new issues may add relations
         // via link_conversation_to_artifacts; updates flow status/title through).
         queryClient.invalidateQueries({ queryKey: ["chatRelated"] });
-      } else if (entity_type === "session" || eventType.startsWith("session_")) {
+      } else if (entity_type === "session_event") {
+        // Live-tail invalidation for the SessionEvent read path consumed by
+        // `useChatTranscript`. `entity_id` is the session_id. Invalidate the
+        // per-session events query (active observers refetch) and the
+        // conversation→sessions index at the root (the SSE payload doesn't
+        // carry conversation_id, so broad-match is the simplest correct
+        // invalidation here — it costs one refetch per open chat page).
+        queryClient.invalidateQueries({ queryKey: ["sessionEvents", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["sessionsByConversation"] });
+      } else if (entity_type === "session_state") {
+        // SessionState SSE notifications carry no payload; consumers must
+        // refetch the state blob themselves. No current React Query consumer
+        // reads SessionState (the chat transcript doesn't), so for now we
+        // only invalidate the conventional per-session state key so that
+        // future hooks pick the update up automatically.
+        queryClient.invalidateQueries({ queryKey: ["sessionState", entity_id] });
+      } else if (entity_type === "session") {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
 

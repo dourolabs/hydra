@@ -127,17 +127,19 @@ export function useChatTranscript(conversationId: string): ChatTranscriptResult 
     })),
   });
 
-  const mergedSessionEvents = useMemo<ConversationEvent[]>(() => {
-    const merged: ConversationEvent[] = [];
-    for (const q of sessionEventQueries) {
-      if (!q.data) continue;
-      for (const e of q.data) {
-        const projected = sessionEventToConversationEvent(e);
-        if (projected) merged.push(projected);
-      }
+  // Inlined (not `useMemo`) because `useQueries` returns a fresh outer array
+  // on every render even when no underlying data changed — memoizing on it
+  // would recompute every render anyway. The merge is a cheap O(N) loop, so
+  // recomputing each render is acceptable and avoids a stale-reference foot
+  // gun if a future contributor adds extra deps to a memo here.
+  const mergedSessionEvents: ConversationEvent[] = [];
+  for (const q of sessionEventQueries) {
+    if (!q.data) continue;
+    for (const e of q.data) {
+      const projected = sessionEventToConversationEvent(e);
+      if (projected) mergedSessionEvents.push(projected);
     }
-    return merged;
-  }, [sessionEventQueries]);
+  }
 
   // The fallback gate must wait for the sessions-list query to resolve;
   // otherwise the first render (orderedSessionIds === []) would fire the
