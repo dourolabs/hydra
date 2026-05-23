@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use hydra_common::{
     sessions::{SearchSessionsQuery, SessionSummaryRecord},
-    IssueId,
+    ConversationId, IssueId,
 };
 pub const DEFAULT_SESSION_LIMIT: usize = 10;
 
@@ -15,10 +15,12 @@ pub async fn run(
     limit: usize,
     spawned_from: Option<IssueId>,
     creator: Option<String>,
+    conversation: Option<ConversationId>,
     context: &CommandContext,
 ) -> Result<()> {
     let mut query = SearchSessionsQuery::new(None, spawned_from, None, vec![]);
     query.creator = creator;
+    query.conversation_id = conversation;
     let response = client.list_sessions(&query).await?;
     let limit = limit.max(1);
     let total_sessions = response.sessions.len();
@@ -157,7 +159,7 @@ mod tests {
 
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
 
-        run(&client, 5, Some(spawned_from.clone()), None, &context)
+        run(&client, 5, Some(spawned_from.clone()), None, None, &context)
             .await
             .expect("list sessions should succeed");
 
@@ -193,9 +195,53 @@ mod tests {
 
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
 
-        run(&client, 5, None, Some("alice".to_string()), &context)
+        run(&client, 5, None, Some("alice".to_string()), None, &context)
             .await
             .expect("list sessions should succeed");
+
+        mock.assert();
+    }
+
+    fn only_conversation_query(request: &HttpMockRequest) -> bool {
+        match &request.query_params {
+            Some(params) => params.len() == 1 && params[0].0 == "conversation_id",
+            None => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_passes_conversation_query() {
+        let conversation_id = ConversationId::new();
+        let server = MockServer::start();
+        let client = HydraClient::new(
+            server.base_url(),
+            TEST_HYDRA_TOKEN,
+            &HydraClientTimeouts::default(),
+        )
+        .expect("should construct client");
+
+        let list_response = ListSessionsResponse::new(vec![sample_session("t-job-1")]);
+
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/sessions")
+                .query_param("conversation_id", conversation_id.as_ref())
+                .matches(only_conversation_query);
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+
+        run(
+            &client,
+            5,
+            None,
+            None,
+            Some(conversation_id.clone()),
+            &context,
+        )
+        .await
+        .expect("list sessions should succeed");
 
         mock.assert();
     }

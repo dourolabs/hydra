@@ -776,6 +776,11 @@ pub struct SearchSessionsQuery {
     /// Filter sessions by creator username.
     #[serde(default)]
     pub creator: Option<String>,
+    /// Filter sessions by the interactive conversation they are attached to.
+    /// Only interactive sessions whose `interactive.conversation_id` matches
+    /// are returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<ConversationId>,
     /// Filter sessions by status (comma-separated in query string). When multiple
     /// statuses are provided, a session matches if its status is any of the given values.
     #[serde(
@@ -824,6 +829,7 @@ impl SearchSessionsQuery {
             spawned_from_ids: Vec::new(),
             include_deleted,
             creator: None,
+            conversation_id: None,
             status,
             limit: None,
             cursor: None,
@@ -956,6 +962,7 @@ mod tests {
             spawned_from_ids: vec![],
             include_deleted: None,
             creator: None,
+            conversation_id: None,
             status: vec![],
             limit: None,
             cursor: None,
@@ -1053,6 +1060,37 @@ mod tests {
 
         let parsed: SearchSessionsQuery = serde_urlencoded::from_str("creator=alice").unwrap();
         assert_eq!(parsed.creator.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn search_sessions_query_round_trips_conversation_id() {
+        let conv_id = crate::ConversationId::new();
+        let query = SearchSessionsQuery {
+            conversation_id: Some(conv_id.clone()),
+            ..SearchSessionsQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("conversation_id").map(String::as_str),
+            Some(conv_id.as_ref())
+        );
+
+        let encoded = format!("conversation_id={}", conv_id.as_ref());
+        let parsed: SearchSessionsQuery = serde_urlencoded::from_str(&encoded).unwrap();
+        assert_eq!(parsed.conversation_id.as_ref(), Some(&conv_id));
+    }
+
+    #[test]
+    fn search_sessions_query_omits_conversation_id_when_unset() {
+        let query = SearchSessionsQuery::default();
+        let params = serialize_query_params(&query);
+        assert!(
+            params.iter().all(|(k, _)| k != "conversation_id"),
+            "expected no conversation_id param when unset"
+        );
     }
 
     #[test]

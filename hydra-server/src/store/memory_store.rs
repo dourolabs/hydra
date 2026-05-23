@@ -483,6 +483,12 @@ impl MemoryStore {
                 }
             }
 
+            if let Some(expected_conversation) = query.conversation_id.as_ref() {
+                if latest.item.conversation_id() != Some(expected_conversation) {
+                    return None;
+                }
+            }
+
             if !query.status.is_empty() {
                 let status_filter: Vec<Status> = query
                     .status
@@ -5612,6 +5618,57 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, HashSet::from([alice_id]));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filters_by_conversation_id() {
+        let store = MemoryStore::new();
+
+        let conv_a = ConversationId::new();
+        let conv_b = ConversationId::new();
+
+        let mut task_a = spawn_task();
+        task_a.interactive = Some(crate::store::InteractiveOptions {
+            conversation_id: Some(conv_a.clone()),
+            conversation_resume_from: None,
+        });
+        let (task_a_id, _) = store
+            .add_session(task_a, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_b = spawn_task();
+        task_b.interactive = Some(crate::store::InteractiveOptions {
+            conversation_id: Some(conv_b.clone()),
+            conversation_resume_from: None,
+        });
+        store
+            .add_session(task_b, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Non-interactive session (no `interactive`, so no conversation link).
+        store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(conv_a.clone());
+        let tasks: HashSet<_> = store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, HashSet::from([task_a_id]));
+
+        // An unrelated conversation returns nothing.
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(ConversationId::new());
+        let tasks: Vec<_> = store.list_sessions(&query).await.unwrap();
+        assert!(tasks.is_empty());
     }
 
     #[tokio::test]
