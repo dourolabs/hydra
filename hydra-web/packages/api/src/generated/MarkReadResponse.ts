@@ -3,4 +3,4 @@
 /**
  * Response after marking notifications as read.
  */
-export type MarkReadResponse = { marked: bigint, };
+export type MarkReadResponse = { marked: bigint };

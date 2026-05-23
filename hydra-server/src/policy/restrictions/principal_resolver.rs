@@ -5,12 +5,6 @@
 //! resolved against the current state of the patch and (when relevant) its
 //! parent issue — never snapshotted. See
 //! `/designs/merge-time-constraints.md` §4.4 for why resolution is live.
-//!
-//! The parent-issue lookup is duplicated verbatim from
-//! [`crate::policy::automations::patch_workflow`] (see the issue spec
-//! "Parent-issue lookup helper") to keep the legacy automation's tests
-//! unchanged through Phase 2. Phase 3 deletes that automation and this copy
-//! becomes the only one.
 
 use hydra_common::api::v1::repositories::{DynamicRef, Principal};
 
@@ -85,11 +79,6 @@ fn resolve_dynamic_ref(dref: DynamicRef, ctx: &ResolutionContext<'_>) -> Option<
 /// Returns `Ok(None)` if no parent issue can be found through either path —
 /// dynamic-ref resolution will then return `None` for `parent_issue.*` refs
 /// and the error payload will surface that to the caller.
-///
-/// This is a verbatim copy of `PatchWorkflowAutomation::resolve_parent_issue`
-/// (`hydra-server/src/policy/automations/patch_workflow.rs`) adapted for
-/// `&dyn ReadOnlyStore`. Behavioural drift between the two would be a bug;
-/// Phase 3 deletes the automation copy.
 pub async fn resolve_parent_issue(
     store: &dyn ReadOnlyStore,
     patch_id: &hydra_common::PatchId,

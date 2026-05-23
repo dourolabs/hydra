@@ -67,10 +67,6 @@
   width: 220px;
 }
 
-.colWorkflow {
-  width: 150px;
-}
-
 .colActions {
   width: 110px;
   text-align: right;
@@ -116,21 +112,6 @@
 
 .dash {
   color: var(--fg-3);
-}
-
-.workflowChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 19px;
-  padding: 0 7px;
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-1);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
 }
 
 .rowActions {

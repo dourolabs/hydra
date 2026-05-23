@@ -13,7 +13,6 @@ import { RepositoryRailRow } from "../related/RailRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
-import { workflowSummary } from "./workflowSummary";
 import styles from "./RepositoriesSection.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -99,13 +98,11 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                 <th className={styles.colRemote}>Remote URL</th>
                 <th className={styles.colBranch}>Default branch</th>
                 <th className={styles.colImage}>Image</th>
-                <th className={styles.colWorkflow}>Workflow</th>
                 <th className={styles.colActions} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {repositories.map((repo) => {
-                const workflow = workflowSummary(repo);
                 return (
                   <tr key={repo.name} data-testid={`repositories-list-row-${repo.name}`}>
                     <td className={styles.colName}>
@@ -131,13 +128,6 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                         <span className={styles.monoDim} title={repo.repository.default_image}>
                           {repo.repository.default_image}
                         </span>
-                      ) : (
-                        <span className={styles.dash}>—</span>
-                      )}
-                    </td>
-                    <td className={styles.colWorkflow}>
-                      {workflow ? (
-                        <span className={styles.workflowChip}>{workflow}</span>
                       ) : (
                         <span className={styles.dash}>—</span>
                       )}

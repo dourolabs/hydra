@@ -4,4 +4,13 @@ import type { ConversationStatus } from "./ConversationStatus";
 import type { SessionSettings } from "./SessionSettings";
 import type { Username } from "./Username";
 
-export type Conversation = { conversation_id: ConversationId, title: string | null, agent_name: string | null, status: ConversationStatus, creator: Username, session_settings?: SessionSettings, created_at: string, updated_at: string, };
+export type Conversation = {
+  conversation_id: ConversationId;
+  title: string | null;
+  agent_name: string | null;
+  status: ConversationStatus;
+  creator: Username;
+  session_settings?: SessionSettings;
+  created_at: string;
+  updated_at: string;
+};

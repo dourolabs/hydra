@@ -3,4 +3,8 @@ import type { IssueId } from "./IssueId";
 import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
-export type ActorIdentity = { "type": "user", username: Username, } | { "type": "session", session_id: SessionId, creator: Username, } | { "type": "issue", issue_id: IssueId, creator: Username, } | { "type": "service", service_name: string, };
+export type ActorIdentity =
+  | { type: "user"; username: Username }
+  | { type: "session"; session_id: SessionId; creator: Username }
+  | { type: "issue"; issue_id: IssueId; creator: Username }
+  | { type: "service"; service_name: string };

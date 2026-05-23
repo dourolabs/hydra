@@ -978,15 +978,6 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for repository '{id}'"))
         })?;
 
-        let patch_workflow_json = repo
-            .patch_workflow
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| {
-                StoreError::Internal(format!("failed to serialize patch_workflow: {e}"))
-            })?;
-
         let merge_policy_json = repo
             .merge_policy
             .as_ref()
@@ -995,8 +986,8 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize merge_policy: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -1005,7 +996,6 @@ impl PostgresStoreV2 {
             .bind(repo.default_branch.as_deref())
             .bind(repo.default_image.as_deref())
             .bind(repo.deleted)
-            .bind(&patch_workflow_json)
             .bind(&merge_policy_json)
             .bind(actor)
             .execute(&self.pool)
@@ -1016,16 +1006,6 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_repository(&self, row: &RepositoryRow) -> Result<Repository, StoreError> {
-        let patch_workflow = row
-            .patch_workflow
-            .as_ref()
-            .map(|v| {
-                serde_json::from_value(v.clone()).map_err(|e| {
-                    StoreError::Internal(format!("failed to deserialize patch_workflow: {e}"))
-                })
-            })
-            .transpose()?;
-
         let merge_policy = row
             .merge_policy
             .as_ref()
@@ -1040,7 +1020,6 @@ impl PostgresStoreV2 {
             row.remote_url.clone(),
             row.default_branch.clone(),
             row.default_image.clone(),
-            patch_workflow,
         );
         repo.deleted = row.deleted;
         repo.merge_policy = merge_policy;
@@ -1616,7 +1595,6 @@ struct RepositoryRow {
     default_branch: Option<String>,
     default_image: Option<String>,
     deleted: bool,
-    patch_workflow: Option<Value>,
     merge_policy: Option<Value>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -2140,7 +2118,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2178,7 +2156,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE is_latest = true
              ORDER BY id"
@@ -5569,10 +5547,7 @@ mod tests {
         api::v1::form::{
             Action, ActionStyle, Effect, Field, Form, FormResponse, Input, SelectOption,
         },
-        repositories::{
-            MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
-            SearchRepositoriesQuery,
-        },
+        repositories::{Repository, SearchRepositoriesQuery},
     };
     use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 
@@ -5678,19 +5653,6 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
-            Some(RepoWorkflowConfig {
-                review_requests: vec![
-                    ReviewRequestConfig {
-                        assignee: "alice".to_string(),
-                    },
-                    ReviewRequestConfig {
-                        assignee: "bob".to_string(),
-                    },
-                ],
-                merge_request: Some(MergeRequestConfig {
-                    assignee: Some("charlie".to_string()),
-                }),
-            }),
         )
     }
 

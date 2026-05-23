@@ -127,17 +127,7 @@ async fn multi_repo_workflow() -> Result<()> {
         "patch 1 should reference org/app"
     );
 
-    // The patch_workflow automation may have created child issues (e.g. MergeRequest)
-    // on child 1 when the patch was created. Close them before closing child 1.
-    let all_issues = user.list_issues().await?;
-    for issue in find_summary_children_of(&all_issues.issues, &child1_id) {
-        if issue.issue.status == IssueStatus::Open {
-            user.update_issue_status(&issue.issue_id, IssueStatus::Closed)
-                .await?;
-        }
-    }
-
-    // Close child 1 (now that its workflow children are closed).
+    // Close child 1.
     user.update_issue_status(&child1_id, IssueStatus::Closed)
         .await?;
 

@@ -8,4 +8,16 @@ import type { IssueId } from "./IssueId";
  *
  * Notifications are non-versioned: the only mutation after creation is marking as read.
  */
-export type Notification = { recipient: ActorId, source_actor: ActorId | null, object_kind: string, object_id: HydraId, object_version: bigint, event_type: string, summary: string, source_issue_id?: IssueId | null, policy: string, is_read: boolean, created_at: string, };
+export type Notification = {
+  recipient: ActorId;
+  source_actor: ActorId | null;
+  object_kind: string;
+  object_id: HydraId;
+  object_version: bigint;
+  event_type: string;
+  summary: string;
+  source_issue_id?: IssueId | null;
+  policy: string;
+  is_read: boolean;
+  created_at: string;
+};

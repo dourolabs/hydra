@@ -3,4 +3,14 @@ import type { ConversationId } from "./ConversationId";
 import type { ConversationStatus } from "./ConversationStatus";
 import type { Username } from "./Username";
 
-export type ConversationSummary = { conversation_id: ConversationId, title: string | null, agent_name: string | null, status: ConversationStatus, event_count: number, last_event_preview: string | null, creator: Username, created_at: string, updated_at: string, };
+export type ConversationSummary = {
+  conversation_id: ConversationId;
+  title: string | null;
+  agent_name: string | null;
+  status: ConversationStatus;
+  event_count: number;
+  last_event_preview: string | null;
+  creator: Username;
+  created_at: string;
+  updated_at: string;
+};

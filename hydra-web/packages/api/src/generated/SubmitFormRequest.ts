@@ -4,12 +4,13 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Request body for POST /v1/issues/{issue_id}/actions.
  */
-export type SubmitFormRequest = { 
-/**
- * Which action button was clicked.
- */
-action_id: string, 
-/**
- * Collected field values, keyed by field key.
- */
-values: { [key in string]: JsonValue }, };
+export type SubmitFormRequest = {
+  /**
+   * Which action button was clicked.
+   */
+  action_id: string;
+  /**
+   * Collected field values, keyed by field key.
+   */
+  values: { [key in string]: JsonValue };
+};

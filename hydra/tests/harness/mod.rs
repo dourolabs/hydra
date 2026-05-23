@@ -22,16 +22,13 @@ use hydra_common::{
     IssueId, PatchId, RepoName, SessionId,
 };
 use hydra_server::{
-    app::{default_policy_config, AppState, ServiceState},
+    app::{AppState, ServiceState},
     background::{
         monitor_running_sessions::MonitorRunningSessionsWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
     domain::actors::{Actor, ActorRef},
-    policy::{
-        config::PolicyEntry, integrations::github_pr_poller::GithubPollerWorker,
-        registry::build_default_registry,
-    },
+    policy::integrations::github_pr_poller::GithubPollerWorker,
     store::{MemoryStore, Store},
     test_utils::{
         spawn_test_server_with_state, test_app_config, test_secret_manager, GitHubMockBuilder,
@@ -49,31 +46,8 @@ pub use assertions::{
 };
 pub use concurrency::{concurrent, test_all_orderings, Step};
 pub use relay_counter::RelayCallCountingClient;
-// Re-export patch workflow config types for test files that construct configs directly.
-pub use hydra_server::policy::automations::patch_workflow::{
-    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
-};
 pub use user_handle::UserHandle;
 pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
-
-/// Build a `PatchWorkflowConfig` with a single reviewer and an optional
-/// merge-request assignee.
-///
-/// This covers the common test pattern where a patch creates one
-/// `ReviewRequest` and one `MergeRequest` issue.
-pub fn test_patch_workflow_config(
-    reviewer: &str,
-    merge_assignee: Option<&str>,
-) -> PatchWorkflowConfig {
-    PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: reviewer.to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig {
-            assignee: merge_assignee.map(|s| s.to_string()),
-        }),
-    }
-}
 
 /// Build a `SessionSettings` with only `repo_name` set.
 pub fn test_job_settings(repo: &RepoName) -> SessionSettings {
@@ -91,59 +65,13 @@ pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> Ses
     settings
 }
 
-/// Set a patch status to Merged via the API, triggering the
-/// `close_merge_request_issues` automation.
+/// Set a patch status to Merged via the API.
 pub async fn merge_patch(client: &dyn HydraClientInterface, patch_id: &PatchId) -> Result<()> {
     let mut patch = client.get_patch(patch_id).await?;
     patch.patch.status = PatchStatus::Merged;
     let request = UpsertPatchRequest::new(patch.patch);
     client.update_patch(patch_id, &request).await?;
     Ok(())
-}
-
-/// Create a merge-request tracking issue for a patch in tests.
-///
-/// The issue is created as a child of `parent_issue_id`, inheriting the
-/// parent's creator and job settings.
-pub async fn create_merge_request_issue(
-    client: &dyn HydraClientInterface,
-    patch_id: PatchId,
-    assignee: String,
-    parent_issue_id: IssueId,
-    patch_title: String,
-) -> Result<IssueId> {
-    let parent_issue = client
-        .get_issue(&parent_issue_id, false)
-        .await
-        .context("failed to fetch parent issue")?;
-    let creator = parent_issue.issue.creator;
-    let job_settings = parent_issue.issue.session_settings.clone();
-    let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
-    let issue = Issue::new(
-        IssueType::MergeRequest,
-        "Test Title".to_string(),
-        description,
-        creator,
-        String::new(),
-        IssueStatus::Open,
-        Some(assignee),
-        Some(job_settings),
-        Vec::new(),
-        vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_issue_id,
-        )],
-        vec![patch_id],
-        false,
-        None,
-        None,
-        None,
-    );
-    let response = client
-        .create_issue(&UpsertIssueRequest::new(issue, None))
-        .await
-        .context("failed to create merge-request issue")?;
-    Ok(response.issue_id)
 }
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
@@ -458,7 +386,6 @@ pub struct TestHarnessBuilder {
     repos: Vec<String>,
     users: Vec<String>,
     enable_github: bool,
-    patch_workflow_config: Option<PatchWorkflowConfig>,
     agent_configs: Vec<(String, String)>,
     assignment_agent: Option<String>,
 }
@@ -469,7 +396,6 @@ impl TestHarnessBuilder {
             repos: Vec::new(),
             users: Vec::new(),
             enable_github: false,
-            patch_workflow_config: None,
             agent_configs: Vec::new(),
             assignment_agent: None,
         }
@@ -501,17 +427,6 @@ impl TestHarnessBuilder {
     /// created automatically; this method is for additional users.
     pub fn with_user(mut self, name: &str) -> Self {
         self.users.push(name.to_string());
-        self
-    }
-
-    /// Configure the patch_workflow automation with custom parameters.
-    ///
-    /// Overrides the default patch_workflow config (which creates a
-    /// MergeRequest issue with no assignee). Use this to set custom
-    /// reviewer assignments, `$patch_creator` support, or per-repo
-    /// overrides.
-    pub fn with_patch_workflow_config(mut self, config: PatchWorkflowConfig) -> Self {
-        self.patch_workflow_config = Some(config);
         self
     }
 
@@ -585,12 +500,8 @@ impl TestHarnessBuilder {
                 .with_context(|| format!("failed to create git remote for '{repo_name_str}'"))?;
             let repo_name = RepoName::from_str(repo_name_str)
                 .with_context(|| format!("invalid repo name: '{repo_name_str}'"))?;
-            let repository = Repository::new(
-                git_remote.url().to_string(),
-                Some("main".to_string()),
-                None,
-                None,
-            );
+            let repository =
+                Repository::new(git_remote.url().to_string(), Some("main".to_string()), None);
             store
                 .add_repository(repo_name.clone(), repository, &ActorRef::test())
                 .await
@@ -628,7 +539,7 @@ impl TestHarnessBuilder {
 
         // Build AppState.
         let server_config = Arc::new(test_app_config());
-        let mut state = AppState::new(
+        let state = AppState::new(
             server_config,
             octocrab_client,
             Arc::new(ServiceState::default()),
@@ -636,28 +547,6 @@ impl TestHarnessBuilder {
             engine.clone(),
             test_secret_manager(),
         );
-
-        // Override the policy engine if a custom patch_workflow config was provided.
-        if let Some(pwc) = self.patch_workflow_config {
-            let params = serde_yaml_ng::to_value(&pwc)
-                .context("failed to serialize PatchWorkflowConfig to YAML")?;
-            let mut policy_config = default_policy_config();
-            // Replace the default patch_workflow entry with the parameterized one.
-            for entry in &mut policy_config.global.automations {
-                if matches!(entry, PolicyEntry::Name(n) if n == "patch_workflow") {
-                    *entry = PolicyEntry::WithParams {
-                        name: "patch_workflow".to_string(),
-                        params: params.clone(),
-                    };
-                    break;
-                }
-            }
-            let registry = build_default_registry();
-            let engine = registry
-                .build(&policy_config)
-                .map_err(|e| anyhow::anyhow!("failed to build policy engine: {e}"))?;
-            state = state.with_policy_engine(engine);
-        }
 
         // Collect user credentials. We need to create actors and users in the
         // store before spawning the server, but UserHandle construction needs

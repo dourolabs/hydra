@@ -7,8 +7,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::repositories::{
-    CreateRepositoryRequest, MergePolicy, MergeRequestConfig, RepoWorkflowConfig, Repository,
-    RepositoryRecord, ReviewRequestConfig, SearchRepositoriesQuery, UpdateRepositoryRequest,
+    CreateRepositoryRequest, MergePolicy, Repository, RepositoryRecord, SearchRepositoriesQuery,
+    UpdateRepositoryRequest,
 };
 use hydra_common::RepoName;
 use std::path::{Path, PathBuf};
@@ -74,14 +74,6 @@ pub struct CreateRepositoryArgs {
     /// Clear the configured default image.
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
-
-    /// Add a reviewer to the patch workflow. Can be specified multiple times for multiple reviewers.
-    #[arg(long = "reviewer", value_name = "ASSIGNEE")]
-    pub reviewer: Vec<String>,
-
-    /// Set the merger for the patch workflow.
-    #[arg(long = "merger", value_name = "ASSIGNEE")]
-    pub merger: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -118,26 +110,6 @@ pub struct UpdateRepositoryArgs {
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
 
-    /// Add a reviewer to the patch workflow. Can be specified multiple times for multiple reviewers.
-    #[arg(
-        long = "reviewer",
-        value_name = "ASSIGNEE",
-        conflicts_with = "clear_patch_workflow"
-    )]
-    pub reviewer: Vec<String>,
-
-    /// Set the merger for the patch workflow.
-    #[arg(
-        long = "merger",
-        value_name = "ASSIGNEE",
-        conflicts_with = "clear_patch_workflow"
-    )]
-    pub merger: Option<String>,
-
-    /// Clear the configured patch workflow.
-    #[arg(long = "clear-patch-workflow")]
-    pub clear_patch_workflow: bool,
-
     /// Read a YAML merge policy from PATH and apply it to the repository.
     ///
     /// The file is deserialised into a `MergePolicy`; strings starting with
@@ -150,7 +122,7 @@ pub struct UpdateRepositoryArgs {
     )]
     pub merge_policy_file: Option<PathBuf>,
 
-    /// Clear the configured merge policy. Does not affect `patch_workflow`.
+    /// Clear the configured merge policy.
     #[arg(long = "clear-merge-policy")]
     pub clear_merge_policy: bool,
 }
@@ -302,14 +274,13 @@ async fn clone_repository(
 }
 
 fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryRequest> {
-    let mut repo = build_repository_config(
+    let repo = build_repository_config(
         resolve_remote_url(&args.remote_url)?,
         &args.default_branch,
         args.clear_default_branch,
         &args.default_image,
         args.clear_default_image,
     )?;
-    repo.patch_workflow = build_patch_workflow(&args.reviewer, &args.merger);
     Ok(CreateRepositoryRequest::new(args.name.clone(), repo))
 }
 
@@ -358,13 +329,6 @@ async fn build_update_request(
         }
     };
 
-    let patch_workflow = if args.clear_patch_workflow {
-        None
-    } else {
-        let new_workflow = build_patch_workflow(&args.reviewer, &args.merger);
-        new_workflow.or(current.patch_workflow)
-    };
-
     let merge_policy = if args.clear_merge_policy {
         None
     } else if let Some(path) = &args.merge_policy_file {
@@ -373,7 +337,7 @@ async fn build_update_request(
         current.merge_policy
     };
 
-    let mut repo = Repository::new(remote_url, default_branch, default_image, patch_workflow);
+    let mut repo = Repository::new(remote_url, default_branch, default_image);
     repo.merge_policy = merge_policy;
 
     Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
@@ -419,30 +383,7 @@ fn build_repository_config(
             "default image",
             "--clear-default-image",
         )?,
-        None,
     ))
-}
-
-fn build_patch_workflow(
-    reviewers: &[String],
-    merger: &Option<String>,
-) -> Option<RepoWorkflowConfig> {
-    if reviewers.is_empty() && merger.is_none() {
-        return None;
-    }
-    let review_requests = reviewers
-        .iter()
-        .map(|assignee| ReviewRequestConfig {
-            assignee: assignee.clone(),
-        })
-        .collect();
-    let merge_request = merger.as_ref().map(|assignee| MergeRequestConfig {
-        assignee: Some(assignee.clone()),
-    });
-    Some(RepoWorkflowConfig {
-        review_requests,
-        merge_request,
-    })
 }
 
 /// Detects whether `remote_url` looks like a filesystem path (starts with `/` or `.`)
@@ -536,8 +477,6 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/hydra:latest".to_string()),
             clear_default_image: false,
-            reviewer: vec![],
-            merger: None,
         }
     }
 
@@ -549,9 +488,6 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/hydra:latest".to_string()),
             clear_default_image: false,
-            reviewer: vec![],
-            merger: None,
-            clear_patch_workflow: false,
             merge_policy_file: None,
             clear_merge_policy: false,
         }
@@ -564,7 +500,6 @@ mod tests {
                 "https://example.com/hydra.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/dourolabs/hydra:latest".to_string()),
-                None,
             ),
         )
     }
@@ -581,12 +516,7 @@ mod tests {
             sample_repository_info(&repo_name),
             RepositoryRecord::new(
                 RepoName::from_str("dourolabs/api").unwrap(),
-                Repository::new(
-                    "git@github.com:dourolabs/api.git".to_string(),
-                    None,
-                    None,
-                    None,
-                ),
+                Repository::new("git@github.com:dourolabs/api.git".to_string(), None, None),
             ),
         ]);
         let server = MockServer::start();
@@ -708,7 +638,6 @@ mod tests {
                         args.remote_url.clone().unwrap(),
                         None,
                         args.default_image.clone(),
-                        None,
                     ),
                 )));
         });
@@ -759,7 +688,6 @@ mod tests {
                         "https://example.com/hydra.git".to_string(),
                         Some("main".to_string()),
                         args.default_image.clone(),
-                        None,
                     ),
                 )));
         });
@@ -842,7 +770,6 @@ mod tests {
                         "https://example.com/hydra.git".to_string(),
                         Some("main".to_string()),
                         Some("ghcr.io/dourolabs/hydra:canary".to_string()),
-                        None,
                     ),
                 )));
         });
@@ -897,7 +824,6 @@ mod tests {
                         "https://example.com/hydra.git".to_string(),
                         None,
                         Some("ghcr.io/dourolabs/hydra:latest".to_string()),
-                        None,
                     ),
                 )));
         });
@@ -944,7 +870,6 @@ mod tests {
                     Repository::new(
                         "https://example.com/hydra.git".to_string(),
                         Some("main".to_string()),
-                        None,
                         None,
                     ),
                 )));
@@ -1010,249 +935,6 @@ mod tests {
             .clone()
             .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
         assert_eq!(destination, PathBuf::from("/tmp/my-clone"));
-    }
-
-    fn sample_workflow_config() -> RepoWorkflowConfig {
-        RepoWorkflowConfig {
-            review_requests: vec![ReviewRequestConfig {
-                assignee: "alice".to_string(),
-            }],
-            merge_request: Some(MergeRequestConfig {
-                assignee: Some("$patch_creator".to_string()),
-            }),
-        }
-    }
-
-    #[tokio::test]
-    async fn create_repository_with_patch_workflow() {
-        let mut args = sample_create_args();
-        args.reviewer = vec!["alice".to_string()];
-        args.merger = Some("$patch_creator".to_string());
-        let server = MockServer::start();
-        let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/repositories").json_body(json!({
-                "name": "dourolabs/hydra",
-                "remote_url": "https://example.com/hydra.git",
-                "default_branch": "main",
-                "default_image": "ghcr.io/dourolabs/hydra:latest",
-                "patch_workflow": {
-                    "review_requests": [{"assignee": "alice"}],
-                    "merge_request": {"assignee": "$patch_creator"}
-                }
-            }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone(),
-                        args.default_branch.clone(),
-                        args.default_image.clone(),
-                        Some(sample_workflow_config()),
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = create_repository(&client, args).await.unwrap();
-        assert!(repository.repository.patch_workflow.is_some());
-
-        create_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn create_repository_without_patch_workflow() {
-        let args = sample_create_args();
-        let server = MockServer::start();
-        let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/repositories").json_body(json!({
-                "name": "dourolabs/hydra",
-                "remote_url": "https://example.com/hydra.git",
-                "default_branch": "main",
-                "default_image": "ghcr.io/dourolabs/hydra:latest"
-            }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone(),
-                        args.default_branch.clone(),
-                        args.default_image.clone(),
-                        None,
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = create_repository(&client, args).await.unwrap();
-        assert!(repository.repository.patch_workflow.is_none());
-
-        create_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn update_repository_with_patch_workflow() {
-        let mut args = sample_update_args();
-        args.reviewer = vec!["alice".to_string()];
-        args.merger = Some("$patch_creator".to_string());
-        let server = MockServer::start();
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200)
-                .json_body_obj(&ListRepositoriesResponse::new(vec![
-                    sample_repository_info(&args.name),
-                ]));
-        });
-        let update_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/hydra")
-                .json_body(json!({
-                    "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest",
-                    "patch_workflow": {
-                        "review_requests": [{"assignee": "alice"}],
-                        "merge_request": {"assignee": "$patch_creator"}
-                    }
-                }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone().unwrap(),
-                        args.default_branch.clone(),
-                        args.default_image.clone(),
-                        Some(sample_workflow_config()),
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = update_repository(&client, args).await.unwrap();
-        assert!(repository.repository.patch_workflow.is_some());
-
-        list_mock.assert();
-        update_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn update_repository_clear_patch_workflow() {
-        let mut args = sample_update_args();
-        args.clear_patch_workflow = true;
-        let server = MockServer::start();
-        let mut existing = sample_repository_info(&args.name);
-        existing.repository.patch_workflow = Some(sample_workflow_config());
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200)
-                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
-        });
-        let update_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/hydra")
-                .json_body(json!({
-                    "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest"
-                }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone().unwrap(),
-                        args.default_branch.clone(),
-                        args.default_image.clone(),
-                        None,
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = update_repository(&client, args).await.unwrap();
-        assert!(repository.repository.patch_workflow.is_none());
-
-        list_mock.assert();
-        update_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn update_repository_preserves_patch_workflow_when_unmodified() {
-        let mut args = sample_update_args();
-        args.default_image = Some("ghcr.io/dourolabs/hydra:canary".to_string());
-        let server = MockServer::start();
-        let mut existing = sample_repository_info(&args.name);
-        existing.repository.patch_workflow = Some(sample_workflow_config());
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200)
-                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
-        });
-        let update_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/hydra")
-                .json_body(json!({
-                    "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:canary",
-                    "patch_workflow": {
-                        "review_requests": [{"assignee": "alice"}],
-                        "merge_request": {"assignee": "$patch_creator"}
-                    }
-                }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone().unwrap(),
-                        args.default_branch.clone(),
-                        args.default_image.clone(),
-                        Some(sample_workflow_config()),
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = update_repository(&client, args).await.unwrap();
-        assert!(repository.repository.patch_workflow.is_some());
-
-        list_mock.assert();
-        update_mock.assert();
-    }
-
-    #[test]
-    fn list_repositories_shows_patch_workflow_in_pretty_output() {
-        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
-        let mut repo_info = sample_repository_info(&repo_name);
-        repo_info.repository.patch_workflow = Some(sample_workflow_config());
-
-        let mut output = Vec::new();
-        render(
-            RepositoryRecords(&[repo_info]),
-            ResolvedOutputFormat::Pretty,
-            &mut output,
-        )
-        .unwrap();
-        let output = String::from_utf8(output).unwrap();
-
-        assert!(output.contains("reviewers: alice"));
-        assert!(output.contains("merger: $patch_creator"));
-    }
-
-    #[test]
-    fn list_repositories_omits_patch_workflow_when_none() {
-        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
-        let repo_info = sample_repository_info(&repo_name);
-
-        let mut output = Vec::new();
-        render(
-            RepositoryRecords(&[repo_info]),
-            ResolvedOutputFormat::Pretty,
-            &mut output,
-        )
-        .unwrap();
-        let output = String::from_utf8(output).unwrap();
-
-        assert!(!output.contains("reviewers:"));
-        assert!(!output.contains("merger:"));
     }
 
     #[test]
@@ -1454,7 +1136,6 @@ mergers:
                     args.remote_url.clone().unwrap(),
                     args.default_branch.clone(),
                     args.default_image.clone(),
-                    None,
                 );
                 r.merge_policy = Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
                 r
@@ -1475,12 +1156,11 @@ mergers:
     }
 
     #[tokio::test]
-    async fn update_repository_clear_merge_policy_preserves_patch_workflow() {
+    async fn update_repository_clear_merge_policy_drops_only_merge_policy() {
         let mut args = sample_update_args();
         args.clear_merge_policy = true;
         let server = MockServer::start();
         let mut existing = sample_repository_info(&args.name);
-        existing.repository.patch_workflow = Some(sample_workflow_config());
         existing.repository.merge_policy =
             Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
         let list_mock = server.mock(|when, then| {
@@ -1494,11 +1174,7 @@ mergers:
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest",
-                    "patch_workflow": {
-                        "review_requests": [{"assignee": "alice"}],
-                        "merge_request": {"assignee": "$patch_creator"}
-                    }
+                    "default_image": "ghcr.io/dourolabs/hydra:latest"
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -1507,7 +1183,6 @@ mergers:
                         args.remote_url.clone().unwrap(),
                         args.default_branch.clone(),
                         args.default_image.clone(),
-                        Some(sample_workflow_config()),
                     ),
                 )));
         });
@@ -1515,7 +1190,6 @@ mergers:
 
         let repository = update_repository(&client, args).await.unwrap();
         assert!(repository.repository.merge_policy.is_none());
-        assert!(repository.repository.patch_workflow.is_some());
 
         list_mock.assert();
         update_mock.assert();
@@ -1547,7 +1221,6 @@ mergers:
                 args.remote_url.clone().unwrap(),
                 args.default_branch.clone(),
                 Some("ghcr.io/dourolabs/hydra:canary".to_string()),
-                None,
             );
             response_repo.merge_policy = Some(policy.clone());
             then.status(200)

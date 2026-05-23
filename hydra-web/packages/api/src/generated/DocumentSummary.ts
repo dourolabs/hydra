@@ -8,4 +8,10 @@ import type { SessionId } from "./SessionId";
  *
  * Excludes `body_markdown`.
  */
-export type DocumentSummary = { title: string, path?: DocumentPath | null, created_by?: SessionId | null, deleted?: boolean, labels?: Array<LabelSummary>, };
+export type DocumentSummary = {
+  title: string;
+  path?: DocumentPath | null;
+  created_by?: SessionId | null;
+  deleted?: boolean;
+  labels?: Array<LabelSummary>;
+};

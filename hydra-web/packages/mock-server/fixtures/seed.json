@@ -2308,24 +2308,12 @@
     "acme/web-app": {
       "remote_url": "https://github.com/acme/web-app.git",
       "default_branch": "main",
-      "default_image": "node:20-slim",
-      "patch_workflow": {
-        "review_requests": [{ "assignee": "reviewer" }],
-        "merge_request": {
-          "assignee": "alice"
-        }
-      }
+      "default_image": "node:20-slim"
     },
     "acme/api-gateway": {
       "remote_url": "https://github.com/acme/api-gateway.git",
       "default_branch": "main",
-      "default_image": "node:20-slim",
-      "patch_workflow": {
-        "review_requests": [{ "assignee": "reviewer" }],
-        "merge_request": {
-          "assignee": "alice"
-        }
-      }
+      "default_image": "node:20-slim"
     }
   },
   "agents": {

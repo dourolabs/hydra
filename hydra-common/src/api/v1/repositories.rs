@@ -23,32 +23,6 @@ fn is_default_exclude_author(b: &bool) -> bool {
     *b
 }
 
-/// Configuration for a single review request entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct ReviewRequestConfig {
-    pub assignee: String,
-}
-
-/// Configuration for the merge request issue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct MergeRequestConfig {
-    pub assignee: Option<String>,
-}
-
-/// Per-repo workflow configuration for patch review and merge.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(default)]
-pub struct RepoWorkflowConfig {
-    pub review_requests: Vec<ReviewRequestConfig>,
-    pub merge_request: Option<MergeRequestConfig>,
-}
-
 /// A closed enumeration of dynamic principal references resolvable at
 /// merge-attempt time. Serialised as the `@…` shorthand string used in
 /// repo-policy YAML and JSON.
@@ -224,8 +198,6 @@ pub struct Repository {
     #[serde(default, skip_serializing_if = "is_false")]
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub patch_workflow: Option<RepoWorkflowConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_policy: Option<MergePolicy>,
 }
 
@@ -234,14 +206,12 @@ impl Repository {
         remote_url: String,
         default_branch: Option<String>,
         default_image: Option<String>,
-        patch_workflow: Option<RepoWorkflowConfig>,
     ) -> Self {
         Self {
             remote_url,
             default_branch,
             default_image,
             deleted: false,
-            patch_workflow,
             merge_policy: None,
         }
     }
@@ -412,78 +382,9 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn repository_without_patch_workflow_deserializes_to_none() {
-        let json = json!({
-            "remote_url": "https://example.com/repo.git",
-            "default_branch": "main",
-            "default_image": null
-        });
-        let repo: Repository = serde_json::from_value(json).unwrap();
-        assert_eq!(repo.patch_workflow, None);
-    }
-
-    #[test]
-    fn repository_with_null_patch_workflow_deserializes_to_none() {
-        let json = json!({
-            "remote_url": "https://example.com/repo.git",
-            "patch_workflow": null
-        });
-        let repo: Repository = serde_json::from_value(json).unwrap();
-        assert_eq!(repo.patch_workflow, None);
-    }
-
-    #[test]
-    fn patch_workflow_round_trips_through_serde_json() {
-        let config = RepoWorkflowConfig {
-            review_requests: vec![
-                ReviewRequestConfig {
-                    assignee: "alice".to_string(),
-                },
-                ReviewRequestConfig {
-                    assignee: "$patch_creator".to_string(),
-                },
-            ],
-            merge_request: Some(MergeRequestConfig {
-                assignee: Some("bob".to_string()),
-            }),
-        };
-        let repo = Repository::new(
-            "https://example.com/repo.git".to_string(),
-            Some("main".to_string()),
-            None,
-            Some(config.clone()),
-        );
-
-        let serialized = serde_json::to_value(&repo).unwrap();
-        let deserialized: Repository = serde_json::from_value(serialized).unwrap();
-        assert_eq!(deserialized.patch_workflow, Some(config));
-    }
-
-    #[test]
-    fn patch_workflow_none_is_omitted_from_serialized_json() {
-        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None, None);
-        let serialized = serde_json::to_value(&repo).unwrap();
-        assert!(
-            !serialized
-                .as_object()
-                .unwrap()
-                .contains_key("patch_workflow"),
-            "patch_workflow should be omitted when None"
-        );
-    }
-
-    #[test]
-    fn repo_workflow_config_defaults_to_empty() {
-        let config: RepoWorkflowConfig = serde_json::from_value(json!({})).unwrap();
-        assert!(config.review_requests.is_empty());
-        assert_eq!(config.merge_request, None);
-    }
-
-    #[test]
     fn github_owner_repo_https_with_git_suffix() {
         let repo = Repository::new(
             "https://github.com/dourolabs/hydra.git".to_string(),
-            None,
             None,
             None,
         );
@@ -495,12 +396,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_https_without_git_suffix() {
-        let repo = Repository::new(
-            "https://github.com/dourolabs/hydra".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("https://github.com/dourolabs/hydra".to_string(), None, None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -509,12 +405,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_ssh() {
-        let repo = Repository::new(
-            "git@github.com:dourolabs/hydra.git".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("git@github.com:dourolabs/hydra.git".to_string(), None, None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -523,12 +414,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_ssh_without_git_suffix() {
-        let repo = Repository::new(
-            "git@github.com:dourolabs/hydra".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("git@github.com:dourolabs/hydra".to_string(), None, None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -537,27 +423,22 @@ mod tests {
 
     #[test]
     fn github_owner_repo_non_github() {
-        let repo = Repository::new(
-            "https://gitlab.com/org/repo.git".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None, None);
         assert_eq!(repo.github_owner_repo(), None);
     }
 
     #[test]
     fn github_owner_repo_file_url() {
-        let repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        let repo = Repository::new("file:///home/user/repo".to_string(), None, None);
         assert_eq!(repo.github_owner_repo(), None);
     }
 
     #[test]
     fn github_owner_repo_empty_segments() {
-        let repo = Repository::new("https://github.com//repo.git".to_string(), None, None, None);
+        let repo = Repository::new("https://github.com//repo.git".to_string(), None, None);
         assert_eq!(repo.github_owner_repo(), None);
 
-        let repo2 = Repository::new("https://github.com/owner/".to_string(), None, None, None);
+        let repo2 = Repository::new("https://github.com/owner/".to_string(), None, None);
         assert_eq!(repo2.github_owner_repo(), None);
     }
 
@@ -567,31 +448,25 @@ mod tests {
             "https://github.com/dourolabs/hydra.git".to_string(),
             None,
             None,
-            None,
         );
         assert!(repo.is_github());
     }
 
     #[test]
     fn is_github_returns_false_for_non_github_url() {
-        let repo = Repository::new(
-            "https://gitlab.com/org/repo.git".to_string(),
-            None,
-            None,
-            None,
-        );
+        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None, None);
         assert!(!repo.is_github());
     }
 
     #[test]
     fn is_local_file_url() {
-        let repo = Repository::new("file:///home/user/repo".to_string(), None, None, None);
+        let repo = Repository::new("file:///home/user/repo".to_string(), None, None);
         assert!(repo.is_local());
     }
 
     #[test]
     fn is_local_absolute_path() {
-        let repo = Repository::new("/home/user/repo".to_string(), None, None, None);
+        let repo = Repository::new("/home/user/repo".to_string(), None, None);
         assert!(repo.is_local());
     }
 
@@ -601,26 +476,8 @@ mod tests {
             "https://github.com/dourolabs/hydra.git".to_string(),
             None,
             None,
-            None,
         );
         assert!(!repo.is_local());
-    }
-
-    #[test]
-    fn new_with_patch_workflow_sets_field() {
-        let config = RepoWorkflowConfig {
-            review_requests: vec![ReviewRequestConfig {
-                assignee: "reviewer".to_string(),
-            }],
-            merge_request: None,
-        };
-        let repo = Repository::new(
-            "https://example.com/repo.git".to_string(),
-            None,
-            None,
-            Some(config.clone()),
-        );
-        assert_eq!(repo.patch_workflow, Some(config));
     }
 
     // ---- MergePolicy ----------------------------------------------------
@@ -784,44 +641,21 @@ mergers:
 
     #[test]
     fn repository_merge_policy_round_trips() {
-        let mut repo =
-            Repository::new("https://example.com/repo.git".to_string(), None, None, None);
+        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
         repo.merge_policy = Some(full_merge_policy());
         let value = serde_json::to_value(&repo).unwrap();
         let back: Repository = serde_json::from_value(value).unwrap();
         assert_eq!(back.merge_policy, Some(full_merge_policy()));
-        assert!(back.patch_workflow.is_none());
     }
 
     #[test]
     fn repository_merge_policy_none_is_omitted() {
-        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None, None);
+        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
         let value = serde_json::to_value(&repo).unwrap();
         assert!(
             !value.as_object().unwrap().contains_key("merge_policy"),
             "merge_policy should be omitted when None"
         );
-    }
-
-    #[test]
-    fn repository_merge_policy_and_patch_workflow_can_coexist() {
-        let workflow = RepoWorkflowConfig {
-            review_requests: vec![ReviewRequestConfig {
-                assignee: "reviewer".to_string(),
-            }],
-            merge_request: None,
-        };
-        let mut repo = Repository::new(
-            "https://example.com/repo.git".to_string(),
-            None,
-            None,
-            Some(workflow.clone()),
-        );
-        repo.merge_policy = Some(full_merge_policy());
-        let value = serde_json::to_value(&repo).unwrap();
-        let back: Repository = serde_json::from_value(value).unwrap();
-        assert_eq!(back.patch_workflow, Some(workflow));
-        assert_eq!(back.merge_policy, Some(full_merge_policy()));
     }
 
     #[test]

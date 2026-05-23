@@ -17,7 +17,6 @@ import {
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
 import { conversationTitle } from "../chat/conversationTitle";
-import { workflowSummary } from "../repositories/workflowSummary";
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
@@ -309,7 +308,6 @@ interface RepositoryRailRowProps {
 }
 
 export function RepositoryRailRow({ record }: RepositoryRailRowProps) {
-  const workflow = workflowSummary(record);
   return (
     <div className={styles.row} data-testid={`related-rail-row-repository-${record.name}`}>
       <Icons.IconRepo size={14} className={styles.docIcon} aria-hidden="true" />
@@ -319,7 +317,6 @@ export function RepositoryRailRow({ record }: RepositoryRailRowProps) {
           {record.repository.default_branch && (
             <span className={styles.metaMono}>{record.repository.default_branch}</span>
           )}
-          {workflow && <span className={styles.metaMono}>{workflow}</span>}
         </div>
       </div>
     </div>

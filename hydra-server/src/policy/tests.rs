@@ -585,68 +585,6 @@ fn policy_config_default_is_empty() {
     assert!(config.global.automations.is_empty());
 }
 
-/// Exact structure from config.yaml: policies with automations list and
-/// params for patch_workflow. Ensures merge_request.assignee
-/// is deserialized and passed through to the automation.
-#[test]
-fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
-    let yaml_str = r#"
-hydra:
-  namespace: "default"
-  HYDRA_SECRET_ENCRYPTION_KEY: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
-job:
-  default_image: "x"
-database:
-  url: "postgres://localhost/db"
-auth_mode: github
-github_app:
-  app_id: 1
-  client_id: "c"
-  client_secret: "s"
-  private_key: "k"
-background: {}
-policies:
-  restrictions:
-    - "issue_lifecycle_validation"
-  automations:
-    - name: "cascade_issue_status"
-      params: {}
-    - name: "patch_workflow"
-      params:
-        merge_request:
-          assignee: "$patch_creator"
-    - name: "github_pr_sync"
-      params: {}
-    "#;
-
-    let config: crate::config::AppConfig =
-        serde_yaml_ng::from_str(yaml_str).expect("full config with policies should deserialize");
-    let policies = config.policies.expect("policies should be present");
-    let patch_workflow_entry = policies
-        .global
-        .automations
-        .iter()
-        .find(|e| e.name() == "patch_workflow")
-        .expect("patch_workflow automation should be present");
-    let params = patch_workflow_entry
-        .params()
-        .expect("patch_workflow should have params");
-    let mapping = params.as_mapping().expect("params should be a mapping");
-    let merge_request = mapping
-        .get("merge_request")
-        .and_then(|v| v.as_mapping())
-        .expect("params.merge_request should be a mapping");
-    let assignee = merge_request
-        .get("assignee")
-        .and_then(|v| v.as_str())
-        .expect("merge_request.assignee should be present");
-    assert_eq!(assignee, "$patch_creator");
-
-    // Build engine and ensure patch_workflow is constructed with params (no panic)
-    let engine = crate::app::AppState::build_policy_engine(Some(&policies));
-    assert!(engine.automation_count() >= 3);
-}
-
 // ---------------------------------------------------------------------------
 // Shortcut method tests
 // ---------------------------------------------------------------------------
@@ -843,7 +781,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 6);
-    assert_eq!(engine.automation_count(), 13);
+    assert_eq!(engine.automation_count(), 10);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -859,9 +797,6 @@ fn default_config_enables_all_builtin_policies() {
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                PolicyEntry::Name("close_merge_request_issues".to_string()),
-                PolicyEntry::Name("sync_review_request_issues".to_string()),
-                PolicyEntry::Name("patch_workflow".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
                 PolicyEntry::Name("notification_generation".to_string()),
                 PolicyEntry::Name("inbox_label".to_string()),
@@ -875,7 +810,7 @@ fn default_config_enables_all_builtin_policies() {
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 6);
-    assert_eq!(explicit_engine.automation_count(), 13);
+    assert_eq!(explicit_engine.automation_count(), 10);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
@@ -930,8 +865,6 @@ async fn disabling_restriction_allows_blocked_operation() {
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                PolicyEntry::Name("close_merge_request_issues".to_string()),
-                PolicyEntry::Name("patch_workflow".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },

@@ -364,12 +364,8 @@ mod tests {
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
         let repo_name = RepoName::from_str("dourolabs/hydra")?;
-        let repository = Repository::new(
-            remote_dir.path().to_str().unwrap().to_string(),
-            None,
-            None,
-            None,
-        );
+        let repository =
+            Repository::new(remote_dir.path().to_str().unwrap().to_string(), None, None);
 
         let (repo, _workdir) = connect_repository(&repo_name, &repository)?;
 
