@@ -20,8 +20,11 @@ pub use hydra_common::api::v1::ApiError;
 pub mod context;
 pub mod kill;
 pub mod logs;
+pub mod mount_spec;
 pub mod relay;
 pub mod status;
+
+pub use mount_spec::mount_spec_from_create_request;
 
 pub async fn create_session(
     State(state): State<AppState>,

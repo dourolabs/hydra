@@ -30,47 +30,30 @@ pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
 pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
 
 /// Build the standard 2-item MountSpec (`Bundle` + `Documents`) for a session
-/// at create time. Mirrors the migration backfill shape from PR-1 (no
-/// `BuildCache` item — that's config-derived and added at WorkerContext
-/// fetch time by `routes/sessions/context.rs`).
+/// at create time. Delegates to
+/// [`crate::routes::sessions::mount_spec_from_create_request`], which is the
+/// single source of truth for `CreateSessionRequest → MountSpec` translation.
+/// `ServiceRepository` can't be lowered without the resolver here, so it is
+/// substituted with `Bundle::None`; `routes/sessions/context.rs` re-runs the
+/// translation against the resolved bundle at WorkerContext fetch time.
 pub(crate) fn mount_spec_for_session(
     context: &BundleSpec,
 ) -> hydra_common::api::v1::sessions::MountSpec {
     use hydra_common::SessionId;
-    use hydra_common::api::v1::sessions::{Bundle, MountItem, MountSpec, RelativePath};
+    use hydra_common::api::v1::sessions::Bundle;
     let bundle = match context {
         BundleSpec::None => Bundle::None,
         BundleSpec::GitRepository { url, rev } => Bundle::GitRepository {
             url: url.clone(),
             rev: rev.clone(),
         },
-        // ServiceRepository can't be lowered to Bundle without the resolver
-        // (which has access to config). For the in-memory mount_spec we
-        // store None — `routes/sessions/context.rs` resolves it again at
-        // worker-fetch time.
         _ => Bundle::None,
     };
     // The session id is set after the store assigns it; we use a placeholder
     // here. The dual-write path persists the row's actual id into the
     // `mount_spec` JSON when the row is inserted (the `bundle` item carries
     // the same id as the row, per the legacy backfill rule).
-    let placeholder_session_id = SessionId::new();
-    let repo_target = RelativePath::new("repo").expect("static `repo` is valid");
-    let docs_target = RelativePath::new("documents").expect("static `documents` is valid");
-    MountSpec::new(
-        repo_target.clone(),
-        vec![
-            MountItem::Bundle {
-                target: repo_target,
-                bundle,
-                session_id: placeholder_session_id,
-                issue_branch_id: None,
-            },
-            MountItem::Documents {
-                target: docs_target,
-            },
-        ],
-    )
+    crate::routes::sessions::mount_spec_from_create_request(bundle, SessionId::new(), None, None)
 }
 
 #[derive(Debug, Error)]
