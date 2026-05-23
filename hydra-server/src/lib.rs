@@ -296,6 +296,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             post(routes::patches::create_patch_asset),
         )
         .route(
+            "/v1/patches/:patch_id/merge_check",
+            post(routes::patches::merge_check),
+        )
+        .route(
             "/v1/documents",
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
