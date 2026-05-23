@@ -1333,6 +1333,17 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
+        let mount_spec_json =
+            serde_json::to_string(&super::dual_write_mount_spec_json(id, &session.context)?)
+                .map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize mount_spec: {e}"))
+                })?;
+        let agent_config_json =
+            serde_json::to_string(&super::dual_write_agent_config_json(session)?).map_err(|e| {
+                StoreError::Internal(format!("failed to serialize agent_config: {e}"))
+            })?;
+        let mode_json = serde_json::to_string(&super::dual_write_mode_json(session))
+            .map_err(|e| StoreError::Internal(format!("failed to serialize mode: {e}")))?;
         let status_str = super::status_to_db_str(session.status);
         let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
@@ -1354,8 +1365,8 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1390,14 +1401,17 @@ impl SqliteStore {
                     .map(|n| n as i64),
             )
             .bind(&usage_json)
+            .bind(&mount_spec_json)
+            .bind(&agent_config_json)
+            .bind(&mode_json)
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1431,6 +1445,9 @@ impl SqliteStore {
                     .map(|n| n as i64),
             )
             .bind(&usage_json)
+            .bind(&mount_spec_json)
+            .bind(&agent_config_json)
+            .bind(&mode_json)
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -10992,5 +11009,395 @@ mod tests {
             .await
             .unwrap();
         assert!(ids.is_empty());
+    }
+
+    // ---- Session-shape column dual-write + backfill tests ----
+    //
+    // These tests cover Phase D step 12: the `mount_spec`, `agent_config`,
+    // `mode`, and `resumed_from` columns added in
+    // `20260523020000_add_session_shape_columns.sql`. They assert both the
+    // runtime dual-write path (via `add_session` / our updated INSERT) and
+    // the migration backfill SQL (replayed against raw inserts that bypass
+    // the application path and leave the new columns NULL).
+
+    #[derive(sqlx::FromRow)]
+    struct SessionShapeRow {
+        mount_spec: Option<String>,
+        agent_config: Option<String>,
+        mode: Option<String>,
+        resumed_from: Option<String>,
+    }
+
+    async fn fetch_session_shape(store: &SqliteStore, id: &SessionId) -> SessionShapeRow {
+        sqlx::query_as::<_, SessionShapeRow>(
+            "SELECT mount_spec, agent_config, mode, resumed_from \
+             FROM tasks_v2 WHERE id = ?1 AND is_latest = 1",
+        )
+        .bind(id.as_ref())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    fn parse_json(s: &str) -> serde_json::Value {
+        serde_json::from_str(s).expect("column should hold valid JSON")
+    }
+
+    #[tokio::test]
+    async fn dual_write_headless_session_populates_mode_and_mount_spec() {
+        let store = create_test_store().await;
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let row = fetch_session_shape(&store, &sid).await;
+
+        let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
+        assert_eq!(mode["type"], "headless");
+        assert_eq!(mode["prompt"], "test prompt");
+
+        let mount_spec = parse_json(row.mount_spec.as_deref().expect("mount_spec is non-null"));
+        assert_eq!(mount_spec["working_dir"], "repo");
+        let mounts = mount_spec["mounts"].as_array().expect("mounts is an array");
+        assert_eq!(
+            mounts.len(),
+            2,
+            "headless backfill emits Bundle + Documents"
+        );
+        assert_eq!(mounts[0]["type"], "bundle");
+        assert_eq!(mounts[0]["target"], "repo");
+        assert_eq!(mounts[0]["session_id"], sid.as_ref());
+        assert_eq!(mounts[0]["bundle"]["type"], "none");
+        assert_eq!(mounts[1]["type"], "documents");
+        assert_eq!(mounts[1]["target"], "documents");
+
+        let agent_config = parse_json(
+            row.agent_config
+                .as_deref()
+                .expect("agent_config is non-null"),
+        );
+        assert!(agent_config["agent_name"].is_null());
+        assert!(agent_config["system_prompt"].is_null());
+        // spawn_task() sets model: None, mcp_config: None
+        assert!(agent_config["model"].is_null());
+        assert!(agent_config["mcp_config"].is_null());
+
+        assert!(
+            row.resumed_from.is_none(),
+            "fresh sessions have no predecessor"
+        );
+    }
+
+    #[tokio::test]
+    async fn dual_write_interactive_session_populates_mode_with_conversation_id() {
+        let store = create_test_store().await;
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let row = fetch_session_shape(&store, &sid).await;
+
+        let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
+        assert_eq!(mode["type"], "interactive");
+        assert_eq!(mode["conversation_id"], conv_id.as_ref());
+        assert_eq!(mode["idle_timeout_secs"], 0);
+    }
+
+    #[tokio::test]
+    async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec() {
+        let store = create_test_store().await;
+        let mut session = spawn_task();
+        session.context = BundleSpec::GitRepository {
+            url: "https://github.com/example/repo".to_string(),
+            rev: "main".to_string(),
+        };
+        session.model = Some("gpt-4o".to_string());
+
+        let (sid, _) = store
+            .add_session(session, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let row = fetch_session_shape(&store, &sid).await;
+        let mount_spec = parse_json(row.mount_spec.as_deref().expect("mount_spec is non-null"));
+        let bundle = &mount_spec["mounts"][0]["bundle"];
+        assert_eq!(bundle["type"], "git_repository");
+        assert_eq!(bundle["url"], "https://github.com/example/repo");
+        assert_eq!(bundle["rev"], "main");
+
+        let agent_config = parse_json(
+            row.agent_config
+                .as_deref()
+                .expect("agent_config is non-null"),
+        );
+        assert_eq!(agent_config["model"], "gpt-4o");
+    }
+
+    /// Inserts a raw `tasks_v2` row with the new session-shape columns left
+    /// NULL, mimicking pre-migration state. Used by the backfill replay tests
+    /// below.
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_pre_migration_row(
+        store: &SqliteStore,
+        id: &str,
+        context_json: &str,
+        prompt: &str,
+        model: Option<&str>,
+        mcp_config_json: Option<&str>,
+        conversation_id: Option<&str>,
+        conversation_resume_from: Option<i64>,
+        creation_time: &str,
+    ) {
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_TASKS_V2} \
+             (id, version_number, prompt, context, env_vars, status, deleted, \
+              model, mcp_config, interactive, conversation_id, \
+              conversation_resume_from, creation_time, is_latest) \
+             VALUES (?1, 1, ?2, ?3, '{{}}', 'complete', 0, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+        ))
+        .bind(id)
+        .bind(prompt)
+        .bind(context_json)
+        .bind(model)
+        .bind(mcp_config_json)
+        .bind(conversation_id.is_some())
+        .bind(conversation_id)
+        .bind(conversation_resume_from)
+        .bind(creation_time)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    }
+
+    /// Replays the four backfill UPDATE statements from
+    /// `20260523020000_add_session_shape_columns.sql`. Kept in lockstep with
+    /// the migration; if the migration changes, this must change too.
+    async fn replay_session_shape_backfill(store: &SqliteStore) {
+        for stmt in [
+            r#"UPDATE tasks_v2
+               SET mount_spec = json_object(
+                   'working_dir', 'repo',
+                   'mounts', json_array(
+                       json_object(
+                           'type', 'bundle',
+                           'target', 'repo',
+                           'bundle', json(context),
+                           'session_id', id
+                       ),
+                       json_object(
+                           'type', 'documents',
+                           'target', 'documents'
+                       )
+                   )
+               )
+               WHERE mount_spec IS NULL"#,
+            r#"UPDATE tasks_v2
+               SET agent_config = json_object(
+                   'agent_name',    NULL,
+                   'model',         model,
+                   'system_prompt', NULL,
+                   'mcp_config',    CASE WHEN mcp_config IS NULL
+                                        THEN NULL
+                                        ELSE json(mcp_config)
+                                    END
+               )
+               WHERE agent_config IS NULL"#,
+            r#"UPDATE tasks_v2
+               SET mode = CASE
+                   WHEN conversation_id IS NULL THEN
+                       json_object('type', 'headless', 'prompt', prompt)
+                   ELSE
+                       json_object(
+                           'type', 'interactive',
+                           'conversation_id', conversation_id,
+                           'idle_timeout_secs', 0
+                       )
+               END
+               WHERE mode IS NULL"#,
+            r#"UPDATE tasks_v2 AS t
+               SET resumed_from = (
+                   SELECT prev.id
+                   FROM tasks_v2 AS prev
+                   WHERE prev.conversation_id   = t.conversation_id
+                     AND prev.is_latest         = 1
+                     AND prev.id                <> t.id
+                     AND prev.creation_time IS NOT NULL
+                     AND t.creation_time    IS NOT NULL
+                     AND prev.creation_time     <  t.creation_time
+                   ORDER BY prev.creation_time DESC
+                   LIMIT 1
+               )
+               WHERE t.conversation_resume_from IS NOT NULL
+                 AND t.is_latest                = 1
+                 AND t.resumed_from IS NULL"#,
+        ] {
+            sqlx::query(stmt).execute(&store.pool).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn backfill_populates_all_four_columns_across_realistic_history() {
+        // Loads a snapshot of pre-migration data (one Headless, one
+        // Interactive, one resumed-Interactive, one BundleSpec::None row),
+        // replays the backfill SQL, and asserts the four new columns end up
+        // populated correctly. Matches the acceptance criteria for PR-1.
+        let store = create_test_store().await;
+
+        let headless_id = "s-bkfilhdless";
+        insert_pre_migration_row(
+            &store,
+            headless_id,
+            r#"{"type":"git_repository","url":"https://github.com/x/y","rev":"main"}"#,
+            "do the thing",
+            Some("claude-sonnet-4-5"),
+            None,
+            None,
+            None,
+            "2026-01-01T00:00:00.000+00:00",
+        )
+        .await;
+
+        let bundle_none_id = "s-bkfilnobun";
+        insert_pre_migration_row(
+            &store,
+            bundle_none_id,
+            r#"{"type":"none"}"#,
+            "no-bundle headless",
+            None,
+            None,
+            None,
+            None,
+            "2026-01-01T00:01:00.000+00:00",
+        )
+        .await;
+
+        let conv_id = "c-bkfilconv";
+        let prior_interactive_id = "s-bkfilprior";
+        insert_pre_migration_row(
+            &store,
+            prior_interactive_id,
+            r#"{"type":"none"}"#,
+            "",
+            Some("claude-sonnet-4-5"),
+            Some(r#"{"servers": {}}"#),
+            Some(conv_id),
+            None,
+            "2026-01-01T00:02:00.000+00:00",
+        )
+        .await;
+
+        let resumed_interactive_id = "s-bkfilresum";
+        insert_pre_migration_row(
+            &store,
+            resumed_interactive_id,
+            r#"{"type":"none"}"#,
+            "",
+            Some("claude-sonnet-4-5"),
+            None,
+            Some(conv_id),
+            Some(0),
+            "2026-01-01T00:03:00.000+00:00",
+        )
+        .await;
+
+        // Pre-condition: rows arrived with the new columns NULL.
+        for id in [
+            headless_id,
+            bundle_none_id,
+            prior_interactive_id,
+            resumed_interactive_id,
+        ] {
+            let raw: (
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ) = sqlx::query_as(
+                "SELECT mount_spec, agent_config, mode, resumed_from \
+                     FROM tasks_v2 WHERE id = ?1",
+            )
+            .bind(id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                raw,
+                (None, None, None, None),
+                "raw inserts should leave the new columns NULL pre-replay"
+            );
+        }
+
+        replay_session_shape_backfill(&store).await;
+
+        // Headless row: mode = headless { prompt }, mount_spec has 2 items
+        // with the original Bundle JSON preserved.
+        let headless =
+            fetch_session_shape(&store, &SessionId::from_str(headless_id).unwrap()).await;
+        let mode = parse_json(headless.mode.as_deref().unwrap());
+        assert_eq!(mode["type"], "headless");
+        assert_eq!(mode["prompt"], "do the thing");
+        let mount_spec = parse_json(headless.mount_spec.as_deref().unwrap());
+        assert_eq!(mount_spec["working_dir"], "repo");
+        let mounts = mount_spec["mounts"].as_array().unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0]["bundle"]["type"], "git_repository");
+        assert_eq!(mounts[0]["bundle"]["url"], "https://github.com/x/y");
+        assert_eq!(mounts[0]["bundle"]["rev"], "main");
+        assert_eq!(mounts[0]["session_id"], headless_id);
+        let agent_config = parse_json(headless.agent_config.as_deref().unwrap());
+        assert_eq!(agent_config["model"], "claude-sonnet-4-5");
+        assert!(agent_config["agent_name"].is_null());
+        assert!(agent_config["system_prompt"].is_null());
+        assert!(agent_config["mcp_config"].is_null());
+        assert!(headless.resumed_from.is_none());
+
+        // BundleSpec::None row: bundle backfilled as {"type":"none"}.
+        let none_row =
+            fetch_session_shape(&store, &SessionId::from_str(bundle_none_id).unwrap()).await;
+        let mount_spec = parse_json(none_row.mount_spec.as_deref().unwrap());
+        assert_eq!(mount_spec["mounts"][0]["bundle"]["type"], "none");
+        assert_eq!(mount_spec["mounts"].as_array().unwrap().len(), 2);
+
+        // Prior interactive row: mode = interactive with conversation_id +
+        // idle_timeout_secs = 0; mcp_config carried as a nested object (not a
+        // re-stringified value).
+        let prior =
+            fetch_session_shape(&store, &SessionId::from_str(prior_interactive_id).unwrap()).await;
+        let mode = parse_json(prior.mode.as_deref().unwrap());
+        assert_eq!(mode["type"], "interactive");
+        assert_eq!(mode["conversation_id"], conv_id);
+        assert_eq!(mode["idle_timeout_secs"], 0);
+        let agent_config = parse_json(prior.agent_config.as_deref().unwrap());
+        assert!(
+            agent_config["mcp_config"].is_object(),
+            "mcp_config must be embedded as a nested object, not a string"
+        );
+        assert!(agent_config["mcp_config"]["servers"].is_object());
+        // The prior session has no earlier session in the same conversation,
+        // so resumed_from stays NULL even though the row pre-dates a resume.
+        assert!(prior.resumed_from.is_none());
+
+        // Resumed interactive row: resumed_from points at the prior session
+        // in the same conversation (latest creation_time earlier than ours).
+        let resumed = fetch_session_shape(
+            &store,
+            &SessionId::from_str(resumed_interactive_id).unwrap(),
+        )
+        .await;
+        assert_eq!(
+            resumed.resumed_from.as_deref(),
+            Some(prior_interactive_id),
+            "resumed_from should point at the prior session in the chain"
+        );
     }
 }

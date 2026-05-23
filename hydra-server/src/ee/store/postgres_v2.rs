@@ -753,9 +753,13 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let mount_spec_json = crate::store::dual_write_mount_spec_json(id, &session.context)?;
+        let agent_config_json = crate::store::dual_write_agent_config_json(session)?;
+        let mode_json = crate::store::dual_write_mode_json(session);
+
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -789,6 +793,9 @@ impl PostgresStoreV2 {
                     .map(|n| n as i64),
             )
             .bind(usage_json.as_ref())
+            .bind(&mount_spec_json)
+            .bind(&agent_config_json)
+            .bind(&mode_json)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
