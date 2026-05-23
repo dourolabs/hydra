@@ -978,9 +978,16 @@ impl PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize patch_workflow: {e}"))
             })?;
 
+        let merge_policy_json = repo
+            .merge_policy
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to serialize merge_policy: {e}")))?;
+
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -990,6 +997,7 @@ impl PostgresStoreV2 {
             .bind(repo.default_image.as_deref())
             .bind(repo.deleted)
             .bind(&patch_workflow_json)
+            .bind(&merge_policy_json)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -1009,6 +1017,16 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let merge_policy = row
+            .merge_policy
+            .as_ref()
+            .map(|v| {
+                serde_json::from_value(v.clone()).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize merge_policy: {e}"))
+                })
+            })
+            .transpose()?;
+
         let mut repo = Repository::new(
             row.remote_url.clone(),
             row.default_branch.clone(),
@@ -1016,6 +1034,7 @@ impl PostgresStoreV2 {
             patch_workflow,
         );
         repo.deleted = row.deleted;
+        repo.merge_policy = merge_policy;
         Ok(repo)
     }
 
@@ -1570,6 +1589,7 @@ struct RepositoryRow {
     default_image: Option<String>,
     deleted: bool,
     patch_workflow: Option<Value>,
+    merge_policy: Option<Value>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -2087,7 +2107,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2125,7 +2145,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE is_latest = true
              ORDER BY id"
@@ -6299,6 +6319,82 @@ mod tests {
 
         let fetched = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched.item, repo, "Repository must round-trip all fields");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn repository_round_trip_merge_policy_some_v2(pool: PgStorePool) {
+        use hydra_common::repositories::{MergePolicy, MergerRule, Principal, ReviewerGroup};
+
+        let store = PostgresStoreV2::new(pool);
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
+        let mut config = sample_repository_config();
+        config.merge_policy = Some(MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: Some("core".to_string()),
+                any_of: vec![
+                    Principal::User(Username::from("ada").into()),
+                    Principal::User(Username::from("grace").into()),
+                ],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: Some(MergerRule {
+                any_of: vec![Principal::User(Username::from("ada").into())],
+            }),
+        });
+
+        store
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name, false).await.unwrap();
+        assert_eq!(fetched.item, config);
+        assert_eq!(fetched.item.merge_policy, config.merge_policy);
+
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].1.item.merge_policy, config.merge_policy);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn repository_round_trip_merge_policy_none_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
+        let config = sample_repository_config();
+        assert!(config.merge_policy.is_none());
+
+        store
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name, false).await.unwrap();
+        assert!(fetched.item.merge_policy.is_none());
+        assert_eq!(fetched.item, config);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migration_adds_merge_policy_column_to_repositories_v2(pool: PgStorePool) {
+        let row: (String, String, String) = sqlx::query_as(
+            "SELECT column_name, data_type, is_nullable \
+             FROM information_schema.columns \
+             WHERE table_schema = 'metis' \
+               AND table_name = 'repositories_v2' \
+               AND column_name = 'merge_policy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("merge_policy column should exist on metis.repositories_v2 after migrations");
+
+        assert_eq!(row.1, "jsonb", "merge_policy should be JSONB");
+        assert_eq!(row.2, "YES", "merge_policy should be nullable");
     }
 
     /// Round-trip serialization: add then get; fetched entity must equal original.
