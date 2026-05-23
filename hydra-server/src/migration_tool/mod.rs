@@ -5,9 +5,12 @@
 //! See `state.rs` for the `migrate-state` pass which copies
 //! `conversation_session_state` (postgres `metis.conversation_session_state`,
 //! sqlite `conversations.session_state` column) into `session_state` keyed on
-//! the producing session id. The follow-up `migrate-events` pass lands
-//! separately and will reuse the [`Backend`] / [`PlanEntry`] scaffolding here.
+//! the producing session id. See `events.rs` for the `migrate-events` pass
+//! which partitions `conversation_events_v2` user/assistant message rows
+//! by the active session at write time and writes them to `session_events*`
+//! (design §3.5 step 3).
 
+pub mod events;
 pub mod state;
 
 use anyhow::{Context, Result};
