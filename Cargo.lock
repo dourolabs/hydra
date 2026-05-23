@@ -2296,6 +2296,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "chrono",
+ "clap",
  "dashmap",
  "futures",
  "git2",
