@@ -6,10 +6,13 @@
 //!
 //! * `migrate-state` — copy `conversation_session_state` rows into the new
 //!   `session_state` storage, keyed on the producing session id
-//!   (design §3.5 step 4). Lands in this PR.
+//!   (design §3.5 step 4).
 //! * `migrate-events` — copy `conversation_events_v2` user/assistant
 //!   message rows into `session_events_v2`, partitioned by the active
-//!   session at write time. Lands in the follow-up PR (Phase C step 8).
+//!   session at write time (design §3.5 step 3 + §6 step 8). Supports
+//!   `--up-to <TIMESTAMP>` for clean cut-over with the dual-write path
+//!   (PR-1, `i-aankjvnz`): only source rows `created_at < T` are migrated,
+//!   leaving newer rows for the dual-write path.
 //!
 //! # Run order & prerequisites
 //!
@@ -23,9 +26,15 @@
 //! Recommended sequence on a deployed db:
 //!
 //! ```text
+//! # 1. Inspect + apply the state-blob migration.
 //! hydra-migrate-sessions migrate-state --dsn <DSN> --dry-run
-//! # eyeball the JSONL plan, then:
 //! hydra-migrate-sessions migrate-state --dsn <DSN>
+//!
+//! # 2. Inspect + apply the historical-events migration. Pass --up-to
+//! #    with the dual-write cut-over timestamp to leave anything newer
+//! #    to the worker dual-write path (PR-1, i-aankjvnz).
+//! hydra-migrate-sessions migrate-events --dsn <DSN> --up-to <T> --dry-run
+//! hydra-migrate-sessions migrate-events --dsn <DSN> --up-to <T>
 //! ```
 //!
 //! # Expected runtime
@@ -58,9 +67,10 @@
 //! `action` is one of `"would-write"` / `"would-skip"` (dry-run) or
 //! `"wrote"` / `"skipped"` (live).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use hydra_server::migration_tool::{Backend, state};
+use hydra_server::migration_tool::{Backend, events, state};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -78,6 +88,11 @@ enum Command {
     /// Copy `conversation_session_state` rows into `session_state`, keyed on
     /// the producing session id. Re-running is a no-op.
     MigrateState(MigrateStateArgs),
+    /// Partition historical `conversation_events_v2` user/assistant message
+    /// rows by the active session at write time and write them to
+    /// `session_events*`. Re-running is a no-op (sessions that already have
+    /// rows are skipped).
+    MigrateEvents(MigrateEventsArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -97,6 +112,28 @@ struct MigrateStateArgs {
     dry_run: bool,
 }
 
+#[derive(Debug, clap::Args)]
+struct MigrateEventsArgs {
+    /// Database DSN. Same scheme rules as `migrate-state`: `sqlite:<path>`
+    /// or `postgres(ql)://USER:PASSWORD@HOST/DB`.
+    #[arg(long, env = "DATABASE_URL")]
+    dsn: String,
+
+    /// Print the migration plan as JSON Lines without writing anything.
+    /// The dry-run output matches the live-run plan exactly except for the
+    /// `action` field (`would-*` vs `wrote`/`skipped`).
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+
+    /// Cut-over timestamp (ISO-8601). Only source rows whose `created_at`
+    /// is strictly less than this value are migrated; anything `>= T` is
+    /// left for the worker dual-write path (PR-1, `i-aankjvnz`). Pass the
+    /// time you enabled dual-writes in production. Omit to migrate every
+    /// historical row (only safe if dual-writes are NOT yet running).
+    #[arg(long, value_name = "TIMESTAMP")]
+    up_to: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -111,6 +148,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::MigrateState(args) => run_migrate_state(args).await,
+        Command::MigrateEvents(args) => run_migrate_events(args).await,
     }
 }
 
@@ -124,6 +162,32 @@ async fn run_migrate_state(args: MigrateStateArgs) -> Result<()> {
         "migrate-state {}: {} conversation_session_state row(s) processed",
         if args.dry_run { "dry-run" } else { "complete" },
         plan.len(),
+    );
+    Ok(())
+}
+
+async fn run_migrate_events(args: MigrateEventsArgs) -> Result<()> {
+    let up_to = match args.up_to.as_deref() {
+        None => None,
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .with_context(|| format!("parsing --up-to value '{s}' as ISO-8601"))?,
+        ),
+    };
+    let backend = Backend::connect(&args.dsn).await?;
+    let plan = events::run(&backend, args.dry_run, up_to).await?;
+    for entry in &plan {
+        events::emit_jsonl(entry)?;
+    }
+    eprintln!(
+        "migrate-events {}: {} conversation_events row(s) processed{}",
+        if args.dry_run { "dry-run" } else { "complete" },
+        plan.len(),
+        match up_to {
+            Some(t) => format!(" (--up-to {})", t.to_rfc3339()),
+            None => String::new(),
+        },
     );
     Ok(())
 }
