@@ -287,7 +287,11 @@ describe("Sessions", () => {
     const created = await client.createSession(sessionPayload);
     const ctx = await client.getSessionContext(created.session_id);
     expect(ctx.prompt).toBe("Contract test session prompt");
-    expect(ctx.request_context.type).toBe("git_repository");
+    const firstItem = ctx.mount_spec.mounts[0];
+    expect(firstItem.type).toBe("bundle");
+    if (firstItem.type === "bundle") {
+      expect(firstItem.bundle.type).toBe("git_repository");
+    }
   });
 
   it("get session logs", async () => {

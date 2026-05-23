@@ -169,7 +169,7 @@ mod tests {
     use reqwest::Client as HttpClient;
 
     use crate::client::HydraClient;
-    use crate::command::sessions::mounts::{self, Mount};
+    use crate::command::sessions::mounts::Mount;
     use crate::test_utils::ids::task_id;
 
     fn dummy_client() -> Arc<dyn HydraClientInterface> {
@@ -221,16 +221,13 @@ mod tests {
             .collect()
     }
 
-    /// `instantiate` on the standard 3-item spec must produce the same
-    /// concrete mount types in the same order as `mounts::build_mounts`,
-    /// pointing at the same target paths.
+    /// `instantiate` on the standard 3-item spec must produce the expected
+    /// concrete mount types in `[Bundle, BuildCache, Documents]` order,
+    /// each pointing at the target paths the spec specifies.
     #[test]
-    fn three_item_spec_matches_build_mounts() {
+    fn three_item_spec_produces_bundle_buildcache_documents() {
         let dest = PathBuf::from("/tmp/example-dest");
         let job = task_id("t-spec-3");
-        let issue_branch_id = Some("i-spec-3".to_string());
-        let github_token = Some("ghp_xxx".to_string());
-        let worker_home_dir = Some(PathBuf::from("/tmp/worker-home"));
         let bundle = dummy_bundle();
         let cache_ctx = dummy_cache_context();
         let repo_name = dummy_repo_name();
@@ -240,15 +237,15 @@ mod tests {
             vec![
                 MountItem::Bundle {
                     target: rel("repo"),
-                    bundle: bundle.clone(),
+                    bundle,
                     session_id: job.clone(),
-                    issue_branch_id: issue_branch_id.clone(),
+                    issue_branch_id: Some("i-spec-3".to_string()),
                 },
                 MountItem::BuildCache {
                     repo_target: rel("repo"),
-                    service_repo_name: repo_name.clone(),
-                    context: cache_ctx.clone(),
-                    session_id: job.clone(),
+                    service_repo_name: repo_name,
+                    context: cache_ctx,
+                    session_id: job,
                 },
                 MountItem::Documents {
                     target: rel("documents"),
@@ -259,8 +256,8 @@ mod tests {
         let from_spec = instantiate(
             &spec,
             InstantiateInputs {
-                github_token: github_token.clone(),
-                worker_home_dir: worker_home_dir.clone(),
+                github_token: Some("ghp_xxx".to_string()),
+                worker_home_dir: Some(PathBuf::from("/tmp/worker-home")),
                 dest: &dest,
                 client: dummy_client(),
             },
@@ -269,41 +266,19 @@ mod tests {
 
         assert_eq!(from_spec.working_dir, dest.join("repo"));
         assert_eq!(from_spec.mounts.len(), 3);
-
-        let legacy = mounts::build_mounts(
-            &dest.join("repo"),
-            &dest.join("documents"),
-            dummy_client(),
-            &bundle,
-            Some(&cache_ctx),
-            Some(&repo_name),
-            github_token,
-            issue_branch_id,
-            worker_home_dir,
-            job,
-        )
-        .expect("build_mounts");
-
-        assert_eq!(
-            fingerprints(&from_spec.mounts),
-            fingerprints(&legacy),
-            "spec-instantiated mounts must match legacy build_mounts in order and per-mount phase labels"
-        );
         assert_eq!(
             fingerprints(&from_spec.mounts),
             vec![
                 ("repo checkout", Some("git finalize")),
                 ("cache apply", Some("cache upload")),
                 // `DocumentsMount::save_phase` is `None` until `setup` flips
-                // its `synced` flag, which only happens at runtime — both
-                // pre-setup snapshots agree here.
+                // its `synced` flag, which only happens at runtime.
                 ("document sync", None),
             ],
         );
     }
 
-    /// A spec with no `BuildCache` item produces just `[Bundle, Documents]`
-    /// — same shape as the legacy `build_mounts` output for a bundle-only run.
+    /// A spec with no `BuildCache` item produces just `[Bundle, Documents]`.
     #[test]
     fn two_item_spec_skips_build_cache() {
         let dest = PathBuf::from("/tmp/example-dest");

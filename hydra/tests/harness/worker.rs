@@ -321,9 +321,7 @@ async fn drive_worker_lifecycle(
         Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
     };
     let WorkerContext {
-        request_context,
         mut variables,
-        build_cache,
         mount_spec,
         ..
     } = context;
@@ -340,75 +338,35 @@ async fn drive_worker_lifecycle(
     let dest = temp_dir.path().to_path_buf();
 
     let worker_home_dir = std::env::var_os("HOME").map(PathBuf::from);
-    let issue_branch_id = variables.get(ENV_HYDRA_ISSUE_ID).cloned();
     let github_token = client.get_github_token().await.ok();
 
-    let (repo_path, mut mounts) = match mount_spec.as_ref() {
-        Some(spec) => {
-            if let Some(docs_target) = mounts::spec::find_documents_dir(spec) {
-                variables.insert(
-                    ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-                    dest.join(docs_target).to_string_lossy().into_owned(),
-                );
-            }
-            let result = mounts::spec::instantiate(
-                spec,
-                mounts::spec::InstantiateInputs {
-                    github_token: github_token.clone(),
-                    worker_home_dir: worker_home_dir.clone(),
-                    dest: &dest,
-                    client: Arc::clone(&client),
-                },
+    if let Some(docs_target) = mounts::spec::find_documents_dir(&mount_spec) {
+        variables.insert(
+            ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+            dest.join(docs_target).to_string_lossy().into_owned(),
+        );
+    }
+    let (repo_path, mounts) = match mounts::spec::instantiate(
+        &mount_spec,
+        mounts::spec::InstantiateInputs {
+            github_token: github_token.clone(),
+            worker_home_dir: worker_home_dir.clone(),
+            dest: &dest,
+            client: Arc::clone(&client),
+        },
+    ) {
+        Ok(mounts::spec::InstantiatedMounts {
+            working_dir,
+            mounts,
+        }) => (working_dir, mounts),
+        Err(err) => {
+            return (
+                outputs.lock().unwrap().clone(),
+                Err(anyhow::anyhow!("failed to instantiate MountSpec: {err}")),
             );
-            match result {
-                Ok(mounts::spec::InstantiatedMounts {
-                    working_dir,
-                    mounts,
-                }) => (working_dir, mounts),
-                Err(err) => {
-                    return (
-                        outputs.lock().unwrap().clone(),
-                        Err(anyhow::anyhow!("failed to instantiate MountSpec: {err}")),
-                    );
-                }
-            }
-        }
-        None => {
-            let repo_path = dest.join("repo");
-            let documents_path = dest.join("documents");
-            variables.insert(
-                ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-                documents_path.to_string_lossy().into_owned(),
-            );
-
-            let service_repo_name = match hydra::command::patches::resolve_service_repo_name(
-                client.as_ref(),
-                Some(job_id),
-            )
-            .await
-            {
-                Ok(name) => name,
-                Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
-            };
-
-            let mounts = match mounts::build_mounts(
-                &repo_path,
-                &documents_path,
-                Arc::clone(&client),
-                &request_context,
-                build_cache.as_ref(),
-                service_repo_name.as_ref(),
-                github_token,
-                issue_branch_id,
-                worker_home_dir,
-                job_id.clone(),
-            ) {
-                Ok(m) => m,
-                Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
-            };
-            (repo_path, mounts)
         }
     };
+    let mut mounts = mounts;
 
     let mut errors: Vec<anyhow::Error> = Vec::new();
 

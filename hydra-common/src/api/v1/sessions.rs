@@ -527,44 +527,35 @@ impl<'de> Deserialize<'de> for MountItem {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct WorkerContext {
-    pub request_context: Bundle,
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build_cache: Option<BuildCacheContext>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
     /// Interactive-only settings. `Some` when the worker should run in
     /// interactive mode; `None` for a one-shot session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactive: Option<InteractiveOptions>,
-    /// Server-supplied mount layout. `Some` when the server has populated a
-    /// spec; `None` for older servers, where the worker falls back to the
-    /// legacy `request_context` + `build_cache` derivation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mount_spec: Option<MountSpec>,
+    /// Server-supplied mount layout. The server always populates this; the
+    /// worker iterates `mount_spec.mounts` to build its per-run mounts.
+    pub mount_spec: MountSpec,
 }
 
 impl WorkerContext {
     pub fn new(
-        request_context: Bundle,
         prompt: String,
         model: Option<String>,
         variables: HashMap<String, String>,
-        build_cache: Option<BuildCacheContext>,
         mcp_config: Option<McpConfig>,
         interactive: Option<InteractiveOptions>,
-        mount_spec: Option<MountSpec>,
+        mount_spec: MountSpec,
     ) -> Self {
         Self {
-            request_context,
             prompt,
             model,
             variables,
-            build_cache,
             mcp_config,
             interactive,
             mount_spec,
@@ -1396,14 +1387,12 @@ mod tests {
             }
         });
         let context = WorkerContext::new(
-            Bundle::None,
             "test prompt".to_string(),
             None,
             HashMap::new(),
-            None,
             Some(mcp_config.clone()),
             None,
-            None,
+            standard_mount_spec(false),
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1417,14 +1406,12 @@ mod tests {
     fn worker_context_serializes_interactive_options() {
         let opts = InteractiveOptions::new(None, Some(600), Some(42));
         let context = WorkerContext::new(
-            Bundle::None,
             "test prompt".to_string(),
             None,
             HashMap::new(),
             None,
-            None,
             Some(opts.clone()),
-            None,
+            standard_mount_spec(false),
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1439,14 +1426,12 @@ mod tests {
     #[test]
     fn worker_context_omits_interactive_when_none() {
         let context = WorkerContext::new(
-            Bundle::None,
             "test prompt".to_string(),
             None,
             HashMap::new(),
             None,
             None,
-            None,
-            None,
+            standard_mount_spec(false),
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1603,49 +1588,55 @@ mod tests {
     }
 
     #[test]
-    fn worker_context_deserializes_without_mount_spec() {
+    fn worker_context_requires_mount_spec_for_deserialization() {
         let json = serde_json::json!({
-            "request_context": {"type": "none"},
             "prompt": "hello",
             "variables": {},
         });
-        let ctx: WorkerContext = serde_json::from_value(json).unwrap();
-        assert!(ctx.mount_spec.is_none());
+        let result: Result<WorkerContext, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "WorkerContext deserialization must fail without mount_spec",
+        );
     }
 
     #[test]
-    fn worker_context_omits_mount_spec_when_none() {
+    fn worker_context_rejects_legacy_request_context_and_build_cache() {
+        let spec = standard_mount_spec(true);
         let context = WorkerContext::new(
-            Bundle::None,
             "test prompt".to_string(),
             None,
             HashMap::new(),
             None,
             None,
-            None,
-            None,
+            spec.clone(),
         );
         let json = serde_json::to_value(&context).unwrap();
-        assert!(json.get("mount_spec").is_none());
+        assert!(
+            json.get("request_context").is_none(),
+            "serialized payload must not include legacy request_context"
+        );
+        assert!(
+            json.get("build_cache").is_none(),
+            "serialized payload must not include legacy build_cache"
+        );
     }
 
     #[test]
     fn worker_context_serializes_mount_spec_when_present() {
         let spec = standard_mount_spec(true);
         let context = WorkerContext::new(
-            Bundle::None,
             "test prompt".to_string(),
             None,
             HashMap::new(),
             None,
             None,
-            None,
-            Some(spec.clone()),
+            spec.clone(),
         );
         let json = serde_json::to_value(&context).unwrap();
         assert!(json.get("mount_spec").is_some());
         let parsed: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.mount_spec, Some(spec));
+        assert_eq!(parsed.mount_spec, spec);
     }
 
     #[test]

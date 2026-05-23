@@ -283,9 +283,17 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
         .await?;
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
+    let bundle_item = worker_context
+        .mount_spec
+        .mounts
+        .first()
+        .expect("mount_spec must have at least the bundle item");
+    let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
+        panic!("expected Bundle item first, got {bundle_item:?}");
+    };
     assert_eq!(
-        worker_context.request_context,
-        v1::sessions::Bundle::GitRepository {
+        bundle,
+        &v1::sessions::Bundle::GitRepository {
             url: "https://override.example.com/repo.git".to_string(),
             rev: "issue-branch".to_string(),
         }
@@ -374,70 +382,22 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
         .await?;
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
+    let bundle_item = worker_context
+        .mount_spec
+        .mounts
+        .first()
+        .expect("mount_spec must have at least the bundle item");
+    let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
+        panic!("expected Bundle item first, got {bundle_item:?}");
+    };
     assert_eq!(
-        worker_context.request_context,
-        v1::sessions::Bundle::GitRepository {
+        bundle,
+        &v1::sessions::Bundle::GitRepository {
             url: repo.remote_url.clone(),
             rev: "issue-branch".to_string(),
         }
     );
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn session_context_includes_build_cache_settings() -> anyhow::Result<()> {
-    let mut config = test_app_config();
-    config.build_cache = BuildCacheSection {
-        storage: Some(BuildCacheStorageConfig::FileSystem {
-            root_dir: "/tmp/hydra-build-cache".to_string(),
-        }),
-        include: Vec::new(),
-        exclude: Vec::new(),
-        home_include: Vec::new(),
-        home_exclude: Vec::new(),
-        max_entries_per_repo: Some(5),
-    };
-
-    let store = Arc::new(MemoryStore::new());
-    let state = AppState::new(
-        Arc::new(config),
-        None,
-        Arc::new(ServiceState::default()),
-        store.clone(),
-        Arc::new(MockJobEngine::new()),
-        test_secret_manager(),
-    );
-    let server = spawn_test_server_with_state(state, store).await?;
-
-    let client = test_client();
-    let response = client
-        .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "prompt": "0" }))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: CreateSessionResponse = response.json().await?;
-    let context_response = client
-        .get(format!(
-            "{}/v1/sessions/{}/context",
-            server.base_url(),
-            body.session_id.as_ref()
-        ))
-        .send()
-        .await?;
-
-    assert!(context_response.status().is_success());
-    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
-    let build_cache = worker_context.build_cache.expect("build cache");
-    assert_eq!(
-        build_cache.storage,
-        BuildCacheStorageConfig::FileSystem {
-            root_dir: "/tmp/hydra-build-cache".to_string(),
-        }
-    );
-    assert_eq!(build_cache.settings.max_entries_per_repo, Some(5));
     Ok(())
 }
 
@@ -1256,9 +1216,17 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
+    let bundle_item = body
+        .mount_spec
+        .mounts
+        .first()
+        .expect("mount_spec must have at least the bundle item");
+    let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
+        panic!("expected Bundle item first, got {bundle_item:?}");
+    };
     assert_eq!(
-        body.request_context,
-        v1::sessions::Bundle::GitRepository {
+        bundle,
+        &v1::sessions::Bundle::GitRepository {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         }
@@ -1553,23 +1521,7 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     let server = spawn_test_server_with_state(state, store).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    // Legacy fields are still populated.
-    assert_eq!(
-        context.request_context,
-        v1::sessions::Bundle::GitRepository {
-            url: repo.remote_url.clone(),
-            rev: "develop".to_string(),
-        }
-    );
-    let legacy_cache = context.build_cache.as_ref().expect("legacy build_cache");
-    assert_eq!(
-        legacy_cache.storage,
-        BuildCacheStorageConfig::FileSystem {
-            root_dir: "/tmp/hydra-build-cache".to_string(),
-        }
-    );
-
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    let spec = &context.mount_spec;
     assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
     assert_eq!(spec.mounts.len(), 3);
     match &spec.mounts[0] {
@@ -1641,10 +1593,7 @@ async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyh
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    // No build cache configured -> legacy build_cache None too.
-    assert!(context.build_cache.is_none());
-
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1699,11 +1648,9 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
     let server = spawn_test_server_with_state(state, store).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    // Build cache is still emitted on the legacy field (it's a server-wide config).
-    assert!(context.build_cache.is_some());
-
-    // But the spec has no BuildCache item because there's no service repo name.
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    // The spec has no BuildCache item because there's no service repo name,
+    // even though the server itself has build_cache configured.
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1728,7 +1675,7 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     match &spec.mounts[0] {
         MountItem::Bundle {
@@ -1767,7 +1714,7 @@ async fn get_session_context_propagates_issue_branch_id_into_bundle_item() -> an
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    let spec = &context.mount_spec;
     match &spec.mounts[0] {
         MountItem::Bundle {
             issue_branch_id, ..
@@ -1798,7 +1745,7 @@ async fn get_session_context_bundle_issue_branch_id_absent_when_env_var_missing(
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = context.mount_spec.as_ref().expect("mount_spec populated");
+    let spec = &context.mount_spec;
     match &spec.mounts[0] {
         MountItem::Bundle {
             issue_branch_id, ..

@@ -36,7 +36,6 @@ pub async fn get_session_context(
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
 
-    let build_cache = state.config.build_cache.to_context();
     let interactive = task.interactive.as_ref().map(|opts| {
         v1::sessions::InteractiveOptions::new(
             opts.conversation_id.clone(),
@@ -51,42 +50,8 @@ pub async fn get_session_context(
         _ => None,
     };
     let issue_branch_id = env_vars.get(ENV_HYDRA_ISSUE_ID).cloned();
-    let mount_spec = build_mount_spec(
-        bundle.clone(),
-        build_cache.clone(),
-        service_repo_name,
-        session_id.clone(),
-        issue_branch_id,
-    );
-
-    let context = v1::sessions::WorkerContext::new(
-        bundle,
-        task.prompt,
-        task.model.clone(),
-        env_vars,
-        build_cache,
-        task.mcp_config.clone(),
-        interactive,
-        Some(mount_spec),
-    );
-    info!(session_id = %session_id, "get_session_context completed");
-    Ok(Json(context))
-}
-
-/// Build the standard 3-item (or 2-item, when no build cache) mount spec for a
-/// session. The order is `[Bundle, BuildCache?, Documents]`, matching the
-/// gating in the worker's legacy `mounts::build_mounts`. `working_dir` is
-/// always `"repo"` for the current standard layout.
-fn build_mount_spec(
-    bundle: v1::sessions::Bundle,
-    build_cache: Option<hydra_common::BuildCacheContext>,
-    service_repo_name: Option<hydra_common::RepoName>,
-    session_id: hydra_common::SessionId,
-    issue_branch_id: Option<String>,
-) -> MountSpec {
     let repo_target = RelativePath::new("repo").expect("static `repo` path is valid");
     let docs_target = RelativePath::new("documents").expect("static `documents` path is valid");
-
     let mut mounts = Vec::with_capacity(3);
     mounts.push(MountItem::Bundle {
         target: repo_target.clone(),
@@ -94,16 +59,27 @@ fn build_mount_spec(
         session_id: session_id.clone(),
         issue_branch_id,
     });
-    if let (Some(name), Some(cache)) = (service_repo_name, build_cache) {
+    if let (Some(name), Some(cache)) = (service_repo_name, state.config.build_cache.to_context()) {
         mounts.push(MountItem::BuildCache {
             repo_target: repo_target.clone(),
             service_repo_name: name,
             context: cache,
-            session_id,
+            session_id: session_id.clone(),
         });
     }
     mounts.push(MountItem::Documents {
         target: docs_target,
     });
-    MountSpec::new(repo_target, mounts)
+    let mount_spec = MountSpec::new(repo_target, mounts);
+
+    let context = v1::sessions::WorkerContext::new(
+        task.prompt,
+        task.model.clone(),
+        env_vars,
+        task.mcp_config.clone(),
+        interactive,
+        mount_spec,
+    );
+    info!(session_id = %session_id, "get_session_context completed");
+    Ok(Json(context))
 }
