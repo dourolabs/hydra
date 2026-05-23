@@ -38,9 +38,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::OnceCell;
 
+#[cfg(test)]
+use super::{AgentConfig, SessionMode};
 use super::{
-    ConversationEventSummary, InteractiveOptions, ReadOnlyStore, Session, SessionEvent,
-    SessionEventSummary, Status, Store, StoreError, TaskError, TaskStatusLog,
+    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary, Status,
+    Store, StoreError, TaskError, TaskStatusLog, agent_config_from_legacy_columns,
+    mode_from_legacy_columns, mount_spec_from_legacy_columns,
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
@@ -329,6 +332,10 @@ struct TaskRow {
     start_time: Option<String>,
     #[sqlx(default)]
     end_time: Option<String>,
+    // `interactive` is kept in the row for schema parity but no longer
+    // consulted by the new-shape read path; `mode` (preferred) and
+    // `conversation_id` (legacy fallback) carry the same information.
+    #[allow(dead_code)]
     #[sqlx(default)]
     interactive: bool,
     #[sqlx(default)]
@@ -337,6 +344,19 @@ struct TaskRow {
     conversation_resume_from: Option<i64>,
     #[sqlx(default)]
     usage: Option<String>,
+    // Phase D step 12 (PR-1) — populated by the dual-write path on every
+    // INSERT and read here in preference to the legacy columns. Nullable
+    // because pre-PR-1 rows technically could have NULL values (the
+    // migration backfilled them in the same step, but the read path keeps
+    // the fallback defensively).
+    #[sqlx(default)]
+    mount_spec: Option<String>,
+    #[sqlx(default)]
+    agent_config: Option<String>,
+    #[sqlx(default)]
+    mode: Option<String>,
+    #[sqlx(default)]
+    resumed_from: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1271,8 +1291,19 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
         })?;
 
+        // Use the transitional `context` field as the legacy column. This
+        // preserves `ServiceRepository { name, rev }` rows during PR-2; PR-3
+        // moves the source of truth into the mount_spec.
         let context_json = serde_json::to_string(&session.context)
             .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
+        let legacy_prompt = session.mode.prompt_for_legacy_wire().to_string();
+        let legacy_model = session.agent_config.model.clone();
+        let legacy_mcp_config = session.agent_config.mcp_config.clone();
+        let legacy_interactive = session.is_interactive();
+        let legacy_conversation_id = session.conversation_id().cloned();
+        let legacy_conversation_resume_from =
+            session.mode.conversation_resume_from().map(|n| n as i64);
+
         let env_vars_json = serde_json::to_string(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
         let error_json = session
@@ -1293,8 +1324,7 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let mcp_config_json = session
-            .mcp_config
+        let mcp_config_json = legacy_mcp_config
             .as_ref()
             .map(|c| {
                 serde_json::to_string(c).map_err(|err| {
@@ -1311,17 +1341,20 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let mount_spec_json =
-            serde_json::to_string(&super::dual_write_mount_spec_json(id, &session.context)?)
-                .map_err(|e| {
-                    StoreError::Internal(format!("failed to serialize mount_spec: {e}"))
-                })?;
+        let mount_spec_json = serde_json::to_string(&super::dual_write_mount_spec_json(
+            id, session,
+        )?)
+        .map_err(|e| StoreError::Internal(format!("failed to serialize mount_spec: {e}")))?;
         let agent_config_json =
             serde_json::to_string(&super::dual_write_agent_config_json(session)?).map_err(|e| {
                 StoreError::Internal(format!("failed to serialize agent_config: {e}"))
             })?;
-        let mode_json = serde_json::to_string(&super::dual_write_mode_json(session))
+        let mode_json = serde_json::to_string(&super::dual_write_mode_json(session)?)
             .map_err(|e| StoreError::Internal(format!("failed to serialize mode: {e}")))?;
+        let resumed_from_str = session
+            .resumed_from
+            .as_ref()
+            .map(|s| s.as_ref().to_string());
         let status_str = super::status_to_db_str(session.status);
         let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
@@ -1343,18 +1376,18 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, created_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, 1)"
                 )
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(&legacy_prompt)
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
             .bind(session.image.as_deref())
-            .bind(session.model.as_deref())
+            .bind(legacy_model.as_deref())
             .bind(&env_vars_json)
             .bind(session.cpu_limit.as_deref())
             .bind(session.memory_limit.as_deref())
@@ -1369,37 +1402,32 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .bind(session.interactive.is_some())
-            .bind(session.conversation_id().map(|c| c.as_ref()))
-            .bind(
-                session
-                    .interactive
-                    .as_ref()
-                    .and_then(|opts| opts.conversation_resume_from)
-                    .map(|n| n as i64),
-            )
+            .bind(legacy_interactive)
+            .bind(legacy_conversation_id.as_ref().map(|c| c.as_ref()))
+            .bind(legacy_conversation_resume_from)
             .bind(&usage_json)
             .bind(&mount_spec_json)
             .bind(&agent_config_json)
             .bind(&mode_json)
+            .bind(resumed_from_str.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, 1)"
                 )
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(&legacy_prompt)
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
             .bind(session.image.as_deref())
-            .bind(session.model.as_deref())
+            .bind(legacy_model.as_deref())
             .bind(&env_vars_json)
             .bind(session.cpu_limit.as_deref())
             .bind(session.memory_limit.as_deref())
@@ -1413,19 +1441,14 @@ impl SqliteStore {
             .bind(creation_time_str.as_deref())
             .bind(start_time_str.as_deref())
             .bind(end_time_str.as_deref())
-            .bind(session.interactive.is_some())
-            .bind(session.conversation_id().map(|c| c.as_ref()))
-            .bind(
-                session
-                    .interactive
-                    .as_ref()
-                    .and_then(|opts| opts.conversation_resume_from)
-                    .map(|n| n as i64),
-            )
+            .bind(legacy_interactive)
+            .bind(legacy_conversation_id.as_ref().map(|c| c.as_ref()))
+            .bind(legacy_conversation_resume_from)
             .bind(&usage_json)
             .bind(&mount_spec_json)
             .bind(&agent_config_json)
             .bind(&mode_json)
+            .bind(resumed_from_str.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1437,8 +1460,6 @@ impl SqliteStore {
     }
 
     fn row_to_session(&self, row: &TaskRow) -> Result<Session, StoreError> {
-        let context = serde_json::from_str(&row.context)
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
         let env_vars: HashMap<String, String> = serde_json::from_str(&row.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize env_vars: {e}")))?;
         let error: Option<TaskError> = row
@@ -1498,33 +1519,6 @@ impl SqliteStore {
             .map(parse_sqlite_timestamp)
             .transpose()?;
 
-        let mcp_config: Option<serde_json::Value> = row
-            .mcp_config
-            .as_deref()
-            .map(|s| {
-                serde_json::from_str(s).map_err(|e| {
-                    StoreError::Internal(format!("failed to deserialize mcp_config: {e}"))
-                })
-            })
-            .transpose()?;
-
-        let conversation_id = row
-            .conversation_id
-            .as_deref()
-            .map(|c| {
-                c.parse::<ConversationId>()
-                    .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
-            })
-            .transpose()?;
-        let interactive = if row.interactive {
-            Some(InteractiveOptions {
-                conversation_id,
-                conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
-            })
-        } else {
-            None
-        };
-
         let usage = row
             .usage
             .as_deref()
@@ -1534,19 +1528,57 @@ impl SqliteStore {
             })
             .transpose()?;
 
+        // Phase D step 13: prefer the new columns, fall back to deriving from
+        // legacy columns if a row slipped through with NULLs (defensive —
+        // PR-1's migration backfilled every row).
+        let mount_spec = match row.mount_spec.as_deref() {
+            Some(s) => serde_json::from_str(s).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize mount_spec: {e}"))
+            })?,
+            None => mount_spec_from_legacy_columns(&row.id, &row.context)?,
+        };
+        let agent_config = match row.agent_config.as_deref() {
+            Some(s) => serde_json::from_str(s).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
+            })?,
+            None => {
+                agent_config_from_legacy_columns(row.model.as_deref(), row.mcp_config.as_deref())?
+            }
+        };
+        let mode = match row.mode.as_deref() {
+            Some(s) => serde_json::from_str(s)
+                .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?,
+            None => mode_from_legacy_columns(
+                &row.prompt,
+                row.conversation_id.as_deref(),
+                row.conversation_resume_from.map(|n| n as usize),
+            )?,
+        };
+        let resumed_from = row
+            .resumed_from
+            .as_deref()
+            .map(|s| {
+                s.parse::<SessionId>()
+                    .map_err(|e| StoreError::Internal(format!("invalid resumed_from: {e}")))
+            })
+            .transpose()?;
+
+        let context: crate::domain::sessions::BundleSpec = serde_json::from_str(&row.context)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
+
         Ok(Session {
-            prompt: row.prompt.clone(),
-            context,
-            spawned_from,
             creator,
+            spawned_from,
+            resumed_from,
+            agent_config,
+            mount_spec,
+            context,
             image: row.image.clone(),
-            model: row.model.clone(),
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
             secrets,
-            mcp_config,
-            interactive,
+            mode,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -3193,7 +3225,8 @@ impl ReadOnlyStore for SqliteStore {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at,
-                 creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
+                 creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage,
+                 mount_spec, agent_config, mode, resumed_from
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -3218,7 +3251,8 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage,
+                 mount_spec, agent_config, mode, resumed_from
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -3252,7 +3286,8 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.mcp_config, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
-             t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage \
+             t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage, \
+             t.mount_spec, t.agent_config, t.mode, t.resumed_from \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
@@ -3331,7 +3366,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, mcp_config, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -5592,7 +5627,6 @@ fn apply_pagination_sql_sqlite(
 mod tests {
     use super::*;
     use crate::domain::actors::{ActorId, ActorRef};
-    use crate::domain::sessions::BundleSpec;
     use chrono::Duration;
     use hydra_common::SessionId;
     use std::collections::HashSet;
@@ -7432,19 +7466,26 @@ mod tests {
     // ---- Task helpers ----
 
     fn spawn_task() -> Session {
+        spawn_task_with_prompt("test prompt")
+    }
+
+    fn spawn_task_with_prompt(prompt: &str) -> Session {
         Session::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
             None,
+            None,
+            AgentConfig::default(),
+            crate::app::sessions::mount_spec_for_session(
+                &crate::domain::sessions::BundleSpec::None,
+            ),
+            Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
             Status::Created,
             None,
             None,
@@ -7452,6 +7493,22 @@ mod tests {
     }
 
     // ---- Task tests ----
+
+    /// Rewrite any in-memory mount_spec placeholder session_ids on
+    /// `expected` to match a row's persisted id. Mirrors the dual-write
+    /// rewrite in `dual_write_mount_spec_json`, so round-trip equality
+    /// checks (`expected == fetched.item`) still hold for sessions that
+    /// were constructed with placeholder ids before insertion.
+    fn rewrite_mount_spec_session_ids(expected: &mut Session, sid: &SessionId) {
+        use hydra_common::api::v1::sessions::MountItem;
+        for item in expected.mount_spec.mounts.iter_mut() {
+            match item {
+                MountItem::Bundle { session_id, .. } => *session_id = sid.clone(),
+                MountItem::BuildCache { session_id, .. } => *session_id = sid.clone(),
+                _ => {}
+            }
+        }
+    }
 
     #[tokio::test]
     async fn task_add_and_get() {
@@ -7469,6 +7526,7 @@ mod tests {
         // add_task sets creation_time on the stored task
         let mut expected = task.clone();
         expected.creation_time = Some(now);
+        rewrite_mount_spec_session_ids(&mut expected, &task_id);
         assert_versioned(&fetched, &expected, 1);
         assert_eq!(fetched.item.status, Status::Created);
     }
@@ -7485,37 +7543,35 @@ mod tests {
     async fn task_versions_increment_and_latest_returned() {
         let store = create_test_store().await;
 
-        let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        let task = spawn_task_with_prompt("v1");
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut updated = spawn_task();
-        updated.prompt = "v2".to_string();
+        let updated = spawn_task_with_prompt("v2");
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_session(&task_id, false).await.unwrap();
-        assert_versioned(&fetched, &updated, 2);
+        let mut expected = updated.clone();
+        rewrite_mount_spec_session_ids(&mut expected, &task_id);
+        assert_versioned(&fetched, &expected, 2);
     }
 
     #[tokio::test]
     async fn task_get_versions_returns_ordered_entries() {
         let store = create_test_store().await;
 
-        let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        let task = spawn_task_with_prompt("v1");
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut v2 = spawn_task();
-        v2.prompt = "v2".to_string();
+        let v2 = spawn_task_with_prompt("v2");
         store
             .update_session(&task_id, v2, &ActorRef::test())
             .await
@@ -7525,8 +7581,18 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
-        assert_eq!(versions[0].item.prompt, "v1");
-        assert_eq!(versions[1].item.prompt, "v2");
+        assert_eq!(
+            versions[0].item.mode,
+            SessionMode::Headless {
+                prompt: "v1".to_string()
+            }
+        );
+        assert_eq!(
+            versions[1].item.mode,
+            SessionMode::Headless {
+                prompt: "v2".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -7621,15 +7687,13 @@ mod tests {
     async fn task_list_filters_by_text_search() {
         let store = create_test_store().await;
 
-        let mut task1 = spawn_task();
-        task1.prompt = "deploy to production".to_string();
+        let task1 = spawn_task_with_prompt("deploy to production");
         store
             .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut task2 = spawn_task();
-        task2.prompt = "run tests".to_string();
+        let task2 = spawn_task_with_prompt("run tests");
         store
             .add_session(task2, Utc::now(), &ActorRef::test())
             .await
@@ -7638,7 +7702,10 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].1.item.prompt, "deploy to production");
+        assert_eq!(
+            tasks[0].1.item.mode.prompt_for_legacy_wire(),
+            "deploy to production"
+        );
     }
 
     #[tokio::test]
@@ -7889,21 +7956,23 @@ mod tests {
     #[tokio::test]
     async fn task_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
+        let mcp_config = serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}});
         let mut task = Session::new(
-            "full test".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("alice"),
+            None,
+            None,
+            AgentConfig::new(None, Some("claude-3".to_string()), None, Some(mcp_config)),
+            crate::app::sessions::mount_spec_for_session(
+                &crate::domain::sessions::BundleSpec::None,
+            ),
             Some("my-image:v1".to_string()),
-            Some("claude-3".to_string()),
             HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
             Some("2".to_string()),
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
-            Some(
-                serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
-            ),
-            None,
+            SessionMode::Headless {
+                prompt: "full test".to_string(),
+            },
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {
@@ -7924,9 +7993,11 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_session(&task_id, false).await.unwrap();
-        // add_task sets creation_time on the stored task
+        // add_task sets creation_time on the stored task; rewrite the
+        // placeholder mount_spec session_ids to match the persisted row.
         let mut expected = task.clone();
         expected.creation_time = Some(now);
+        rewrite_mount_spec_session_ids(&mut expected, &task_id);
         assert_eq!(fetched.item, expected, "Task must round-trip all fields");
     }
 
@@ -7935,10 +8006,11 @@ mod tests {
         let store = create_test_store().await;
         let conv_id = ConversationId::new();
         let mut task = spawn_task();
-        task.interactive = Some(InteractiveOptions {
-            conversation_id: Some(conv_id.clone()),
+        task.mode = SessionMode::Interactive {
+            conversation_id: conv_id.clone(),
+            idle_timeout_secs: None,
             conversation_resume_from: Some(7),
-        });
+        };
 
         let now = Utc::now();
         let (task_id, _) = store
@@ -7957,13 +8029,9 @@ mod tests {
             "conversation_id must be persisted"
         );
         assert_eq!(
-            fetched
-                .item
-                .interactive
-                .as_ref()
-                .and_then(|opts| opts.conversation_resume_from),
+            fetched.item.mode.conversation_resume_from(),
             Some(7),
-            "conversation_resume_from must be persisted"
+            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
         );
     }
 
@@ -10647,10 +10715,24 @@ mod tests {
 
     fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
         let mut session = spawn_task();
-        session.interactive = Some(InteractiveOptions {
-            conversation_id,
-            conversation_resume_from: None,
-        });
+        match conversation_id {
+            Some(conv_id) => {
+                session.mode = SessionMode::Interactive {
+                    conversation_id: conv_id,
+                    idle_timeout_secs: None,
+                    conversation_resume_from: None,
+                };
+            }
+            None => {
+                // Tests previously passed `None` to mean "interactive but no
+                // conversation". The new shape requires a conversation_id, so
+                // collapse this case to Headless with an empty prompt — same
+                // semantic effect (no conversation linkage).
+                session.mode = SessionMode::Headless {
+                    prompt: String::new(),
+                };
+            }
+        }
         session
     }
 
@@ -11087,18 +11169,36 @@ mod tests {
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
-        assert_eq!(mode["idle_timeout_secs"], 0);
+        // `idle_timeout_secs` is omitted when None (server applies default).
+        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
     }
 
     #[tokio::test]
     async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec() {
+        use hydra_common::api::v1::sessions::{
+            Bundle, MountItem, MountSpec as ApiMountSpec, RelativePath,
+        };
         let store = create_test_store().await;
         let mut session = spawn_task();
-        session.context = BundleSpec::GitRepository {
-            url: "https://github.com/example/repo".to_string(),
-            rev: "main".to_string(),
-        };
-        session.model = Some("gpt-4o".to_string());
+        let session_id_placeholder = SessionId::new();
+        session.mount_spec = ApiMountSpec::new(
+            RelativePath::new("repo").unwrap(),
+            vec![
+                MountItem::Bundle {
+                    target: RelativePath::new("repo").unwrap(),
+                    bundle: Bundle::GitRepository {
+                        url: "https://github.com/example/repo".to_string(),
+                        rev: "main".to_string(),
+                    },
+                    session_id: session_id_placeholder,
+                    issue_branch_id: None,
+                },
+                MountItem::Documents {
+                    target: RelativePath::new("documents").unwrap(),
+                },
+            ],
+        );
+        session.agent_config.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store
             .add_session(session, Utc::now(), &ActorRef::test())
@@ -11118,6 +11218,96 @@ mod tests {
                 .expect("agent_config is non-null"),
         );
         assert_eq!(agent_config["model"], "gpt-4o");
+    }
+
+    /// `row_to_session` must synthesize `mount_spec`, `agent_config`, and
+    /// `mode` from the legacy columns when the new columns are NULL — the
+    /// defensive read path for rows that escape PR-1's backfill.
+    /// Hand-crafts two rows (headless + interactive) directly via SQL and
+    /// asserts the resulting in-memory `Session` shape.
+    #[tokio::test]
+    async fn row_to_session_falls_back_to_legacy_columns_when_new_columns_are_null() {
+        let store = create_test_store().await;
+
+        let headless_id = "s-legcyhdlss";
+        insert_pre_migration_row(
+            &store,
+            headless_id,
+            r#"{"type":"git_repository","url":"https://github.com/x/y","rev":"main"}"#,
+            "legacy headless prompt",
+            Some("claude-sonnet-4-5"),
+            Some(r#"{"servers": {"a": 1}}"#),
+            None,
+            None,
+            "2026-01-01T00:00:00.000+00:00",
+        )
+        .await;
+
+        let conv_id_str = "c-legcyconvb";
+        let interactive_id = "s-legcyintrc";
+        insert_pre_migration_row(
+            &store,
+            interactive_id,
+            r#"{"type":"none"}"#,
+            "",
+            Some("gpt-4o"),
+            None,
+            Some(conv_id_str),
+            Some(7),
+            "2026-01-01T00:01:00.000+00:00",
+        )
+        .await;
+
+        // Headless: legacy `context` + `prompt` + `model` + `mcp_config`
+        // must yield a Headless mode and a 2-item mount_spec carrying the
+        // bundle from `context`.
+        let headless = store
+            .get_session(&SessionId::from_str(headless_id).unwrap(), false)
+            .await
+            .expect("legacy headless row should read back")
+            .item;
+        match &headless.mode {
+            crate::domain::sessions::SessionMode::Headless { prompt } => {
+                assert_eq!(prompt, "legacy headless prompt");
+            }
+            other => panic!("expected Headless, got {other:?}"),
+        }
+        assert_eq!(
+            headless.mount_spec.mounts.len(),
+            2,
+            "legacy fallback mount_spec should be Bundle + Documents"
+        );
+        assert_eq!(
+            headless.agent_config.model.as_deref(),
+            Some("claude-sonnet-4-5"),
+            "agent_config.model must hydrate from legacy `model` column"
+        );
+        assert!(
+            headless.agent_config.mcp_config.is_some(),
+            "agent_config.mcp_config must hydrate from legacy `mcp_config` column"
+        );
+
+        // Interactive: legacy `conversation_id` + `conversation_resume_from`
+        // must yield an Interactive mode carrying both values; the resume
+        // hint lives inside the variant.
+        let interactive = store
+            .get_session(&SessionId::from_str(interactive_id).unwrap(), false)
+            .await
+            .expect("legacy interactive row should read back")
+            .item;
+        match &interactive.mode {
+            crate::domain::sessions::SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            } => {
+                assert_eq!(conversation_id.as_ref(), conv_id_str);
+                assert_eq!(*idle_timeout_secs, None);
+                assert_eq!(*conversation_resume_from, Some(7));
+            }
+            other => panic!("expected Interactive, got {other:?}"),
+        }
+        assert_eq!(interactive.agent_config.model.as_deref(), Some("gpt-4o"));
     }
 
     /// Inserts a raw `tasks_v2` row with the new session-shape columns left
@@ -11156,9 +11346,13 @@ mod tests {
         .unwrap();
     }
 
-    /// Replays the four backfill UPDATE statements from
-    /// `20260523020000_add_session_shape_columns.sql`. Kept in lockstep with
-    /// the migration; if the migration changes, this must change too.
+    /// Replays the backfill UPDATE statements from the session-shape
+    /// migrations: the four from
+    /// `20260523020000_add_session_shape_columns.sql`, followed by the
+    /// `idle_timeout_secs: 0` cleanup from
+    /// `20260523040000_normalize_session_mode_idle_timeout.sql`. Kept in
+    /// lockstep with both migrations; if either changes, this must change
+    /// too.
     async fn replay_session_shape_backfill(store: &SqliteStore) {
         for stmt in [
             r#"UPDATE tasks_v2
@@ -11217,6 +11411,10 @@ mod tests {
                WHERE t.conversation_resume_from IS NOT NULL
                  AND t.is_latest                = 1
                  AND t.resumed_from IS NULL"#,
+            r#"UPDATE tasks_v2
+               SET mode = json_remove(mode, '$.idle_timeout_secs')
+               WHERE mode IS NOT NULL
+                 AND json_extract(mode, '$.idle_timeout_secs') = 0"#,
         ] {
             sqlx::query(stmt).execute(&store.pool).await.unwrap();
         }
@@ -11345,15 +11543,15 @@ mod tests {
         assert_eq!(mount_spec["mounts"][0]["bundle"]["type"], "none");
         assert_eq!(mount_spec["mounts"].as_array().unwrap().len(), 2);
 
-        // Prior interactive row: mode = interactive with conversation_id +
-        // idle_timeout_secs = 0; mcp_config carried as a nested object (not a
-        // re-stringified value).
+        // Prior interactive row: mode = interactive with conversation_id;
+        // idle_timeout_secs is None (omitted from JSON); mcp_config carried
+        // as a nested object (not a re-stringified value).
         let prior =
             fetch_session_shape(&store, &SessionId::from_str(prior_interactive_id).unwrap()).await;
         let mode = parse_json(prior.mode.as_deref().unwrap());
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id);
-        assert_eq!(mode["idle_timeout_secs"], 0);
+        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
         let agent_config = parse_json(prior.agent_config.as_deref().unwrap());
         assert!(
             agent_config["mcp_config"].is_object(),

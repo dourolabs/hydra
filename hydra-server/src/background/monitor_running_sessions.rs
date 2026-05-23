@@ -99,10 +99,11 @@ impl ScheduledWorker for MonitorRunningSessionsWorker {
 mod tests {
     use super::*;
     use crate::{
+        app::sessions::mount_spec_for_session,
         domain::{
             actors::ActorRef,
             issues::{Issue, IssueStatus, IssueType},
-            sessions::BundleSpec,
+            sessions::{AgentConfig, BundleSpec, SessionMode},
             users::Username,
         },
         job_engine::JobStatus,
@@ -113,7 +114,29 @@ mod tests {
         },
     };
     use chrono::Utc;
+    use hydra_common::IssueId;
     use std::{collections::HashMap, sync::Arc};
+
+    fn test_session(prompt: &str, spawned_from: Option<IssueId>) -> Session {
+        Session::new(
+            Username::from("test-creator"),
+            spawned_from,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    }
 
     #[tokio::test]
     async fn returns_idle_when_no_running_tasks_exist() {
@@ -129,23 +152,7 @@ mod tests {
     async fn reconciles_running_sessions_and_reports_progress() {
         let engine = Arc::new(MockJobEngine::new());
         let handles = test_state_with_engine_handles(engine.clone());
-        let task = Session::new(
-            "observe".to_string(),
-            BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Status::Created,
-            None,
-            None,
-        );
+        let task = test_session("observe", None);
         let (task_id, _) = handles
             .store
             .add_session(task, Utc::now(), &ActorRef::test())
@@ -218,23 +225,7 @@ mod tests {
             .await
             .unwrap();
 
-        let task = Session::new(
-            "spawned task".to_string(),
-            BundleSpec::None,
-            Some(issue_id.clone()),
-            Username::from("test-creator"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Status::Created,
-            None,
-            None,
-        );
+        let task = test_session("spawned task", Some(issue_id.clone()));
         let (task_id, _) = handles
             .store
             .add_session(task, Utc::now(), &ActorRef::test())

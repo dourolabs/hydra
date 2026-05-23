@@ -641,6 +641,19 @@ fn forward_job_json(job_id: &SessionId, status_log: Value) -> Value {
             },
             "creator": "future-creator",
             "env_vars": { "DEBUG": "true" },
+            "mount_spec": {
+                "working_dir": "repo",
+                "mounts": [
+                    {
+                        "type": "bundle",
+                        "target": "repo",
+                        "bundle": { "type": "none" },
+                        "session_id": job_id,
+                    },
+                    { "type": "documents", "target": "documents" }
+                ]
+            },
+            "mode": { "type": "headless", "prompt": "future job" },
             "extra": "task"
         },
         "notes": "note",

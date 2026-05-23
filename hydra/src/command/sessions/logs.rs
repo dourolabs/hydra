@@ -110,27 +110,38 @@ mod tests {
             task_id(id),
             0,
             Utc::now(),
-            Session::new(
-                "demo".to_string(),
-                hydra_common::sessions::BundleSpec::None,
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                HashMap::new(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            {
+                use hydra_common::api::v1::sessions::{
+                    AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
+                };
+                Session::new(
+                    Username::from("test-creator"),
+                    None,
+                    None,
+                    AgentConfig::default(),
+                    MountSpec::new(
+                        RelativePath::new("repo").unwrap(),
+                        vec![MountItem::Documents {
+                            target: RelativePath::new("documents").unwrap(),
+                        }],
+                    ),
+                    None,
+                    HashMap::new(),
+                    None,
+                    None,
+                    None,
+                    SessionMode::Headless {
+                        prompt: "demo".to_string(),
+                    },
+                    Status::Created,
+                    None,
+                    None,
+                    false,
+                    None,
+                    None,
+                    None,
+                )
+            },
             None,
         )
     }

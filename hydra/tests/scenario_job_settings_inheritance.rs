@@ -2,10 +2,8 @@ mod harness;
 
 use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, JobAssertions, TestHarness};
-use hydra_common::{
-    issues::{IssueStatus, IssueType, SessionSettings},
-    sessions::BundleSpec,
-};
+use hydra_common::issues::{IssueStatus, IssueType, SessionSettings};
+use hydra_common::sessions::BundleSpec;
 use std::str::FromStr;
 
 /// Scenario 16: Job Settings Inheritance
@@ -60,7 +58,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
 
     // Verify model is inherited.
     assert_eq!(
-        job.session.model.as_deref(),
+        job.session.agent_config.model.as_deref(),
         Some("claude-opus-4-20250514"),
         "spawned task should inherit the model from job settings"
     );

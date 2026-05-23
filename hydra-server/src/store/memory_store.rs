@@ -503,7 +503,12 @@ impl MemoryStore {
 
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
+                let matches_prompt = latest
+                    .item
+                    .mode
+                    .prompt_for_legacy_wire()
+                    .to_lowercase()
+                    .contains(term);
                 let matches_status = format!("{:?}", latest.item.status)
                     .to_lowercase()
                     .contains(term);
@@ -1773,9 +1778,7 @@ impl ReadOnlyStore for MemoryStore {
                 }
                 let linked = latest
                     .item
-                    .interactive
-                    .as_ref()
-                    .and_then(|opts| opts.conversation_id.as_ref())
+                    .conversation_id()
                     .map(|cid| cid == conversation_id)
                     .unwrap_or(false);
                 if !linked {
@@ -2719,19 +2722,26 @@ mod tests {
     }
 
     fn spawn_task() -> Session {
+        spawn_task_with_prompt("0")
+    }
+
+    fn spawn_task_with_prompt(prompt: &str) -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "0".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
             Status::Created,
             None,
             None,
@@ -3699,15 +3709,13 @@ mod tests {
     async fn task_versions_increment_and_latest_returned() {
         let store = MemoryStore::new();
 
-        let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        let task = spawn_task_with_prompt("v1");
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut updated = spawn_task();
-        updated.prompt = "v2".to_string();
+        let updated = spawn_task_with_prompt("v2");
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -3724,15 +3732,13 @@ mod tests {
     async fn task_versions_return_ordered_entries() {
         let store = MemoryStore::new();
 
-        let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        let task = spawn_task_with_prompt("v1");
         let (task_id, _) = store
             .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut v2 = spawn_task();
-        v2.prompt = "v2".to_string();
+        let v2 = spawn_task_with_prompt("v2");
         store
             .update_session(&task_id, v2, &ActorRef::test())
             .await
@@ -3740,8 +3746,8 @@ mod tests {
 
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
-        assert_eq!(versions[0].item.prompt, "v1");
-        assert_eq!(versions[1].item.prompt, "v2");
+        assert_eq!(versions[0].item.mode.prompt_for_legacy_wire(), "v1");
+        assert_eq!(versions[1].item.mode.prompt_for_legacy_wire(), "v2");
     }
 
     #[tokio::test]
@@ -3784,15 +3790,16 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
         let created_at = Utc::now() - Duration::seconds(60);
-        let mut task = spawn_task();
-        task.prompt = "v1".to_string();
+        let task = spawn_task_with_prompt("v1");
         let (task_id, _) = store
             .add_session(task.clone(), created_at, &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = task.clone();
-        updated.prompt = "v2".to_string();
+        updated.mode = crate::domain::sessions::SessionMode::Headless {
+            prompt: "v2".to_string(),
+        };
         store
             .update_session(&task_id, updated, &ActorRef::test())
             .await
@@ -3818,7 +3825,9 @@ mod tests {
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
         let mut running = store.get_session(&task_id, false).await.unwrap().item;
-        running.prompt = "v3".to_string();
+        running.mode = crate::domain::sessions::SessionMode::Headless {
+            prompt: "v3".to_string(),
+        };
         store
             .update_session(&task_id, running, &ActorRef::test())
             .await
@@ -5627,20 +5636,22 @@ mod tests {
         let conv_b = ConversationId::new();
 
         let mut task_a = spawn_task();
-        task_a.interactive = Some(crate::store::InteractiveOptions {
-            conversation_id: Some(conv_a.clone()),
+        task_a.mode = crate::domain::sessions::SessionMode::Interactive {
+            conversation_id: conv_a.clone(),
+            idle_timeout_secs: None,
             conversation_resume_from: None,
-        });
+        };
         let (task_a_id, _) = store
             .add_session(task_a, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task_b = spawn_task();
-        task_b.interactive = Some(crate::store::InteractiveOptions {
-            conversation_id: Some(conv_b.clone()),
+        task_b.mode = crate::domain::sessions::SessionMode::Interactive {
+            conversation_id: conv_b.clone(),
+            idle_timeout_secs: None,
             conversation_resume_from: None,
-        });
+        };
         store
             .add_session(task_b, Utc::now(), &ActorRef::test())
             .await
@@ -5734,22 +5745,19 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create tasks with different prompts
-        let mut task1 = spawn_task();
-        task1.prompt = "Fix authentication bug".to_string();
+        let task1 = spawn_task_with_prompt("Fix authentication bug");
         let (task1_id, _) = store
             .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut task2 = spawn_task();
-        task2.prompt = "Add new feature for login".to_string();
+        let task2 = spawn_task_with_prompt("Add new feature for login");
         let (task2_id, _) = store
             .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut task3 = spawn_task();
-        task3.prompt = "Refactor database layer".to_string();
+        let task3 = spawn_task_with_prompt("Refactor database layer");
         let (task3_id, _) = store
             .add_session(task3, Utc::now(), &ActorRef::test())
             .await
@@ -8515,10 +8523,20 @@ mod tests {
 
     fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
         let mut session = spawn_task();
-        session.interactive = Some(crate::store::InteractiveOptions {
-            conversation_id,
-            conversation_resume_from: None,
-        });
+        match conversation_id {
+            Some(conv_id) => {
+                session.mode = crate::domain::sessions::SessionMode::Interactive {
+                    conversation_id: conv_id,
+                    idle_timeout_secs: None,
+                    conversation_resume_from: None,
+                };
+            }
+            None => {
+                session.mode = crate::domain::sessions::SessionMode::Headless {
+                    prompt: String::new(),
+                };
+            }
+        }
         session
     }
 

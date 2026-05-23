@@ -74,13 +74,7 @@ async fn session_count_for_conversation(
         .expect("list sessions");
     sessions
         .into_iter()
-        .filter(|(_, s)| {
-            s.item
-                .interactive
-                .as_ref()
-                .and_then(|i| i.conversation_id.as_ref())
-                == Some(conversation_id)
-        })
+        .filter(|(_, s)| s.item.conversation_id() == Some(conversation_id))
         .count()
 }
 
@@ -97,13 +91,7 @@ async fn find_session_for_conversation(
             .expect("list sessions");
         sessions
             .into_iter()
-            .find(|(_, s)| {
-                s.item
-                    .interactive
-                    .as_ref()
-                    .and_then(|i| i.conversation_id.as_ref())
-                    == Some(conversation_id)
-            })
+            .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
             .map(|(id, _)| id)
     })
     .await

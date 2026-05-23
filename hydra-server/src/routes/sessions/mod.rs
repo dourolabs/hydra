@@ -68,6 +68,9 @@ pub async fn create_session(
             err @ CreateSessionError::IssueAndConversationConflict => {
                 ApiError::bad_request(err.to_string())
             }
+            err @ CreateSessionError::InteractiveRequiresConversation => {
+                ApiError::bad_request(err.to_string())
+            }
             err @ CreateSessionError::AgentNotFound { .. } => {
                 ApiError::bad_request(err.to_string())
             }

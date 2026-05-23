@@ -992,34 +992,37 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
         .unwrap();
 
     // Create a task owned by the test creator
+    let session = {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session {
+            creator: creator.clone(),
+            spawned_from: None,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
+            image: Some("test-image:latest".to_string()),
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            mode: SessionMode::Headless {
+                prompt: "test prompt".to_string(),
+            },
+            status: Status::Created,
+            last_message: None,
+            error: None,
+            deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
+            usage: None,
+        }
+    };
     let (job_id, _) = handles
         .store
-        .add_session(
-            Session {
-                prompt: "test prompt".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: creator.clone(),
-                image: Some("test-image:latest".to_string()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                mcp_config: None,
-                interactive: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-                creation_time: None,
-                start_time: None,
-                end_time: None,
-                usage: None,
-            },
-            Utc::now(),
-            &ActorRef::test(),
-        )
+        .add_session(session, Utc::now(), &ActorRef::test())
         .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;

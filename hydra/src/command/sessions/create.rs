@@ -271,6 +271,40 @@ mod tests {
         CommandContext::new(ResolvedOutputFormat::Pretty)
     }
 
+    fn test_session(status: Status, error: Option<TaskError>) -> Session {
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
+        };
+        let mount_spec = MountSpec::new(
+            RelativePath::new("repo").unwrap(),
+            vec![MountItem::Documents {
+                target: RelativePath::new("documents").unwrap(),
+            }],
+        );
+        Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            mount_spec,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "0".to_string(),
+            },
+            status,
+            None,
+            error,
+            false,
+            None,
+            None,
+            None,
+        )
+    }
+
     fn task_id(value: &str) -> SessionId {
         ids::task_id(value)
     }
@@ -284,27 +318,7 @@ mod tests {
             task_id(id),
             0,
             chrono::Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::None,
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                HashMap::new(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                status,
-                None,
-                error,
-                false,
-                None,
-                None,
-                None,
-            ),
+            test_session(status, error),
             None,
         )
     }

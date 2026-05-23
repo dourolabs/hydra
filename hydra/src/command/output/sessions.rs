@@ -417,20 +417,37 @@ mod tests {
         conversation_id: Option<hydra_common::ConversationId>,
         usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
     ) -> Session {
-        use hydra_common::api::v1::sessions::{BundleSpec, InteractiveOptions};
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
+        };
+        let mode = match conversation_id {
+            Some(id) => SessionMode::Interactive {
+                conversation_id: id,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            None => SessionMode::Headless {
+                prompt: "p".to_string(),
+            },
+        };
+        let mount_spec = MountSpec::new(
+            RelativePath::new("repo").unwrap(),
+            vec![MountItem::Documents {
+                target: RelativePath::new("documents").unwrap(),
+            }],
+        );
         let mut session = Session::new(
-            "p".to_string(),
-            BundleSpec::None,
-            None,
             "alice".into(),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec,
             None,
             std::collections::HashMap::new(),
             None,
             None,
             None,
-            None,
-            conversation_id.map(|id| InteractiveOptions::new(Some(id), None, None)),
+            mode,
             Status::Complete,
             None,
             None,

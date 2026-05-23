@@ -4,7 +4,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         issues::SessionSettings,
-        sessions::{Bundle, BundleSpec, InteractiveOptions},
+        sessions::{AgentConfig, Bundle, BundleSpec, SessionMode},
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
@@ -28,6 +28,50 @@ use super::app_state::AppState;
 
 pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
 pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
+
+/// Build the standard 2-item MountSpec (`Bundle` + `Documents`) for a session
+/// at create time. Mirrors the migration backfill shape from PR-1 (no
+/// `BuildCache` item — that's config-derived and added at WorkerContext
+/// fetch time by `routes/sessions/context.rs`).
+pub(crate) fn mount_spec_for_session(
+    context: &BundleSpec,
+) -> hydra_common::api::v1::sessions::MountSpec {
+    use hydra_common::SessionId;
+    use hydra_common::api::v1::sessions::{Bundle, MountItem, MountSpec, RelativePath};
+    let bundle = match context {
+        BundleSpec::None => Bundle::None,
+        BundleSpec::GitRepository { url, rev } => Bundle::GitRepository {
+            url: url.clone(),
+            rev: rev.clone(),
+        },
+        // ServiceRepository can't be lowered to Bundle without the resolver
+        // (which has access to config). For the in-memory mount_spec we
+        // store None — `routes/sessions/context.rs` resolves it again at
+        // worker-fetch time.
+        _ => Bundle::None,
+    };
+    // The session id is set after the store assigns it; we use a placeholder
+    // here. The dual-write path persists the row's actual id into the
+    // `mount_spec` JSON when the row is inserted (the `bundle` item carries
+    // the same id as the row, per the legacy backfill rule).
+    let placeholder_session_id = SessionId::new();
+    let repo_target = RelativePath::new("repo").expect("static `repo` is valid");
+    let docs_target = RelativePath::new("documents").expect("static `documents` is valid");
+    MountSpec::new(
+        repo_target.clone(),
+        vec![
+            MountItem::Bundle {
+                target: repo_target,
+                bundle,
+                session_id: placeholder_session_id,
+                issue_branch_id: None,
+            },
+            MountItem::Documents {
+                target: docs_target,
+            },
+        ],
+    )
+}
 
 #[derive(Debug, Error)]
 pub enum CreateSessionError {
@@ -71,6 +115,8 @@ pub enum CreateSessionError {
         #[source]
         source: StoreError,
     },
+    #[error("interactive sessions require a conversation_id")]
+    InteractiveRequiresConversation,
 }
 
 #[derive(Debug, Error)]
@@ -249,31 +295,65 @@ impl AppState {
             }
         }
 
-        let interactive = if request.interactive {
-            Some(InteractiveOptions {
-                conversation_id: request.conversation_id.clone(),
+        let mode = if request.interactive {
+            // `SessionMode::Interactive` requires a `conversation_id`. The
+            // legacy flat `CreateSessionRequest` shape can't express that
+            // constraint at compile time, so the cross-field check stays
+            // here. Matches the historical worker-start rejection.
+            let conv_id = request
+                .conversation_id
+                .clone()
+                .ok_or(CreateSessionError::InteractiveRequiresConversation)?;
+            SessionMode::Interactive {
+                conversation_id: conv_id,
+                idle_timeout_secs: None,
                 conversation_resume_from: None,
-            })
+            }
+        } else {
+            SessionMode::Headless {
+                prompt: prompt.clone(),
+            }
+        };
+        let mount_spec = mount_spec_for_session(&context);
+        // For interactive sessions, the agent prompt lives in
+        // `agent_config.system_prompt` because `SessionMode::Interactive`
+        // doesn't carry a `prompt` field. Headless sessions carry the same
+        // string in `mode.Headless.prompt`. Either way, the WorkerContext
+        // surfaces a single `prompt` string to the worker (see
+        // `routes/sessions/context::get_session_context`).
+        let system_prompt = if matches!(mode, SessionMode::Interactive { .. }) {
+            Some(prompt.clone())
         } else {
             None
         };
-        let session = Session::new(
-            prompt,
-            context,
-            request.issue_id.clone(),
-            creator,
-            image,
+        let agent_config = AgentConfig::new(
+            resolved_agent.as_ref().map(|a| a.name.clone()),
             model,
+            system_prompt,
+            mcp_config,
+        );
+        let mut session = Session::new(
+            creator,
+            request.issue_id.clone(),
+            None,
+            agent_config,
+            mount_spec,
+            image,
             env_vars,
             cpu_limit,
             memory_limit,
             secrets,
-            mcp_config,
-            interactive,
+            mode,
             Status::Created,
             None,
             None,
         );
+        // Preserve the BundleSpec (including ServiceRepository) so the
+        // resolver can lower it to a concrete GitRepository URL at fetch
+        // time. The new `mount_spec` only encodes lowered `Bundle` variants,
+        // so this transitional field is the only carrier for
+        // ServiceRepository linkage until PR-3.
+        session.context = context;
 
         self.resolve_task(&session).await?;
 
@@ -1517,7 +1597,7 @@ mod tests {
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
         assert_eq!(
-            session.model.as_deref(),
+            session.agent_config.model.as_deref(),
             Some("conversation-model"),
             "session should inherit model from the linked conversation"
         );

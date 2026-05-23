@@ -611,7 +611,10 @@ mod tests {
 
         assert_eq!(versioned.item.status, ConversationStatus::Active);
         let session = session_for_conversation(&state, &conversation_id).await;
-        assert_eq!(session.item.model.as_deref(), Some("custom-model"));
+        assert_eq!(
+            session.item.agent_config.model.as_deref(),
+            Some("custom-model")
+        );
     }
 
     #[tokio::test]
@@ -633,7 +636,10 @@ mod tests {
             .unwrap();
 
         let session = session_for_conversation(&state, &conversation_id).await;
-        assert_eq!(session.item.model.as_deref(), Some("default-model"));
+        assert_eq!(
+            session.item.agent_config.model.as_deref(),
+            Some("default-model")
+        );
     }
 
     #[tokio::test]
@@ -812,7 +818,10 @@ mod tests {
             .get_session(&resumed_session_id, false)
             .await
             .unwrap();
-        assert_eq!(session.item.model.as_deref(), Some("custom-model"));
+        assert_eq!(
+            session.item.agent_config.model.as_deref(),
+            Some("custom-model")
+        );
     }
 
     #[tokio::test]
@@ -926,13 +935,12 @@ mod tests {
             .get_session(&resumed_session_id, false)
             .await
             .unwrap();
-        let opts = session
-            .item
-            .interactive
-            .as_ref()
-            .expect("session should be interactive");
+        assert!(
+            session.item.is_interactive(),
+            "session should be interactive"
+        );
         assert_eq!(
-            opts.conversation_resume_from,
+            session.item.mode.conversation_resume_from(),
             Some(expected_resume_from),
             "conversation_resume_from should equal index just after the most recent Closed"
         );
@@ -1137,13 +1145,12 @@ mod tests {
             .get_session(&resumed_session_id, false)
             .await
             .unwrap();
-        let opts = session
-            .item
-            .interactive
-            .as_ref()
-            .expect("session should be interactive");
+        assert!(
+            session.item.is_interactive(),
+            "session should be interactive"
+        );
         assert_eq!(
-            opts.conversation_resume_from,
+            session.item.mode.conversation_resume_from(),
             Some(expected_resume_from),
             "conversation_resume_from should equal index just after the most recent Closed"
         );
@@ -1167,7 +1174,7 @@ mod tests {
             .unwrap();
 
         let session = session_for_conversation(&state, &conversation_id).await;
-        assert_eq!(session.item.prompt, "you are an SWE");
+        assert_eq!(session.item.resolved_prompt(), "you are an SWE");
     }
 
     #[tokio::test]
@@ -1197,7 +1204,7 @@ mod tests {
         let session = session_for_conversation(&state, &conversation_id).await;
         assert_eq!(session.item.secrets, Some(vec!["FOO".to_string()]));
         assert!(
-            session.item.mcp_config.is_some(),
+            session.item.agent_config.mcp_config.is_some(),
             "mcp_config should be set"
         );
     }
@@ -1220,7 +1227,7 @@ mod tests {
             .unwrap();
 
         let session = session_for_conversation(&state, &conversation_id).await;
-        assert_eq!(session.item.prompt, "default agent prompt");
+        assert_eq!(session.item.resolved_prompt(), "default agent prompt");
         assert_eq!(
             session
                 .item
@@ -1399,9 +1406,9 @@ mod tests {
             .get_session(&resumed_session_id, false)
             .await
             .unwrap();
-        assert_eq!(session.item.prompt, "agent prompt");
+        assert_eq!(session.item.resolved_prompt(), "agent prompt");
         assert_eq!(session.item.secrets, Some(vec!["FOO".to_string()]));
-        assert!(session.item.mcp_config.is_some());
+        assert!(session.item.agent_config.mcp_config.is_some());
         assert_eq!(
             session
                 .item

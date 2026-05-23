@@ -1,16 +1,16 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
-use crate::app::{AppState, ServiceState};
+use crate::app::{AppState, ServiceState, sessions::mount_spec_for_session};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::ActorRef,
     issues::{Issue, IssueStatus, IssueType, SessionSettings},
     patches::{Patch, PatchStatus},
-    sessions::{Bundle, BundleSpec},
+    sessions::{AgentConfig, Bundle, BundleSpec, SessionMode},
     users::Username,
 };
 use crate::{
     job_engine::JobStatus,
-    store::{InteractiveOptions, MemoryStore, Session, Status},
+    store::{MemoryStore, Session, Status},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
         test_app_config, test_client, test_secret_manager, test_state_handles,
@@ -53,12 +53,9 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
 
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
-    let Session {
-        context, prompt, ..
-    } = task;
 
-    assert_eq!(prompt, "0");
-    assert_eq!(context, BundleSpec::None);
+    assert_eq!(task.mode.prompt_for_legacy_wire(), "0");
+    assert_eq!(task.context, BundleSpec::None);
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -97,9 +94,8 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
     let body: CreateSessionResponse = response.json().await?;
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
-    let Session { context, .. } = task;
     assert_eq!(
-        context,
+        task.context,
         BundleSpec::ServiceRepository {
             name: repo_name.clone(),
             rev: None
@@ -449,33 +445,36 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
         cache_read_input_tokens: 89,
         cache_creation_input_tokens: 12,
     };
-    let (session_id, _) = store
-        .add_session(
-            Session {
+    let session = {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session {
+            creator: Username::from("test-creator"),
+            spawned_from: None,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
+            image: Some(default_image.clone()),
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            mode: SessionMode::Headless {
                 prompt: "with-usage".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: Username::from("test-creator"),
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                mcp_config: None,
-                interactive: None,
-                status: Status::Complete,
-                last_message: None,
-                error: None,
-                deleted: false,
-                creation_time: None,
-                start_time: None,
-                end_time: None,
-                usage: Some(usage.clone()),
             },
-            Utc::now(),
-            &ActorRef::test(),
-        )
+            status: Status::Complete,
+            last_message: None,
+            error: None,
+            deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
+            usage: Some(usage.clone()),
+        }
+    };
+    let (session_id, _) = store
+        .add_session(session, Utc::now(), &ActorRef::test())
         .await?;
 
     let server = spawn_test_server_with_state(handles.state, store).await?;
@@ -666,18 +665,20 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image.clone()),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -940,18 +941,20 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image.clone()),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1019,18 +1022,20 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image()),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1118,18 +1123,20 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image.clone()),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1178,18 +1185,20 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: context_spec.clone(),
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&context_spec),
+                context: context_spec.clone(),
                 image: Some(default_image.clone()),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1244,18 +1253,25 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::new(
+                    None,
+                    Some("claude-3-5-sonnet".to_string()),
+                    None,
+                    None,
+                ),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image),
-                model: Some("claude-3-5-sonnet".to_string()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1295,18 +1311,20 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image.clone()),
-                model: None,
                 env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1354,21 +1372,24 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
         .store
         .add_session(
             Session {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
                 creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
                 image: Some(default_image),
-                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mcp_config: None,
-                interactive: Some(InteractiveOptions {
-                    conversation_id: None,
+                // Interactive sessions surface the server-configured
+                // idle-timeout through `WorkerContext.interactive`.
+                mode: SessionMode::Interactive {
+                    conversation_id: hydra_common::ConversationId::new(),
+                    idle_timeout_secs: None,
                     conversation_resume_from: None,
-                }),
+                },
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1423,22 +1444,25 @@ fn make_session_with_service_repo(
     repo_name: hydra_common::RepoName,
     env_vars: HashMap<String, String>,
 ) -> Session {
+    let context = BundleSpec::ServiceRepository {
+        name: repo_name,
+        rev: None,
+    };
     Session {
-        prompt: "prompt".to_string(),
-        context: BundleSpec::ServiceRepository {
-            name: repo_name,
-            rev: None,
-        },
-        spawned_from: None,
         creator: Username::from("test-creator"),
+        spawned_from: None,
+        resumed_from: None,
+        agent_config: AgentConfig::default(),
+        mount_spec: mount_spec_for_session(&context),
+        context: context.clone(),
         image: Some(default_image()),
-        model: None,
         env_vars,
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mcp_config: None,
-        interactive: None,
+        mode: SessionMode::Headless {
+            prompt: "prompt".to_string(),
+        },
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1452,18 +1476,20 @@ fn make_session_with_service_repo(
 
 fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
     Session {
-        prompt: "prompt".to_string(),
-        context: BundleSpec::None,
-        spawned_from: None,
         creator: Username::from("test-creator"),
+        spawned_from: None,
+        resumed_from: None,
+        agent_config: AgentConfig::default(),
+        mount_spec: mount_spec_for_session(&BundleSpec::None),
+        context: BundleSpec::None,
         image: Some(default_image()),
-        model: None,
         env_vars,
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mcp_config: None,
-        interactive: None,
+        mode: SessionMode::Headless {
+            prompt: "prompt".to_string(),
+        },
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1616,22 +1642,25 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
     );
 
     // Session uses a raw git_repository bundle (no service_repo_name available).
+    let context = BundleSpec::GitRepository {
+        url: "https://example.com/repo.git".to_string(),
+        rev: "main".to_string(),
+    };
     let session = Session {
-        prompt: "prompt".to_string(),
-        context: BundleSpec::GitRepository {
-            url: "https://example.com/repo.git".to_string(),
-            rev: "main".to_string(),
-        },
-        spawned_from: None,
         creator: Username::from("test-creator"),
+        spawned_from: None,
+        resumed_from: None,
+        agent_config: AgentConfig::default(),
+        mount_spec: mount_spec_for_session(&context),
+        context: context.clone(),
         image: Some(default_image()),
-        model: None,
         env_vars: HashMap::new(),
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mcp_config: None,
-        interactive: None,
+        mode: SessionMode::Headless {
+            prompt: "prompt".to_string(),
+        },
         status: Status::Created,
         last_message: None,
         error: None,

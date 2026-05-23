@@ -36,7 +36,9 @@ pub use crate::ee::store::migration;
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
-pub use crate::domain::sessions::{InteractiveOptions, Session, SessionEvent, SessionEventSummary};
+pub use crate::domain::sessions::{
+    AgentConfig, InteractiveOptions, Session, SessionEvent, SessionEventSummary, SessionMode,
+};
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
 /// The kind of object participating in a relationship.
@@ -179,84 +181,156 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 /// when applicable. PR-3 replaces this with the resolved spec.
 pub(crate) fn dual_write_mount_spec_json(
     id: &SessionId,
-    context: &crate::domain::sessions::BundleSpec,
+    session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
-    let bundle = serde_json::to_value(context).map_err(|e| {
-        StoreError::Internal(format!("failed to serialize context for mount_spec: {e}"))
-    })?;
-    Ok(serde_json::json!({
-        "working_dir": "repo",
-        "mounts": [
-            {
-                "type": "bundle",
-                "target": "repo",
-                "bundle": bundle,
-                "session_id": id.as_ref(),
-            },
-            {
-                "type": "documents",
-                "target": "documents",
+    // Rewrite any placeholder session_id references inside the mount spec
+    // to match the row's actual id. Sessions constructed in-memory before
+    // they hit the store carry placeholder ids (see
+    // `app/sessions::mount_spec_for_session`); the persisted JSON must
+    // resolve to the row.
+    use hydra_common::api::v1::sessions::MountItem;
+    let mut spec = session.mount_spec.clone();
+    for item in spec.mounts.iter_mut() {
+        match item {
+            MountItem::Bundle { session_id, .. } => {
+                *session_id = id.clone();
             }
-        ]
-    }))
+            MountItem::BuildCache { session_id, .. } => {
+                *session_id = id.clone();
+            }
+            _ => {}
+        }
+    }
+    serde_json::to_value(&spec).map_err(|e| {
+        StoreError::Internal(format!(
+            "failed to serialize mount_spec for dual-write: {e}"
+        ))
+    })
 }
 
 /// Build the JSON value persisted to `tasks_v2.agent_config` for a session on
-/// dual-write inserts. Mirrors the backfill shape — `agent_name` and
-/// `system_prompt` are NULL on dual-write because the legacy Session struct
-/// does not carry them; PR-2 introduces those fields on Session and PR-3
-/// resolves `system_prompt` from the agent definition.
+/// dual-write inserts. Now reads directly from `session.agent_config`.
 pub(crate) fn dual_write_agent_config_json(
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
-    let mcp_config = session
-        .mcp_config
-        .as_ref()
-        .map(|c| {
-            serde_json::to_value(c).map_err(|e| {
-                StoreError::Internal(format!(
-                    "failed to serialize mcp_config for agent_config: {e}"
-                ))
-            })
-        })
-        .transpose()?
-        .unwrap_or(serde_json::Value::Null);
-    Ok(serde_json::json!({
-        "agent_name": serde_json::Value::Null,
-        "model": session.model,
-        "system_prompt": serde_json::Value::Null,
-        "mcp_config": mcp_config,
-    }))
+    serde_json::to_value(&session.agent_config).map_err(|e| {
+        StoreError::Internal(format!(
+            "failed to serialize agent_config for dual-write: {e}"
+        ))
+    })
 }
 
 /// Build the JSON value persisted to `tasks_v2.mode` for a session on
-/// dual-write inserts. Mirrors the backfill shape: `Headless { prompt }` if
-/// no conversation is attached, `Interactive { conversation_id,
-/// idle_timeout_secs }` otherwise. `idle_timeout_secs` is 0 because the
-/// timeout lives in server config, not on Session; PR-3 picks it up at
-/// runtime.
-///
-/// Note on divergence from design §6 step 12. The design wording keys the
-/// rule on the legacy `interactive` field — "Headless if `interactive` is
-/// None, Interactive otherwise." We key on `Session::conversation_id()`
-/// instead because the new `SessionMode::Interactive { conversation_id,
-/// idle_timeout_secs }` variant requires a non-null `conversation_id` (see
-/// design §1.3): the legacy edge case `interactive=Some(...) AND
-/// conversation_id=None` (constructible today via `request.interactive=true`
-/// with no `conversation_id`, see `app/sessions.rs`) cannot be represented
-/// as `SessionMode::Interactive` in the new shape, so we collapse it to
-/// `Headless { prompt }`. The migration's `mode` backfill uses the same
-/// rule (see `20260523020000_add_session_shape_columns.sql`).
-pub(crate) fn dual_write_mode_json(session: &Session) -> serde_json::Value {
-    match session.conversation_id() {
-        Some(conversation_id) => serde_json::json!({
-            "type": "interactive",
-            "conversation_id": conversation_id.as_ref(),
-            "idle_timeout_secs": 0,
-        }),
-        None => serde_json::json!({
-            "type": "headless",
-            "prompt": session.prompt,
+/// dual-write inserts. Reads directly from `session.mode`.
+pub(crate) fn dual_write_mode_json(session: &Session) -> Result<serde_json::Value, StoreError> {
+    serde_json::to_value(&session.mode)
+        .map_err(|e| StoreError::Internal(format!("failed to serialize mode for dual-write: {e}")))
+}
+
+/// Fallback constructor for `mount_spec` when the row's new column is NULL.
+/// Should not happen post PR-1 (the migration backfills every row); kept
+/// defensively for hand-crafted rows / future writers that bypass the
+/// dual-write path.
+pub(crate) fn mount_spec_from_legacy_columns(
+    session_id_str: &str,
+    context_json: &str,
+) -> Result<hydra_common::api::v1::sessions::MountSpec, StoreError> {
+    use hydra_common::SessionId;
+    use hydra_common::api::v1::sessions::{BundleSpec, MountItem, MountSpec, RelativePath};
+    use std::str::FromStr;
+
+    let bundle_spec: BundleSpec = serde_json::from_str(context_json).map_err(|e| {
+        StoreError::Internal(format!(
+            "failed to deserialize legacy `context` while falling back for mount_spec: {e}"
+        ))
+    })?;
+    let bundle = match bundle_spec {
+        BundleSpec::None => hydra_common::api::v1::sessions::Bundle::None,
+        BundleSpec::GitRepository { url, rev } => {
+            hydra_common::api::v1::sessions::Bundle::GitRepository { url, rev }
+        }
+        // ServiceRepository can't be expressed as `Bundle` directly; the
+        // resolver would normally lower it to a `GitRepository`. For the
+        // legacy fallback we substitute `None` so the worker doesn't get a
+        // garbled bundle — this only matters for rows that escaped PR-1's
+        // backfill, which should not happen in practice.
+        _ => hydra_common::api::v1::sessions::Bundle::None,
+    };
+    let session_id = SessionId::from_str(session_id_str).map_err(|e| {
+        StoreError::Internal(format!(
+            "invalid session id while building fallback mount_spec: {e}"
+        ))
+    })?;
+    let repo_target = RelativePath::new("repo")
+        .map_err(|e| StoreError::Internal(format!("invalid static `repo` target: {e}")))?;
+    let docs_target = RelativePath::new("documents")
+        .map_err(|e| StoreError::Internal(format!("invalid static `documents` target: {e}")))?;
+    Ok(MountSpec::new(
+        repo_target.clone(),
+        vec![
+            MountItem::Bundle {
+                target: repo_target,
+                bundle,
+                session_id,
+                issue_branch_id: None,
+            },
+            MountItem::Documents {
+                target: docs_target,
+            },
+        ],
+    ))
+}
+
+/// Fallback constructor for `agent_config` when the row's new column is NULL.
+pub(crate) fn agent_config_from_legacy_columns(
+    model: Option<&str>,
+    mcp_config_json: Option<&str>,
+) -> Result<crate::domain::sessions::AgentConfig, StoreError> {
+    let mcp_config = mcp_config_json
+        .map(|s| {
+            serde_json::from_str::<serde_json::Value>(s).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize legacy mcp_config while falling back: {e}"
+                ))
+            })
+        })
+        .transpose()?;
+    Ok(crate::domain::sessions::AgentConfig {
+        agent_name: None,
+        model: model.map(String::from),
+        system_prompt: None,
+        mcp_config,
+    })
+}
+
+/// Fallback constructor for `mode` when the row's new column is NULL.
+/// `conversation_resume_from` is the legacy `tasks_v2.conversation_resume_from`
+/// column value — folded into `SessionMode::Interactive` so the field's
+/// invariant (only meaningful for interactive sessions) holds at the row level.
+pub(crate) fn mode_from_legacy_columns(
+    prompt: &str,
+    conversation_id: Option<&str>,
+    conversation_resume_from: Option<usize>,
+) -> Result<crate::domain::sessions::SessionMode, StoreError> {
+    use crate::domain::sessions::SessionMode;
+    use hydra_common::ConversationId;
+    match conversation_id {
+        Some(c) => {
+            let conv_id = c.parse::<ConversationId>().map_err(|e| {
+                StoreError::Internal(format!(
+                    "invalid conversation_id while building fallback mode: {e}"
+                ))
+            })?;
+            Ok(SessionMode::Interactive {
+                conversation_id: conv_id,
+                // Legacy rows don't persist a per-session timeout override;
+                // the route layer falls back to the server-configured default.
+                idle_timeout_secs: None,
+                conversation_resume_from,
+            })
+        }
+        None => Ok(SessionMode::Headless {
+            prompt: prompt.to_string(),
         }),
     }
 }

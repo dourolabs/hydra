@@ -684,21 +684,24 @@ mod tests {
         store: &MemoryStore,
         issue_id: hydra_common::IssueId,
     ) -> hydra_common::SessionId {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
         use crate::store::Session;
         use chrono::Utc;
         let session = Session::new(
-            "p".to_string(),
-            Default::default(),
-            Some(issue_id),
             Username::from("test-creator"),
+            Some(issue_id),
             None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
             None,
             std::collections::HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "p".to_string(),
+            },
             crate::store::Status::Created,
             None,
             None,

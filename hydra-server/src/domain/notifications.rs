@@ -674,28 +674,7 @@ mod tests {
         let (issue_id, _) = store.add_issue(issue.clone(), &test_actor()).await.unwrap();
 
         // Create a Task with spawned_from pointing to the issue
-        let task = crate::store::Session {
-            prompt: "test".to_string(),
-            context: crate::domain::sessions::BundleSpec::default(),
-            spawned_from: Some(issue_id.clone()),
-            creator: Username::from("alice"),
-            image: None,
-            model: None,
-            env_vars: Default::default(),
-            cpu_limit: None,
-            memory_limit: None,
-            secrets: None,
-            mcp_config: None,
-            interactive: None,
-            status: crate::store::Status::Created,
-            last_message: None,
-            error: None,
-            deleted: false,
-            creation_time: None,
-            start_time: None,
-            end_time: None,
-            usage: None,
-        };
+        let task = test_session_for_notification(Some(issue_id.clone()));
 
         let payload = Arc::new(MutationPayload::Session {
             old: None,
@@ -851,21 +830,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn summary_session_created() {
-        let task = crate::store::Session {
-            prompt: "test".to_string(),
-            context: crate::domain::sessions::BundleSpec::default(),
-            spawned_from: None,
+    fn test_session_for_notification(spawned_from: Option<IssueId>) -> crate::store::Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
+        crate::store::Session {
             creator: Username::from("alice"),
+            spawned_from,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
             image: None,
-            model: None,
             env_vars: Default::default(),
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mcp_config: None,
-            interactive: None,
+            mode: SessionMode::Headless {
+                prompt: "test".to_string(),
+            },
             status: crate::store::Status::Created,
             last_message: None,
             error: None,
@@ -874,7 +856,12 @@ mod tests {
             start_time: None,
             end_time: None,
             usage: None,
-        };
+        }
+    }
+
+    #[test]
+    fn summary_session_created() {
+        let task = test_session_for_notification(None);
 
         let payload = Arc::new(MutationPayload::Session {
             old: None,

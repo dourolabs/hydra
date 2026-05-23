@@ -104,19 +104,22 @@ mod tests {
     use std::sync::Arc;
 
     fn make_session(status: Status) -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "test task".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
             None,
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "test task".to_string(),
+            },
             status,
             None,
             None,

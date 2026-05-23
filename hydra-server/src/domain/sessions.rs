@@ -2,7 +2,7 @@ use super::task_status::{Status, TaskError};
 use super::users::Username;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1 as api;
-use hydra_common::api::v1::sessions::{McpConfig, TokenUsage};
+use hydra_common::api::v1::sessions::{McpConfig, MountSpec, TokenUsage};
 use hydra_common::{ConversationId, IssueId, RepoName, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +13,8 @@ fn default_task_status() -> Status {
 }
 
 /// Settings that only apply when a session is running in interactive mode.
+/// Retained on the domain side only as an adapter for `CreateSessionRequest`;
+/// stored sessions encode the same data through `SessionMode::Interactive`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteractiveOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,17 +23,121 @@ pub struct InteractiveOptions {
     pub conversation_resume_from: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Session {
-    pub prompt: String,
-    pub context: BundleSpec,
+/// Per-session knobs handed to the model wrapper. Mirrors
+/// [`api::sessions::AgentConfig`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawned_from: Option<IssueId>,
-    pub creator: Username,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
+    pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
+}
+
+impl AgentConfig {
+    pub fn new(
+        agent_name: Option<String>,
+        model: Option<String>,
+        system_prompt: Option<String>,
+        mcp_config: Option<McpConfig>,
+    ) -> Self {
+        Self {
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
+        }
+    }
+}
+
+/// First-class discriminant for the two kinds of sessions Hydra runs.
+/// Mirrors [`api::sessions::SessionMode`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionMode {
+    Headless {
+        prompt: String,
+    },
+    Interactive {
+        conversation_id: ConversationId,
+        /// Optional worker-side idle timeout override. `None` falls back to
+        /// `config.job.interactive_idle_timeout_secs`.
+        idle_timeout_secs: Option<u64>,
+        /// Conversation event index that a resumed session should replay
+        /// from. Stamped by the spawn automation when a previous run on
+        /// the same conversation was closed/suspended. Transitional
+        /// alongside `Session::resumed_from`; retired in PR-4 when the
+        /// worker stops needing an event-index hint.
+        conversation_resume_from: Option<usize>,
+    },
+}
+
+impl SessionMode {
+    pub fn conversation_id(&self) -> Option<&ConversationId> {
+        match self {
+            SessionMode::Headless { .. } => None,
+            SessionMode::Interactive {
+                conversation_id, ..
+            } => Some(conversation_id),
+        }
+    }
+
+    pub fn prompt_for_legacy_wire(&self) -> &str {
+        match self {
+            SessionMode::Headless { prompt } => prompt.as_str(),
+            SessionMode::Interactive { .. } => "",
+        }
+    }
+
+    /// Returns the conversation event index to resume from, if any.
+    /// Always `None` for `SessionMode::Headless`.
+    pub fn conversation_resume_from(&self) -> Option<usize> {
+        match self {
+            SessionMode::Interactive {
+                conversation_resume_from,
+                ..
+            } => *conversation_resume_from,
+            SessionMode::Headless { .. } => None,
+        }
+    }
+
+    /// Stamp the resume hint on an interactive mode. Returns `false` if
+    /// called on a `Headless` mode — the caller has the wrong session.
+    #[must_use]
+    pub fn set_conversation_resume_from(&mut self, value: Option<usize>) -> bool {
+        match self {
+            SessionMode::Interactive {
+                conversation_resume_from,
+                ..
+            } => {
+                *conversation_resume_from = value;
+                true
+            }
+            SessionMode::Headless { .. } => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Session {
+    pub creator: Username,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<SessionId>,
+
+    pub agent_config: AgentConfig,
+    pub mount_spec: MountSpec,
+    /// Transitional bundle spec, mirrored from
+    /// [`api::sessions::Session::context`]. Removed in PR-3.
+    #[serde(default, skip_serializing_if = "BundleSpec::is_none")]
+    pub context: BundleSpec,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env_vars: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,11 +146,9 @@ pub struct Session {
     pub memory_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_config: Option<McpConfig>,
-    /// Interactive-only settings. `Some` for interactive sessions, `None` otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interactive: Option<InteractiveOptions>,
+
+    pub mode: SessionMode,
+
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,8 +163,6 @@ pub struct Session {
     pub start_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_time: Option<DateTime<Utc>>,
-    /// Aggregated token usage reported by the worker at the end of a run.
-    /// `None` until the worker submits a `Complete` status with usage data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
 }
@@ -68,35 +170,34 @@ pub struct Session {
 impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        prompt: String,
-        context: BundleSpec,
-        spawned_from: Option<IssueId>,
         creator: Username,
+        spawned_from: Option<IssueId>,
+        resumed_from: Option<SessionId>,
+        agent_config: AgentConfig,
+        mount_spec: MountSpec,
         image: Option<String>,
-        model: Option<String>,
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
-        mcp_config: Option<McpConfig>,
-        interactive: Option<InteractiveOptions>,
+        mode: SessionMode,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
     ) -> Self {
         Self {
-            prompt,
-            context,
-            spawned_from,
             creator,
+            spawned_from,
+            resumed_from,
+            agent_config,
+            mount_spec,
+            context: BundleSpec::None,
             image,
-            model,
             env_vars,
             cpu_limit,
             memory_limit,
             secrets,
-            mcp_config,
-            interactive,
+            mode,
             status,
             last_message,
             error,
@@ -111,14 +212,27 @@ impl Session {
     /// Returns the conversation_id, if this is an interactive session attached
     /// to a conversation.
     pub fn conversation_id(&self) -> Option<&ConversationId> {
-        self.interactive
-            .as_ref()
-            .and_then(|opts| opts.conversation_id.as_ref())
+        self.mode.conversation_id()
     }
 
     /// Returns `true` if this is an interactive session.
     pub fn is_interactive(&self) -> bool {
-        self.interactive.is_some()
+        matches!(self.mode, SessionMode::Interactive { .. })
+    }
+
+    /// Returns the prompt string for the worker, regardless of mode.
+    /// Headless sessions return `mode.Headless.prompt`; Interactive
+    /// sessions return `agent_config.system_prompt` (the agent's prompt,
+    /// stamped at session-create time).
+    pub fn resolved_prompt(&self) -> &str {
+        match &self.mode {
+            SessionMode::Headless { prompt } => prompt.as_str(),
+            SessionMode::Interactive { .. } => self
+                .agent_config
+                .system_prompt
+                .as_deref()
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -145,6 +259,12 @@ pub enum BundleSpec {
 impl Default for BundleSpec {
     fn default() -> Self {
         Self::None
+    }
+}
+
+impl BundleSpec {
+    pub fn is_none(&self) -> bool {
+        matches!(self, BundleSpec::None)
     }
 }
 
@@ -237,23 +357,80 @@ impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
     }
 }
 
+impl From<api::sessions::AgentConfig> for AgentConfig {
+    fn from(value: api::sessions::AgentConfig) -> Self {
+        AgentConfig {
+            agent_name: value.agent_name,
+            model: value.model,
+            system_prompt: value.system_prompt,
+            mcp_config: value.mcp_config,
+        }
+    }
+}
+
+impl From<AgentConfig> for api::sessions::AgentConfig {
+    fn from(value: AgentConfig) -> Self {
+        api::sessions::AgentConfig::new(
+            value.agent_name,
+            value.model,
+            value.system_prompt,
+            value.mcp_config,
+        )
+    }
+}
+
+impl From<api::sessions::SessionMode> for SessionMode {
+    fn from(value: api::sessions::SessionMode) -> Self {
+        match value {
+            api::sessions::SessionMode::Headless { prompt } => SessionMode::Headless { prompt },
+            api::sessions::SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            } => SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            },
+            _ => unreachable!("unsupported session mode variant"),
+        }
+    }
+}
+
+impl From<SessionMode> for api::sessions::SessionMode {
+    fn from(value: SessionMode) -> Self {
+        match value {
+            SessionMode::Headless { prompt } => api::sessions::SessionMode::Headless { prompt },
+            SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            } => api::sessions::SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            },
+        }
+    }
+}
+
 impl TryFrom<api::sessions::Session> for Session {
     type Error = crate::domain::task_status::UnsupportedVariantError;
 
     fn try_from(value: api::sessions::Session) -> Result<Self, Self::Error> {
         Ok(Session {
-            prompt: value.prompt,
-            context: value.context.into(),
-            spawned_from: value.spawned_from,
             creator: value.creator.into(),
+            spawned_from: value.spawned_from,
+            resumed_from: value.resumed_from,
+            agent_config: value.agent_config.into(),
+            mount_spec: value.mount_spec,
+            context: value.context.into(),
             image: value.image,
-            model: value.model,
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
             secrets: value.secrets,
-            mcp_config: value.mcp_config,
-            interactive: value.interactive.map(Into::into),
+            mode: value.mode.into(),
             status: value.status.try_into()?,
             last_message: value.last_message,
             error: value.error.map(TryInto::try_into).transpose()?,
@@ -269,18 +446,17 @@ impl TryFrom<api::sessions::Session> for Session {
 impl From<Session> for api::sessions::Session {
     fn from(value: Session) -> Self {
         let mut session = api::sessions::Session::new(
-            value.prompt,
-            value.context.into(),
-            value.spawned_from,
             value.creator.into(),
+            value.spawned_from,
+            value.resumed_from,
+            value.agent_config.into(),
+            value.mount_spec,
             value.image,
-            value.model,
             value.env_vars,
             value.cpu_limit,
             value.memory_limit,
             value.secrets,
-            value.mcp_config,
-            value.interactive.map(Into::into),
+            value.mode.into(),
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
@@ -290,6 +466,7 @@ impl From<Session> for api::sessions::Session {
             value.end_time,
         );
         session.usage = value.usage;
+        session.context = value.context.into();
         session
     }
 }
@@ -469,15 +646,26 @@ impl From<SessionEventSummary> for api::sessions::SessionEventSummary {
 #[cfg(test)]
 mod tests {
     use super::{
-        BundleSpec, Session, SessionEvent, SessionEventSummary, UnknownSessionEventVariant,
+        AgentConfig, BundleSpec, Session, SessionEvent, SessionEventSummary, SessionMode,
+        UnknownSessionEventVariant,
     };
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use chrono::Utc;
     use hydra_common::api::v1 as api;
+    use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath};
     use hydra_common::{RepoName, SessionId};
     use std::collections::HashMap;
     use std::str::FromStr;
+
+    fn test_mount_spec() -> MountSpec {
+        MountSpec::new(
+            RelativePath::new("repo").unwrap(),
+            vec![MountItem::Documents {
+                target: RelativePath::new("documents").unwrap(),
+            }],
+        )
+    }
 
     #[test]
     fn bundle_spec_converts_between_domain_and_api() {
@@ -497,18 +685,19 @@ mod tests {
     fn session_roundtrip_preserves_secrets() {
         let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
         let domain_session = Session::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::new(None, Some("gpt-4o".to_string()), None, None),
+            test_mount_spec(),
             Some("worker:latest".to_string()),
-            Some("gpt-4o".to_string()),
             HashMap::new(),
             Some("400m".to_string()),
             Some("768Mi".to_string()),
             secrets.clone(),
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "test prompt".to_string(),
+            },
             Status::Created,
             None,
             None,
@@ -518,26 +707,30 @@ mod tests {
         let round_trip: Session = api_session.try_into().unwrap();
 
         assert_eq!(round_trip.secrets, secrets);
-        assert_eq!(round_trip.prompt, domain_session.prompt);
+        assert_eq!(round_trip.mode, domain_session.mode);
         assert_eq!(round_trip.image, domain_session.image);
-        assert_eq!(round_trip.model, domain_session.model);
+        assert_eq!(
+            round_trip.agent_config.model,
+            domain_session.agent_config.model
+        );
     }
 
     #[test]
     fn session_roundtrip_preserves_empty_secrets() {
         let domain_session = Session::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
             None,
+            None,
+            AgentConfig::default(),
+            test_mount_spec(),
             None,
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "test prompt".to_string(),
+            },
             Status::Created,
             None,
             None,

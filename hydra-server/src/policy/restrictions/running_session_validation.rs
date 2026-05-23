@@ -88,19 +88,22 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_task() -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "test".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
             None,
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "test".to_string(),
+            },
             Status::Created,
             None,
             None,
