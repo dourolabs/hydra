@@ -1,3 +1,8 @@
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::PatchId;
@@ -8,6 +13,53 @@ use crate::api::v1::repositories::DynamicRef;
 // (see `hydra-common/src/api/v1/repositories.rs`). We reuse it verbatim for
 // the `ref` field of [`EligiblePrincipal::Dynamic`] rather than introducing
 // a parallel enum.
+
+/// Response body of `POST /v1/patches/:id/merge_check`.
+///
+/// On success the server returns `{ "ok": true }`; on a blocked merge the
+/// body is the same [`MergeBlockedError`] payload the write-path returns.
+/// Untagged so the wire JSON is exactly one of those two shapes — no
+/// discriminator wrapper.
+///
+/// HTTP status: `200` for [`MergeCheckResponse::Ok`], `422` for
+/// [`MergeCheckResponse::Blocked`]. The 422 (Unprocessable Entity) choice
+/// is locked in by the `IntoResponse` impl and is documented in
+/// `/designs/merge-time-constraints.md` §4.3 / §4.5 — it is NOT 400
+/// (request well-formed) and NOT 403 (actor authorisation is only one of
+/// two layers).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(untagged)]
+pub enum MergeCheckResponse {
+    Ok(MergeCheckOk),
+    Blocked(MergeBlockedError),
+}
+
+/// Success body of `POST /v1/patches/:id/merge_check`. The `ok` field is
+/// always `true` — its purpose is to give the variant a unique JSON shape
+/// so the untagged [`MergeCheckResponse`] can be parsed without ambiguity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct MergeCheckOk {
+    pub ok: bool,
+}
+
+impl MergeCheckOk {
+    pub fn allowed() -> Self {
+        Self { ok: true }
+    }
+}
+
+impl IntoResponse for MergeCheckResponse {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Ok(body) => (StatusCode::OK, Json(body)).into_response(),
+            Self::Blocked(body) => (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response(),
+        }
+    }
+}
 
 /// Structured body of a `merge_blocked` response.
 ///
@@ -386,6 +438,46 @@ mod tests {
             msg.contains("robot") || msg.contains("user"),
             "unknown EligiblePrincipal kind error should mention the offending value or accepted set, got: {msg}"
         );
+    }
+
+    // ---- MergeCheckResponse round-trips ---------------------------------
+
+    #[test]
+    fn merge_check_response_ok_round_trips() {
+        let value = json!({ "ok": true });
+        let parsed: MergeCheckResponse = serde_json::from_value(value.clone()).unwrap();
+        assert!(matches!(
+            parsed,
+            MergeCheckResponse::Ok(MergeCheckOk { ok: true })
+        ));
+        let reserialised = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(reserialised, value);
+    }
+
+    #[test]
+    fn merge_check_response_blocked_round_trips() {
+        let value = reviews_blocked_value();
+        let parsed: MergeCheckResponse = serde_json::from_value(value.clone()).unwrap();
+        assert!(matches!(parsed, MergeCheckResponse::Blocked(_)));
+        let reserialised = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(reserialised, value);
+    }
+
+    #[test]
+    fn merge_check_response_blocked_does_not_swallow_ok_field() {
+        // Defensive: a blocked body must NEVER be confused with the ok variant
+        // by the untagged enum, even though serde tries variants in source
+        // order. The `code` / `patch_id` / `blocked_at_layer` / `reasons`
+        // fields are required by MergeBlockedError; `ok` is required by
+        // MergeCheckOk. The two shapes are disjoint.
+        let value = mergers_blocked_value();
+        let parsed: MergeCheckResponse = serde_json::from_value(value).unwrap();
+        match parsed {
+            MergeCheckResponse::Blocked(body) => {
+                assert_eq!(body.blocked_at_layer, BlockedAtLayer::Mergers);
+            }
+            MergeCheckResponse::Ok(_) => panic!("must not match Ok"),
+        }
     }
 
     #[test]

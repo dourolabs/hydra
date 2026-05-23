@@ -1,7 +1,10 @@
 use crate::domain::{
     actors::{Actor, ActorRef},
-    patches::GithubPr,
+    patches::{GithubPr, PatchStatus},
 };
+use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
+use crate::policy::restrictions::MergeAuthorizationRestriction;
+use crate::policy::{PolicyViolation, Restriction};
 use crate::{
     app::{AppState, UpsertPatchError},
     store::StoreError,
@@ -17,6 +20,7 @@ use hydra_common::{
     HydraId, PatchId,
     api::v1::{
         self, ApiError,
+        merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
         pagination::{compute_next_cursor, effective_limit},
     },
 };
@@ -110,6 +114,102 @@ pub async fn update_patch(
     Ok(Json(v1::patches::UpsertPatchResponse::new(
         patch_id, version,
     )))
+}
+
+/// Preflight check: would calling `hydra patches merge` against this patch
+/// succeed *right now* for the calling actor? Runs the same
+/// `merge_authorization` restriction the write path runs on
+/// `PatchStatus::Merged` transitions, but read-only — no state changes.
+///
+/// Returns `200` with `{ "ok": true }` if the merge would be allowed, or
+/// `422 Unprocessable Entity` carrying a [`MergeBlockedError`] body
+/// otherwise. The 422 status is documented in
+/// `/designs/merge-time-constraints.md` §4.3 / §4.5 — it is NOT 400
+/// (request well-formed) and NOT 403 (actor authorisation is only one of
+/// two layers).
+pub async fn merge_check(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    PatchIdPath(patch_id): PatchIdPath,
+) -> Result<MergeCheckResponse, ApiError> {
+    info!(patch_id = %patch_id, "merge_check invoked");
+
+    // 1. Load current patch (404 if missing). Reuses the same error mapping
+    //    as sibling read handlers.
+    let current = state
+        .get_patch(&patch_id, false)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    // 2. Build a context that mimics the write-path's `UpdatePatch`
+    //    operation transitioning into `Merged`: old = current patch, new =
+    //    same patch with status flipped to `Merged`. The restriction is the
+    //    authoritative read-only evaluator — handing it the same shape the
+    //    write path would supply guarantees parity (see §4.3).
+    let old_patch = current.item.clone();
+    let mut new_patch = current.item;
+    new_patch.status = PatchStatus::Merged;
+
+    let actor_ref = ActorRef::from(&actor);
+    let payload = OperationPayload::Patch {
+        patch_id: Some(patch_id.clone()),
+        new: new_patch,
+        old: Some(old_patch),
+    };
+    let ctx = RestrictionContext {
+        operation: Operation::UpdatePatch,
+        actor: &actor_ref,
+        payload: &payload,
+        store: state.store(),
+    };
+
+    // 3. Evaluate. The restriction is the single source of truth; we
+    //    invoke it directly (not via `PolicyEngine::check_restrictions`)
+    //    because the preflight surface answers ONLY the merge_authorization
+    //    question — other restrictions don't belong in the response shape.
+    let restriction = MergeAuthorizationRestriction::new();
+    match restriction.evaluate(&ctx).await {
+        Ok(()) => {
+            info!(patch_id = %patch_id, "merge_check completed: allowed");
+            Ok(MergeCheckResponse::Ok(MergeCheckOk::allowed()))
+        }
+        Err(violation) => {
+            let body = parse_merge_blocked_violation(&violation, &patch_id)?;
+            info!(
+                patch_id = %patch_id,
+                blocked_at_layer = ?body.blocked_at_layer,
+                "merge_check completed: blocked"
+            );
+            Ok(MergeCheckResponse::Blocked(body))
+        }
+    }
+}
+
+/// Translate a `merge_authorization` `PolicyViolation` into the structured
+/// [`MergeBlockedError`] wire body.
+///
+/// The restriction serialises its block response as JSON into
+/// `PolicyViolation::message`; preflight just round-trips it back. Anything
+/// else (an internal failure, e.g. "failed to load repository") arrives as a
+/// non-JSON message — surface that as `500 Internal Server Error` because
+/// preflight cannot distinguish it from a real block without the parse.
+fn parse_merge_blocked_violation(
+    violation: &PolicyViolation,
+    patch_id: &PatchId,
+) -> Result<MergeBlockedError, ApiError> {
+    serde_json::from_str::<MergeBlockedError>(&violation.message).map_err(|err| {
+        error!(
+            patch_id = %patch_id,
+            policy = %violation.policy_name,
+            error = %err,
+            message = %violation.message,
+            "merge_authorization produced a non-MergeBlockedError violation"
+        );
+        ApiError::internal(format!(
+            "merge_authorization internal failure: {}",
+            violation.message
+        ))
+    })
 }
 
 pub async fn get_patch(
@@ -647,4 +747,348 @@ pub async fn delete_patch(
         labels,
     );
     Ok(Json(response))
+}
+
+#[cfg(test)]
+mod merge_check_tests {
+    //! Handler-level tests for `POST /v1/patches/:patch_id/merge_check`.
+    //!
+    //! These call the handler function directly with constructed extractor
+    //! wrappers (cheaper than spawning the full router/test-server). The
+    //! handler's only interaction with HTTP is the `IntoResponse` impl on
+    //! `MergeCheckResponse` and `ApiError`, both of which are covered by
+    //! upstream unit tests; verifying the body + status mapping here would
+    //! duplicate them.
+    use super::*;
+    use crate::domain::actors::Actor;
+    use crate::domain::patches::{Patch, PatchStatus, Review};
+    use crate::domain::users::Username;
+    use crate::test_utils::{TestStateHandles, test_state_handles};
+    use axum::http::StatusCode;
+    use chrono::Utc;
+    use hydra_common::ActorRef as CommonActorRef;
+    use hydra_common::api::v1::merge_check::{
+        BlockedAtLayer, MergeBlockedError, MergeBlockedReason, MergeCheckResponse,
+    };
+    use hydra_common::api::v1::repositories::{
+        MergePolicy, MergerRule, Principal as ApiPrincipal, ReviewerGroup,
+    };
+    use hydra_common::api::v1::users::Username as ApiUsername;
+    use hydra_common::{RepoName, Repository};
+
+    fn repo_name() -> RepoName {
+        RepoName::new("octo", "repo").expect("valid repo name")
+    }
+
+    fn user_principal(name: &str) -> ApiPrincipal {
+        ApiPrincipal::User(ApiUsername::from(name))
+    }
+
+    fn actor_for(username: &str) -> Actor {
+        Actor::new_for_user(Username::from(username)).0
+    }
+
+    fn approval(author: &str) -> Review {
+        Review::new(
+            "LGTM".to_string(),
+            true,
+            author.to_string(),
+            Some(Utc::now()),
+        )
+    }
+
+    fn open_patch(reviews: Vec<Review>) -> Patch {
+        Patch::new(
+            "title".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("author"),
+            reviews,
+            repo_name(),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    async fn seed_repo(handles: &TestStateHandles, policy: Option<MergePolicy>) {
+        let mut repo =
+            Repository::new("https://example.com/repo.git".to_string(), None, None, None);
+        repo.merge_policy = policy;
+        handles
+            .store
+            .as_ref()
+            .add_repository(repo_name(), repo, &CommonActorRef::test())
+            .await
+            .expect("seed repository");
+    }
+
+    async fn seed_patch(handles: &TestStateHandles, patch: Patch) -> PatchId {
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(patch, &CommonActorRef::test())
+            .await
+            .expect("seed patch");
+        patch_id
+    }
+
+    async fn call_merge_check(
+        state: &AppState,
+        actor: Actor,
+        patch_id: PatchId,
+    ) -> Result<MergeCheckResponse, ApiError> {
+        merge_check(
+            State(state.clone()),
+            Extension(actor),
+            PatchIdPath(patch_id),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn merge_check_returns_ok_when_no_merge_policy() {
+        let handles = test_state_handles();
+        seed_repo(&handles, None).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("anyone"), patch_id)
+            .await
+            .expect("handler must succeed when no policy is configured");
+        assert!(
+            matches!(response, MergeCheckResponse::Ok(_)),
+            "expected MergeCheckResponse::Ok, got {response:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_check_blocks_when_reviewer_missing() {
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: Some("code-review".to_string()),
+                any_of: vec![user_principal("reviewer")],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: None,
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("anyone"), patch_id.clone())
+            .await
+            .expect("handler returns Ok-wrapped MergeCheckResponse on block");
+
+        let body = match response {
+            MergeCheckResponse::Blocked(body) => body,
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+        assert_eq!(body.patch_id, patch_id);
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Reviews);
+        assert_eq!(body.reasons.len(), 1);
+        assert!(matches!(
+            body.reasons[0],
+            MergeBlockedReason::MissingApprovals { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn merge_check_allows_after_non_stale_approval() {
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: None,
+                any_of: vec![user_principal("reviewer")],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: None,
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![approval("reviewer")])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("anyone"), patch_id)
+            .await
+            .expect("handler must succeed once the approval lands");
+        assert!(
+            matches!(response, MergeCheckResponse::Ok(_)),
+            "expected Ok, got {response:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_check_blocks_when_actor_not_in_mergers() {
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![user_principal("alice")],
+            }),
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("swe-x"), patch_id)
+            .await
+            .expect("handler returns Ok-wrapped MergeCheckResponse on block");
+
+        let body = match response {
+            MergeCheckResponse::Blocked(body) => body,
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Mergers);
+        match &body.reasons[..] {
+            [MergeBlockedReason::NotInMergers { actor, .. }] => {
+                assert_eq!(actor, "swe-x");
+            }
+            other => panic!("expected single NotInMergers reason, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn merge_check_allows_listed_merger() {
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![user_principal("alice")],
+            }),
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("alice"), patch_id)
+            .await
+            .expect("alice is in mergers, must succeed");
+        assert!(matches!(response, MergeCheckResponse::Ok(_)));
+    }
+
+    #[tokio::test]
+    async fn merge_check_priority_gates_to_reviews_only() {
+        // Both layers would fail simultaneously, but the response must
+        // expose ONLY the reviews-layer reason — per design §4.5 the SWE
+        // sees one priority layer at a time.
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: None,
+                any_of: vec![user_principal("reviewer")],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: Some(MergerRule {
+                any_of: vec![user_principal("alice")],
+            }),
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+
+        let response = call_merge_check(&handles.state, actor_for("bob"), patch_id)
+            .await
+            .expect("handler returns Ok-wrapped MergeCheckResponse on block");
+
+        let body = match response {
+            MergeCheckResponse::Blocked(body) => body,
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Reviews);
+        assert!(
+            body.reasons
+                .iter()
+                .all(|r| matches!(r, MergeBlockedReason::MissingApprovals { .. })),
+            "reviews-layer block must NOT carry NotInMergers reasons; \
+             got: {:?}",
+            body.reasons
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_check_unknown_patch_id_is_404() {
+        let handles = test_state_handles();
+        seed_repo(&handles, None).await;
+        let bogus = PatchId::new();
+
+        let err = call_merge_check(&handles.state, actor_for("anyone"), bogus)
+            .await
+            .expect_err("unknown patch id must be a 404");
+        assert_eq!(err.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Parity test: the JSON body the preflight endpoint emits on a block
+    /// must equal the JSON the restriction stuffs into
+    /// `PolicyViolation::message` for the same inputs — that's the
+    /// guarantee the design hangs on, since the CLI parses the same wire
+    /// shape from both surfaces.
+    #[tokio::test]
+    async fn merge_check_blocked_body_matches_restriction_violation() {
+        use crate::domain::actors::ActorRef as DomainActorRef;
+        use crate::policy::Restriction;
+        use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
+        use crate::policy::restrictions::MergeAuthorizationRestriction;
+
+        let handles = test_state_handles();
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: Some("code-review".to_string()),
+                any_of: vec![user_principal("reviewer")],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: None,
+        };
+        seed_repo(&handles, Some(policy)).await;
+        let patch_id = seed_patch(&handles, open_patch(vec![])).await;
+        let actor = actor_for("author");
+
+        let response = call_merge_check(&handles.state, actor.clone(), patch_id.clone())
+            .await
+            .expect("merge_check call must not error");
+        let preflight_body = match response {
+            MergeCheckResponse::Blocked(body) => body,
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+
+        // Reproduce the write path's restriction call exactly: same actor,
+        // same store, same simulated UpdatePatch payload.
+        let current = handles
+            .state
+            .get_patch(&patch_id, false)
+            .await
+            .expect("patch still present");
+        let old_patch = current.item.clone();
+        let mut new_patch = current.item;
+        new_patch.status = PatchStatus::Merged;
+
+        let actor_ref = DomainActorRef::from(&actor);
+        let payload = OperationPayload::Patch {
+            patch_id: Some(patch_id.clone()),
+            new: new_patch,
+            old: Some(old_patch),
+        };
+        let ctx = RestrictionContext {
+            operation: Operation::UpdatePatch,
+            actor: &actor_ref,
+            payload: &payload,
+            store: handles.state.store(),
+        };
+        let violation = MergeAuthorizationRestriction::new()
+            .evaluate(&ctx)
+            .await
+            .expect_err("restriction must block on the same inputs");
+        let restriction_body: MergeBlockedError = serde_json::from_str(&violation.message)
+            .expect("restriction emits MergeBlockedError JSON");
+
+        // Compare the two as JSON to keep the assertion focused on the
+        // wire shape (not on Rust struct equality), since the wire shape is
+        // the contract the CLI consumes from both surfaces.
+        assert_eq!(
+            serde_json::to_value(&preflight_body).unwrap(),
+            serde_json::to_value(&restriction_body).unwrap(),
+        );
+    }
 }
