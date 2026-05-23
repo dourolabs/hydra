@@ -31,6 +31,7 @@ use hydra_common::{
     api::v1::labels::{
         ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
     },
+    api::v1::merge_check::MergeCheckResponse,
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
@@ -217,6 +218,10 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse> {
         self.inner.list_patch_versions(patch_id).await
+    }
+
+    async fn merge_check(&self, patch_id: &PatchId) -> Result<MergeCheckResponse> {
+        self.inner.merge_check(patch_id).await
     }
 
     async fn create_document(

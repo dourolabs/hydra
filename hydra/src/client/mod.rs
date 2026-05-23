@@ -19,6 +19,7 @@ use hydra_common::{
     api::v1::login::{
         DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
     },
+    api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
@@ -258,6 +259,7 @@ pub trait HydraClientInterface: Send + Sync {
     ) -> Result<PatchVersionRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse>;
+    async fn merge_check(&self, patch_id: &PatchId) -> Result<MergeCheckResponse>;
     async fn create_document(
         &self,
         request: &UpsertDocumentRequest,
@@ -1079,6 +1081,52 @@ impl HydraClient {
             .json::<ListPatchesResponse>()
             .await
             .context("failed to decode list patches response")
+    }
+
+    /// Call `POST /v1/patches/:patch_id/merge_check` to ask the server whether
+    /// `hydra patches merge` would succeed *right now* for the calling actor.
+    ///
+    /// Returns `Ok(MergeCheckResponse::Ok)` on HTTP 200 and
+    /// `Ok(MergeCheckResponse::Blocked(_))` on HTTP 422 — both are normal,
+    /// in-band outcomes from the preflight endpoint. Other statuses
+    /// (network errors, 404, 5xx) surface as `Err` and the caller MUST NOT
+    /// proceed with the merge.
+    pub async fn merge_check(&self, patch_id: &PatchId) -> Result<MergeCheckResponse> {
+        let path = format!("/v1/patches/{patch_id}/merge_check");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .send()
+            .await
+            .context("failed to submit merge_check request")?;
+
+        let status = response.status();
+        match status {
+            StatusCode::OK => {
+                let body = response
+                    .json::<MergeCheckOk>()
+                    .await
+                    .context("failed to decode merge_check success body")?;
+                Ok(MergeCheckResponse::Ok(body))
+            }
+            StatusCode::UNPROCESSABLE_ENTITY => {
+                let body = response
+                    .json::<MergeBlockedError>()
+                    .await
+                    .context("failed to decode merge_check blocked body")?;
+                Ok(MergeCheckResponse::Blocked(body))
+            }
+            _ => {
+                let _ = response
+                    .error_for_status_with_body(
+                        "hydra-server returned an error while running merge_check",
+                    )
+                    .await?;
+                Err(anyhow!(
+                    "merge_check returned unexpected status {status} — refusing to proceed"
+                ))
+            }
+        }
     }
 
     /// Call `GET /v1/patches/:patch_id/versions` to list patch history.
@@ -2391,6 +2439,10 @@ impl HydraClientInterface for HydraClient {
 
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse> {
         HydraClient::list_patch_versions(self, patch_id).await
+    }
+
+    async fn merge_check(&self, patch_id: &PatchId) -> Result<MergeCheckResponse> {
+        HydraClient::merge_check(self, patch_id).await
     }
 
     async fn create_document(
