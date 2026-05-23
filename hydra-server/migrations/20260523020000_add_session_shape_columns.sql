@@ -64,10 +64,9 @@ WHERE agent_config IS NULL;
 -- mode backfill
 --
 -- Headless if no conversation_id was attached, Interactive otherwise.
--- `idle_timeout_secs` and `conversation_resume_from` are omitted because
--- they are `Option`-shaped on the new `SessionMode::Interactive` variant;
--- the route layer applies the server-configured default for the former
--- and the latter is carried in the dedicated legacy column already.
+-- `idle_timeout_secs` defaults to 0 for historical rows because the value was
+-- never persisted per-row (it lives in server config); PR-3 picks up the
+-- current config value at runtime.
 --
 -- Note on divergence from design §6 step 12. The design wording phrases the
 -- rule in terms of the legacy `interactive` column: "Headless if `interactive`
@@ -85,7 +84,8 @@ SET mode = CASE
     ELSE
         jsonb_build_object(
             'type', 'interactive',
-            'conversation_id', conversation_id
+            'conversation_id', conversation_id,
+            'idle_timeout_secs', 0
         )
 END
 WHERE mode IS NULL;

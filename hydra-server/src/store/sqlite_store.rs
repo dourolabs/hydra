@@ -11346,9 +11346,13 @@ mod tests {
         .unwrap();
     }
 
-    /// Replays the four backfill UPDATE statements from
-    /// `20260523020000_add_session_shape_columns.sql`. Kept in lockstep with
-    /// the migration; if the migration changes, this must change too.
+    /// Replays the backfill UPDATE statements from the session-shape
+    /// migrations: the four from
+    /// `20260523020000_add_session_shape_columns.sql`, followed by the
+    /// `idle_timeout_secs: 0` cleanup from
+    /// `20260523040000_normalize_session_mode_idle_timeout.sql`. Kept in
+    /// lockstep with both migrations; if either changes, this must change
+    /// too.
     async fn replay_session_shape_backfill(store: &SqliteStore) {
         for stmt in [
             r#"UPDATE tasks_v2
@@ -11386,7 +11390,8 @@ mod tests {
                    ELSE
                        json_object(
                            'type', 'interactive',
-                           'conversation_id', conversation_id
+                           'conversation_id', conversation_id,
+                           'idle_timeout_secs', 0
                        )
                END
                WHERE mode IS NULL"#,
@@ -11406,6 +11411,10 @@ mod tests {
                WHERE t.conversation_resume_from IS NOT NULL
                  AND t.is_latest                = 1
                  AND t.resumed_from IS NULL"#,
+            r#"UPDATE tasks_v2
+               SET mode = json_remove(mode, '$.idle_timeout_secs')
+               WHERE mode IS NOT NULL
+                 AND json_extract(mode, '$.idle_timeout_secs') = 0"#,
         ] {
             sqlx::query(stmt).execute(&store.pool).await.unwrap();
         }
