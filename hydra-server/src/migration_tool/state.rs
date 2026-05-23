@@ -48,7 +48,19 @@ pub fn emit_jsonl(entry: &PlanEntry) -> Result<()> {
 /// "latest linked session" rule.
 fn session_id_from_actor_json(actor: &str) -> Option<String> {
     let parsed: ActorRef = serde_json::from_str(actor).ok()?;
-    match parsed {
+    session_id_from_actor_ref(parsed)
+}
+
+/// Same as [`session_id_from_actor_json`] but for an already-parsed JSON
+/// value (used by the Postgres path where `actor` is JSONB).
+#[cfg(feature = "postgres")]
+fn session_id_from_actor_value(actor: serde_json::Value) -> Option<String> {
+    let parsed: ActorRef = serde_json::from_value(actor).ok()?;
+    session_id_from_actor_ref(parsed)
+}
+
+fn session_id_from_actor_ref(actor: ActorRef) -> Option<String> {
+    match actor {
         ActorRef::Authenticated {
             actor_id: ActorId::Session(session_id),
         } => Some(session_id.as_ref().to_string()),
@@ -186,7 +198,7 @@ mod sqlite {
 
 #[cfg(feature = "postgres")]
 mod postgres {
-    use super::{PlanAction, PlanEntry, Result, session_id_from_actor_json};
+    use super::{PlanAction, PlanEntry, Result, session_id_from_actor_value};
     use anyhow::Context;
     use sqlx::PgPool;
 
@@ -278,7 +290,7 @@ mod postgres {
         .flatten();
 
         if let Some(actor_value) = suspending_actor
-            && let Some(session_id) = session_id_from_actor_json(&actor_value.to_string())
+            && let Some(session_id) = session_id_from_actor_value(actor_value)
         {
             return Ok(Some(session_id));
         }
