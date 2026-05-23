@@ -95,14 +95,11 @@ pub async fn resolve_session_for_conversation(
     if let Some(entry) = state.chat_relay_map.get(conversation_id) {
         return Some(entry.session_id.clone());
     }
-    let sessions = state
-        .store()
-        .list_sessions(&SearchSessionsQuery::default())
-        .await
-        .ok()?;
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    let sessions = state.store().list_sessions(&query).await.ok()?;
     sessions
         .into_iter()
-        .filter(|(_, v)| v.item.conversation_id() == Some(conversation_id))
         .max_by_key(|(_, v)| v.creation_time)
         .map(|(id, _)| id)
 }
