@@ -463,7 +463,6 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
             mode: SessionMode::Headless {
                 prompt: "with-usage".to_string(),
             },
-            conversation_resume_from: None,
             status: Status::Complete,
             last_message: None,
             error: None,
@@ -680,7 +679,6 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -957,7 +955,6 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1039,7 +1036,6 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1141,7 +1137,6 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1204,7 +1199,6 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1278,7 +1272,6 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1332,7 +1325,6 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1395,9 +1387,9 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 // idle-timeout through `WorkerContext.interactive`.
                 mode: SessionMode::Interactive {
                     conversation_id: hydra_common::ConversationId::new(),
-                    idle_timeout_secs: 0,
+                    idle_timeout_secs: None,
+                    conversation_resume_from: None,
                 },
-                conversation_resume_from: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1471,7 +1463,6 @@ fn make_session_with_service_repo(
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
         },
-        conversation_resume_from: None,
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1499,7 +1490,6 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
         },
-        conversation_resume_from: None,
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1671,7 +1661,6 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
         },
-        conversation_resume_from: None,
         status: Status::Created,
         last_message: None,
         error: None,

@@ -5638,7 +5638,8 @@ mod tests {
         let mut task_a = spawn_task();
         task_a.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_a.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
         };
         let (task_a_id, _) = store
             .add_session(task_a, Utc::now(), &ActorRef::test())
@@ -5648,7 +5649,8 @@ mod tests {
         let mut task_b = spawn_task();
         task_b.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_b.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
         };
         store
             .add_session(task_b, Utc::now(), &ActorRef::test())
@@ -8525,7 +8527,8 @@ mod tests {
             Some(conv_id) => {
                 session.mode = crate::domain::sessions::SessionMode::Interactive {
                     conversation_id: conv_id,
-                    idle_timeout_secs: 0,
+                    idle_timeout_secs: None,
+                    conversation_resume_from: None,
                 };
             }
             None => {

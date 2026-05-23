@@ -423,7 +423,8 @@ mod tests {
         let mode = match conversation_id {
             Some(id) => SessionMode::Interactive {
                 conversation_id: id,
-                idle_timeout_secs: 0,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
             },
             None => SessionMode::Headless {
                 prompt: "p".to_string(),

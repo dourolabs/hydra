@@ -227,39 +227,6 @@ pub(crate) fn dual_write_mode_json(session: &Session) -> Result<serde_json::Valu
         .map_err(|e| StoreError::Internal(format!("failed to serialize mode for dual-write: {e}")))
 }
 
-/// Recover legacy `context: BundleSpec` from a session's mount spec. Mirrors
-/// what `mount_spec_from_create_request` writes in `dual_write_mount_spec_json`:
-/// the first `MountItem::Bundle` carries the bundle. Defaults to
-/// `BundleSpec::None` if no Bundle item is present (e.g. resumed sessions
-/// from a future schema).
-#[allow(dead_code)]
-pub(crate) fn legacy_context_from_mount_spec(
-    session: &Session,
-) -> crate::domain::sessions::BundleSpec {
-    use hydra_common::api::v1::sessions::MountItem;
-    for item in &session.mount_spec.mounts {
-        if let MountItem::Bundle { bundle, .. } = item {
-            // The API `Bundle` enum converts into domain `BundleSpec` via the
-            // existing `From<api::Bundle> for domain::Bundle` plus
-            // `From<domain::Bundle> for domain::BundleSpec` chain — but we
-            // bypass the intermediate `domain::Bundle` since we only need the
-            // BundleSpec shape that goes into the legacy `context` column.
-            use hydra_common::api::v1::sessions::Bundle;
-            return match bundle {
-                Bundle::None => crate::domain::sessions::BundleSpec::None,
-                Bundle::GitRepository { url, rev } => {
-                    crate::domain::sessions::BundleSpec::GitRepository {
-                        url: url.clone(),
-                        rev: rev.clone(),
-                    }
-                }
-                _ => crate::domain::sessions::BundleSpec::None,
-            };
-        }
-    }
-    crate::domain::sessions::BundleSpec::None
-}
-
 /// Fallback constructor for `mount_spec` when the row's new column is NULL.
 /// Should not happen post PR-1 (the migration backfills every row); kept
 /// defensively for hand-crafted rows / future writers that bypass the
@@ -337,9 +304,13 @@ pub(crate) fn agent_config_from_legacy_columns(
 }
 
 /// Fallback constructor for `mode` when the row's new column is NULL.
+/// `conversation_resume_from` is the legacy `tasks_v2.conversation_resume_from`
+/// column value — folded into `SessionMode::Interactive` so the field's
+/// invariant (only meaningful for interactive sessions) holds at the row level.
 pub(crate) fn mode_from_legacy_columns(
     prompt: &str,
     conversation_id: Option<&str>,
+    conversation_resume_from: Option<usize>,
 ) -> Result<crate::domain::sessions::SessionMode, StoreError> {
     use crate::domain::sessions::SessionMode;
     use hydra_common::ConversationId;
@@ -352,7 +323,10 @@ pub(crate) fn mode_from_legacy_columns(
             })?;
             Ok(SessionMode::Interactive {
                 conversation_id: conv_id,
-                idle_timeout_secs: 0,
+                // Legacy rows don't persist a per-session timeout override;
+                // the route layer falls back to the server-configured default.
+                idle_timeout_secs: None,
+                conversation_resume_from,
             })
         }
         None => Ok(SessionMode::Headless {

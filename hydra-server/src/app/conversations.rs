@@ -940,7 +940,7 @@ mod tests {
             "session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_resume_from,
+            session.item.mode.conversation_resume_from(),
             Some(expected_resume_from),
             "conversation_resume_from should equal index just after the most recent Closed"
         );
@@ -1150,7 +1150,7 @@ mod tests {
             "session should be interactive"
         );
         assert_eq!(
-            session.item.conversation_resume_from,
+            session.item.mode.conversation_resume_from(),
             Some(expected_resume_from),
             "conversation_resume_from should equal index just after the most recent Closed"
         );

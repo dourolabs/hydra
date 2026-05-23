@@ -2269,7 +2269,6 @@ mod tests {
             mode: SessionMode::Headless {
                 prompt: "test task".to_string(),
             },
-            conversation_resume_from: None,
             status,
             last_message,
             error: None,
@@ -2981,7 +2980,6 @@ mod tests {
             mode: SessionMode::Headless {
                 prompt: "test session".to_string(),
             },
-            conversation_resume_from: None,
             status: Status::Created,
             last_message: None,
             error: None,

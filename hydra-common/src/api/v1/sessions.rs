@@ -118,7 +118,20 @@ pub enum SessionMode {
     /// Interactive session attached to a conversation.
     Interactive {
         conversation_id: ConversationId,
-        idle_timeout_secs: u64,
+        /// Worker-side idle timeout override. `None` means the server
+        /// applies its configured default (`job.interactive_idle_timeout_secs`)
+        /// at handshake time — used when the caller didn't supply a value
+        /// and for legacy rows that don't carry one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idle_timeout_secs: Option<u64>,
+        /// Conversation event index that a resumed session should replay
+        /// from. Stamped by the spawn automation. Belongs inside the
+        /// `Interactive` variant because resumption is only meaningful for
+        /// interactive sessions; making it part of the mode means a
+        /// `Headless` session can never carry a meaningless value.
+        /// Transitional until PR-4 introduces `SessionStateBlob`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_resume_from: Option<usize>,
     },
 }
 
@@ -142,6 +155,19 @@ impl SessionMode {
             SessionMode::Interactive { .. } => "",
         }
     }
+
+    /// Returns the conversation event index to resume from, if any. Always
+    /// `None` for headless sessions because resumption is only meaningful
+    /// for interactive runs.
+    pub fn conversation_resume_from(&self) -> Option<usize> {
+        match self {
+            SessionMode::Interactive {
+                conversation_resume_from,
+                ..
+            } => *conversation_resume_from,
+            SessionMode::Headless { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,8 +186,8 @@ pub struct Session {
     // === Universal agent inputs ===
     #[serde(default)]
     pub agent_config: AgentConfig,
-    /// Server-supplied mount layout. Always populated post-PR-1.
-    #[serde(default = "default_mount_spec")]
+    /// Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
+    /// serde default; deserialization fails loudly if the field is missing.
     pub mount_spec: MountSpec,
     /// Transitional bundle spec, retained until PR-3 routes
     /// `CreateSessionRequest` → `mount_spec` through the resolver. The
@@ -184,16 +210,9 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
 
     // === Mode (first-class) ===
-    #[serde(default = "default_mode")]
+    /// Mandatory per design §1.2 — no serde default; deserialization
+    /// fails loudly if the field is missing.
     pub mode: SessionMode,
-
-    /// Conversation event index that this resumed session should replay from.
-    /// Set by the spawn automation when a previous run on the same
-    /// conversation was closed/suspended. Transitional alongside
-    /// [`Self::resumed_from`] until PR-4 introduces `SessionStateBlob` and the
-    /// worker stops needing an event-index hint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
 
     // === Universal lifecycle ===
     #[serde(default = "default_status")]
@@ -251,7 +270,6 @@ impl Session {
             memory_limit,
             secrets,
             mode,
-            conversation_resume_from: None,
             status,
             last_message,
             error,
@@ -276,19 +294,6 @@ impl Session {
 
 fn default_status() -> Status {
     Status::Created
-}
-
-fn default_mount_spec() -> MountSpec {
-    MountSpec::new(
-        RelativePath::new("repo").expect("static `repo` path is valid"),
-        Vec::new(),
-    )
-}
-
-fn default_mode() -> SessionMode {
-    SessionMode::Headless {
-        prompt: String::new(),
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1349,7 +1354,8 @@ mod tests {
         let mut session = make_test_session("interactive prompt");
         session.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: 600,
+            idle_timeout_secs: Some(600),
+            conversation_resume_from: None,
         };
         let summary = SessionSummary::from(&session);
         assert_eq!(summary.conversation_id.as_ref(), Some(&conv_id));
@@ -1478,12 +1484,14 @@ mod tests {
         let conv_id = crate::ConversationId::new();
         let interactive = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: 300,
+            idle_timeout_secs: Some(300),
+            conversation_resume_from: Some(7),
         };
         let i_json = serde_json::to_value(&interactive).unwrap();
         assert_eq!(i_json["type"], "interactive");
         assert_eq!(i_json["conversation_id"], conv_id.as_ref());
         assert_eq!(i_json["idle_timeout_secs"], 300);
+        assert_eq!(i_json["conversation_resume_from"], 7);
         let parsed: SessionMode = serde_json::from_value(i_json).unwrap();
         assert_eq!(parsed, interactive);
     }

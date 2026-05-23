@@ -115,6 +115,8 @@ pub enum CreateSessionError {
         #[source]
         source: StoreError,
     },
+    #[error("interactive sessions require a conversation_id")]
+    InteractiveRequiresConversation,
 }
 
 #[derive(Debug, Error)]
@@ -294,19 +296,18 @@ impl AppState {
         }
 
         let mode = if request.interactive {
-            // The new SessionMode::Interactive requires a non-null
-            // conversation_id; legacy callers that asked for `interactive:
-            // true` without a conversation_id collapse to Headless with the
-            // same prompt — same semantic effect (no conversation linkage),
-            // matches the dual-write rule in `dual_write_mode_json`.
-            match request.conversation_id.clone() {
-                Some(conv_id) => SessionMode::Interactive {
-                    conversation_id: conv_id,
-                    idle_timeout_secs: 0,
-                },
-                None => SessionMode::Headless {
-                    prompt: prompt.clone(),
-                },
+            // `SessionMode::Interactive` requires a `conversation_id`. The
+            // legacy flat `CreateSessionRequest` shape can't express that
+            // constraint at compile time, so the cross-field check stays
+            // here. Matches the historical worker-start rejection.
+            let conv_id = request
+                .conversation_id
+                .clone()
+                .ok_or(CreateSessionError::InteractiveRequiresConversation)?;
+            SessionMode::Interactive {
+                conversation_id: conv_id,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
             }
         } else {
             SessionMode::Headless {

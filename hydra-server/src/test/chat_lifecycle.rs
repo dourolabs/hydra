@@ -559,7 +559,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         "resumed session must be interactive"
     );
     assert_eq!(
-        resumed_session.conversation_resume_from,
+        resumed_session.mode.conversation_resume_from(),
         Some(3),
         "conversation_resume_from should equal pre-Resumed event count"
     );
@@ -571,7 +571,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     let catch_up = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: resumed_session.conversation_resume_from,
+            resume_from_event_index: resumed_session.mode.conversation_resume_from(),
         },
     )
     .await?;
@@ -731,7 +731,7 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         "resumed session must be interactive"
     );
     assert!(
-        new_session.conversation_resume_from.is_some(),
+        new_session.mode.conversation_resume_from().is_some(),
         "conversation_resume_from must be set on a session created by /resume"
     );
 
@@ -996,7 +996,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let catch_up2 = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: new_session.conversation_resume_from,
+            resume_from_event_index: new_session.mode.conversation_resume_from(),
         },
     )
     .await?;
@@ -1239,7 +1239,8 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         "resumed session must be interactive"
     );
     let events_len_at_resume = new_session
-        .conversation_resume_from
+        .mode
+        .conversation_resume_from()
         .expect("conversation_resume_from must be set on a session created by /resume");
 
     // Phase 4: connect fake-worker #2 with the real worker's
@@ -1422,7 +1423,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     let catch_up = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: new_session.conversation_resume_from,
+            resume_from_event_index: new_session.mode.conversation_resume_from(),
         },
     )
     .await?;

@@ -36,13 +36,18 @@ pub async fn get_session_context(
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
 
-    let interactive = task.conversation_id().cloned().map(|conv_id| {
-        v1::sessions::InteractiveOptions::new(
-            Some(conv_id),
-            Some(state.config.job.interactive_idle_timeout_secs),
-            task.conversation_resume_from,
-        )
-    });
+    let interactive = match &task.mode {
+        crate::domain::sessions::SessionMode::Interactive {
+            conversation_id,
+            idle_timeout_secs,
+            conversation_resume_from,
+        } => Some(v1::sessions::InteractiveOptions::new(
+            Some(conversation_id.clone()),
+            Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
+            *conversation_resume_from,
+        )),
+        crate::domain::sessions::SessionMode::Headless { .. } => None,
+    };
 
     let bundle: v1::sessions::Bundle = resolved.context.bundle.clone().into();
     let service_repo_name = match &task.context {

@@ -721,7 +721,8 @@ impl PostgresStoreV2 {
         let legacy_mcp_config = session.agent_config.mcp_config.clone();
         let legacy_interactive = session.is_interactive();
         let legacy_conversation_id = session.conversation_id().cloned();
-        let legacy_conversation_resume_from = session.conversation_resume_from.map(|n| n as i64);
+        let legacy_conversation_resume_from =
+            session.mode.conversation_resume_from().map(|n| n as i64);
 
         let env_vars_json = serde_json::to_value(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
@@ -902,9 +903,11 @@ impl PostgresStoreV2 {
         let mode = match row.mode.as_ref() {
             Some(v) => serde_json::from_value(v.clone())
                 .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?,
-            None => {
-                crate::store::mode_from_legacy_columns(&row.prompt, row.conversation_id.as_deref())?
-            }
+            None => crate::store::mode_from_legacy_columns(
+                &row.prompt,
+                row.conversation_id.as_deref(),
+                row.conversation_resume_from.map(|n| n as usize),
+            )?,
         };
         let resumed_from = row
             .resumed_from
@@ -932,7 +935,6 @@ impl PostgresStoreV2 {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mode,
-            conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
             status,
             last_message: row.last_message.clone(),
             error,
@@ -6013,9 +6015,9 @@ mod tests {
         let mut task = sample_session();
         task.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: Some(7),
         };
-        task.conversation_resume_from = Some(7);
 
         let (task_id, _) = store
             .add_session(task.clone(), Utc::now(), &ActorRef::test())
@@ -6033,9 +6035,9 @@ mod tests {
             "conversation_id must be persisted"
         );
         assert_eq!(
-            fetched.item.conversation_resume_from,
+            fetched.item.mode.conversation_resume_from(),
             Some(7),
-            "conversation_resume_from must be persisted"
+            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
         );
     }
 
@@ -9106,7 +9108,8 @@ mod tests {
         let mut task_a = sample_session();
         task_a.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_a.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
         };
         let (task_a_id, _) = handles
             .store
@@ -9117,7 +9120,8 @@ mod tests {
         let mut task_b = sample_session();
         task_b.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_b.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
         };
         handles
             .store
@@ -9444,7 +9448,8 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: 0,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
             },
             None => SessionMode::Headless {
                 prompt: "interactive prompt".to_string(),
@@ -9895,7 +9900,8 @@ mod tests {
         let mode = mode.expect("mode is non-null");
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
-        assert_eq!(mode["idle_timeout_secs"], 0);
+        // `idle_timeout_secs` is omitted when None (server applies default).
+        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -213,7 +213,8 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: 0,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
             },
             None => SessionMode::Headless {
                 prompt: "test".to_string(),
@@ -232,7 +233,6 @@ mod tests {
             memory_limit: None,
             secrets: None,
             mode,
-            conversation_resume_from: None,
             status: Status::Created,
             last_message: None,
             error: None,

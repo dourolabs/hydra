@@ -1301,7 +1301,8 @@ impl SqliteStore {
         let legacy_mcp_config = session.agent_config.mcp_config.clone();
         let legacy_interactive = session.is_interactive();
         let legacy_conversation_id = session.conversation_id().cloned();
-        let legacy_conversation_resume_from = session.conversation_resume_from.map(|n| n as i64);
+        let legacy_conversation_resume_from =
+            session.mode.conversation_resume_from().map(|n| n as i64);
 
         let env_vars_json = serde_json::to_string(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
@@ -1547,7 +1548,11 @@ impl SqliteStore {
         let mode = match row.mode.as_deref() {
             Some(s) => serde_json::from_str(s)
                 .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?,
-            None => mode_from_legacy_columns(&row.prompt, row.conversation_id.as_deref())?,
+            None => mode_from_legacy_columns(
+                &row.prompt,
+                row.conversation_id.as_deref(),
+                row.conversation_resume_from.map(|n| n as usize),
+            )?,
         };
         let resumed_from = row
             .resumed_from
@@ -1574,7 +1579,6 @@ impl SqliteStore {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mode,
-            conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
             status,
             last_message: row.last_message.clone(),
             error,
@@ -8004,9 +8008,9 @@ mod tests {
         let mut task = spawn_task();
         task.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: 0,
+            idle_timeout_secs: None,
+            conversation_resume_from: Some(7),
         };
-        task.conversation_resume_from = Some(7);
 
         let now = Utc::now();
         let (task_id, _) = store
@@ -8025,9 +8029,9 @@ mod tests {
             "conversation_id must be persisted"
         );
         assert_eq!(
-            fetched.item.conversation_resume_from,
+            fetched.item.mode.conversation_resume_from(),
             Some(7),
-            "conversation_resume_from must be persisted"
+            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
         );
     }
 
@@ -10715,7 +10719,8 @@ mod tests {
             Some(conv_id) => {
                 session.mode = SessionMode::Interactive {
                     conversation_id: conv_id,
-                    idle_timeout_secs: 0,
+                    idle_timeout_secs: None,
+                    conversation_resume_from: None,
                 };
             }
             None => {
@@ -11164,7 +11169,8 @@ mod tests {
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
-        assert_eq!(mode["idle_timeout_secs"], 0);
+        // `idle_timeout_secs` is omitted when None (server applies default).
+        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
     }
 
     #[tokio::test]
@@ -11212,6 +11218,96 @@ mod tests {
                 .expect("agent_config is non-null"),
         );
         assert_eq!(agent_config["model"], "gpt-4o");
+    }
+
+    /// `row_to_session` must synthesize `mount_spec`, `agent_config`, and
+    /// `mode` from the legacy columns when the new columns are NULL — the
+    /// defensive read path for rows that escape PR-1's backfill.
+    /// Hand-crafts two rows (headless + interactive) directly via SQL and
+    /// asserts the resulting in-memory `Session` shape.
+    #[tokio::test]
+    async fn row_to_session_falls_back_to_legacy_columns_when_new_columns_are_null() {
+        let store = create_test_store().await;
+
+        let headless_id = "s-legcyhdlss";
+        insert_pre_migration_row(
+            &store,
+            headless_id,
+            r#"{"type":"git_repository","url":"https://github.com/x/y","rev":"main"}"#,
+            "legacy headless prompt",
+            Some("claude-sonnet-4-5"),
+            Some(r#"{"servers": {"a": 1}}"#),
+            None,
+            None,
+            "2026-01-01T00:00:00.000+00:00",
+        )
+        .await;
+
+        let conv_id_str = "c-legcyconvb";
+        let interactive_id = "s-legcyintrc";
+        insert_pre_migration_row(
+            &store,
+            interactive_id,
+            r#"{"type":"none"}"#,
+            "",
+            Some("gpt-4o"),
+            None,
+            Some(conv_id_str),
+            Some(7),
+            "2026-01-01T00:01:00.000+00:00",
+        )
+        .await;
+
+        // Headless: legacy `context` + `prompt` + `model` + `mcp_config`
+        // must yield a Headless mode and a 2-item mount_spec carrying the
+        // bundle from `context`.
+        let headless = store
+            .get_session(&SessionId::from_str(headless_id).unwrap(), false)
+            .await
+            .expect("legacy headless row should read back")
+            .item;
+        match &headless.mode {
+            crate::domain::sessions::SessionMode::Headless { prompt } => {
+                assert_eq!(prompt, "legacy headless prompt");
+            }
+            other => panic!("expected Headless, got {other:?}"),
+        }
+        assert_eq!(
+            headless.mount_spec.mounts.len(),
+            2,
+            "legacy fallback mount_spec should be Bundle + Documents"
+        );
+        assert_eq!(
+            headless.agent_config.model.as_deref(),
+            Some("claude-sonnet-4-5"),
+            "agent_config.model must hydrate from legacy `model` column"
+        );
+        assert!(
+            headless.agent_config.mcp_config.is_some(),
+            "agent_config.mcp_config must hydrate from legacy `mcp_config` column"
+        );
+
+        // Interactive: legacy `conversation_id` + `conversation_resume_from`
+        // must yield an Interactive mode carrying both values; the resume
+        // hint lives inside the variant.
+        let interactive = store
+            .get_session(&SessionId::from_str(interactive_id).unwrap(), false)
+            .await
+            .expect("legacy interactive row should read back")
+            .item;
+        match &interactive.mode {
+            crate::domain::sessions::SessionMode::Interactive {
+                conversation_id,
+                idle_timeout_secs,
+                conversation_resume_from,
+            } => {
+                assert_eq!(conversation_id.as_ref(), conv_id_str);
+                assert_eq!(*idle_timeout_secs, None);
+                assert_eq!(*conversation_resume_from, Some(7));
+            }
+            other => panic!("expected Interactive, got {other:?}"),
+        }
+        assert_eq!(interactive.agent_config.model.as_deref(), Some("gpt-4o"));
     }
 
     /// Inserts a raw `tasks_v2` row with the new session-shape columns left
@@ -11290,8 +11386,7 @@ mod tests {
                    ELSE
                        json_object(
                            'type', 'interactive',
-                           'conversation_id', conversation_id,
-                           'idle_timeout_secs', 0
+                           'conversation_id', conversation_id
                        )
                END
                WHERE mode IS NULL"#,
@@ -11439,15 +11534,15 @@ mod tests {
         assert_eq!(mount_spec["mounts"][0]["bundle"]["type"], "none");
         assert_eq!(mount_spec["mounts"].as_array().unwrap().len(), 2);
 
-        // Prior interactive row: mode = interactive with conversation_id +
-        // idle_timeout_secs = 0; mcp_config carried as a nested object (not a
-        // re-stringified value).
+        // Prior interactive row: mode = interactive with conversation_id;
+        // idle_timeout_secs is None (omitted from JSON); mcp_config carried
+        // as a nested object (not a re-stringified value).
         let prior =
             fetch_session_shape(&store, &SessionId::from_str(prior_interactive_id).unwrap()).await;
         let mode = parse_json(prior.mode.as_deref().unwrap());
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id);
-        assert_eq!(mode["idle_timeout_secs"], 0);
+        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
         let agent_config = parse_json(prior.agent_config.as_deref().unwrap());
         assert!(
             agent_config["mcp_config"].is_object(),

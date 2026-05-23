@@ -220,12 +220,23 @@ async fn spawn_session(
         match ctx.store.get_session(&session_id, false).await {
             Ok(versioned) => {
                 let mut session = versioned.item;
-                // Stamp the legacy event-index hint and the new
-                // session-level lineage edge in the same update. The worker
-                // currently reads `conversation_resume_from` from
+                // Stamp the legacy event-index hint inside the Interactive
+                // mode variant and set the new session-level lineage edge in
+                // the same update. Resume only makes sense for interactive
+                // sessions; the helper rejects callers that try to stamp on
+                // a Headless mode. The worker currently reads
+                // `conversation_resume_from` from
                 // `WorkerContext.interactive`; PR-4 will swap that for
                 // `SessionStateBlob`.
-                session.conversation_resume_from = Some(resume_from);
+                if !session.mode.set_conversation_resume_from(Some(resume_from)) {
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        conversation_id = %conversation_id,
+                        session_id = %session_id,
+                        "refusing to stamp conversation_resume_from on a headless session"
+                    );
+                    return Ok(());
+                }
                 if let Some(prior) = find_prior_session_id(ctx, conversation_id, &session_id).await
                 {
                     session.resumed_from = Some(prior);
@@ -531,7 +542,8 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: 0,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
             },
             None => SessionMode::Headless {
                 prompt: "prompt".to_string(),
@@ -1103,7 +1115,7 @@ mod tests {
 
         // No conversation_resume_from on a fresh spawn.
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.conversation_resume_from, None);
+        assert_eq!(session.mode.conversation_resume_from(), None);
 
         // No Resumed event on a fresh conversation.
         let events = state
@@ -1173,7 +1185,10 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.conversation_resume_from, Some(expected_resume_from));
+        assert_eq!(
+            session.mode.conversation_resume_from(),
+            Some(expected_resume_from)
+        );
 
         let events = state
             .store()
@@ -1246,7 +1261,7 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.conversation_resume_from, Some(2));
+        assert_eq!(session.mode.conversation_resume_from(), Some(2));
     }
 
     #[tokio::test]

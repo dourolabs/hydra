@@ -848,7 +848,6 @@ mod tests {
             mode: SessionMode::Headless {
                 prompt: "test".to_string(),
             },
-            conversation_resume_from: None,
             status: crate::store::Status::Created,
             last_message: None,
             error: None,

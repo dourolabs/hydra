@@ -63,7 +63,15 @@ pub enum SessionMode {
     },
     Interactive {
         conversation_id: ConversationId,
-        idle_timeout_secs: u64,
+        /// Optional worker-side idle timeout override. `None` falls back to
+        /// `config.job.interactive_idle_timeout_secs`.
+        idle_timeout_secs: Option<u64>,
+        /// Conversation event index that a resumed session should replay
+        /// from. Stamped by the spawn automation when a previous run on
+        /// the same conversation was closed/suspended. Transitional
+        /// alongside `Session::resumed_from`; retired in PR-4 when the
+        /// worker stops needing an event-index hint.
+        conversation_resume_from: Option<usize>,
     },
 }
 
@@ -81,6 +89,34 @@ impl SessionMode {
         match self {
             SessionMode::Headless { prompt } => prompt.as_str(),
             SessionMode::Interactive { .. } => "",
+        }
+    }
+
+    /// Returns the conversation event index to resume from, if any.
+    /// Always `None` for `SessionMode::Headless`.
+    pub fn conversation_resume_from(&self) -> Option<usize> {
+        match self {
+            SessionMode::Interactive {
+                conversation_resume_from,
+                ..
+            } => *conversation_resume_from,
+            SessionMode::Headless { .. } => None,
+        }
+    }
+
+    /// Stamp the resume hint on an interactive mode. Returns `false` if
+    /// called on a `Headless` mode — the caller has the wrong session.
+    #[must_use]
+    pub fn set_conversation_resume_from(&mut self, value: Option<usize>) -> bool {
+        match self {
+            SessionMode::Interactive {
+                conversation_resume_from,
+                ..
+            } => {
+                *conversation_resume_from = value;
+                true
+            }
+            SessionMode::Headless { .. } => false,
         }
     }
 }
@@ -112,11 +148,6 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
 
     pub mode: SessionMode,
-
-    /// Transitional event-index hint for the legacy resume flow. Mirrors
-    /// [`api::sessions::Session::conversation_resume_from`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
 
     #[serde(default = "default_task_status")]
     pub status: Status,
@@ -167,7 +198,6 @@ impl Session {
             memory_limit,
             secrets,
             mode,
-            conversation_resume_from: None,
             status,
             last_message,
             error,
@@ -356,9 +386,11 @@ impl From<api::sessions::SessionMode> for SessionMode {
             api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
+                conversation_resume_from,
             } => SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
+                conversation_resume_from,
             },
             _ => unreachable!("unsupported session mode variant"),
         }
@@ -372,9 +404,11 @@ impl From<SessionMode> for api::sessions::SessionMode {
             SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
+                conversation_resume_from,
             } => api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
+                conversation_resume_from,
             },
         }
     }
@@ -397,7 +431,6 @@ impl TryFrom<api::sessions::Session> for Session {
             memory_limit: value.memory_limit,
             secrets: value.secrets,
             mode: value.mode.into(),
-            conversation_resume_from: value.conversation_resume_from,
             status: value.status.try_into()?,
             last_message: value.last_message,
             error: value.error.map(TryInto::try_into).transpose()?,
@@ -433,7 +466,6 @@ impl From<Session> for api::sessions::Session {
             value.end_time,
         );
         session.usage = value.usage;
-        session.conversation_resume_from = value.conversation_resume_from;
         session.context = value.context.into();
         session
     }
