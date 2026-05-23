@@ -170,6 +170,97 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
     }
 }
 
+/// Build the JSON value persisted to `tasks_v2.mount_spec` for a session on
+/// dual-write inserts. Mirrors the 2-item layout
+/// `[MountItem::Bundle, MountItem::Documents]` produced by the migration
+/// backfill (see `20260523020000_add_session_shape_columns.sql`). The
+/// BuildCache item is config-derived and intentionally omitted; runtime spec
+/// construction in `routes/sessions/context.rs::build_mount_spec` adds it
+/// when applicable. PR-3 replaces this with the resolved spec.
+pub(crate) fn dual_write_mount_spec_json(
+    id: &SessionId,
+    context: &crate::domain::sessions::BundleSpec,
+) -> Result<serde_json::Value, StoreError> {
+    let bundle = serde_json::to_value(context).map_err(|e| {
+        StoreError::Internal(format!("failed to serialize context for mount_spec: {e}"))
+    })?;
+    Ok(serde_json::json!({
+        "working_dir": "repo",
+        "mounts": [
+            {
+                "type": "bundle",
+                "target": "repo",
+                "bundle": bundle,
+                "session_id": id.as_ref(),
+            },
+            {
+                "type": "documents",
+                "target": "documents",
+            }
+        ]
+    }))
+}
+
+/// Build the JSON value persisted to `tasks_v2.agent_config` for a session on
+/// dual-write inserts. Mirrors the backfill shape — `agent_name` and
+/// `system_prompt` are NULL on dual-write because the legacy Session struct
+/// does not carry them; PR-2 introduces those fields on Session and PR-3
+/// resolves `system_prompt` from the agent definition.
+pub(crate) fn dual_write_agent_config_json(
+    session: &Session,
+) -> Result<serde_json::Value, StoreError> {
+    let mcp_config = session
+        .mcp_config
+        .as_ref()
+        .map(|c| {
+            serde_json::to_value(c).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to serialize mcp_config for agent_config: {e}"
+                ))
+            })
+        })
+        .transpose()?
+        .unwrap_or(serde_json::Value::Null);
+    Ok(serde_json::json!({
+        "agent_name": serde_json::Value::Null,
+        "model": session.model,
+        "system_prompt": serde_json::Value::Null,
+        "mcp_config": mcp_config,
+    }))
+}
+
+/// Build the JSON value persisted to `tasks_v2.mode` for a session on
+/// dual-write inserts. Mirrors the backfill shape: `Headless { prompt }` if
+/// no conversation is attached, `Interactive { conversation_id,
+/// idle_timeout_secs }` otherwise. `idle_timeout_secs` is 0 because the
+/// timeout lives in server config, not on Session; PR-3 picks it up at
+/// runtime.
+///
+/// Note on divergence from design §6 step 12. The design wording keys the
+/// rule on the legacy `interactive` field — "Headless if `interactive` is
+/// None, Interactive otherwise." We key on `Session::conversation_id()`
+/// instead because the new `SessionMode::Interactive { conversation_id,
+/// idle_timeout_secs }` variant requires a non-null `conversation_id` (see
+/// design §1.3): the legacy edge case `interactive=Some(...) AND
+/// conversation_id=None` (constructible today via `request.interactive=true`
+/// with no `conversation_id`, see `app/sessions.rs`) cannot be represented
+/// as `SessionMode::Interactive` in the new shape, so we collapse it to
+/// `Headless { prompt }`. The migration's `mode` backfill uses the same
+/// rule (see `20260523020000_add_session_shape_columns.sql`).
+pub(crate) fn dual_write_mode_json(session: &Session) -> serde_json::Value {
+    match session.conversation_id() {
+        Some(conversation_id) => serde_json::json!({
+            "type": "interactive",
+            "conversation_id": conversation_id.as_ref(),
+            "idle_timeout_secs": 0,
+        }),
+        None => serde_json::json!({
+            "type": "headless",
+            "prompt": session.prompt,
+        }),
+    }
+}
+
 pub(crate) fn session_status_log_from_versions(
     versions: &[Versioned<Session>],
 ) -> Option<TaskStatusLog> {
