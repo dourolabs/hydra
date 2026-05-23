@@ -116,6 +116,8 @@ const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
 const TABLE_CONVERSATION_EVENTS_V2: &str = "metis.conversation_events_v2";
 const TABLE_CONVERSATION_SESSION_STATE: &str = "metis.conversation_session_state";
+const TABLE_SESSION_EVENTS_V2: &str = "metis.session_events_v2";
+const TABLE_SESSION_STATE_V2: &str = "metis.session_state_v2";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -1557,6 +1559,25 @@ struct ConversationEventRow {
 #[derive(sqlx::FromRow)]
 struct ConversationEventSummaryRow {
     conversation_id: String,
+    event_count: i64,
+    last_event_data: Option<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionEventRow {
+    #[allow(dead_code)]
+    id: i64,
+    #[allow(dead_code)]
+    session_id: String,
+    version_number: i64,
+    event_data: Value,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionEventSummaryRow {
+    session_id: String,
     event_count: i64,
     last_event_data: Option<Value>,
 }
@@ -4062,35 +4083,132 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_session_events(
         &self,
-        _id: &SessionId,
+        id: &SessionId,
     ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::get_session_events: implemented in PR-4",
-        ))
+        self.ensure_session_exists(id).await?;
+
+        let query = format!(
+            "SELECT id, session_id, version_number, event_data, actor, created_at \
+             FROM {TABLE_SESSION_EVENTS_V2} \
+             WHERE session_id = $1 \
+             ORDER BY id ASC"
+        );
+        let rows = sqlx::query_as::<_, SessionEventRow>(&query)
+            .bind(id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal("invalid version number stored for session event".to_string())
+            })?;
+            let event: SessionEvent = serde_json::from_value(row.event_data).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize session event: {e}"))
+            })?;
+            results.push(Versioned::with_optional_actor(
+                event,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.created_at,
+            ));
+        }
+
+        Ok(results)
     }
 
     async fn list_session_ids_by_conversation_id(
         &self,
-        _conversation_id: &ConversationId,
+        conversation_id: &ConversationId,
     ) -> Result<Vec<SessionId>, StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::list_session_ids_by_conversation_id: implemented in PR-4",
-        ))
+        let query = format!(
+            "SELECT id FROM {TABLE_TASKS_V2} \
+             WHERE conversation_id = $1 \
+               AND is_latest = TRUE \
+               AND deleted = FALSE \
+             ORDER BY creation_time ASC, id ASC"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&query)
+            .bind(conversation_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<SessionId>()
+                    .map_err(|e| StoreError::Internal(format!("invalid session id: {e}")))
+            })
+            .collect()
     }
 
     async fn get_session_event_summaries(
         &self,
-        _ids: &[SessionId],
+        ids: &[SessionId],
     ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::get_session_event_summaries: implemented in PR-4",
-        ))
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
+        let query = format!(
+            "SELECT e.session_id, COUNT(*) AS event_count, \
+             (SELECT e2.event_data FROM {TABLE_SESSION_EVENTS_V2} e2 \
+              WHERE e2.session_id = e.session_id ORDER BY e2.id DESC LIMIT 1) AS last_event_data \
+             FROM {TABLE_SESSION_EVENTS_V2} e \
+             WHERE e.session_id = ANY($1) \
+             GROUP BY e.session_id"
+        );
+
+        let rows = sqlx::query_as::<_, SessionEventSummaryRow>(&query)
+            .bind(&id_strings)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let session_id = row
+                .session_id
+                .parse::<SessionId>()
+                .map_err(|e| StoreError::Internal(format!("invalid session id: {e}")))?;
+            let last_event_preview = row
+                .last_event_data
+                .map(|data| {
+                    serde_json::from_value::<SessionEvent>(data)
+                        .map(|event| event.preview())
+                        .map_err(|e| {
+                            StoreError::Internal(format!(
+                                "failed to deserialize session event: {e}"
+                            ))
+                        })
+                })
+                .transpose()?;
+            result.insert(
+                session_id,
+                SessionEventSummary {
+                    event_count: row.event_count as usize,
+                    last_event_preview,
+                },
+            );
+        }
+
+        Ok(result)
     }
 
-    async fn get_session_state(&self, _id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::get_session_state: implemented in PR-4",
-        ))
+    async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        self.ensure_session_exists(id).await?;
+
+        let query = format!("SELECT data FROM {TABLE_SESSION_STATE_V2} WHERE session_id = $1");
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&query)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(row)
     }
 }
 
@@ -5187,24 +5305,108 @@ impl Store for PostgresStoreV2 {
 
     async fn append_session_event(
         &self,
-        _id: &SessionId,
-        _event: SessionEvent,
-        _actor: &ActorRef,
+        id: &SessionId,
+        event: SessionEvent,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::append_session_event: implemented in PR-4",
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        // Ensure session exists.
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_TASKS_V2} WHERE id = $1 LIMIT 1)"
         ))
+        .bind(id.as_ref())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        if !exists {
+            return Err(StoreError::SessionNotFound(id.clone()));
+        }
+
+        // Lock existing rows for this session to serialize concurrent appends.
+        // The UNIQUE (session_id, version_number) constraint is the safety net.
+        let _lock_rows = {
+            let query = format!(
+                "SELECT id FROM {TABLE_SESSION_EVENTS_V2} \
+                 WHERE session_id = $1 FOR UPDATE"
+            );
+            sqlx::query_scalar::<_, i64>(&query)
+                .bind(id.as_ref())
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?
+        };
+        let latest_event_version = {
+            let query = format!(
+                "SELECT COALESCE(MAX(version_number), 0) FROM {TABLE_SESSION_EVENTS_V2} \
+                 WHERE session_id = $1"
+            );
+            sqlx::query_scalar::<_, i64>(&query)
+                .bind(id.as_ref())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?
+        };
+        let next_version = VersionNumber::try_from(latest_event_version + 1).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for session event '{id}'"))
+        })?;
+
+        let event_data = serde_json::to_value(&event)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize session event: {e}")))?;
+        let event_type = match &event {
+            SessionEvent::UserMessage { .. } => "user_message",
+            SessionEvent::AssistantMessage { .. } => "assistant_message",
+            SessionEvent::ToolUse { .. } => "tool_use",
+            SessionEvent::Suspending { .. } => "suspending",
+            SessionEvent::Resumed { .. } => "resumed",
+            SessionEvent::Closed { .. } => "closed",
+        };
+        let actor_json = actor_to_json(actor);
+
+        let query = format!(
+            "INSERT INTO {TABLE_SESSION_EVENTS_V2} \
+             (session_id, version_number, event_type, event_data, actor) \
+             VALUES ($1, $2, $3, $4, $5)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(
+                i64::try_from(next_version)
+                    .map_err(|_| StoreError::Internal("version number overflow".to_string()))?,
+            )
+            .bind(event_type)
+            .bind(&event_data)
+            .bind(&actor_json)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
     }
 
     async fn store_session_state(
         &self,
-        _id: &SessionId,
-        _data: Vec<u8>,
+        id: &SessionId,
+        data: Vec<u8>,
         _actor: &ActorRef,
     ) -> Result<(), StoreError> {
-        Err(StoreError::Unsupported(
-            "postgres_v2::store_session_state: implemented in PR-4",
-        ))
+        self.ensure_session_exists(id).await?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_SESSION_STATE_V2} (session_id, data) \
+             VALUES ($1, $2) \
+             ON CONFLICT (session_id) DO UPDATE SET data = $2, updated_at = NOW()"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(&data)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
     async fn store_conversation_session_state(
@@ -9043,39 +9245,111 @@ mod tests {
         );
     }
 
-    // ---- Session event log stubs ----
-    // PR-2 only ships trait parity for PostgresStoreV2; the real impls land
-    // in PR-4. This test pins the stub-error variant so PR-4 only flips the
-    // method bodies without churning the trait surface.
+    // ---- Session event log + state ----
+
+    fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
+        Session::new(
+            "interactive prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("test-creator"),
+            Some("hydra-worker:latest".to_string()),
+            None,
+            Default::default(),
+            None,
+            None,
+            None,
+            None,
+            Some(InteractiveOptions {
+                conversation_id,
+                conversation_resume_from: None,
+            }),
+            Status::Created,
+            None,
+            None,
+        )
+    }
+
+    fn sample_conversation(creator: &str) -> crate::domain::conversations::Conversation {
+        crate::domain::conversations::Conversation {
+            title: Some("Test conversation".to_string()),
+            agent_name: None,
+            status: crate::domain::conversations::ConversationStatus::Active,
+            creator: Username::from(creator),
+            session_settings: Default::default(),
+            deleted: false,
+        }
+    }
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn session_event_log_methods_return_unsupported_stub_error_v2(pool: PgStorePool) {
+    async fn session_events_append_then_reload_in_insertion_order_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let session_id = SessionId::generate(6).unwrap();
-        let conv_id = ConversationId::new();
-
-        let err = store.get_session_events(&session_id).await.unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
-
-        let err = store
-            .list_session_ids_by_conversation_id(&conv_id)
+        let (sid, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
             .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+            .unwrap();
 
-        let err = store
-            .get_session_event_summaries(&[session_id.clone()])
+        // No events yet.
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert!(events.is_empty());
+
+        let e1 = SessionEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        };
+        let v1 = store
+            .append_session_event(&sid, e1.clone(), &ActorRef::test())
             .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+            .unwrap();
+        assert_eq!(v1, VersionNumber::from(1u64));
 
-        let err = store.get_session_state(&session_id).await.unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        let e2 = SessionEvent::AssistantMessage {
+            content: "world".to_string(),
+            timestamp: Utc::now(),
+        };
+        let v2 = store
+            .append_session_event(&sid, e2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, VersionNumber::from(2u64));
 
+        let e3 = SessionEvent::Closed {
+            timestamp: Utc::now(),
+        };
+        let v3 = store
+            .append_session_event(&sid, e3.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v3, VersionNumber::from(3u64));
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].item, e1);
+        assert_eq!(events[1].item, e2);
+        assert_eq!(events[2].item, e3);
+        assert_eq!(events[0].version, VersionNumber::from(1u64));
+        assert_eq!(events[1].version, VersionNumber::from(2u64));
+        assert_eq!(events[2].version, VersionNumber::from(3u64));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_events_get_returns_not_found_for_missing_session_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let missing = SessionId::generate(6).unwrap();
+        let err = store.get_session_events(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_events_append_to_missing_session_errors_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let missing = SessionId::generate(6).unwrap();
         let err = store
             .append_session_event(
-                &session_id,
+                &missing,
                 SessionEvent::Closed {
                     timestamp: Utc::now(),
                 },
@@ -9083,12 +9357,259 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_event_id_is_monotonic_across_sessions_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (sid_a, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid_b, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Interleave appends across two sessions.
+        for i in 0..3 {
+            store
+                .append_session_event(
+                    &sid_a,
+                    SessionEvent::UserMessage {
+                        content: format!("a-{i}"),
+                        timestamp: Utc::now(),
+                    },
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+            store
+                .append_session_event(
+                    &sid_b,
+                    SessionEvent::UserMessage {
+                        content: format!("b-{i}"),
+                        timestamp: Utc::now(),
+                    },
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // The `id` BIGSERIAL column must be strictly increasing across all
+        // rows (cross-session insertion order). This is what §3.4.1's merge
+        // relies on.
+        let ids: Vec<i64> = sqlx::query_scalar(&format!(
+            "SELECT id FROM {TABLE_SESSION_EVENTS_V2} ORDER BY id ASC"
+        ))
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(ids.len(), 6);
+        for window in ids.windows(2) {
+            assert!(window[0] < window[1], "id must strictly increase: {ids:?}");
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_state_empty_present_overwrite_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (sid, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Empty.
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert!(state.is_none());
+
+        // Store + read.
+        let data1 = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        store
+            .store_session_state(&sid, data1.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data1));
+
+        // Overwrite.
+        let data2 = vec![0xCA, 0xFE];
+        store
+            .store_session_state(&sid, data2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data2));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_state_missing_session_errors_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let missing = SessionId::generate(6).unwrap();
+
+        let err = store.get_session_state(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
 
         let err = store
-            .store_session_state(&session_id, vec![1, 2, 3], &ActorRef::test())
+            .store_session_state(&missing, vec![1, 2, 3], &ActorRef::test())
             .await
             .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_event_summaries_returns_counts_and_previews_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (sid_a, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid_b, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid_empty, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .append_session_event(
+                &sid_a,
+                SessionEvent::UserMessage {
+                    content: "hi a".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_a,
+                SessionEvent::AssistantMessage {
+                    content: "bye a".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_b,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_session_event_summaries(&[sid_a.clone(), sid_b.clone(), sid_empty.clone()])
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 2);
+        let a = summaries.get(&sid_a).unwrap();
+        assert_eq!(a.event_count, 2);
+        assert_eq!(a.last_event_preview.as_deref(), Some("Assistant: bye a"));
+        let b = summaries.get(&sid_b).unwrap();
+        assert_eq!(b.event_count, 1);
+        assert_eq!(b.last_event_preview.as_deref(), Some("Closed"));
+        assert!(!summaries.contains_key(&sid_empty));
+
+        // Empty input returns empty map.
+        let empty = store.get_session_event_summaries(&[]).await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_session_ids_by_conversation_id_orders_and_filters_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Two conversations.
+        let (conv_a, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (conv_b, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let t0 = Utc::now() - chrono::Duration::minutes(10);
+        let t1 = t0 + chrono::Duration::minutes(1);
+        let t2 = t0 + chrono::Duration::minutes(2);
+        let t3 = t0 + chrono::Duration::minutes(3);
+
+        // Two sessions linked to conv_a, in non-creation order.
+        let (s1, _) = store
+            .add_session(
+                interactive_session(Some(conv_a.clone())),
+                t2,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (s2, _) = store
+            .add_session(
+                interactive_session(Some(conv_a.clone())),
+                t1,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // A session linked to conv_b — must be excluded.
+        store
+            .add_session(
+                interactive_session(Some(conv_b.clone())),
+                t0,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // A non-interactive session (no conversation_id) — must be excluded.
+        store
+            .add_session(sample_session(), t0, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // A deleted session linked to conv_a — must be excluded by `deleted = FALSE`.
+        let (s_deleted, _) = store
+            .add_session(
+                interactive_session(Some(conv_a.clone())),
+                t3,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .delete_session(&s_deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Order: by creation_time ASC -> s2 before s1.
+        let ids = store
+            .list_session_ids_by_conversation_id(&conv_a)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec![s2.clone(), s1.clone()]);
+
+        // Unknown conversation: empty.
+        let empty = store
+            .list_session_ids_by_conversation_id(&ConversationId::new())
+            .await
+            .unwrap();
+        assert!(empty.is_empty());
     }
 }
