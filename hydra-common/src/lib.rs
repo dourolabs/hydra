@@ -249,6 +249,11 @@ mod ts_export {
         crate::repositories::RepoWorkflowConfig::export_all(&cfg).expect("RepoWorkflowConfig");
         crate::repositories::ReviewRequestConfig::export_all(&cfg).expect("ReviewRequestConfig");
         crate::repositories::MergeRequestConfig::export_all(&cfg).expect("MergeRequestConfig");
+        crate::repositories::DynamicRef::export_all(&cfg).expect("DynamicRef");
+        crate::repositories::Principal::export_all(&cfg).expect("Principal");
+        crate::repositories::ReviewerGroup::export_all(&cfg).expect("ReviewerGroup");
+        crate::repositories::MergerRule::export_all(&cfg).expect("MergerRule");
+        crate::repositories::MergePolicy::export_all(&cfg).expect("MergePolicy");
         crate::Repository::export_all(&cfg).expect("Repository");
         crate::RepositoryRecord::export_all(&cfg).expect("RepositoryRecord");
         crate::CreateRepositoryRequest::export_all(&cfg).expect("CreateRepositoryRequest");
