@@ -1949,3 +1949,87 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
 
     Ok(())
 }
+
+/// `GET /v1/sessions/:session_id/events` returns the appended `SessionEvent`
+/// log as JSON and 404s for unknown session ids. Mirrors
+/// `get_conversation_events_returns_events` in `test/conversations.rs`.
+#[tokio::test]
+async fn get_session_events_route_returns_events() -> anyhow::Result<()> {
+    use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+    init_test_tracing();
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+
+    // Drive a session into existence via the conversation create path, then
+    // append events directly to the session-event log so the test is
+    // independent of dual-write timing.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("seed".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    let actor = ActorRef::test();
+    store
+        .append_session_event(
+            &session_id,
+            DomainSessionEvent::UserMessage {
+                content: "hello agent".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &actor,
+        )
+        .await?;
+    store
+        .append_session_event(
+            &session_id,
+            DomainSessionEvent::AssistantMessage {
+                content: "hi there".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &actor,
+        )
+        .await?;
+
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{session_id}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let events: Vec<serde_json::Value> = response.json().await?;
+    let user = events
+        .iter()
+        .find(|e| e["type"] == "user_message")
+        .expect("session events must contain a user_message");
+    assert_eq!(user["content"], "hello agent");
+    let assistant = events
+        .iter()
+        .find(|e| e["type"] == "assistant_message")
+        .expect("session events must contain an assistant_message");
+    assert_eq!(assistant["content"], "hi there");
+
+    // Unknown session id must 404, not 500.
+    let unknown = SessionId::new();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{unknown}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
