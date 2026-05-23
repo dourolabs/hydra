@@ -59,6 +59,8 @@ const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
 const TABLE_CONVERSATIONS: &str = "conversations";
 const TABLE_CONVERSATION_EVENTS: &str = "conversation_events";
+const TABLE_SESSION_EVENTS: &str = "session_events";
+const TABLE_SESSION_STATE: &str = "session_state";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -207,6 +209,21 @@ struct ConversationEventRow {
 #[derive(sqlx::FromRow)]
 struct ConversationEventSummaryRow {
     conversation_id: String,
+    event_count: i64,
+    last_event_data: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionEventRow {
+    version_number: i64,
+    event_data: String,
+    actor: Option<String>,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionEventSummaryRow {
+    session_id: String,
     event_count: i64,
     last_event_data: Option<String>,
 }
@@ -4295,35 +4312,136 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_session_events(
         &self,
-        _id: &SessionId,
+        id: &SessionId,
     ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::get_session_events: implemented in PR-3",
+        // Verify session exists (including soft-deleted, mirroring memory store).
+        let _ = self.get_session(id, true).await?;
+
+        let rows = sqlx::query_as::<_, SessionEventRow>(&format!(
+            "SELECT version_number, event_data, actor, created_at
+             FROM {TABLE_SESSION_EVENTS}
+             WHERE session_id = ?1
+             ORDER BY rowid_seq ASC"
         ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            let event: SessionEvent = serde_json::from_str(&row.event_data).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize session event: {e}"))
+            })?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal("invalid version number for session event".to_string())
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            events.push(Versioned::with_optional_actor(
+                event,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        Ok(events)
     }
 
     async fn list_session_ids_by_conversation_id(
         &self,
-        _conversation_id: &ConversationId,
+        conversation_id: &ConversationId,
     ) -> Result<Vec<SessionId>, StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::list_session_ids_by_conversation_id: implemented in PR-3",
+        let rows = sqlx::query_as::<_, (String,)>(&format!(
+            "SELECT id FROM {TABLE_TASKS_V2}
+             WHERE is_latest = 1
+               AND deleted = 0
+               AND conversation_id = ?1
+             ORDER BY creation_time ASC, id ASC"
         ))
+        .bind(conversation_id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let mut ids = Vec::with_capacity(rows.len());
+        for (id_str,) in rows {
+            ids.push(Self::row_to_session_id(&id_str)?);
+        }
+        Ok(ids)
     }
 
     async fn get_session_event_summaries(
         &self,
-        _ids: &[SessionId],
+        ids: &[SessionId],
     ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::get_session_event_summaries: implemented in PR-3",
-        ))
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT e.session_id AS session_id, COUNT(*) AS event_count, \
+             (SELECT e2.event_data FROM {TABLE_SESSION_EVENTS} e2 \
+              WHERE e2.session_id = e.session_id ORDER BY e2.rowid_seq DESC LIMIT 1) AS last_event_data \
+             FROM {TABLE_SESSION_EVENTS} e \
+             WHERE e.session_id IN ({}) \
+             GROUP BY e.session_id",
+            placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, SessionEventSummaryRow>(&sql);
+        for id in ids {
+            query_builder = query_builder.bind(id.as_ref());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let sid = Self::row_to_session_id(&row.session_id)?;
+            let last_event_preview = row
+                .last_event_data
+                .as_deref()
+                .map(|data| {
+                    serde_json::from_str::<SessionEvent>(data)
+                        .map(|event| event.preview())
+                        .map_err(|e| {
+                            StoreError::Internal(format!(
+                                "failed to deserialize session event: {e}"
+                            ))
+                        })
+                })
+                .transpose()?;
+            result.insert(
+                sid,
+                SessionEventSummary {
+                    event_count: row.event_count as usize,
+                    last_event_preview,
+                },
+            );
+        }
+
+        Ok(result)
     }
 
-    async fn get_session_state(&self, _id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::get_session_state: implemented in PR-3",
+    async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        // Verify session exists (including soft-deleted, mirroring memory store).
+        let _ = self.get_session(id, true).await?;
+
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&format!(
+            "SELECT data FROM {TABLE_SESSION_STATE} WHERE session_id = ?1"
         ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(row)
     }
 }
 
@@ -5353,24 +5471,85 @@ impl Store for SqliteStore {
 
     async fn append_session_event(
         &self,
-        _id: &SessionId,
-        _event: SessionEvent,
-        _actor: &ActorRef,
+        id: &SessionId,
+        event: SessionEvent,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::append_session_event: implemented in PR-3",
+        // Verify session exists (including soft-deleted, mirroring memory store).
+        let _ = self.get_session(id, true).await?;
+
+        let event_data = serde_json::to_string(&event)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize session event: {e}")))?;
+        let event_type = match &event {
+            SessionEvent::UserMessage { .. } => "user_message",
+            SessionEvent::AssistantMessage { .. } => "assistant_message",
+            SessionEvent::ToolUse { .. } => "tool_use",
+            SessionEvent::Suspending { .. } => "suspending",
+            SessionEvent::Resumed { .. } => "resumed",
+            SessionEvent::Closed { .. } => "closed",
+        };
+        let actor_json = actor_to_json_string(actor);
+
+        // Single transaction: compute next version_number for this session and
+        // insert the row atomically.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let latest_version: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT MAX(version_number) FROM {TABLE_SESSION_EVENTS} WHERE session_id = ?1"
         ))
+        .bind(id.as_ref())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let next_version_i64 = latest_version.unwrap_or(0).checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("event version number overflow for session '{id}'"))
+        })?;
+        let next_version = VersionNumber::try_from(next_version_i64).map_err(|_| {
+            StoreError::Internal(format!("event version number overflow for session '{id}'"))
+        })?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_SESSION_EVENTS} (session_id, version_number, event_type, event_data, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5)"
+        ))
+        .bind(id.as_ref())
+        .bind(next_version_i64)
+        .bind(event_type)
+        .bind(&event_data)
+        .bind(&actor_json)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
     }
 
     async fn store_session_state(
         &self,
-        _id: &SessionId,
-        _data: Vec<u8>,
+        id: &SessionId,
+        data: Vec<u8>,
         _actor: &ActorRef,
     ) -> Result<(), StoreError> {
-        Err(StoreError::Unsupported(
-            "sqlite_store::store_session_state: implemented in PR-3",
+        // Verify session exists (including soft-deleted, mirroring memory store).
+        let _ = self.get_session(id, true).await?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_SESSION_STATE} (session_id, data, updated_at)
+             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             ON CONFLICT(session_id) DO UPDATE SET
+                data = excluded.data,
+                updated_at = excluded.updated_at"
         ))
+        .bind(id.as_ref())
+        .bind(&data)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 }
 
@@ -10424,38 +10603,73 @@ mod tests {
         );
     }
 
-    // ---- Session event log stubs ----
-    // PR-2 stops at trait parity for SqliteStore; the real impls land in PR-3.
-    // These tests pin the stub-error variant so PR-3 only flips the bodies
-    // without churning the trait surface.
+    // ---- Session event log tests ----
+
+    fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
+        let mut session = spawn_task();
+        session.interactive = Some(InteractiveOptions {
+            conversation_id,
+            conversation_resume_from: None,
+        });
+        session
+    }
 
     #[tokio::test]
-    async fn session_event_log_methods_return_unsupported_stub_error() {
+    async fn append_and_get_session_events_returns_in_insertion_order() {
         let store = create_test_store().await;
-        let session_id = SessionId::generate(6).unwrap();
-        let conv_id = ConversationId::new();
-
-        let err = store.get_session_events(&session_id).await.unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
-
-        let err = store
-            .list_session_ids_by_conversation_id(&conv_id)
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+            .unwrap();
 
-        let err = store
-            .get_session_event_summaries(&[session_id.clone()])
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert!(events.is_empty());
+
+        let v1 = store
+            .append_session_event(
+                &sid,
+                SessionEvent::UserMessage {
+                    content: "hi".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
             .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+            .unwrap();
+        assert_eq!(v1, 1);
 
-        let err = store.get_session_state(&session_id).await.unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        let v2 = store
+            .append_session_event(
+                &sid,
+                SessionEvent::AssistantMessage {
+                    content: "hello".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].version, 1);
+        assert_eq!(events[1].version, 2);
+        assert!(matches!(events[0].item, SessionEvent::UserMessage { .. }));
+        assert!(matches!(
+            events[1].item,
+            SessionEvent::AssistantMessage { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn append_session_event_fails_for_missing_session() {
+        let store = create_test_store().await;
+        let missing = SessionId::generate(6).unwrap();
 
         let err = store
             .append_session_event(
-                &session_id,
+                &missing,
                 SessionEvent::Closed {
                     timestamp: Utc::now(),
                 },
@@ -10463,12 +10677,274 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+
+        let err = store.get_session_events(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn session_event_rowid_seq_is_monotonic_across_sessions() {
+        let store = create_test_store().await;
+        let (s1, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (s2, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Interleaved appends: s1, s2, s1.
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::UserMessage {
+                    content: "a".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s2,
+                SessionEvent::UserMessage {
+                    content: "b".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::AssistantMessage {
+                    content: "c".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // rowid_seq is strictly monotonic across all sessions in insertion order.
+        let rows = sqlx::query_as::<_, (i64, String)>(
+            "SELECT rowid_seq, session_id FROM session_events ORDER BY rowid_seq ASC",
+        )
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, s1.as_ref());
+        assert_eq!(rows[1].1, s2.as_ref());
+        assert_eq!(rows[2].1, s1.as_ref());
+        assert!(rows[0].0 < rows[1].0);
+        assert!(rows[1].0 < rows[2].0);
+    }
+
+    #[tokio::test]
+    async fn session_state_round_trip_and_upsert() {
+        let store = create_test_store().await;
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert!(state.is_none());
+
+        let data = vec![1u8, 2, 3, 4, 5];
+        store
+            .store_session_state(&sid, data.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data));
+
+        // Second write must overwrite the first.
+        let data2 = vec![9u8, 8, 7];
+        store
+            .store_session_state(&sid, data2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data2));
+    }
+
+    #[tokio::test]
+    async fn session_state_fails_for_missing_session() {
+        let store = create_test_store().await;
+        let missing = SessionId::generate(6).unwrap();
+
+        let err = store.get_session_state(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
 
         let err = store
-            .store_session_state(&session_id, vec![1, 2, 3], &ActorRef::test())
+            .store_session_state(&missing, vec![1, 2, 3], &ActorRef::test())
             .await
             .unwrap_err();
-        assert!(matches!(err, StoreError::Unsupported(_)));
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_session_event_summaries_returns_counts_and_previews() {
+        let store = create_test_store().await;
+        let (s1, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (s2, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (s3, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::UserMessage {
+                    content: "first".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::AssistantMessage {
+                    content: "second".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s2,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_session_event_summaries(&[s1.clone(), s2.clone(), s3.clone()])
+            .await
+            .unwrap();
+
+        let s1_summary = summaries.get(&s1).expect("s1 summary");
+        assert_eq!(s1_summary.event_count, 2);
+        assert_eq!(
+            s1_summary.last_event_preview.as_deref(),
+            Some("Assistant: second")
+        );
+
+        let s2_summary = summaries.get(&s2).expect("s2 summary");
+        assert_eq!(s2_summary.event_count, 1);
+        assert_eq!(s2_summary.last_event_preview.as_deref(), Some("Closed"));
+
+        // s3 has no events and is omitted from the result.
+        assert!(!summaries.contains_key(&s3));
+
+        // Empty input → empty output.
+        let summaries = store.get_session_event_summaries(&[]).await.unwrap();
+        assert!(summaries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_session_ids_by_conversation_id_returns_linked_in_creation_order() {
+        let store = create_test_store().await;
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (other_conv_id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Session A: linked to conv_id, earliest.
+        let t1 = Utc::now();
+        let (sid_a, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                t1,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Session B: linked to other conversation.
+        let (_sid_b, _) = store
+            .add_session(
+                interactive_session(Some(other_conv_id.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Session C: linked to conv_id, later than A.
+        let t3 = t1 + Duration::seconds(5);
+        let (sid_c, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                t3,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Session D: non-interactive.
+        let (_sid_d, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let ids = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec![sid_a.clone(), sid_c.clone()]);
+
+        // Unrelated conversation returns no sessions.
+        let unrelated = ConversationId::new();
+        let ids = store
+            .list_session_ids_by_conversation_id(&unrelated)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_session_ids_by_conversation_id_excludes_deleted_sessions() {
+        let store = create_test_store().await;
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store.delete_session(&sid, &ActorRef::test()).await.unwrap();
+
+        let ids = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
     }
 }
