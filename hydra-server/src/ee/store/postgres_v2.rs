@@ -2017,6 +2017,11 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         bindings.push(creator.to_string());
     }
 
+    if let Some(conversation_id) = query.conversation_id.as_ref() {
+        predicates.push(format!("conversation_id = ${}", bindings.len() + 1));
+        bindings.push(conversation_id.as_ref().to_string());
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -9053,6 +9058,62 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(sessions, HashSet::from([alice_id]));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_sessions_filters_by_conversation_id(pool: PgStorePool) {
+        let store = Arc::new(PostgresStoreV2::new(pool));
+        let handles = test_state_with_store(store.clone());
+
+        let conv_a = ConversationId::new();
+        let conv_b = ConversationId::new();
+
+        let mut task_a = sample_session();
+        task_a.interactive = Some(InteractiveOptions {
+            conversation_id: Some(conv_a.clone()),
+            conversation_resume_from: None,
+        });
+        let (task_a_id, _) = handles
+            .store
+            .add_session(task_a, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_b = sample_session();
+        task_b.interactive = Some(InteractiveOptions {
+            conversation_id: Some(conv_b.clone()),
+            conversation_resume_from: None,
+        });
+        handles
+            .store
+            .add_session(task_b, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Non-interactive session (no `interactive`, so no conversation link).
+        handles
+            .store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(conv_a.clone());
+        let sessions: HashSet<_> = handles
+            .store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(sessions, HashSet::from([task_a_id]));
+
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(ConversationId::new());
+        let sessions = handles.store.list_sessions(&query).await.unwrap();
+        assert!(sessions.is_empty());
     }
 
     #[sqlx::test(migrations = "./migrations")]

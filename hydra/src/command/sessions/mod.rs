@@ -9,8 +9,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use hydra_common::{
-    activity_log_for_session_versions, constants::ENV_HYDRA_ISSUE_ID, sessions::Session, HydraId,
-    IssueId, RelativeVersionNumber, SessionId, Versioned,
+    activity_log_for_session_versions, constants::ENV_HYDRA_ISSUE_ID, sessions::Session,
+    ConversationId, HydraId, IssueId, RelativeVersionNumber, SessionId, Versioned,
 };
 use std::{io::Write, path::PathBuf, sync::Arc};
 
@@ -75,6 +75,9 @@ pub enum SessionsCommand {
         /// Filter sessions by creator username.
         #[arg(long = "creator", value_name = "CREATOR")]
         creator: Option<String>,
+        /// Filter sessions attached to a specific conversation.
+        #[arg(long = "conversation", value_name = "CONVERSATION_ID")]
+        conversation: Option<ConversationId>,
     },
     /// Get the full details of a single session by ID. Returns the complete session record including the full prompt, context, and configuration.
     Get {
@@ -161,7 +164,18 @@ pub async fn run(
             limit,
             spawned_from,
             creator,
-        } => list::run(client.as_ref(), limit, spawned_from, creator, context).await?,
+            conversation,
+        } => {
+            list::run(
+                client.as_ref(),
+                limit,
+                spawned_from,
+                creator,
+                conversation,
+                context,
+            )
+            .await?
+        }
         SessionsCommand::Get { id, version } => {
             get_session(client.as_ref(), &id, version, context).await?
         }

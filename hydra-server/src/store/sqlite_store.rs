@@ -2236,6 +2236,11 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         predicates.push(format!("t.creator = ?{}", bindings.len()));
     }
 
+    if let Some(conversation_id) = query.conversation_id.as_ref() {
+        bindings.push(conversation_id.as_ref().to_string());
+        predicates.push(format!("t.conversation_id = ?{}", bindings.len()));
+    }
+
     if let Some(term) = query
         .q
         .as_ref()
@@ -7575,6 +7580,47 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].0, alice_id);
         assert_eq!(tasks[0].1.item.creator, Username::from("alice"));
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_by_conversation_id() {
+        let store = create_test_store().await;
+
+        let conv_a = ConversationId::new();
+        let conv_b = ConversationId::new();
+
+        let (sid_a, _) = store
+            .add_session(
+                interactive_session(Some(conv_a.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_session(
+                interactive_session(Some(conv_b.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Non-interactive (no `interactive`, so no conversation link).
+        store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(conv_a.clone());
+        let tasks = store.list_sessions(&query).await.unwrap();
+        let ids: Vec<_> = tasks.into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec![sid_a]);
+
+        let mut query = SearchSessionsQuery::default();
+        query.conversation_id = Some(ConversationId::new());
+        let tasks = store.list_sessions(&query).await.unwrap();
+        assert!(tasks.is_empty());
     }
 
     #[tokio::test]
