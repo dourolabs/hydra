@@ -848,6 +848,99 @@ impl KillSessionResponse {
     }
 }
 
+/// Append-only log of model-context events for a session. The transcript the
+/// model "sees" is the projection of this log onto `UserMessage` and
+/// `AssistantMessage` variants in insertion order.
+///
+/// Mirrors [`ConversationEvent`](crate::conversations::ConversationEvent) so
+/// the same store / cache / SSE plumbing can be reused once Phase B wires the
+/// new storage in. See `/designs/sessions-orthogonality-redesign.md` §3.2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionEvent {
+    /// User input received by the model. For headless sessions this is the
+    /// initial prompt (and any future tool-supplied inputs); for interactive
+    /// sessions this is each user turn from the relay.
+    UserMessage {
+        content: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Assistant text emitted by the model.
+    AssistantMessage {
+        content: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Tool-use event (call + result) captured for replay / debugging; not part
+    /// of the resumable transcript by default. `payload` is structured but
+    /// model-agnostic.
+    ToolUse {
+        tool_name: String,
+        payload: Value,
+        timestamp: DateTime<Utc>,
+    },
+    /// The worker is suspending the session (idle timeout, kill signal, etc.).
+    /// The next event is typically a `Closed` on the same session or a
+    /// `Resumed` on the next session.
+    Suspending {
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// The model-context state was loaded from a prior session. Always the
+    /// first event on a resumed session; carries the predecessor session id.
+    Resumed {
+        from_session_id: SessionId,
+        timestamp: DateTime<Utc>,
+    },
+    /// Session is closed — no further events will be appended.
+    Closed { timestamp: DateTime<Utc> },
+    /// Forward-compat fallback. Old clients reading an event whose `type` tag
+    /// is unrecognized deserialize it as `Unknown` rather than erroring.
+    #[serde(other)]
+    Unknown,
+}
+
+impl SessionEvent {
+    /// The event's own wall-clock timestamp, if any. `Unknown` carries no
+    /// timestamp because the discriminator was opaque.
+    pub fn timestamp(&self) -> Option<DateTime<Utc>> {
+        match self {
+            SessionEvent::UserMessage { timestamp, .. }
+            | SessionEvent::AssistantMessage { timestamp, .. }
+            | SessionEvent::ToolUse { timestamp, .. }
+            | SessionEvent::Suspending { timestamp, .. }
+            | SessionEvent::Resumed { timestamp, .. }
+            | SessionEvent::Closed { timestamp } => Some(*timestamp),
+            SessionEvent::Unknown => None,
+        }
+    }
+}
+
+/// Summary of session events for batch fetching — mirrors the
+/// `ConversationEventSummary` shape used by the existing conversation read
+/// paths so the eventual `get_session_event_summaries` store method can return
+/// the same minimal shape per session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct SessionEventSummary {
+    pub event_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_preview: Option<String>,
+}
+
+impl SessionEventSummary {
+    pub fn new(event_count: usize, last_event_preview: Option<String>) -> Self {
+        Self {
+            event_count,
+            last_event_preview,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1515,5 +1608,102 @@ mod tests {
         assert!(json.get("mount_spec").is_some());
         let parsed: WorkerContext = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.mount_spec, Some(spec));
+    }
+
+    #[test]
+    fn session_event_user_message_round_trip() {
+        let event = SessionEvent::UserMessage {
+            content: "hello agent".to_string(),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"user_message""#));
+    }
+
+    #[test]
+    fn session_event_assistant_message_round_trip() {
+        let event = SessionEvent::AssistantMessage {
+            content: "hi there".to_string(),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"assistant_message""#));
+    }
+
+    #[test]
+    fn session_event_tool_use_round_trip() {
+        let event = SessionEvent::ToolUse {
+            tool_name: "browser_navigate".to_string(),
+            payload: serde_json::json!({"url": "https://example.test"}),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"tool_use""#));
+    }
+
+    #[test]
+    fn session_event_suspending_round_trip() {
+        let event = SessionEvent::Suspending {
+            reason: "idle_timeout".to_string(),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"suspending""#));
+    }
+
+    #[test]
+    fn session_event_resumed_round_trip() {
+        let event = SessionEvent::Resumed {
+            from_session_id: SessionId::new(),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"resumed""#));
+        assert!(json.contains(r#""from_session_id""#));
+    }
+
+    #[test]
+    fn session_event_closed_round_trip() {
+        let event = SessionEvent::Closed {
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"closed""#));
+    }
+
+    #[test]
+    fn session_event_unknown_tag_round_trips_as_unknown() {
+        let json = r#"{"type":"future_kind","whatever":42}"#;
+        let parsed: SessionEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed, SessionEvent::Unknown);
+    }
+
+    #[test]
+    fn session_event_summary_round_trip() {
+        let summary = SessionEventSummary::new(7, Some("User: hi".to_string()));
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: SessionEventSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, parsed);
+    }
+
+    #[test]
+    fn session_event_summary_omits_preview_when_absent() {
+        let summary = SessionEventSummary::new(0, None);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(!json.contains("last_event_preview"));
+        let parsed: SessionEventSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, summary);
     }
 }
