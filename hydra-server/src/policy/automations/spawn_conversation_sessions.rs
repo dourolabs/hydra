@@ -316,14 +316,12 @@ async fn find_prior_session_id(
     new_session_id: &hydra_common::SessionId,
 ) -> Option<hydra_common::SessionId> {
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
-    let sessions = ctx
-        .store
-        .list_sessions(&SearchSessionsQuery::default())
-        .await
-        .ok()?;
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    let sessions = ctx.store.list_sessions(&query).await.ok()?;
     sessions
         .into_iter()
-        .filter(|(id, v)| id != new_session_id && v.item.conversation_id() == Some(conversation_id))
+        .filter(|(id, _)| id != new_session_id)
         .max_by_key(|(_, v)| v.creation_time)
         .map(|(id, _)| id)
 }
