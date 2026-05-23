@@ -2566,6 +2566,8 @@ mod tests {
     use chrono::{Duration, Utc};
     use hydra_common::{
         IssueId, RepoName, SessionId, VersionNumber, Versioned,
+        api::v1::repositories::{DynamicRef, MergePolicy, MergerRule, Principal, ReviewerGroup},
+        api::v1::users::Username as ApiUsername,
         repositories::{Repository, SearchRepositoriesQuery},
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
@@ -2697,6 +2699,36 @@ mod tests {
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
         assert!(fetched_again.timestamp >= fetched.timestamp);
+    }
+
+    #[tokio::test]
+    async fn repository_persists_merge_policy_round_trip() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/hydra").unwrap();
+        let mut config = sample_repository_config();
+        config.merge_policy = Some(MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: Some("code-review".to_string()),
+                any_of: vec![
+                    Principal::User(ApiUsername::from("reviewer")),
+                    Principal::Dynamic(DynamicRef::ParentIssueCreator),
+                ],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: Some(MergerRule {
+                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor)],
+            }),
+        });
+
+        store
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name, false).await.unwrap();
+        assert_eq!(fetched.item.merge_policy, config.merge_policy);
+        assert_eq!(fetched.item, config);
     }
 
     #[tokio::test]
