@@ -7,6 +7,7 @@ import type {
   Session,
   CreateSessionRequest,
   CreateSessionResponse,
+  SessionEvent,
   SessionVersionRecord,
   ListSessionsResponse,
   ListSessionVersionsResponse,
@@ -21,6 +22,26 @@ import type {
 
 const COLLECTION = "sessions";
 const SSE_PREFIX = "session";
+
+// Per-session SessionEvent log. Mirrors the conversation event map in
+// routes/conversations.ts; the chat read path (Phase C step 11) fans out
+// over this on `GET /v1/sessions/:id/events`.
+const sessionEvents = new Map<string, SessionEvent[]>();
+
+export function clearSessionEvents(): void {
+  sessionEvents.clear();
+}
+
+export function setSessionEvents(
+  sessionId: string,
+  events: SessionEvent[],
+): void {
+  sessionEvents.set(sessionId, [...events]);
+}
+
+function getSessionEvents(sessionId: string): SessionEvent[] {
+  return sessionEvents.get(sessionId) ?? [];
+}
 
 function toVersionRecord(
   sessionId: string,
@@ -93,6 +114,7 @@ export function createSessionRoutes(store: Store): Hono {
     const spawnedFrom = c.req.query("spawned_from");
     const spawnedFromIds = c.req.query("spawned_from_ids");
     const status = c.req.query("status");
+    const conversationId = c.req.query("conversation_id");
     const limitParam = c.req.query("limit");
     const countParam = c.req.query("count");
 
@@ -115,6 +137,11 @@ export function createSessionRoutes(store: Store): Hono {
     if (status) {
       const statuses = new Set(status.split(","));
       filtered = filtered.filter(({ entry }) => statuses.has(entry.data.status));
+    }
+    if (conversationId) {
+      filtered = filtered.filter(
+        ({ entry }) => entry.data.interactive?.conversation_id === conversationId,
+      );
     }
 
     const totalCount = filtered.length;
@@ -235,6 +262,19 @@ export function createSessionRoutes(store: Store): Hono {
       variables: task.env_vars ?? {},
     };
     return c.json(resp);
+  });
+
+  // GET /v1/sessions/:id/events — SessionEvent log for a single session.
+  // Used by the Phase C step 11 chat read path; the frontend fans out over
+  // every session linked to a conversation and concatenates the per-session
+  // logs in creation-time order.
+  app.get("/v1/sessions/:id/events", (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    return c.json(getSessionEvents(id));
   });
 
   // GET /v1/sessions/:id/versions

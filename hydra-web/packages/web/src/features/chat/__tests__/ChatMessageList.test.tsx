@@ -69,3 +69,36 @@ describe("ChatMessageList auto-scroll", () => {
     expect(scrollToSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("ChatMessageList transcript source attribution", () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo =
+      vi.fn() as unknown as typeof Element.prototype.scrollTo;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("surfaces data-transcript-source on the container when provided", () => {
+    const { container } = render(
+      <ChatMessageList
+        events={[userMessage("hi")]}
+        data-transcript-source="session_events"
+      />,
+    );
+    const list = container.querySelector('[data-testid="chat-message-list"]');
+    expect(list?.getAttribute("data-transcript-source")).toBe("session_events");
+  });
+
+  it("surfaces data-transcript-source on the empty-state container", () => {
+    const { container } = render(
+      <ChatMessageList events={[]} data-transcript-source="conversation_events" />,
+    );
+    const list = container.querySelector('[data-testid="chat-message-list"]');
+    expect(list?.getAttribute("data-transcript-source")).toBe(
+      "conversation_events",
+    );
+  });
+});

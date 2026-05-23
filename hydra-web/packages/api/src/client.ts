@@ -66,6 +66,7 @@ import type { ConversationEvent } from "./generated/ConversationEvent";
 import type { CreateConversationRequest } from "./generated/CreateConversationRequest";
 import type { SendMessageRequest } from "./generated/SendMessageRequest";
 import type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
+import type { SessionEvent } from "./generated/SessionEvent";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -246,6 +247,18 @@ export class HydraApiClient {
   /** GET /v1/sessions/:sessionId/versions */
   listSessionVersions(sessionId: string): Promise<ListSessionVersionsResponse> {
     return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/versions`);
+  }
+
+  /**
+   * GET /v1/sessions/:sessionId/events
+   *
+   * Returns the append-only `SessionEvent` log for a single session, in
+   * insertion order. Used by the chat read path (designs/sessions-orthogonality-redesign.md §3.4.1)
+   * which fan-out fetches per-session event logs and merges them in
+   * chronological order across a conversation's resumption chain.
+   */
+  getSessionEvents(sessionId: string): Promise<SessionEvent[]> {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/events`);
   }
 
   // ---------------------------------------------------------------------------

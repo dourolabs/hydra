@@ -296,6 +296,33 @@ describe("Sessions", () => {
     const text = await resp.text();
     expect(text).toContain("[mock]");
   });
+
+  it("GET /v1/sessions/:id/events returns SessionEvent log; unknown session 404s", async () => {
+    // Seed pair t-seed00014 + t-seed00015 forms a 2-session resumption chain
+    // for conversation c-seed00007.
+    const first = await client.getSessionEvents("t-seed00014");
+    expect(first.length).toBeGreaterThan(0);
+    expect(first[0].type).toBe("user_message");
+
+    const second = await client.getSessionEvents("t-seed00015");
+    expect(second[0].type).toBe("resumed");
+
+    // A session that exists but has no SessionEvent log returns an empty
+    // array — this is the legacy-fallback signal the frontend depends on.
+    const created = await client.createSession(sessionPayload);
+    const empty = await client.getSessionEvents(created.session_id);
+    expect(empty).toEqual([]);
+
+    await expect(
+      client.getSessionEvents("t-does-not-exist"),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("GET /v1/sessions?conversation_id=X filters to sessions linked to that conversation", async () => {
+    const list = await client.listSessions({ conversation_id: "c-seed00007" });
+    const ids = list.sessions.map((s) => s.session_id).sort();
+    expect(ids).toEqual(["t-seed00014", "t-seed00015"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
