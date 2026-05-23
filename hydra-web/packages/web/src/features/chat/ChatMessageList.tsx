@@ -59,9 +59,21 @@ function renderEvent(event: ConversationEvent, index: number, agentName: string)
 interface ChatMessageListProps {
   events: ConversationEvent[];
   agentName?: string | null;
+  /**
+   * Which read path produced `events` — `session_events` for the new
+   * SessionEvent merge (design step 11) or `conversation_events` for the
+   * legacy fallback. Surfaced on the container as
+   * `data-transcript-source` so e2e tests and DevTools can confirm the
+   * cut-over fired without poking React internals.
+   */
+  "data-transcript-source"?: string;
 }
 
-export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
+export function ChatMessageList({
+  events,
+  agentName,
+  "data-transcript-source": transcriptSource,
+}: ChatMessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const resolvedAgent = agentName || "Agent";
 
@@ -73,7 +85,12 @@ export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
 
   if (events.length === 0) {
     return (
-      <div ref={containerRef} className={styles.container} data-testid="chat-message-list">
+      <div
+        ref={containerRef}
+        className={styles.container}
+        data-testid="chat-message-list"
+        data-transcript-source={transcriptSource}
+      >
         <div className={styles.empty}>
           <p className={styles.emptyText}>
             No messages yet. Send a message to start the conversation.
@@ -84,7 +101,12 @@ export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
   }
 
   return (
-    <div ref={containerRef} className={styles.container} data-testid="chat-message-list">
+    <div
+      ref={containerRef}
+      className={styles.container}
+      data-testid="chat-message-list"
+      data-transcript-source={transcriptSource}
+    >
       <div className={styles.thread}>
         {events.map((event, i) => renderEvent(event, i, resolvedAgent))}
       </div>

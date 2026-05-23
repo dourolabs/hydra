@@ -2,9 +2,20 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
-import type { Issue, Session, Patch, Document, Repository, AgentRecord, Conversation, ConversationEvent } from "@hydra/api";
+import type {
+  Issue,
+  Session,
+  Patch,
+  Document,
+  Repository,
+  AgentRecord,
+  Conversation,
+  ConversationEvent,
+  SessionEvent,
+} from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 import { clearConversationEvents, setConversationEvents } from "./routes/conversations.js";
+import { clearSessionEvents, setSessionEvents } from "./routes/sessions.js";
 import { clearSeededRelations, addSeededRelation } from "./routes/relations.js";
 
 interface LabelData {
@@ -54,6 +65,7 @@ interface SeedData {
   label_associations?: LabelAssociationSeed[];
   conversations?: Record<string, Conversation>;
   conversation_events?: Record<string, ConversationEvent[]>;
+  session_events?: Record<string, SessionEvent[]>;
   relations?: RelationSeed[];
 }
 
@@ -135,6 +147,7 @@ export function loadSeedData(store: Store): void {
   store.clear();
   clearAssociations();
   clearConversationEvents();
+  clearSessionEvents();
   clearSeededRelations();
 
   const seed = loadFixture();
@@ -195,6 +208,14 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  let sessionEventCount = 0;
+  if (seed.session_events) {
+    for (const [id, events] of Object.entries(seed.session_events)) {
+      setSessionEvents(id, events);
+      sessionEventCount += events.length;
+    }
+  }
+
   if (seed.relations) {
     for (const rel of seed.relations) {
       addSeededRelation(rel);
@@ -214,6 +235,7 @@ export function loadSeedData(store: Store): void {
     `${labelCount} labels, ` +
     `${conversationCount} conversations, ` +
     `${conversationEventCount} conversation events, ` +
+    `${sessionEventCount} session events, ` +
     `${relationCount} relations`,
   );
 }

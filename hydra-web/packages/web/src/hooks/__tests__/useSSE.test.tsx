@@ -377,3 +377,145 @@ describe("useSSE chatRelated cache invalidation", () => {
     expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
   });
 });
+
+interface SetQueriesDataSpy {
+  mock: { calls: unknown[][] };
+}
+
+describe("useSSE SessionEvent / SessionState live-tail wiring", () => {
+  let queryClient: QueryClient;
+  let invalidateSpy: InvalidateSpy;
+  let setQueriesDataSpy: SetQueriesDataSpy;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries") as unknown as InvalidateSpy;
+    setQueriesDataSpy = vi.spyOn(queryClient, "setQueriesData") as unknown as SetQueriesDataSpy;
+  });
+
+  it("invalidates ['sessionEvents', sid] and ['sessionsByConversation'] on session_event_created", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_event_created", {
+        entity_type: "session_event",
+        entity_id: "t-abc",
+        version: 4,
+        timestamp: "2026-05-23T17:00:00Z",
+        // SessionEvent JSON payload (not a SessionSummaryRecord) — the new
+        // arm must not feed this to upsertBatchSession.
+        entity: {
+          type: "user_message",
+          content: "hi",
+          timestamp: "2026-05-23T17:00:00Z",
+        },
+      });
+    });
+
+    // The per-session events query is invalidated so the chat page refetches
+    // just that session's SessionEvent log.
+    expect(wasInvalidated(invalidateSpy, ["sessionEvents", "t-abc"])).toBe(true);
+    // The conversation→sessions index is invalidated broadly (SSE payload
+    // doesn't carry conversation_id, so prefix-match covers any open chat).
+    expect(wasInvalidated(invalidateSpy, ["sessionsByConversation"])).toBe(true);
+  });
+
+  it("does not poison ['sessions', 'batch'] when a session_event_created arrives", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_event_created", {
+        entity_type: "session_event",
+        entity_id: "t-abc",
+        version: 1,
+        timestamp: "2026-05-23T17:00:00Z",
+        entity: {
+          type: "user_message",
+          content: "hi",
+          timestamp: "2026-05-23T17:00:00Z",
+        },
+      });
+    });
+
+    // Regression guard: the prior implementation hit the SessionSummaryRecord
+    // arm via `eventType.startsWith("session_")` and called
+    // upsertBatchSession with a SessionEvent payload, poisoning the cache.
+    // The new arm must NEVER write into ["sessions", "batch"] for these
+    // events. setQueriesData calls with that key indicate a regression.
+    const wroteToBatchSessions = setQueriesDataSpy.mock.calls.some((call) => {
+      const filter = call[0] as { queryKey?: readonly unknown[] } | undefined;
+      const key = filter?.queryKey;
+      return Array.isArray(key) && key[0] === "sessions" && key[1] === "batch";
+    });
+    expect(wroteToBatchSessions).toBe(false);
+  });
+
+  it("does not invalidate ['session', sid] (per-session detail) on session_event_created", () => {
+    // Sanity: the per-session-detail cache (keyed differently) shouldn't be
+    // pulled in by the session_event arm. Keeps the invalidation set tight.
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_event_created", {
+        entity_type: "session_event",
+        entity_id: "t-abc",
+        version: 1,
+        timestamp: "2026-05-23T17:00:00Z",
+        entity: {
+          type: "user_message",
+          content: "hi",
+          timestamp: "2026-05-23T17:00:00Z",
+        },
+      });
+    });
+
+    expect(wasInvalidated(invalidateSpy, ["session", "t-abc"])).toBe(false);
+  });
+
+  it("invalidates ['sessionState', sid] on session_state_updated (entity is null)", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      // SessionState SSE notifications deliberately carry no entity payload —
+      // the early null-entity guard must let them through.
+      es.dispatch("session_state_updated", {
+        entity_type: "session_state",
+        entity_id: "t-xyz",
+        version: 0,
+        timestamp: "2026-05-23T17:00:00Z",
+      });
+    });
+
+    expect(wasInvalidated(invalidateSpy, ["sessionState", "t-xyz"])).toBe(true);
+    // Must not fall through to the session-record arm.
+    expect(wasInvalidated(invalidateSpy, ["session", "t-xyz"])).toBe(false);
+  });
+
+  it("still routes session_updated to the SessionSummaryRecord arm", () => {
+    // Sibling regression guard: gating the existing arm on entity_type ===
+    // "session" must not break ordinary session_updated handling.
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_updated", {
+        entity_type: "session",
+        entity_id: "s-1",
+        version: 2,
+        timestamp: "2026-05-23T17:00:00Z",
+        entity: makeSessionRecord("s-1", "i-1"),
+      });
+    });
+
+    // Per-session detail still invalidated.
+    expect(wasInvalidated(invalidateSpy, ["session", "s-1"])).toBe(true);
+    // And the new session_event-only keys are NOT touched by this event.
+    expect(wasInvalidated(invalidateSpy, ["sessionEvents", "s-1"])).toBe(false);
+  });
+});

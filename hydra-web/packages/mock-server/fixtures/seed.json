@@ -1830,6 +1830,29 @@
       "status": "running",
       "creation_time": "2026-03-15T15:30:00.000Z",
       "start_time": "2026-03-15T15:31:00.000Z"
+    },
+    "t-seed00014": {
+      "prompt": "You are an agent specializing in software engineering. Task: walk through the realtime collab demo deployment runbook.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-seed00007"
+      },
+      "creator": "alice",
+      "status": "complete",
+      "creation_time": "2026-04-01T09:00:00.000Z",
+      "start_time": "2026-04-01T09:00:30.000Z",
+      "end_time": "2026-04-01T09:30:00.000Z"
+    },
+    "t-seed00015": {
+      "prompt": "You are an agent specializing in software engineering. Task: walk through the realtime collab demo deployment runbook.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-seed00007"
+      },
+      "creator": "alice",
+      "status": "running",
+      "creation_time": "2026-04-01T10:00:00.000Z",
+      "start_time": "2026-04-01T10:00:30.000Z"
     }
   },
   "patches": {
@@ -2444,6 +2467,15 @@
       "creator": "dev-user",
       "created_at": "2026-05-09T08:45:00.000Z",
       "updated_at": "2026-05-09T11:20:00.000Z"
+    },
+    "c-seed00007": {
+      "conversation_id": "c-seed00007",
+      "title": "Realtime collab demo runbook (resumed)",
+      "agent_name": "swe",
+      "status": "active",
+      "creator": "alice",
+      "created_at": "2026-04-01T09:00:00.000Z",
+      "updated_at": "2026-04-01T10:15:00.000Z"
     }
   },
   "conversation_events": {
@@ -2575,6 +2607,42 @@
       {
         "type": "closed",
         "timestamp": "2026-05-09T11:20:00.000Z"
+      }
+    ]
+  },
+  "session_events": {
+    "t-seed00014": [
+      {
+        "type": "user_message",
+        "content": "Start: walk me through the realtime demo deployment runbook.",
+        "timestamp": "2026-04-01T09:01:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Step 1 of the runbook is to drain the websocket gateway replicas.",
+        "timestamp": "2026-04-01T09:02:00.000Z"
+      },
+      {
+        "type": "suspending",
+        "reason": "out of context window",
+        "timestamp": "2026-04-01T09:30:00.000Z"
+      }
+    ],
+    "t-seed00015": [
+      {
+        "type": "resumed",
+        "from_session_id": "t-seed00014",
+        "timestamp": "2026-04-01T10:00:30.000Z"
+      },
+      {
+        "type": "user_message",
+        "content": "Continue: what's step 2?",
+        "timestamp": "2026-04-01T10:05:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Step 2 is to roll out the CRDT persistence adapter, monitoring Redis Stream lag.",
+        "timestamp": "2026-04-01T10:10:00.000Z"
       }
     ]
   },
