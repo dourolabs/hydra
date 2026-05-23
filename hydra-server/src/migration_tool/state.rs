@@ -1,19 +1,25 @@
 //! `migrate-state` pass: copy `conversation_session_state` rows into
 //! `session_state`, keyed on the producing session id.
 //!
-//! Producing-session rule (per §3.5 step 4):
+//! Producing-session rule (per §3.5 step 4 of
+//! `designs/sessions-orthogonality-redesign.md`):
 //!   "the most recent session attached to the conversation that has a
 //!    Suspending entry in conversation_events_v2. If a conversation has no
 //!    Suspending event yet (state was persisted while still active), use
 //!    the most recent linked session."
 //!
-//! In both branches the producing session is the latest linked session by
-//! creation time — the resumption protocol is strictly sequential, so the
-//! current `conversation_session_state` blob is always the one written by
-//! the most recently attached session.
+//! The current `conversation_session_state` blob is uploaded inside
+//! `emit_suspend` immediately after a worker emits a `Suspending` event
+//! (see `hydra/src/worker/relay_adapter.rs::emit_suspend`). So the session
+//! that produced the latest blob is exactly the session that emitted the
+//! most recent `Suspending` event on the conversation — i.e. the actor of
+//! that event in `conversation_events_v2`. If no Suspending event has been
+//! emitted yet, fall back to the most recently linked session (the active
+//! one mid-flight).
 
 use super::{Backend, PlanAction, PlanEntry};
 use anyhow::{Context, Result};
+use hydra_common::{ActorId, ActorRef};
 
 /// Run the migrate-state pass against `backend`. With `dry_run = true`, no
 /// writes happen and every plan entry is a `would-*`. With `dry_run = false`,
@@ -36,12 +42,26 @@ pub fn emit_jsonl(entry: &PlanEntry) -> Result<()> {
     Ok(())
 }
 
+/// Extract the session id from a stored `ActorRef` JSON value, if the actor
+/// is an authenticated session. Other actor shapes (service tokens, automation
+/// triggers) return `None`, which makes the caller fall back to the
+/// "latest linked session" rule.
+fn session_id_from_actor_json(actor: &str) -> Option<String> {
+    let parsed: ActorRef = serde_json::from_str(actor).ok()?;
+    match parsed {
+        ActorRef::Authenticated {
+            actor_id: ActorId::Session(session_id),
+        } => Some(session_id.as_ref().to_string()),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SQLite
 // ---------------------------------------------------------------------------
 
 mod sqlite {
-    use super::{PlanAction, PlanEntry, Result};
+    use super::{PlanAction, PlanEntry, Result, session_id_from_actor_json};
     use anyhow::Context;
     use sqlx::{Row, SqlitePool};
 
@@ -65,29 +85,9 @@ mod sqlite {
             let conversation_id: String = row.try_get("id")?;
             let data: Vec<u8> = row.try_get("session_state")?;
 
-            // Latest session linked to this conversation. The resumption
-            // protocol is strictly sequential, so the latest linked session
-            // is the producing session for the current state blob (with or
-            // without a Suspending event).
-            let producing_session: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM tasks_v2 \
-                 WHERE conversation_id = ?1 \
-                   AND is_latest = 1 \
-                   AND deleted = 0 \
-                 ORDER BY creation_time DESC, id DESC \
-                 LIMIT 1",
-            )
-            .bind(&conversation_id)
-            .fetch_optional(pool)
-            .await
-            .with_context(|| {
-                format!("looking up producing session for conversation {conversation_id}")
-            })?;
-
-            let Some(producing_session_id) = producing_session else {
-                // No linked session: cannot migrate without a key. Surface as
-                // a warning rather than failing the whole pass so an operator
-                // can investigate without blocking the rest of the migration.
+            let Some(producing_session_id) =
+                resolve_producing_session(pool, &conversation_id).await?
+            else {
                 eprintln!(
                     "warning: conversation {conversation_id} has session_state but no \
                      linked session — skipping",
@@ -138,6 +138,46 @@ mod sqlite {
 
         Ok(plan)
     }
+
+    /// Implements the §3.5 step 4 producing-session rule against the SQLite
+    /// schema: prefer the actor of the most recent `suspending` event on the
+    /// conversation; fall back to the most recently linked session.
+    async fn resolve_producing_session(
+        pool: &SqlitePool,
+        conversation_id: &str,
+    ) -> Result<Option<String>> {
+        let suspending_actor: Option<String> = sqlx::query_scalar(
+            "SELECT actor FROM conversation_events \
+             WHERE id = ?1 AND event_type = 'suspending' \
+             ORDER BY version_number DESC \
+             LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| {
+            format!("looking up suspending event for conversation {conversation_id}")
+        })?;
+
+        if let Some(actor_json) = suspending_actor.as_deref()
+            && let Some(session_id) = session_id_from_actor_json(actor_json)
+        {
+            return Ok(Some(session_id));
+        }
+
+        sqlx::query_scalar(
+            "SELECT id FROM tasks_v2 \
+             WHERE conversation_id = ?1 \
+               AND is_latest = 1 \
+               AND deleted = 0 \
+             ORDER BY creation_time DESC, id DESC \
+             LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("looking up latest linked session for {conversation_id}"))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +186,7 @@ mod sqlite {
 
 #[cfg(feature = "postgres")]
 mod postgres {
-    use super::{PlanAction, PlanEntry, Result};
+    use super::{PlanAction, PlanEntry, Result, session_id_from_actor_json};
     use anyhow::Context;
     use sqlx::PgPool;
 
@@ -163,22 +203,9 @@ mod postgres {
         let mut plan = Vec::with_capacity(rows.len());
 
         for (conversation_id, data) in rows {
-            let producing_session: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM metis.tasks_v2 \
-                 WHERE conversation_id = $1 \
-                   AND is_latest = TRUE \
-                   AND deleted = FALSE \
-                 ORDER BY creation_time DESC, id DESC \
-                 LIMIT 1",
-            )
-            .bind(&conversation_id)
-            .fetch_optional(pool)
-            .await
-            .with_context(|| {
-                format!("looking up producing session for conversation {conversation_id}")
-            })?;
-
-            let Some(producing_session_id) = producing_session else {
+            let Some(producing_session_id) =
+                resolve_producing_session(pool, &conversation_id).await?
+            else {
                 eprintln!(
                     "warning: conversation {conversation_id} has session_state but no \
                      linked session — skipping",
@@ -228,23 +255,63 @@ mod postgres {
 
         Ok(plan)
     }
+
+    /// Implements the §3.5 step 4 producing-session rule against the Postgres
+    /// schema: prefer the actor of the most recent `suspending` event on the
+    /// conversation; fall back to the most recently linked session.
+    async fn resolve_producing_session(
+        pool: &PgPool,
+        conversation_id: &str,
+    ) -> Result<Option<String>> {
+        // Postgres `actor` is JSONB; `to_jsonb(NULL)` is NULL, so an absent
+        // actor surfaces as `None` here.
+        let suspending_actor: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT actor FROM metis.conversation_events_v2 \
+             WHERE conversation_id = $1 AND event_type = 'suspending' \
+             ORDER BY version_number DESC \
+             LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("looking up suspending event for conversation {conversation_id}"))?
+        .flatten();
+
+        if let Some(actor_value) = suspending_actor
+            && let Some(session_id) = session_id_from_actor_json(&actor_value.to_string())
+        {
+            return Ok(Some(session_id));
+        }
+
+        sqlx::query_scalar(
+            "SELECT id FROM metis.tasks_v2 \
+             WHERE conversation_id = $1 \
+               AND is_latest = TRUE \
+               AND deleted = FALSE \
+             ORDER BY creation_time DESC, id DESC \
+             LIMIT 1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("looking up latest linked session for {conversation_id}"))
+    }
 }
 
 // ---------------------------------------------------------------------------
-// SQLite integration test
+// SQLite integration tests
 // ---------------------------------------------------------------------------
 //
-// Builds a sqlite fixture with two conversations (single-session and a
-// multi-session resumption chain), populates `conversations.session_state`,
-// runs the tool dry-run + live, and asserts the resulting `session_state`
-// rows match the design's keying rule. Re-running live mode is a no-op.
+// Builds sqlite fixtures with single-session, multi-session-no-suspending,
+// and multi-session-with-suspending-fork scenarios, runs the tool dry-run +
+// live, and asserts the resulting `session_state` rows match §3.5 step 4.
 
 #[cfg(test)]
 mod tests {
     use super::{Backend, PlanAction, run};
     use crate::store::sqlite_store::SqliteStore;
     use chrono::{Duration, Utc};
-    use hydra_common::{ConversationId, SessionId};
+    use hydra_common::{ActorId, ActorRef, ConversationId, SessionId};
     use sqlx::SqlitePool;
 
     /// Build an in-memory sqlite store with the production migrations
@@ -300,6 +367,37 @@ mod tests {
         .unwrap();
     }
 
+    /// Insert a `suspending` conversation event attributed to `actor_session`.
+    async fn insert_suspending_event(
+        pool: &SqlitePool,
+        conv_id: &ConversationId,
+        version: i64,
+        actor_session: &SessionId,
+    ) {
+        let actor = ActorRef::Authenticated {
+            actor_id: ActorId::Session(actor_session.clone()),
+        };
+        let actor_json = serde_json::to_string(&actor).unwrap();
+        let event_data = serde_json::json!({
+            "type": "suspending",
+            "reason": "test",
+            "timestamp": Utc::now().to_rfc3339(),
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO conversation_events \
+                (id, version_number, event_type, event_data, actor) \
+             VALUES (?1, ?2, 'suspending', ?3, ?4)",
+        )
+        .bind(conv_id.as_ref())
+        .bind(version)
+        .bind(event_data)
+        .bind(actor_json)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     /// Read back the session_state blob for `session_id`.
     async fn read_session_state(pool: &SqlitePool, session_id: &SessionId) -> Option<Vec<u8>> {
         sqlx::query_scalar::<_, Vec<u8>>("SELECT data FROM session_state WHERE session_id = ?1")
@@ -310,23 +408,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migrate_state_keys_on_latest_linked_session_and_is_idempotent() {
+    async fn migrate_state_falls_back_to_latest_linked_when_no_suspending_event() {
         let pool = fresh_pool().await;
 
-        // Conversation 1: single session.
+        // Conversation 1: single session, no suspending event yet.
         let conv_one = ConversationId::new();
         let sess_one = SessionId::new();
         let blob_one = b"state-for-conversation-one".to_vec();
         insert_conversation_with_state(&pool, &conv_one, "alice", &blob_one).await;
         insert_linked_session(&pool, &sess_one, &conv_one, "alice", Utc::now()).await;
 
-        // Conversation 2: resumption chain (3 sessions); current state was
-        // produced by the most recent (third) session.
+        // Conversation 2: resumption chain (3 sessions), no suspending event
+        // yet (state was persisted while still active). Latest linked = C.
         let conv_two = ConversationId::new();
         let sess_a = SessionId::new();
         let sess_b = SessionId::new();
         let sess_c = SessionId::new();
-        let blob_two = b"state-for-conversation-two-from-c".to_vec();
+        let blob_two = b"state-for-conversation-two".to_vec();
         insert_conversation_with_state(&pool, &conv_two, "bob", &blob_two).await;
         let now = Utc::now();
         insert_linked_session(&pool, &sess_a, &conv_two, "bob", now - Duration::hours(2)).await;
@@ -334,62 +432,97 @@ mod tests {
         insert_linked_session(&pool, &sess_c, &conv_two, "bob", now).await;
 
         let backend = Backend::Sqlite(pool.clone());
+        let plan = run(&backend, false).await.unwrap();
+        assert_eq!(plan.len(), 2);
 
-        // Dry-run: nothing should be written, but the plan should match.
-        let dry_plan = run(&backend, true).await.unwrap();
-        assert_eq!(dry_plan.len(), 2);
-        for entry in &dry_plan {
-            assert_eq!(entry.action, PlanAction::WouldWrite);
-        }
-        let dry_for_conv_one = dry_plan
+        let entry_one = plan
             .iter()
             .find(|p| p.conversation_id == *conv_one.as_ref())
             .unwrap();
-        let dry_for_conv_two = dry_plan
+        let entry_two = plan
             .iter()
             .find(|p| p.conversation_id == *conv_two.as_ref())
             .unwrap();
-        assert_eq!(dry_for_conv_one.producing_session_id, *sess_one.as_ref());
-        assert_eq!(dry_for_conv_one.byte_len, blob_one.len());
-        assert_eq!(dry_for_conv_two.producing_session_id, *sess_c.as_ref());
-        assert_eq!(dry_for_conv_two.byte_len, blob_two.len());
-
-        // Dry-run must not have written anything.
-        assert!(read_session_state(&pool, &sess_one).await.is_none());
-        assert!(read_session_state(&pool, &sess_c).await.is_none());
-
-        // Live run: writes happen, plan matches dry-run exactly (only the
-        // action variant differs).
-        let live_plan = run(&backend, false).await.unwrap();
-        assert_eq!(live_plan.len(), dry_plan.len());
-        for entry in &live_plan {
-            assert_eq!(entry.action, PlanAction::Wrote);
-        }
-        assert_eq!(
-            read_session_state(&pool, &sess_one).await.as_deref(),
-            Some(&blob_one[..])
-        );
+        assert_eq!(entry_one.producing_session_id, *sess_one.as_ref());
+        assert_eq!(entry_two.producing_session_id, *sess_c.as_ref());
         assert_eq!(
             read_session_state(&pool, &sess_c).await.as_deref(),
             Some(&blob_two[..])
         );
-        // Predecessors in the chain should NOT have rows.
+        // Predecessors should not have rows.
         assert!(read_session_state(&pool, &sess_a).await.is_none());
         assert!(read_session_state(&pool, &sess_b).await.is_none());
+    }
 
-        // Re-run is a no-op: every entry becomes Skipped, no data changes.
-        let rerun_plan = run(&backend, false).await.unwrap();
-        assert_eq!(rerun_plan.len(), live_plan.len());
-        for entry in &rerun_plan {
-            assert_eq!(entry.action, PlanAction::Skipped);
-        }
+    #[tokio::test]
+    async fn migrate_state_keys_on_session_that_emitted_latest_suspending() {
+        // Chain A → B → C with C mid-flight: B emitted Suspending (which is
+        // what spawned C). The current state blob was uploaded by B inside
+        // `emit_suspend`. C has not yet suspended. §3.5 step 4 requires the
+        // blob to be keyed under B, not C.
+        let pool = fresh_pool().await;
+        let conv = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let sess_c = SessionId::new();
+        let blob = b"state-uploaded-by-b".to_vec();
+        insert_conversation_with_state(&pool, &conv, "carol", &blob).await;
+        let now = Utc::now();
+        insert_linked_session(&pool, &sess_a, &conv, "carol", now - Duration::hours(2)).await;
+        insert_linked_session(&pool, &sess_b, &conv, "carol", now - Duration::hours(1)).await;
+        insert_linked_session(&pool, &sess_c, &conv, "carol", now).await;
+        // A and B both suspended; C is mid-flight (no suspending event).
+        insert_suspending_event(&pool, &conv, 1, &sess_a).await;
+        insert_suspending_event(&pool, &conv, 2, &sess_b).await;
+
+        let backend = Backend::Sqlite(pool.clone());
+        let plan = run(&backend, false).await.unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].producing_session_id, *sess_b.as_ref());
+        assert_eq!(plan[0].action, PlanAction::Wrote);
+
         assert_eq!(
-            read_session_state(&pool, &sess_one).await.as_deref(),
-            Some(&blob_one[..])
+            read_session_state(&pool, &sess_b).await.as_deref(),
+            Some(&blob[..])
         );
+        // C is the latest linked session but did not produce the blob.
+        assert!(read_session_state(&pool, &sess_c).await.is_none());
+        assert!(read_session_state(&pool, &sess_a).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn migrate_state_is_idempotent_and_dry_run_matches_live_plan() {
+        let pool = fresh_pool().await;
+        let conv = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let blob = b"blob".to_vec();
+        insert_conversation_with_state(&pool, &conv, "dave", &blob).await;
+        let now = Utc::now();
+        insert_linked_session(&pool, &sess_a, &conv, "dave", now - Duration::hours(1)).await;
+        insert_linked_session(&pool, &sess_b, &conv, "dave", now).await;
+        insert_suspending_event(&pool, &conv, 1, &sess_a).await;
+
+        let backend = Backend::Sqlite(pool.clone());
+
+        let dry = run(&backend, true).await.unwrap();
+        assert_eq!(dry.len(), 1);
+        assert_eq!(dry[0].producing_session_id, *sess_a.as_ref());
+        assert_eq!(dry[0].action, PlanAction::WouldWrite);
+        // Dry run must not write.
+        assert!(read_session_state(&pool, &sess_a).await.is_none());
+
+        let live = run(&backend, false).await.unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].producing_session_id, *sess_a.as_ref());
+        assert_eq!(live[0].action, PlanAction::Wrote);
+
+        let rerun = run(&backend, false).await.unwrap();
+        assert_eq!(rerun.len(), 1);
+        assert_eq!(rerun[0].action, PlanAction::Skipped);
         assert_eq!(
-            read_session_state(&pool, &sess_c).await.as_deref(),
-            Some(&blob_two[..])
+            read_session_state(&pool, &sess_a).await.as_deref(),
+            Some(&blob[..])
         );
     }
 
