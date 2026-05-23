@@ -191,9 +191,25 @@ impl AppState {
             timestamp: chrono::Utc::now(),
         };
         self.store
-            .append_conversation_event_with_actor(conversation_id, event.clone(), actor_ref)
+            .append_conversation_event_with_actor(conversation_id, event.clone(), actor_ref.clone())
             .await
             .map_err(|source| SendMessageError::Store { source })?;
+
+        // Dual-write the equivalent SessionEvent onto the conversation's
+        // active session (Phase C step 7 of the sessions-orthogonality
+        // redesign). When the conversation was just flipped from
+        // `Closed`/`Idle` to `Active`, the new session may not exist yet —
+        // the helper logs a warn and skips in that case, and Step 8's
+        // historical backfill will repair the gap.
+        if let Some(session_event) = chat_relay::conversation_event_to_session_event(&event) {
+            let _ = chat_relay::dual_write_session_event_for_conversation(
+                self,
+                conversation_id,
+                session_event,
+                actor_ref,
+            )
+            .await;
+        }
 
         // Forward to worker via ChatRelayMap if connected
         let api_event: api_conversations::ConversationEvent = event.into();
@@ -235,9 +251,24 @@ impl AppState {
             timestamp: chrono::Utc::now(),
         };
         self.store
-            .append_conversation_event_with_actor(conversation_id, event, actor_ref.clone())
+            .append_conversation_event_with_actor(conversation_id, event.clone(), actor_ref.clone())
             .await
             .map_err(|source| CloseConversationError::Store { source })?;
+
+        // Dual-write the equivalent SessionEvent onto the conversation's
+        // active session (Phase C step 7 of the sessions-orthogonality
+        // redesign). At this point the worker is still alive (we kill it
+        // below), so the active relay entry — and the session it points to
+        // — is the right target.
+        if let Some(session_event) = chat_relay::conversation_event_to_session_event(&event) {
+            let _ = chat_relay::dual_write_session_event_for_conversation(
+                self,
+                conversation_id,
+                session_event,
+                actor_ref.clone(),
+            )
+            .await;
+        }
 
         // Kill the worker if one is currently relaying this conversation.
         // If no entry is present, no worker is connected and no kill is needed.

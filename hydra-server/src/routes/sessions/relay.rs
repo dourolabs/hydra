@@ -156,6 +156,7 @@ async fn handle_relay_socket(
                                 if let Err(err) = handle_worker_event(
                                     &state,
                                     &conversation_id,
+                                    &session_id,
                                     &actor_ref,
                                     event,
                                 ).await {
@@ -170,11 +171,11 @@ async fn handle_relay_socket(
                                     bytes,
                                     "received SessionStateUpload — storing"
                                 );
-                                match state
+                                let conv_result = state
                                     .store
-                                    .store_conversation_session_state(&conversation_id, data)
-                                    .await
-                                {
+                                    .store_conversation_session_state(&conversation_id, data.clone())
+                                    .await;
+                                match conv_result {
                                     Ok(()) => info!(
                                         %session_id,
                                         %conversation_id,
@@ -189,6 +190,16 @@ async fn handle_relay_socket(
                                         "failed to store session state"
                                     ),
                                 }
+                                // Dual-write the same blob onto the session,
+                                // keyed by SessionId (Phase C step 7 of the
+                                // sessions-orthogonality redesign).
+                                let _ = chat_relay::dual_write_session_state(
+                                    &state,
+                                    &session_id,
+                                    data,
+                                    actor_ref.clone(),
+                                )
+                                .await;
                             }
                             Err(err) => {
                                 warn!(%session_id, error = %err, "invalid worker message, ignoring");
@@ -318,13 +329,29 @@ async fn build_catch_up(
 async fn handle_worker_event(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
+    session_id: &SessionId,
     actor_ref: &ActorRef,
     event: ConversationEvent,
 ) -> Result<(), StoreError> {
     let domain_event: crate::domain::conversations::ConversationEvent = event.into();
     state
         .store
-        .append_conversation_event_with_actor(conversation_id, domain_event, actor_ref.clone())
+        .append_conversation_event_with_actor(
+            conversation_id,
+            domain_event.clone(),
+            actor_ref.clone(),
+        )
         .await?;
+    // Dual-write the equivalent SessionEvent onto the worker's session (Phase
+    // C step 7 of the sessions-orthogonality redesign).
+    if let Some(session_event) = chat_relay::conversation_event_to_session_event(&domain_event) {
+        let _ = chat_relay::dual_write_session_event(
+            state,
+            session_id,
+            session_event,
+            actor_ref.clone(),
+        )
+        .await;
+    }
     Ok(())
 }

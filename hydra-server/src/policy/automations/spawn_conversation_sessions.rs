@@ -249,14 +249,15 @@ async fn spawn_session(
             }
         }
 
+        let resumed_timestamp = chrono::Utc::now();
         let resumed_event = ConversationEvent::Resumed {
             session_id: session_id.clone(),
-            timestamp: chrono::Utc::now(),
+            timestamp: resumed_timestamp,
         };
         if let Err(err) = ctx
             .app_state
             .store
-            .append_conversation_event_with_actor(conversation_id, resumed_event, actor)
+            .append_conversation_event_with_actor(conversation_id, resumed_event, actor.clone())
             .await
         {
             tracing::warn!(
@@ -265,6 +266,32 @@ async fn spawn_session(
                 session_id = %session_id,
                 error = %err,
                 "failed to append Resumed event"
+            );
+        }
+
+        // Dual-write the SessionEvent::Resumed marker onto the newly-spawned
+        // session, carrying the prior session id (Phase C step 7 of the
+        // sessions-orthogonality redesign, §3.2 mapping rule).
+        if let Some(from_session_id) =
+            find_prior_session_id(ctx, conversation_id, &session_id).await
+        {
+            let session_event = crate::domain::sessions::SessionEvent::Resumed {
+                from_session_id,
+                timestamp: resumed_timestamp,
+            };
+            let _ = crate::app::chat_relay::dual_write_session_event(
+                ctx.app_state,
+                &session_id,
+                session_event,
+                actor,
+            )
+            .await;
+        } else {
+            tracing::warn!(
+                automation = AUTOMATION_NAME,
+                conversation_id = %conversation_id,
+                session_id = %session_id,
+                "dual-write SessionEvent::Resumed skipped: no prior session found for conversation"
             );
         }
     }
@@ -278,6 +305,27 @@ async fn spawn_session(
     );
 
     Ok(())
+}
+
+/// Find the most-recently-created session linked to `conversation_id` that
+/// is NOT the just-spawned `new_session_id`. Returns `None` if no such
+/// session exists (e.g. a fresh conversation that has never been resumed).
+async fn find_prior_session_id(
+    ctx: &AutomationContext<'_>,
+    conversation_id: &ConversationId,
+    new_session_id: &hydra_common::SessionId,
+) -> Option<hydra_common::SessionId> {
+    use hydra_common::api::v1::sessions::SearchSessionsQuery;
+    let sessions = ctx
+        .store
+        .list_sessions(&SearchSessionsQuery::default())
+        .await
+        .ok()?;
+    sessions
+        .into_iter()
+        .filter(|(id, v)| id != new_session_id && v.item.conversation_id() == Some(conversation_id))
+        .max_by_key(|(_, v)| v.creation_time)
+        .map(|(id, _)| id)
 }
 
 /// Compute the `conversation_resume_from` index for a resume spawn.

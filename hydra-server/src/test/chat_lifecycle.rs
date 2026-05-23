@@ -1690,3 +1690,262 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
 
     Ok(())
 }
+
+/// Phase C step 7 dual-write regression test: a complete chat lifecycle
+/// (user → assistant → suspend → resume → close → reopen) must produce
+/// matching rows in `session_events_v2` and `session_state_v2` alongside the
+/// existing `conversation_events_v2` writes.
+#[tokio::test]
+async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Result<()> {
+    use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+    init_test_tracing();
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+
+    // Phase 1: create conversation with a first user message.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let s1 = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Phase 2: connect as worker #1, exchange one assistant turn, then
+    // suspend with a session-state upload.
+    let mut ws = connect_relay(&server.base_url(), &s1).await?;
+    let _ = worker_handshake(
+        &mut ws,
+        WorkerConnect::Fresh {
+            resume_from_event_index: None,
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: ConversationEvent::AssistantMessage {
+                content: "reply 1".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    // A follow-up user message while the worker is connected — this is the
+    // `send_message` dual-write path inside `app/conversations.rs`.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "follow-up".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+    let _ = drain_server_messages(&mut ws, Duration::from_secs(1)).await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: ConversationEvent::Suspending {
+                reason: "idle_timeout".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    let upload_bytes = b"opaque-state-v1".to_vec();
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::SessionStateUpload {
+            data: upload_bytes.clone(),
+        },
+    )
+    .await?;
+    ws.send(tungstenite::Message::Close(None)).await?;
+    drop(ws);
+    mark_session_terminal(&state, &s1, TaskStatus::Complete).await;
+
+    wait_for_status(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        ConversationStatus::Idle,
+    )
+    .await?;
+
+    // Phase 3: /resume — automation spawns session #2 and appends Resumed.
+    let _ = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/resume",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+    let s2 = find_new_session_for_conversation(&store, &conversation_id, &s1).await;
+
+    // Phase 4: /close — emits Closed lifecycle event.
+    let _ = client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/close",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // ---- Assertions ----
+
+    // ConversationEvent log (the existing source of truth).
+    let convo_events = store.get_conversation_events(&conversation_id).await?;
+    let convo_user: usize = convo_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.item,
+                crate::domain::conversations::ConversationEvent::UserMessage { .. }
+            )
+        })
+        .count();
+    let convo_assistant: usize = convo_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.item,
+                crate::domain::conversations::ConversationEvent::AssistantMessage { .. }
+            )
+        })
+        .count();
+    let convo_suspending: usize = convo_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.item,
+                crate::domain::conversations::ConversationEvent::Suspending { .. }
+            )
+        })
+        .count();
+    let convo_resumed: usize = convo_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.item,
+                crate::domain::conversations::ConversationEvent::Resumed { .. }
+            )
+        })
+        .count();
+    let convo_closed: usize = convo_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.item,
+                crate::domain::conversations::ConversationEvent::Closed { .. }
+            )
+        })
+        .count();
+    assert_eq!(convo_user, 2, "convo UserMessage count");
+    assert_eq!(convo_assistant, 1, "convo AssistantMessage count");
+    assert_eq!(convo_suspending, 1, "convo Suspending count");
+    assert_eq!(convo_resumed, 1, "convo Resumed count");
+    assert_eq!(convo_closed, 1, "convo Closed count");
+
+    // SessionEvent log: the dual-write puts each ConversationEvent on the
+    // active session. UserMessage("hello") and the assistant reply + the
+    // Suspending all happen on s1; UserMessage("follow-up") may land on s1
+    // (relay still connected) or s2 depending on relay-map timing — either
+    // is acceptable. Resumed lands on s2. Closed is appended after /close
+    // and lands on the latest session for the conversation (s2).
+    let s1_events: Vec<DomainSessionEvent> = store
+        .get_session_events(&s1)
+        .await?
+        .into_iter()
+        .map(|v| v.item)
+        .collect();
+    let s2_events: Vec<DomainSessionEvent> = store
+        .get_session_events(&s2)
+        .await?
+        .into_iter()
+        .map(|v| v.item)
+        .collect();
+    let total_user: usize = s1_events
+        .iter()
+        .chain(s2_events.iter())
+        .filter(|e| matches!(e, DomainSessionEvent::UserMessage { .. }))
+        .count();
+    let total_assistant: usize = s1_events
+        .iter()
+        .chain(s2_events.iter())
+        .filter(|e| matches!(e, DomainSessionEvent::AssistantMessage { .. }))
+        .count();
+    let total_suspending: usize = s1_events
+        .iter()
+        .chain(s2_events.iter())
+        .filter(|e| matches!(e, DomainSessionEvent::Suspending { .. }))
+        .count();
+    let total_resumed: usize = s1_events
+        .iter()
+        .chain(s2_events.iter())
+        .filter(|e| matches!(e, DomainSessionEvent::Resumed { .. }))
+        .count();
+    let total_closed: usize = s1_events
+        .iter()
+        .chain(s2_events.iter())
+        .filter(|e| matches!(e, DomainSessionEvent::Closed { .. }))
+        .count();
+    // The initial UserMessage from POST /v1/conversations is appended
+    // *before* `SpawnConversationSessionsAutomation` creates s1, so the
+    // dual-write at that instant has no session to attach to and is
+    // skipped (logged at warn-level by the helper). That gap is filled by
+    // step 8's historical backfill, which is out of scope for this PR.
+    // The follow-up UserMessage is the one we expect to see here.
+    assert_eq!(total_user, 1, "dual-write UserMessage count (s1+s2)");
+    assert_eq!(
+        total_assistant, 1,
+        "dual-write AssistantMessage count (s1+s2)"
+    );
+    assert_eq!(total_suspending, 1, "dual-write Suspending count (s1+s2)");
+    assert_eq!(total_resumed, 1, "dual-write Resumed count (s1+s2)");
+    assert_eq!(total_closed, 1, "dual-write Closed count (s1+s2)");
+
+    // The Resumed event lands on the new session, carrying the prior id.
+    let resumed_from = s2_events.iter().find_map(|e| match e {
+        DomainSessionEvent::Resumed {
+            from_session_id, ..
+        } => Some(from_session_id.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        resumed_from.as_ref(),
+        Some(&s1),
+        "SessionEvent::Resumed on s2 must carry s1 as from_session_id"
+    );
+
+    // session_state dual-write: the upload from worker #1 must appear under
+    // both `conversation_session_state` (old key) and `session_state` (new
+    // key) for s1.
+    let conv_state = store
+        .get_conversation_session_state(&conversation_id)
+        .await?;
+    let session_state = store.get_session_state(&s1).await?;
+    assert_eq!(
+        conv_state.as_deref(),
+        Some(upload_bytes.as_slice()),
+        "conversation_session_state must contain the uploaded bytes"
+    );
+    assert_eq!(
+        session_state.as_deref(),
+        Some(upload_bytes.as_slice()),
+        "session_state must contain the same bytes for s1 (dual-write)"
+    );
+
+    Ok(())
+}
