@@ -36,7 +36,7 @@ pub use crate::ee::store::migration;
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
-pub use crate::domain::sessions::{InteractiveOptions, Session};
+pub use crate::domain::sessions::{InteractiveOptions, Session, SessionEvent, SessionEventSummary};
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
 /// The kind of object participating in a relationship.
@@ -275,6 +275,11 @@ pub enum StoreError {
     InvalidAuthToken,
     #[error("A document already exists at this path")]
     DocumentPathConflict,
+    /// Returned by store impls for methods that are not yet implemented in
+    /// that backend. Used to keep trait parity while individual stores land
+    /// behind separate PRs.
+    #[error("Unsupported store operation: {0}")]
+    Unsupported(&'static str),
 }
 
 /// Trait for read-only store operations: queries and lookups.
@@ -645,6 +650,36 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &ConversationId,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
+    // ---- Session event log (read-only) ----
+
+    /// Retrieves the append-only session event log for a session.
+    ///
+    /// Events are returned in append order. Mirrors
+    /// [`Self::get_conversation_events`].
+    async fn get_session_events(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<SessionEvent>>, StoreError>;
+
+    /// Look up every session linked to a conversation, in session-creation
+    /// order. Backs the conversation read path in the sessions-orthogonality
+    /// redesign §3.4.1 — a single query, no chain-walking.
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError>;
+
+    /// Returns session-event summaries (count + last event preview) for the
+    /// provided session ids in a single batch. Sessions with no events are
+    /// omitted from the result.
+    async fn get_session_event_summaries(
+        &self,
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError>;
+
+    /// Retrieves the stored session-state blob for a session, if any.
+    async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError>;
+
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
@@ -865,6 +900,26 @@ pub trait Store: ReadOnlyStore {
         &self,
         id: &ConversationId,
         data: Vec<u8>,
+    ) -> Result<(), StoreError>;
+
+    // ---- Session event log mutations ----
+
+    /// Appends an event to a session's event log. Returns the per-session
+    /// version number assigned to the event.
+    async fn append_session_event(
+        &self,
+        id: &SessionId,
+        event: SessionEvent,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Stores the (binary, opaque) session-state blob for a session,
+    /// overwriting any prior value.
+    async fn store_session_state(
+        &self,
+        id: &SessionId,
+        data: Vec<u8>,
+        actor: &ActorRef,
     ) -> Result<(), StoreError>;
 
     /// Adds a session to the store.

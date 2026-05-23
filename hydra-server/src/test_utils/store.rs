@@ -11,7 +11,10 @@ use crate::{
         secrets::SecretRef,
         users::{User, Username},
     },
-    store::{ConversationEventSummary, ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
+    store::{
+        ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary, Store,
+        StoreError, TaskStatusLog,
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -383,6 +386,31 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Option<Vec<u8>>, StoreError> {
         fail()
     }
+
+    async fn get_session_events(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
+        fail()
+    }
+
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        _conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError> {
+        fail()
+    }
+
+    async fn get_session_event_summaries(
+        &self,
+        _ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
+        fail()
+    }
+
+    async fn get_session_state(&self, _id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -671,6 +699,24 @@ impl Store for FailingStore {
         &self,
         _id: &ConversationId,
         _data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn append_session_event(
+        &self,
+        _id: &SessionId,
+        _event: SessionEvent,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn store_session_state(
+        &self,
+        _id: &SessionId,
+        _data: Vec<u8>,
+        _actor: &ActorRef,
     ) -> Result<(), StoreError> {
         fail()
     }

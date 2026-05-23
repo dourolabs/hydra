@@ -2,9 +2,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    ConversationEventSummary, ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog,
+    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary, Status,
+    Store, StoreError, TaskStatusLog,
 };
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
@@ -80,6 +82,17 @@ pub struct MemoryStore {
     conversation_events: DashMap<ConversationId, Vec<Versioned<ConversationEvent>>>,
     /// Maps conversation IDs to their session state blobs
     conversation_session_state: DashMap<ConversationId, Vec<u8>>,
+    /// Maps session IDs to their versioned session events. Each entry pairs
+    /// the event with the monotonic `next_session_event_seq` value assigned
+    /// at append time, which serves as the global ordering primitive used by
+    /// the conversation read path fan-out merge (see design doc §3.4.1).
+    session_events: DashMap<SessionId, Vec<(u64, Versioned<SessionEvent>)>>,
+    /// Maps session IDs to their opaque session-state blobs.
+    session_state: DashMap<SessionId, Vec<u8>>,
+    /// Monotonic counter stamped on every appended session event, providing
+    /// a process-wide insertion order across sessions. Mirrors the postgres
+    /// BIGSERIAL / sqlite ROWID used by the SQL backends for the same purpose.
+    next_session_event_seq: AtomicU64,
 }
 
 impl MemoryStore {
@@ -106,6 +119,9 @@ impl MemoryStore {
             conversations: DashMap::new(),
             conversation_events: DashMap::new(),
             conversation_session_state: DashMap::new(),
+            session_events: DashMap::new(),
+            session_state: DashMap::new(),
+            next_session_event_seq: AtomicU64::new(1),
         }
     }
 
@@ -1722,6 +1738,86 @@ impl ReadOnlyStore for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone()))
     }
+
+    async fn get_session_events(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::SessionNotFound(id.clone()));
+        }
+        Ok(self
+            .session_events
+            .get(id)
+            .map(|entry| entry.value().iter().map(|(_seq, v)| v.clone()).collect())
+            .unwrap_or_default())
+    }
+
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError> {
+        let mut matches: Vec<(SessionId, DateTime<Utc>)> = self
+            .tasks
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                if latest.item.deleted {
+                    return None;
+                }
+                let linked = latest
+                    .item
+                    .interactive
+                    .as_ref()
+                    .and_then(|opts| opts.conversation_id.as_ref())
+                    .map(|cid| cid == conversation_id)
+                    .unwrap_or(false);
+                if !linked {
+                    return None;
+                }
+                let creation_time = latest.item.creation_time.unwrap_or(latest.creation_time);
+                Some((entry.key().clone(), creation_time))
+            })
+            .collect();
+        matches.sort_by(|(a_id, a_time), (b_id, b_time)| {
+            a_time
+                .cmp(b_time)
+                .then_with(|| a_id.as_ref().cmp(b_id.as_ref()))
+        });
+        Ok(matches.into_iter().map(|(id, _)| id).collect())
+    }
+
+    async fn get_session_event_summaries(
+        &self,
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
+        let mut result = HashMap::new();
+        for id in ids {
+            if let Some(entry) = self.session_events.get(id) {
+                let events = entry.value();
+                if !events.is_empty() {
+                    result.insert(
+                        id.clone(),
+                        SessionEventSummary {
+                            event_count: events.len(),
+                            last_event_preview: events.last().map(|(_seq, v)| v.item.preview()),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::SessionNotFound(id.clone()));
+        }
+        Ok(self
+            .session_state
+            .get(id)
+            .map(|entry| entry.value().clone()))
+    }
 }
 
 #[async_trait]
@@ -2458,6 +2554,42 @@ impl Store for MemoryStore {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
         self.conversation_session_state.insert(id.clone(), data);
+        Ok(())
+    }
+
+    async fn append_session_event(
+        &self,
+        id: &SessionId,
+        event: SessionEvent,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::SessionNotFound(id.clone()));
+        }
+        let mut events = self.session_events.entry(id.clone()).or_default();
+        let next_version = events
+            .last()
+            .map(|(_seq, v)| v.version.saturating_add(1))
+            .unwrap_or(1);
+        let global_seq = self.next_session_event_seq.fetch_add(1, Ordering::Relaxed);
+        let now = Utc::now();
+        events.push((
+            global_seq,
+            Versioned::with_actor(event, next_version, now, actor.clone(), now),
+        ));
+        Ok(next_version)
+    }
+
+    async fn store_session_state(
+        &self,
+        id: &SessionId,
+        data: Vec<u8>,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::SessionNotFound(id.clone()));
+        }
+        self.session_state.insert(id.clone(), data);
         Ok(())
     }
 }
@@ -8290,6 +8422,356 @@ mod tests {
     async fn get_conversation_event_summaries_empty_ids() {
         let store = MemoryStore::new();
         let summaries = store.get_conversation_event_summaries(&[]).await.unwrap();
+        assert!(summaries.is_empty());
+    }
+
+    fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
+        let mut session = spawn_task();
+        session.interactive = Some(crate::store::InteractiveOptions {
+            conversation_id,
+            conversation_resume_from: None,
+        });
+        session
+    }
+
+    #[tokio::test]
+    async fn append_and_get_session_events_returns_in_append_order() {
+        let store = MemoryStore::new();
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        // No events yet.
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert!(events.is_empty());
+
+        let v1 = store
+            .append_session_event(
+                &sid,
+                SessionEvent::UserMessage {
+                    content: "hi".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v1, 1);
+        let v2 = store
+            .append_session_event(
+                &sid,
+                SessionEvent::AssistantMessage {
+                    content: "hello".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].version, 1);
+        assert_eq!(events[1].version, 2);
+        assert!(matches!(events[0].item, SessionEvent::UserMessage { .. }));
+        assert!(matches!(
+            events[1].item,
+            SessionEvent::AssistantMessage { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn append_session_event_not_found_for_missing_session() {
+        let store = MemoryStore::new();
+        let missing = SessionId::generate(6).unwrap();
+        let err = store
+            .append_session_event(
+                &missing,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+        let err = store.get_session_events(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn session_event_global_counter_is_monotonic_across_sessions() {
+        let store = MemoryStore::new();
+        let (s1, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+        let (s2, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        let start = store.next_session_event_seq.load(Ordering::Relaxed);
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::UserMessage {
+                    content: "a".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s2,
+                SessionEvent::UserMessage {
+                    content: "b".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::AssistantMessage {
+                    content: "c".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        // Counter has advanced by exactly 3 across the two sessions.
+        let end = store.next_session_event_seq.load(Ordering::Relaxed);
+        assert_eq!(end - start, 3);
+
+        // The per-event seqs were assigned strictly increasing across sessions:
+        // s1's first event got `start`, s2's only event got `start + 1`,
+        // s1's second event got `start + 2`.
+        let s1_seqs: Vec<u64> = store
+            .session_events
+            .get(&s1)
+            .unwrap()
+            .value()
+            .iter()
+            .map(|(seq, _)| *seq)
+            .collect();
+        let s2_seqs: Vec<u64> = store
+            .session_events
+            .get(&s2)
+            .unwrap()
+            .value()
+            .iter()
+            .map(|(seq, _)| *seq)
+            .collect();
+        assert_eq!(s1_seqs, vec![start, start + 2]);
+        assert_eq!(s2_seqs, vec![start + 1]);
+    }
+
+    #[tokio::test]
+    async fn store_and_get_session_state_blob() {
+        let store = MemoryStore::new();
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert!(state.is_none());
+
+        let data = vec![1u8, 2, 3, 4, 5];
+        store
+            .store_session_state(&sid, data.clone(), &test_actor())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data));
+
+        // Overwrite.
+        let data2 = vec![9u8, 8, 7];
+        store
+            .store_session_state(&sid, data2.clone(), &test_actor())
+            .await
+            .unwrap();
+        let state = store.get_session_state(&sid).await.unwrap();
+        assert_eq!(state, Some(data2));
+    }
+
+    #[tokio::test]
+    async fn session_state_not_found_for_missing_session() {
+        let store = MemoryStore::new();
+        let missing = SessionId::generate(6).unwrap();
+        let err = store.get_session_state(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+        let err = store
+            .store_session_state(&missing, vec![1], &test_actor())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn list_session_ids_by_conversation_id_finds_linked_sessions() {
+        let store = MemoryStore::new();
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (other_conv_id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // Session A: linked to conv_id, created earliest.
+        let t1 = Utc::now();
+        let (sid_a, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                t1,
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        // Session B: linked to a different conversation.
+        let (_sid_b, _) = store
+            .add_session(
+                interactive_session(Some(other_conv_id.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        // Session C: linked to conv_id, created later than A.
+        let t3 = Utc::now() + chrono::Duration::seconds(1);
+        let (sid_c, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                t3,
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        // Session D: not interactive at all.
+        let (_sid_d, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        let ids = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec![sid_a.clone(), sid_c.clone()]);
+
+        // Unrelated conversation returns no sessions.
+        let unrelated = hydra_common::ConversationId::new();
+        let ids = store
+            .list_session_ids_by_conversation_id(&unrelated)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_session_ids_by_conversation_id_excludes_deleted_sessions() {
+        let store = MemoryStore::new();
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store.delete_session(&sid, &test_actor()).await.unwrap();
+        let ids = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_session_event_summaries_returns_counts_and_previews() {
+        let store = MemoryStore::new();
+        let (s1, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+        let (s2, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+        let (s3, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::UserMessage {
+                    content: "first".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s1,
+                SessionEvent::AssistantMessage {
+                    content: "second".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s2,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_session_event_summaries(&[s1.clone(), s2.clone(), s3.clone()])
+            .await
+            .unwrap();
+
+        let s1_summary = summaries.get(&s1).expect("s1 summary");
+        assert_eq!(s1_summary.event_count, 2);
+        assert_eq!(
+            s1_summary.last_event_preview.as_deref(),
+            Some("Assistant: second")
+        );
+
+        let s2_summary = summaries.get(&s2).expect("s2 summary");
+        assert_eq!(s2_summary.event_count, 1);
+        assert_eq!(s2_summary.last_event_preview.as_deref(), Some("Closed"));
+
+        // s3 has no events and is omitted from the result.
+        assert!(!summaries.contains_key(&s3));
+
+        // Empty input → empty output.
+        let summaries = store.get_session_event_summaries(&[]).await.unwrap();
         assert!(summaries.is_empty());
     }
 

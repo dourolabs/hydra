@@ -1725,6 +1725,33 @@ impl ReadOnlyStore for StoreWithEvents {
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.inner.get_conversation_session_state(id).await
     }
+
+    async fn get_session_events(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<crate::store::SessionEvent>>, StoreError> {
+        self.inner.get_session_events(id).await
+    }
+
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError> {
+        self.inner
+            .list_session_ids_by_conversation_id(conversation_id)
+            .await
+    }
+
+    async fn get_session_event_summaries(
+        &self,
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, crate::store::SessionEventSummary>, StoreError> {
+        self.inner.get_session_event_summaries(ids).await
+    }
+
+    async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        self.inner.get_session_state(id).await
+    }
 }
 
 #[cfg(test)]

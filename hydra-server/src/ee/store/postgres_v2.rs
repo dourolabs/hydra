@@ -22,7 +22,10 @@ use crate::{
         task_status::{Status, TaskError},
         users::{User, Username},
     },
-    store::{ConversationEventSummary, ReadOnlyStore, Store, StoreError, TaskStatusLog},
+    store::{
+        ConversationEventSummary, ReadOnlyStore, SessionEvent, SessionEventSummary, Store,
+        StoreError, TaskStatusLog,
+    },
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -4056,6 +4059,39 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         Ok(row)
     }
+
+    async fn get_session_events(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::get_session_events: implemented in PR-4",
+        ))
+    }
+
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        _conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::list_session_ids_by_conversation_id: implemented in PR-4",
+        ))
+    }
+
+    async fn get_session_event_summaries(
+        &self,
+        _ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::get_session_event_summaries: implemented in PR-4",
+        ))
+    }
+
+    async fn get_session_state(&self, _id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::get_session_state: implemented in PR-4",
+        ))
+    }
 }
 
 #[async_trait]
@@ -5147,6 +5183,28 @@ impl Store for PostgresStoreV2 {
             conversation_id: id.clone(),
             event_index,
         })
+    }
+
+    async fn append_session_event(
+        &self,
+        _id: &SessionId,
+        _event: SessionEvent,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::append_session_event: implemented in PR-4",
+        ))
+    }
+
+    async fn store_session_state(
+        &self,
+        _id: &SessionId,
+        _data: Vec<u8>,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported(
+            "postgres_v2::store_session_state: implemented in PR-4",
+        ))
     }
 
     async fn store_conversation_session_state(
@@ -8983,5 +9041,54 @@ mod tests {
             7,
             "677 rows should bump suffix length to 7"
         );
+    }
+
+    // ---- Session event log stubs ----
+    // PR-2 only ships trait parity for PostgresStoreV2; the real impls land
+    // in PR-4. This test pins the stub-error variant so PR-4 only flips the
+    // method bodies without churning the trait surface.
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_event_log_methods_return_unsupported_stub_error_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let session_id = SessionId::generate(6).unwrap();
+        let conv_id = ConversationId::new();
+
+        let err = store.get_session_events(&session_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .get_session_event_summaries(&[session_id.clone()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store.get_session_state(&session_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .append_session_event(
+                &session_id,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .store_session_state(&session_id, vec![1, 2, 3], &ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
     }
 }

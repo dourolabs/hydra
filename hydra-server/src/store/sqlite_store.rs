@@ -39,8 +39,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::OnceCell;
 
 use super::{
-    ConversationEventSummary, InteractiveOptions, ReadOnlyStore, Session, Status, Store,
-    StoreError, TaskError, TaskStatusLog,
+    ConversationEventSummary, InteractiveOptions, ReadOnlyStore, Session, SessionEvent,
+    SessionEventSummary, Status, Store, StoreError, TaskError, TaskStatusLog,
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
@@ -4272,6 +4272,39 @@ impl ReadOnlyStore for SqliteStore {
 
         Ok(row)
     }
+
+    async fn get_session_events(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::get_session_events: implemented in PR-3",
+        ))
+    }
+
+    async fn list_session_ids_by_conversation_id(
+        &self,
+        _conversation_id: &ConversationId,
+    ) -> Result<Vec<SessionId>, StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::list_session_ids_by_conversation_id: implemented in PR-3",
+        ))
+    }
+
+    async fn get_session_event_summaries(
+        &self,
+        _ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, SessionEventSummary>, StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::get_session_event_summaries: implemented in PR-3",
+        ))
+    }
+
+    async fn get_session_state(&self, _id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::get_session_state: implemented in PR-3",
+        ))
+    }
 }
 
 #[async_trait]
@@ -5296,6 +5329,28 @@ impl Store for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         Ok(())
+    }
+
+    async fn append_session_event(
+        &self,
+        _id: &SessionId,
+        _event: SessionEvent,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::append_session_event: implemented in PR-3",
+        ))
+    }
+
+    async fn store_session_state(
+        &self,
+        _id: &SessionId,
+        _data: Vec<u8>,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported(
+            "sqlite_store::store_session_state: implemented in PR-3",
+        ))
     }
 }
 
@@ -10271,5 +10326,53 @@ mod tests {
             7,
             "677 rows should bump suffix length to 7"
         );
+    }
+
+    // ---- Session event log stubs ----
+    // PR-2 stops at trait parity for SqliteStore; the real impls land in PR-3.
+    // These tests pin the stub-error variant so PR-3 only flips the bodies
+    // without churning the trait surface.
+
+    #[tokio::test]
+    async fn session_event_log_methods_return_unsupported_stub_error() {
+        let store = create_test_store().await;
+        let session_id = SessionId::generate(6).unwrap();
+        let conv_id = ConversationId::new();
+
+        let err = store.get_session_events(&session_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .list_session_ids_by_conversation_id(&conv_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .get_session_event_summaries(&[session_id.clone()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store.get_session_state(&session_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .append_session_event(
+                &session_id,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
+
+        let err = store
+            .store_session_state(&session_id, vec![1, 2, 3], &ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Unsupported(_)));
     }
 }
