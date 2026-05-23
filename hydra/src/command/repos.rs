@@ -7,8 +7,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::repositories::{
-    CreateRepositoryRequest, MergeRequestConfig, RepoWorkflowConfig, Repository, RepositoryRecord,
-    ReviewRequestConfig, SearchRepositoriesQuery, UpdateRepositoryRequest,
+    CreateRepositoryRequest, MergePolicy, MergeRequestConfig, RepoWorkflowConfig, Repository,
+    RepositoryRecord, ReviewRequestConfig, SearchRepositoriesQuery, UpdateRepositoryRequest,
 };
 use hydra_common::RepoName;
 use std::path::{Path, PathBuf};
@@ -137,6 +137,22 @@ pub struct UpdateRepositoryArgs {
     /// Clear the configured patch workflow.
     #[arg(long = "clear-patch-workflow")]
     pub clear_patch_workflow: bool,
+
+    /// Read a YAML merge policy from PATH and apply it to the repository.
+    ///
+    /// The file is deserialised into a `MergePolicy`; strings starting with
+    /// `@` are parsed as dynamic principal references (e.g.
+    /// `@parent_issue.creator`).
+    #[arg(
+        long = "merge-policy-file",
+        value_name = "PATH",
+        conflicts_with = "clear_merge_policy"
+    )]
+    pub merge_policy_file: Option<PathBuf>,
+
+    /// Clear the configured merge policy. Does not affect `patch_workflow`.
+    #[arg(long = "clear-merge-policy")]
+    pub clear_merge_policy: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -349,9 +365,25 @@ async fn build_update_request(
         new_workflow.or(current.patch_workflow)
     };
 
-    let repo = Repository::new(remote_url, default_branch, default_image, patch_workflow);
+    let merge_policy = if args.clear_merge_policy {
+        None
+    } else if let Some(path) = &args.merge_policy_file {
+        Some(load_merge_policy_file(path)?)
+    } else {
+        current.merge_policy
+    };
+
+    let mut repo = Repository::new(remote_url, default_branch, default_image, patch_workflow);
+    repo.merge_policy = merge_policy;
 
     Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
+}
+
+fn load_merge_policy_file(path: &Path) -> Result<MergePolicy> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read merge policy file '{}'", path.display()))?;
+    serde_yaml_ng::from_str::<MergePolicy>(&contents)
+        .with_context(|| format!("failed to parse merge policy YAML at '{}'", path.display()))
 }
 
 async fn fetch_current_repository(
@@ -520,6 +552,8 @@ mod tests {
             reviewer: vec![],
             merger: None,
             clear_patch_workflow: false,
+            merge_policy_file: None,
+            clear_merge_policy: false,
         }
     }
 
@@ -1315,5 +1349,266 @@ mod tests {
         std::fs::write(dir.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::create_dir(dir.path().join("objects")).unwrap();
         assert!(is_git_repository(dir.path()));
+    }
+
+    // ---- merge_policy CLI surface --------------------------------------
+
+    /// The YAML example from `/designs/merge-time-constraints.md` §4.2.
+    const SAMPLE_MERGE_POLICY_YAML: &str = r#"
+reviewers:
+  - label: code-review
+    any_of:
+      - reviewer
+      - "@parent_issue.creator"
+    count: 1
+    exclude_author: true
+  - label: human-signoff
+    any_of:
+      - alice
+      - bob
+    count: 1
+
+mergers:
+  any_of:
+    - "@parent_issue.creator"
+    - alice
+"#;
+
+    #[test]
+    fn load_merge_policy_file_parses_design_example() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.yaml");
+        std::fs::write(&path, SAMPLE_MERGE_POLICY_YAML).unwrap();
+
+        let policy = load_merge_policy_file(&path).unwrap();
+        assert_eq!(policy.reviewers.len(), 2);
+        assert_eq!(policy.reviewers[0].label.as_deref(), Some("code-review"));
+        assert_eq!(policy.reviewers[1].label.as_deref(), Some("human-signoff"));
+        assert!(policy.mergers.is_some());
+    }
+
+    #[test]
+    fn load_merge_policy_file_reports_missing_file() {
+        let err = load_merge_policy_file(Path::new("/nonexistent/policy.yaml")).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to read merge policy file"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_merge_policy_file_reports_invalid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.yaml");
+        std::fs::write(&path, "reviewers: [not a sequence element").unwrap();
+
+        let err = load_merge_policy_file(&path).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to parse merge policy YAML"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_repository_with_merge_policy_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.yaml");
+        std::fs::write(&policy_path, SAMPLE_MERGE_POLICY_YAML).unwrap();
+
+        let mut args = sample_update_args();
+        args.merge_policy_file = Some(policy_path);
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/hydra")
+                .json_body(json!({
+                    "remote_url": "https://example.com/hydra.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/hydra:latest",
+                    "merge_policy": {
+                        "reviewers": [
+                            {
+                                "label": "code-review",
+                                "any_of": ["reviewer", "@parent_issue.creator"],
+                            },
+                            {
+                                "label": "human-signoff",
+                                "any_of": ["alice", "bob"],
+                            }
+                        ],
+                        "mergers": {
+                            "any_of": ["@parent_issue.creator", "alice"]
+                        }
+                    }
+                }));
+            let response_repo = {
+                let mut r = Repository::new(
+                    args.remote_url.clone().unwrap(),
+                    args.default_branch.clone(),
+                    args.default_image.clone(),
+                    None,
+                );
+                r.merge_policy = Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
+                r
+            };
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    response_repo,
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.merge_policy.is_some());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_clear_merge_policy_preserves_patch_workflow() {
+        let mut args = sample_update_args();
+        args.clear_merge_policy = true;
+        let server = MockServer::start();
+        let mut existing = sample_repository_info(&args.name);
+        existing.repository.patch_workflow = Some(sample_workflow_config());
+        existing.repository.merge_policy =
+            Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/hydra")
+                .json_body(json!({
+                    "remote_url": "https://example.com/hydra.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/hydra:latest",
+                    "patch_workflow": {
+                        "review_requests": [{"assignee": "alice"}],
+                        "merge_request": {"assignee": "$patch_creator"}
+                    }
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone().unwrap(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        Some(sample_workflow_config()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.merge_policy.is_none());
+        assert!(repository.repository.patch_workflow.is_some());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_preserves_merge_policy_when_unmodified() {
+        let mut args = sample_update_args();
+        args.default_image = Some("ghcr.io/dourolabs/hydra:canary".to_string());
+        let policy: MergePolicy = serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap();
+        let server = MockServer::start();
+        let mut existing = sample_repository_info(&args.name);
+        existing.repository.merge_policy = Some(policy.clone());
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/hydra")
+                .json_body(json!({
+                    "remote_url": "https://example.com/hydra.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/hydra:canary",
+                    "merge_policy": serde_json::to_value(&policy).unwrap(),
+                }));
+            let mut response_repo = Repository::new(
+                args.remote_url.clone().unwrap(),
+                args.default_branch.clone(),
+                Some("ghcr.io/dourolabs/hydra:canary".to_string()),
+                None,
+            );
+            response_repo.merge_policy = Some(policy.clone());
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    response_repo,
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.merge_policy.is_some());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[test]
+    fn list_repositories_shows_merge_policy_in_pretty_output() {
+        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        let mut repo_info = sample_repository_info(&repo_name);
+        repo_info.repository.merge_policy =
+            Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
+
+        let mut output = Vec::new();
+        render(
+            RepositoryRecords(&[repo_info]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(
+            output.contains("merge_policy:"),
+            "should print merge_policy header, got:\n{output}"
+        );
+        assert!(
+            output.contains("code-review"),
+            "should print policy contents, got:\n{output}"
+        );
+        assert!(
+            output.contains("@parent_issue.creator"),
+            "should retain dynamic-ref shorthand, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn list_repositories_omits_merge_policy_when_none() {
+        let repo_name = RepoName::from_str("dourolabs/hydra").unwrap();
+        let repo_info = sample_repository_info(&repo_name);
+
+        let mut output = Vec::new();
+        render(
+            RepositoryRecords(&[repo_info]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(!output.contains("merge_policy"));
     }
 }

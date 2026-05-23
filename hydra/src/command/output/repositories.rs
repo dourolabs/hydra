@@ -66,5 +66,12 @@ fn write_repository_details<W: Write>(repository: &RepositoryRecord, writer: &mu
             )?;
         }
     }
+    if let Some(ref policy) = config.merge_policy {
+        let yaml = serde_yaml_ng::to_string(policy)?;
+        writeln!(writer, "  merge_policy:")?;
+        for line in yaml.lines() {
+            writeln!(writer, "    {line}")?;
+        }
+    }
     Ok(())
 }
