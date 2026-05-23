@@ -185,13 +185,6 @@ pub enum PatchesCommand {
         /// Base branch to squash-merge onto (defaults to the repo's configured default branch or 'main').
         #[arg(long = "base", value_name = "BASE")]
         base: Option<String>,
-
-        /// When the server-side preflight blocks the merge, print the raw
-        /// `MergeBlockedError` JSON body to stdout instead of the human
-        /// summary on stderr. Only affects the blocked path; the success
-        /// path is unchanged.
-        #[arg(long = "json")]
-        json: bool,
     },
     /// Manage patch assets.
     Assets {
@@ -309,11 +302,9 @@ pub async fn run(
             write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
-        PatchesCommand::Merge {
-            patch_id,
-            base,
-            json,
-        } => merge_patch(client, patch_id, base, json).await,
+        PatchesCommand::Merge { patch_id, base } => {
+            merge_patch(client, patch_id, base, context.output_format).await
+        }
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
         }
@@ -742,26 +733,29 @@ async fn update_patch_inner(
 }
 
 /// Convert a server-side `MergeBlockedError` body into the user-facing error
-/// for `hydra patches merge`. The JSON body (if requested) is printed to
-/// stdout and the human summary is printed to stderr as a side effect; the
-/// returned `anyhow::Error` carries a short summary so the top-level CLI
-/// exits non-zero.
-fn handle_merge_blocked(body: MergeBlockedError, json: bool) -> anyhow::Error {
+/// for `hydra patches merge`. The JSON body (when the resolved output format
+/// is `Jsonl`) is printed to stdout and the human summary (when `Pretty`) is
+/// printed to stderr as a side effect; the returned `anyhow::Error` carries a
+/// short summary so the top-level CLI exits non-zero.
+fn handle_merge_blocked(
+    body: MergeBlockedError,
+    output_format: ResolvedOutputFormat,
+) -> anyhow::Error {
     let mut stdout = std::io::stdout();
     let mut stderr = std::io::stderr();
-    handle_merge_blocked_with_writers(body, json, &mut stdout, &mut stderr)
+    handle_merge_blocked_with_writers(body, output_format, &mut stdout, &mut stderr)
 }
 
 fn handle_merge_blocked_with_writers(
     body: MergeBlockedError,
-    json: bool,
+    output_format: ResolvedOutputFormat,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> anyhow::Error {
     let patch_id = body.patch_id.clone();
     let layer = body.blocked_at_layer;
-    if json {
-        match serde_json::to_string(&body) {
+    match output_format {
+        ResolvedOutputFormat::Jsonl => match serde_json::to_string(&body) {
             Ok(rendered) => {
                 if let Err(err) = writeln!(stdout, "{rendered}") {
                     return anyhow!(
@@ -774,9 +768,14 @@ fn handle_merge_blocked_with_writers(
                     "failed to serialise merge_blocked body for patch '{patch_id}': {err}"
                 );
             }
+        },
+        ResolvedOutputFormat::Pretty => {
+            if let Err(err) = writeln!(stderr, "{}", render_merge_blocked_human(&body)) {
+                return anyhow!(
+                    "failed to write merge_blocked summary for patch '{patch_id}': {err}"
+                );
+            }
         }
-    } else if let Err(err) = writeln!(stderr, "{}", render_merge_blocked_human(&body)) {
-        return anyhow!("failed to write merge_blocked summary for patch '{patch_id}': {err}");
     }
     anyhow!(
         "merge blocked at layer '{layer}' for patch '{patch_id}'",
@@ -917,7 +916,7 @@ fn render_merge_blocked_human(body: &MergeBlockedError) -> String {
             }
         }
     }
-    out.push_str("\nRun with --json to get the machine-readable payload.");
+    out.push_str("\nRun with --output-format jsonl to get the machine-readable payload.");
     out
 }
 
@@ -925,7 +924,7 @@ async fn merge_patch(
     client: &dyn HydraClientInterface,
     patch_id: PatchId,
     base_override: Option<String>,
-    json: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     // 1. Fetch the patch and its version history.
     let patch_record = client
@@ -941,7 +940,7 @@ async fn merge_patch(
     match client.merge_check(&patch_id).await {
         Ok(MergeCheckResponse::Ok(_)) => {}
         Ok(MergeCheckResponse::Blocked(body)) => {
-            return Err(handle_merge_blocked(body, json));
+            return Err(handle_merge_blocked(body, output_format));
         }
         Err(err) => {
             return Err(err.context(format!(
@@ -2572,7 +2571,7 @@ mod tests {
             then.status(200).json_body_obj(&versions_response);
         });
 
-        let result = merge_patch(&client, merge_patch_id, None, false).await;
+        let result = merge_patch(&client, merge_patch_id, None, ResolvedOutputFormat::Pretty).await;
 
         get_mock.assert();
         preflight_mock.assert();
@@ -2686,7 +2685,7 @@ mod tests {
             then.status(200).json_body_obj(&versions_response);
         });
 
-        let result = merge_patch(&client, merge_patch_id, None, false).await;
+        let result = merge_patch(&client, merge_patch_id, None, ResolvedOutputFormat::Pretty).await;
 
         get_mock.assert();
         preflight_mock.assert();
@@ -2740,7 +2739,13 @@ mod tests {
         // with `exactly(0)` would also work. We omit the negative mock to
         // keep this test focused; the error assertion below proves we
         // never reached the review check.
-        let result = merge_patch(&client, merge_patch_id.clone(), None, false).await;
+        let result = merge_patch(
+            &client,
+            merge_patch_id.clone(),
+            None,
+            ResolvedOutputFormat::Pretty,
+        )
+        .await;
 
         get_mock.assert();
         preflight_mock.assert();
@@ -2794,7 +2799,13 @@ mod tests {
         let get_mock = mock_get_patch(&server, patch_record);
         let preflight_mock = mock_merge_check_status(&server, merge_patch_id.clone(), 500);
 
-        let result = merge_patch(&client, merge_patch_id.clone(), None, false).await;
+        let result = merge_patch(
+            &client,
+            merge_patch_id.clone(),
+            None,
+            ResolvedOutputFormat::Pretty,
+        )
+        .await;
 
         get_mock.assert();
         preflight_mock.assert();
@@ -2814,7 +2825,12 @@ mod tests {
         let body = sample_reviews_blocked(&pid);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let err = handle_merge_blocked_with_writers(body, false, &mut stdout, &mut stderr);
+        let err = handle_merge_blocked_with_writers(
+            body,
+            ResolvedOutputFormat::Pretty,
+            &mut stdout,
+            &mut stderr,
+        );
 
         assert!(
             stdout.is_empty(),
@@ -2844,8 +2860,8 @@ mod tests {
             "stderr must show the resolved dynamic ref, got: {stderr_text}"
         );
         assert!(
-            stderr_text.contains("Run with --json"),
-            "stderr must include the --json hint, got: {stderr_text}"
+            stderr_text.contains("Run with --output-format jsonl"),
+            "stderr must include the --output-format jsonl hint, got: {stderr_text}"
         );
 
         let err_text = err.to_string();
@@ -2863,11 +2879,16 @@ mod tests {
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let _err = handle_merge_blocked_with_writers(body, true, &mut stdout, &mut stderr);
+        let _err = handle_merge_blocked_with_writers(
+            body,
+            ResolvedOutputFormat::Jsonl,
+            &mut stdout,
+            &mut stderr,
+        );
 
         assert!(
             stderr.is_empty(),
-            "stderr must be empty in the --json path, got: {}",
+            "stderr must be empty in the jsonl path, got: {}",
             String::from_utf8_lossy(&stderr)
         );
 
@@ -2882,7 +2903,12 @@ mod tests {
         let body = sample_mergers_blocked(&pid);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let _err = handle_merge_blocked_with_writers(body, false, &mut stdout, &mut stderr);
+        let _err = handle_merge_blocked_with_writers(
+            body,
+            ResolvedOutputFormat::Pretty,
+            &mut stdout,
+            &mut stderr,
+        );
 
         let stderr_text = String::from_utf8(stderr).unwrap();
         assert!(stderr_text.contains("not authorized to merge"));
@@ -2893,7 +2919,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_clap_definition_exposes_json_flag() {
+    fn merge_clap_definition_rejects_json_flag() {
         use clap::Parser;
 
         #[derive(Parser, Debug)]
@@ -2902,19 +2928,17 @@ mod tests {
             command: PatchesCommand,
         }
 
-        let parsed = Cli::try_parse_from(["cli", "merge", "p-some", "--json"])
-            .expect("--json must be accepted by the merge subcommand");
-        match parsed.command {
-            PatchesCommand::Merge { json, .. } => assert!(json, "expected json=true after --json"),
-            other => panic!("expected merge variant, got: {other:?}"),
-        }
+        // `--json` was removed in favour of the global `--output-format`.
+        let parsed = Cli::try_parse_from(["cli", "merge", "p-some", "--json"]);
+        assert!(
+            parsed.is_err(),
+            "--json must no longer be accepted by the merge subcommand"
+        );
 
+        // The merge subcommand still parses without the (now removed) flag.
         let parsed = Cli::try_parse_from(["cli", "merge", "p-some"])
             .expect("merge must still parse without --json");
-        match parsed.command {
-            PatchesCommand::Merge { json, .. } => assert!(!json, "expected json=false by default"),
-            other => panic!("expected merge variant, got: {other:?}"),
-        }
+        assert!(matches!(parsed.command, PatchesCommand::Merge { .. }));
     }
 
     #[tokio::test]
