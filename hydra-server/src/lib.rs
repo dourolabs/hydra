@@ -7,6 +7,7 @@ pub mod domain;
 pub mod ee;
 pub mod job_engine;
 pub mod merge_queue;
+pub mod migration_tool;
 pub mod policy;
 pub mod routes;
 pub mod store;
