@@ -228,8 +228,11 @@ impl NotificationPolicy for WalkUpPolicy {
             | MutationPayload::Label { .. }
             | MutationPayload::Notification { .. }
             | MutationPayload::Conversation { .. }
-            | MutationPayload::ConversationEvent { .. } => {
-                // No source issue for documents, labels, notifications, or conversations
+            | MutationPayload::ConversationEvent { .. }
+            | MutationPayload::SessionEvent { .. }
+            | MutationPayload::SessionState { .. } => {
+                // No source issue for documents, labels, notifications,
+                // conversations, or session-event broadcasts.
                 vec![]
             }
         };
@@ -373,6 +376,12 @@ pub fn generate_summary(event: &ServerEvent) -> String {
         } => {
             format!("Conversation {conversation_id} received a new event")
         }
+        MutationPayload::SessionEvent { session_id, .. } => {
+            format!("Session {session_id} received a new event")
+        }
+        MutationPayload::SessionState { session_id, .. } => {
+            format!("Session {session_id} state was updated")
+        }
     }
 }
 
@@ -396,6 +405,9 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         ServerEvent::ConversationCreated { .. }
         | ServerEvent::ConversationUpdated { .. }
         | ServerEvent::ConversationEventCreated { .. } => "conversation",
+        ServerEvent::SessionEventCreated { .. } | ServerEvent::SessionStateUpdated { .. } => {
+            "session"
+        }
     }
 }
 
@@ -428,6 +440,8 @@ pub fn event_object_id(event: &ServerEvent) -> HydraId {
         | ServerEvent::ConversationEventCreated {
             conversation_id, ..
         } => conversation_id.clone().into(),
+        ServerEvent::SessionEventCreated { session_id, .. }
+        | ServerEvent::SessionStateUpdated { session_id, .. } => session_id.clone().into(),
     }
 }
 
@@ -451,7 +465,9 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::NotificationCreated { version, .. }
         | ServerEvent::ConversationCreated { version, .. }
         | ServerEvent::ConversationUpdated { version, .. }
-        | ServerEvent::ConversationEventCreated { version, .. } => *version,
+        | ServerEvent::ConversationEventCreated { version, .. }
+        | ServerEvent::SessionEventCreated { version, .. } => *version,
+        ServerEvent::SessionStateUpdated { .. } => 0,
     }
 }
 
@@ -474,9 +490,10 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
         | ServerEvent::PatchDeleted { .. }
         | ServerEvent::DocumentDeleted { .. }
         | ServerEvent::LabelDeleted { .. } => "deleted",
-        ServerEvent::NotificationCreated { .. } | ServerEvent::ConversationEventCreated { .. } => {
-            "created"
-        }
+        ServerEvent::NotificationCreated { .. }
+        | ServerEvent::ConversationEventCreated { .. }
+        | ServerEvent::SessionEventCreated { .. } => "created",
+        ServerEvent::SessionStateUpdated { .. } => "updated",
     }
 }
 
@@ -498,7 +515,9 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
         | MutationPayload::Label { .. }
         | MutationPayload::Notification { .. }
         | MutationPayload::Conversation { .. }
-        | MutationPayload::ConversationEvent { .. } => None,
+        | MutationPayload::ConversationEvent { .. }
+        | MutationPayload::SessionEvent { .. }
+        | MutationPayload::SessionState { .. } => None,
     }
 }
 
