@@ -3,8 +3,9 @@ use super::users::Username;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::sessions::{McpConfig, TokenUsage};
-use hydra_common::{ConversationId, IssueId, RepoName};
+use hydra_common::{ConversationId, IssueId, RepoName, SessionId};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 fn default_task_status() -> Status {
@@ -293,13 +294,188 @@ impl From<Session> for api::sessions::Session {
     }
 }
 
+/// Domain twin of [`api::sessions::SessionEvent`]. Append-only log of
+/// model-context events for a session — the transcript the model "sees" is the
+/// projection of this log onto `UserMessage` and `AssistantMessage` variants in
+/// insertion order. Mirrors [`super::conversations::ConversationEvent`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionEvent {
+    /// User input received by the model.
+    UserMessage {
+        content: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Assistant text emitted by the model.
+    AssistantMessage {
+        content: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Tool-use event (call + result), captured for replay / debugging.
+    ToolUse {
+        tool_name: String,
+        payload: Value,
+        timestamp: DateTime<Utc>,
+    },
+    /// The worker is suspending the session.
+    Suspending {
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// The model-context state was loaded from a prior session.
+    Resumed {
+        from_session_id: SessionId,
+        timestamp: DateTime<Utc>,
+    },
+    /// Session is closed — no further events will be appended.
+    Closed { timestamp: DateTime<Utc> },
+}
+
+impl SessionEvent {
+    /// Returns a short preview string for this event, suitable for summaries.
+    pub fn preview(&self) -> String {
+        const MAX_LEN: usize = 100;
+
+        fn truncate(content: &str, prefix: &str) -> String {
+            let remaining = MAX_LEN.saturating_sub(prefix.len());
+            if content.len() <= remaining {
+                format!("{prefix}{content}")
+            } else {
+                let truncated: String = content.chars().take(remaining).collect();
+                format!("{prefix}{truncated}…")
+            }
+        }
+
+        match self {
+            SessionEvent::UserMessage { content, .. } => truncate(content, "User: "),
+            SessionEvent::AssistantMessage { content, .. } => truncate(content, "Assistant: "),
+            SessionEvent::ToolUse { tool_name, .. } => format!("Tool: {tool_name}"),
+            SessionEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
+            SessionEvent::Resumed { .. } => "Resumed".to_string(),
+            SessionEvent::Closed { .. } => "Closed".to_string(),
+        }
+    }
+}
+
+/// API → domain conversion. The forward-compat `Unknown` variant is unique to
+/// the wire type; callers that receive it must handle it before downcasting to
+/// the domain (typically by treating it as a versioning error).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownSessionEventVariant;
+
+impl std::fmt::Display for UnknownSessionEventVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session event has an unknown variant")
+    }
+}
+
+impl std::error::Error for UnknownSessionEventVariant {}
+
+impl TryFrom<api::sessions::SessionEvent> for SessionEvent {
+    type Error = UnknownSessionEventVariant;
+
+    fn try_from(value: api::sessions::SessionEvent) -> Result<Self, Self::Error> {
+        Ok(match value {
+            api::sessions::SessionEvent::UserMessage { content, timestamp } => {
+                SessionEvent::UserMessage { content, timestamp }
+            }
+            api::sessions::SessionEvent::AssistantMessage { content, timestamp } => {
+                SessionEvent::AssistantMessage { content, timestamp }
+            }
+            api::sessions::SessionEvent::ToolUse {
+                tool_name,
+                payload,
+                timestamp,
+            } => SessionEvent::ToolUse {
+                tool_name,
+                payload,
+                timestamp,
+            },
+            api::sessions::SessionEvent::Suspending { reason, timestamp } => {
+                SessionEvent::Suspending { reason, timestamp }
+            }
+            api::sessions::SessionEvent::Resumed {
+                from_session_id,
+                timestamp,
+            } => SessionEvent::Resumed {
+                from_session_id,
+                timestamp,
+            },
+            api::sessions::SessionEvent::Closed { timestamp } => SessionEvent::Closed { timestamp },
+            api::sessions::SessionEvent::Unknown => return Err(UnknownSessionEventVariant),
+            _ => return Err(UnknownSessionEventVariant),
+        })
+    }
+}
+
+impl From<SessionEvent> for api::sessions::SessionEvent {
+    fn from(value: SessionEvent) -> Self {
+        match value {
+            SessionEvent::UserMessage { content, timestamp } => {
+                api::sessions::SessionEvent::UserMessage { content, timestamp }
+            }
+            SessionEvent::AssistantMessage { content, timestamp } => {
+                api::sessions::SessionEvent::AssistantMessage { content, timestamp }
+            }
+            SessionEvent::ToolUse {
+                tool_name,
+                payload,
+                timestamp,
+            } => api::sessions::SessionEvent::ToolUse {
+                tool_name,
+                payload,
+                timestamp,
+            },
+            SessionEvent::Suspending { reason, timestamp } => {
+                api::sessions::SessionEvent::Suspending { reason, timestamp }
+            }
+            SessionEvent::Resumed {
+                from_session_id,
+                timestamp,
+            } => api::sessions::SessionEvent::Resumed {
+                from_session_id,
+                timestamp,
+            },
+            SessionEvent::Closed { timestamp } => api::sessions::SessionEvent::Closed { timestamp },
+        }
+    }
+}
+
+/// Domain twin of [`api::sessions::SessionEventSummary`]. Mirrors
+/// `ConversationEventSummary` so the eventual session-event store methods can
+/// return the same shape per session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEventSummary {
+    pub event_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_preview: Option<String>,
+}
+
+impl From<api::sessions::SessionEventSummary> for SessionEventSummary {
+    fn from(value: api::sessions::SessionEventSummary) -> Self {
+        Self {
+            event_count: value.event_count,
+            last_event_preview: value.last_event_preview,
+        }
+    }
+}
+
+impl From<SessionEventSummary> for api::sessions::SessionEventSummary {
+    fn from(value: SessionEventSummary) -> Self {
+        api::sessions::SessionEventSummary::new(value.event_count, value.last_event_preview)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BundleSpec, Session};
+    use super::{
+        BundleSpec, Session, SessionEvent, SessionEventSummary, UnknownSessionEventVariant,
+    };
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
-    use hydra_common::RepoName;
+    use chrono::Utc;
     use hydra_common::api::v1 as api;
+    use hydra_common::{RepoName, SessionId};
     use std::collections::HashMap;
     use std::str::FromStr;
 
@@ -371,5 +547,73 @@ mod tests {
         let round_trip: Session = api_session.try_into().unwrap();
 
         assert_eq!(round_trip.secrets, None);
+    }
+
+    fn round_trip_session_event(event: api::sessions::SessionEvent) {
+        let domain: SessionEvent = event.clone().try_into().expect("known variant");
+        let back: api::sessions::SessionEvent = domain.into();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn session_event_user_message_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_assistant_message_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::AssistantMessage {
+            content: "hi there".to_string(),
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_tool_use_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::ToolUse {
+            tool_name: "browser_navigate".to_string(),
+            payload: serde_json::json!({"url": "https://example.test"}),
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_suspending_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::Suspending {
+            reason: "idle_timeout".to_string(),
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_resumed_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::Resumed {
+            from_session_id: SessionId::new(),
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_closed_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::Closed {
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_unknown_variant_is_rejected_at_domain_boundary() {
+        let result: Result<SessionEvent, _> = api::sessions::SessionEvent::Unknown.try_into();
+        assert_eq!(result.unwrap_err(), UnknownSessionEventVariant);
+    }
+
+    #[test]
+    fn session_event_summary_round_trips() {
+        let api_summary = api::sessions::SessionEventSummary::new(3, Some("preview".to_string()));
+        let domain: SessionEventSummary = api_summary.clone().into();
+        let back: api::sessions::SessionEventSummary = domain.into();
+        assert_eq!(back, api_summary);
     }
 }
