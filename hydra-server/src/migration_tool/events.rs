@@ -295,13 +295,14 @@ mod sqlite {
 
         // Per-session idempotency check + insert.
         for (session_id, indices) in &per_session {
-            let existing: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM session_events WHERE session_id = ?1",
-            )
-            .bind(session_id)
-            .fetch_one(pool)
-            .await
-            .with_context(|| format!("checking existing session_events for {session_id}"))?;
+            let existing: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
+                    .bind(session_id)
+                    .fetch_one(pool)
+                    .await
+                    .with_context(|| {
+                        format!("checking existing session_events for {session_id}")
+                    })?;
 
             let session_has_data = existing > 0;
             for &idx in indices {
@@ -350,9 +351,8 @@ mod sqlite {
         for row in session_rows {
             let id: String = row.try_get("id")?;
             let creation_time_str: String = row.try_get("creation_time")?;
-            let creation_time = parse_timestamp(&creation_time_str).with_context(|| {
-                format!("parsing tasks_v2.creation_time for session {id}")
-            })?;
+            let creation_time = parse_timestamp(&creation_time_str)
+                .with_context(|| format!("parsing tasks_v2.creation_time for session {id}"))?;
             sessions.push(SessionInChain {
                 id,
                 creation_time,
@@ -376,9 +376,8 @@ mod sqlite {
         for row in boundary_rows {
             let actor: Option<String> = row.try_get("actor")?;
             let created_at_str: String = row.try_get("created_at")?;
-            let created_at = parse_timestamp(&created_at_str).with_context(|| {
-                format!("parsing conversation_events.created_at for {conv_id}")
-            })?;
+            let created_at = parse_timestamp(&created_at_str)
+                .with_context(|| format!("parsing conversation_events.created_at for {conv_id}"))?;
             let Some(actor_json) = actor.as_deref() else {
                 continue;
             };
@@ -394,10 +393,7 @@ mod sqlite {
         Ok(sessions)
     }
 
-    async fn load_message_rows(
-        pool: &SqlitePool,
-        conv_id: &str,
-    ) -> Result<Vec<MessageRowSqlite>> {
+    async fn load_message_rows(pool: &SqlitePool, conv_id: &str) -> Result<Vec<MessageRowSqlite>> {
         // Order by created_at then version_number so events that share a
         // sub-millisecond timestamp still have a stable order (matches the
         // production append order, since version_number is monotonic per
@@ -421,9 +417,7 @@ mod sqlite {
             let actor: Option<String> = row.try_get("actor")?;
             let created_at_str: String = row.try_get("created_at")?;
             let created_at = parse_timestamp(&created_at_str).with_context(|| {
-                format!(
-                    "parsing conversation_events.created_at for {conv_id} v{version_number}"
-                )
+                format!("parsing conversation_events.created_at for {conv_id} v{version_number}")
             })?;
             out.push(MessageRowSqlite {
                 source_version_number: version_number,
@@ -436,11 +430,7 @@ mod sqlite {
         Ok(out)
     }
 
-    async fn insert_row(
-        pool: &SqlitePool,
-        session_id: &str,
-        row: &MessageRowSqlite,
-    ) -> Result<()> {
+    async fn insert_row(pool: &SqlitePool, session_id: &str, row: &MessageRowSqlite) -> Result<()> {
         // Atomic: compute next version inside the same transaction as the
         // INSERT to avoid races with concurrent appenders (the production
         // dual-write path opens its own append on a different session, but
@@ -619,10 +609,7 @@ mod postgres {
         Ok(plan)
     }
 
-    async fn load_sessions_in_chain(
-        pool: &PgPool,
-        conv_id: &str,
-    ) -> Result<Vec<SessionInChain>> {
+    async fn load_sessions_in_chain(pool: &PgPool, conv_id: &str) -> Result<Vec<SessionInChain>> {
         let session_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT id, creation_time FROM metis.tasks_v2 \
              WHERE conversation_id = $1 AND is_latest = TRUE AND deleted = FALSE \
@@ -669,10 +656,7 @@ mod postgres {
         Ok(sessions)
     }
 
-    async fn load_message_rows(
-        pool: &PgPool,
-        conv_id: &str,
-    ) -> Result<Vec<MessageRowPostgres>> {
+    async fn load_message_rows(pool: &PgPool, conv_id: &str) -> Result<Vec<MessageRowPostgres>> {
         let rows = sqlx::query(
             "SELECT version_number, event_type, event_data, actor, created_at \
              FROM metis.conversation_events_v2 \
@@ -703,11 +687,7 @@ mod postgres {
         Ok(out)
     }
 
-    async fn insert_row(
-        pool: &PgPool,
-        session_id: &str,
-        row: &MessageRowPostgres,
-    ) -> Result<()> {
+    async fn insert_row(pool: &PgPool, session_id: &str, row: &MessageRowPostgres) -> Result<()> {
         let mut tx = pool.begin().await.context("begin tx")?;
         // Lock existing rows for this session to serialize concurrent
         // appenders (mirrors the FOR UPDATE pattern in
@@ -899,9 +879,36 @@ mod tests {
         let t0 = Utc::now() - Duration::hours(2);
         insert_conversation(&pool, &conv, "alice").await;
         insert_session(&pool, &sess, &conv, "alice", t0).await;
-        insert_message_event(&pool, &conv, 1, "user_message", "hi", t0 + Duration::minutes(1), t0 + Duration::minutes(1)).await;
-        insert_message_event(&pool, &conv, 2, "assistant_message", "hello", t0 + Duration::minutes(2), t0 + Duration::minutes(2)).await;
-        insert_message_event(&pool, &conv, 3, "user_message", "bye", t0 + Duration::minutes(3), t0 + Duration::minutes(3)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "hi",
+            t0 + Duration::minutes(1),
+            t0 + Duration::minutes(1),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            2,
+            "assistant_message",
+            "hello",
+            t0 + Duration::minutes(2),
+            t0 + Duration::minutes(2),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            3,
+            "user_message",
+            "bye",
+            t0 + Duration::minutes(3),
+            t0 + Duration::minutes(3),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let plan = run(&backend, false, None).await.unwrap();
@@ -945,18 +952,72 @@ mod tests {
         insert_session(&pool, &sess_c, &conv, "bob", t_c_start).await;
 
         // A's events.
-        insert_message_event(&pool, &conv, 1, "user_message", "a1", t0 + Duration::minutes(1), t0 + Duration::minutes(1)).await;
-        insert_message_event(&pool, &conv, 2, "assistant_message", "a2", t0 + Duration::minutes(2), t0 + Duration::minutes(2)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "a1",
+            t0 + Duration::minutes(1),
+            t0 + Duration::minutes(1),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            2,
+            "assistant_message",
+            "a2",
+            t0 + Duration::minutes(2),
+            t0 + Duration::minutes(2),
+        )
+        .await;
         // A suspends.
         insert_suspending_event(&pool, &conv, 3, &sess_a, t_a_suspend).await;
         // B's events.
-        insert_message_event(&pool, &conv, 4, "user_message", "b1", t0 + Duration::minutes(11), t0 + Duration::minutes(11)).await;
-        insert_message_event(&pool, &conv, 5, "assistant_message", "b2", t0 + Duration::minutes(12), t0 + Duration::minutes(12)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            4,
+            "user_message",
+            "b1",
+            t0 + Duration::minutes(11),
+            t0 + Duration::minutes(11),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            5,
+            "assistant_message",
+            "b2",
+            t0 + Duration::minutes(12),
+            t0 + Duration::minutes(12),
+        )
+        .await;
         // B suspends.
         insert_suspending_event(&pool, &conv, 6, &sess_b, t_b_suspend).await;
         // C's events.
-        insert_message_event(&pool, &conv, 7, "user_message", "c1", t0 + Duration::minutes(21), t0 + Duration::minutes(21)).await;
-        insert_message_event(&pool, &conv, 8, "assistant_message", "c2", t0 + Duration::minutes(22), t0 + Duration::minutes(22)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            7,
+            "user_message",
+            "c1",
+            t0 + Duration::minutes(21),
+            t0 + Duration::minutes(21),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            8,
+            "assistant_message",
+            "c2",
+            t0 + Duration::minutes(22),
+            t0 + Duration::minutes(22),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let plan = run(&backend, false, None).await.unwrap();
@@ -1003,12 +1064,28 @@ mod tests {
         // window (start-inclusive), per the half-open `[start, end)` rule.
         insert_message_event(&pool, &conv, 1, "user_message", "early", t0, t0).await;
         insert_message_event(&pool, &conv, 2, "assistant_message", "on-tie", t_b, t_b).await;
-        insert_message_event(&pool, &conv, 3, "user_message", "after", t_b + Duration::milliseconds(1), t_b + Duration::milliseconds(1)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            3,
+            "user_message",
+            "after",
+            t_b + Duration::milliseconds(1),
+            t_b + Duration::milliseconds(1),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let plan = run(&backend, false, None).await.unwrap();
         let targets: Vec<_> = plan.iter().map(|p| p.target_session_id.clone()).collect();
-        assert_eq!(targets, vec![sess_a.as_ref().to_string(), sess_b.as_ref().to_string(), sess_b.as_ref().to_string()]);
+        assert_eq!(
+            targets,
+            vec![
+                sess_a.as_ref().to_string(),
+                sess_b.as_ref().to_string(),
+                sess_b.as_ref().to_string()
+            ]
+        );
     }
 
     #[tokio::test]
@@ -1027,12 +1104,39 @@ mod tests {
         insert_conversation(&pool, &conv, "dave").await;
         insert_session(&pool, &sess_a, &conv, "dave", t0).await;
         insert_session(&pool, &sess_b, &conv, "dave", t_b_start).await;
-        insert_message_event(&pool, &conv, 1, "user_message", "a1", t0 + Duration::minutes(1), t0 + Duration::minutes(1)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "a1",
+            t0 + Duration::minutes(1),
+            t0 + Duration::minutes(1),
+        )
+        .await;
         insert_suspending_event(&pool, &conv, 2, &sess_a, t_a_suspend).await;
-        insert_message_event(&pool, &conv, 3, "user_message", "b1", t0 + Duration::minutes(7), t0 + Duration::minutes(7)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            3,
+            "user_message",
+            "b1",
+            t0 + Duration::minutes(7),
+            t0 + Duration::minutes(7),
+        )
+        .await;
         insert_suspending_event(&pool, &conv, 4, &sess_b, t_b_suspend).await;
         // Anomalous post-suspend row on the LAST session — edge case 4.
-        insert_message_event(&pool, &conv, 5, "assistant_message", "ghost", t_b_suspend + Duration::minutes(1), t_b_suspend + Duration::minutes(1)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            5,
+            "assistant_message",
+            "ghost",
+            t_b_suspend + Duration::minutes(1),
+            t_b_suspend + Duration::minutes(1),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let plan = run(&backend, false, None).await.unwrap();
@@ -1059,8 +1163,26 @@ mod tests {
         let t0 = Utc::now() - Duration::hours(1);
         insert_conversation(&pool, &conv, "erin").await;
         insert_session(&pool, &sess, &conv, "erin", t0).await;
-        insert_message_event(&pool, &conv, 1, "user_message", "one", t0 + Duration::minutes(1), t0 + Duration::minutes(1)).await;
-        insert_message_event(&pool, &conv, 2, "assistant_message", "two", t0 + Duration::minutes(2), t0 + Duration::minutes(2)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "one",
+            t0 + Duration::minutes(1),
+            t0 + Duration::minutes(1),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            2,
+            "assistant_message",
+            "two",
+            t0 + Duration::minutes(2),
+            t0 + Duration::minutes(2),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
 
@@ -1081,7 +1203,11 @@ mod tests {
         // (source_version_number, target_session_id, source_created_at)
         // tuples agree between dry-run and live.
         let key = |e: &EventPlanEntry| {
-            (e.source_version_number, e.target_session_id.clone(), e.source_created_at)
+            (
+                e.source_version_number,
+                e.target_session_id.clone(),
+                e.source_created_at,
+            )
         };
         assert_eq!(
             dry.iter().map(key).collect::<Vec<_>>(),
@@ -1105,8 +1231,7 @@ mod tests {
         // through sqlite's RFC3339 storage without sub-ms drift skewing the
         // boundary-case assertion below.
         let t0 = DateTime::parse_from_rfc3339(
-            &(Utc::now() - Duration::hours(1))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            &(Utc::now() - Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         )
         .unwrap()
         .with_timezone(&Utc);
@@ -1114,9 +1239,36 @@ mod tests {
 
         insert_conversation(&pool, &conv, "frank").await;
         insert_session(&pool, &sess, &conv, "frank", t0).await;
-        insert_message_event(&pool, &conv, 1, "user_message", "old", t0 + Duration::minutes(1), t0 + Duration::minutes(1)).await;
-        insert_message_event(&pool, &conv, 2, "assistant_message", "old2", t0 + Duration::minutes(4), t0 + Duration::minutes(4)).await;
-        insert_message_event(&pool, &conv, 3, "user_message", "new", t0 + Duration::minutes(6), t0 + Duration::minutes(6)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "old",
+            t0 + Duration::minutes(1),
+            t0 + Duration::minutes(1),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            2,
+            "assistant_message",
+            "old2",
+            t0 + Duration::minutes(4),
+            t0 + Duration::minutes(4),
+        )
+        .await;
+        insert_message_event(
+            &pool,
+            &conv,
+            3,
+            "user_message",
+            "new",
+            t0 + Duration::minutes(6),
+            t0 + Duration::minutes(6),
+        )
+        .await;
         // Boundary case: created_at == cutoff is EXCLUDED (cutoff is
         // exclusive — dual-write owns anything at or after the cut-over).
         insert_message_event(&pool, &conv, 4, "assistant_message", "edge", cutoff, cutoff).await;
@@ -1142,7 +1294,16 @@ mod tests {
         insert_session(&pool, &sess_a, &conv, "grace", t0).await;
         insert_session(&pool, &sess_b, &conv, "grace", t0 + Duration::minutes(10)).await;
         insert_suspending_event(&pool, &conv, 1, &sess_a, t0 + Duration::minutes(5)).await;
-        insert_message_event(&pool, &conv, 2, "user_message", "orphan", t0 + Duration::minutes(7), t0 + Duration::minutes(7)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            2,
+            "user_message",
+            "orphan",
+            t0 + Duration::minutes(7),
+            t0 + Duration::minutes(7),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let err = run(&backend, true, None).await.unwrap_err();
@@ -1158,7 +1319,16 @@ mod tests {
         let pool = fresh_pool().await;
         let conv = ConversationId::new();
         insert_conversation(&pool, &conv, "henry").await;
-        insert_message_event(&pool, &conv, 1, "user_message", "lonely", Utc::now(), Utc::now()).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "lonely",
+            Utc::now(),
+            Utc::now(),
+        )
+        .await;
 
         let backend = Backend::Sqlite(pool.clone());
         let err = run(&backend, true, None).await.unwrap_err();

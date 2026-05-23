@@ -67,9 +67,10 @@
 //! `action` is one of `"would-write"` / `"would-skip"` (dry-run) or
 //! `"wrote"` / `"skipped"` (live).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use hydra_common::time::HydraTime;
 use hydra_server::migration_tool::{Backend, events, state};
 
 #[derive(Debug, Parser)]
@@ -125,13 +126,18 @@ struct MigrateEventsArgs {
     #[arg(long, default_value_t = false)]
     dry_run: bool,
 
-    /// Cut-over timestamp (ISO-8601). Only source rows whose `created_at`
-    /// is strictly less than this value are migrated; anything `>= T` is
-    /// left for the worker dual-write path (PR-1, `i-aankjvnz`). Pass the
-    /// time you enabled dual-writes in production. Omit to migrate every
-    /// historical row (only safe if dual-writes are NOT yet running).
+    /// Cut-over timestamp. Only source rows whose `created_at` is strictly
+    /// less than this value are migrated; anything `>= T` is left for the
+    /// worker dual-write path (PR-1, `i-aankjvnz`). Pass the time you
+    /// enabled dual-writes in production. Omit to migrate every historical
+    /// row (only safe if dual-writes are NOT yet running).
+    ///
+    /// Accepts the same forms as `hydra graph log --since/--until`:
+    /// an RFC 3339 absolute timestamp (e.g. `2026-05-15T13:00:00Z`),
+    /// a relative duration against `now` (e.g. `-30m`, `-1h`, `-7d`),
+    /// or the literal `now`.
     #[arg(long, value_name = "TIMESTAMP")]
-    up_to: Option<String>,
+    up_to: Option<HydraTime>,
 }
 
 #[tokio::main]
@@ -167,14 +173,7 @@ async fn run_migrate_state(args: MigrateStateArgs) -> Result<()> {
 }
 
 async fn run_migrate_events(args: MigrateEventsArgs) -> Result<()> {
-    let up_to = match args.up_to.as_deref() {
-        None => None,
-        Some(s) => Some(
-            DateTime::parse_from_rfc3339(s)
-                .map(|dt| dt.with_timezone(&Utc))
-                .with_context(|| format!("parsing --up-to value '{s}' as ISO-8601"))?,
-        ),
-    };
+    let up_to: Option<DateTime<Utc>> = args.up_to.map(HydraTime::into_inner);
     let backend = Backend::connect(&args.dsn).await?;
     let plan = events::run(&backend, args.dry_run, up_to).await?;
     for entry in &plan {
