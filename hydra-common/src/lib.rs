@@ -25,9 +25,9 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, conversations, documents, events, form, issues, labels, login, logs, merge_queues,
-    notifications, patches, repositories, secrets, session_status, sessions, task_status, users,
-    version, whoami,
+    agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
+    merge_queues, notifications, patches, repositories, secrets, session_status, sessions,
+    task_status, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use conversations::ConversationEventId;
@@ -208,6 +208,14 @@ mod ts_export {
 
         // API v1: logs
         crate::logs::LogsQuery::export_all(&cfg).expect("LogsQuery");
+
+        // API v1: merge_check
+        crate::merge_check::MergeBlockedError::export_all(&cfg).expect("MergeBlockedError");
+        crate::merge_check::MergeBlockedCode::export_all(&cfg).expect("MergeBlockedCode");
+        crate::merge_check::BlockedAtLayer::export_all(&cfg).expect("BlockedAtLayer");
+        crate::merge_check::MergeBlockedReason::export_all(&cfg).expect("MergeBlockedReason");
+        crate::merge_check::EligiblePrincipal::export_all(&cfg).expect("EligiblePrincipal");
+        crate::merge_check::SuggestedAction::export_all(&cfg).expect("SuggestedAction");
 
         // API v1: merge_queues
         crate::merge_queues::MergeQueue::export_all(&cfg).expect("MergeQueue");

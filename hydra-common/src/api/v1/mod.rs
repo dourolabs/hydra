@@ -8,6 +8,7 @@ pub mod issues;
 pub mod labels;
 pub mod login;
 pub mod logs;
+pub mod merge_check;
 pub mod merge_queues;
 pub mod notifications;
 pub mod pagination;
