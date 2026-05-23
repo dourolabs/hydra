@@ -168,6 +168,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_restriction("require_creator", |_params| {
         Ok(Box::new(RequireCreatorRestriction::new()))
     });
+    registry.register_restriction("merge_authorization", |_params| {
+        Ok(Box::new(MergeAuthorizationRestriction::new()))
+    });
 
     // Automations (order matters: cascade must run before kill_tasks)
     registry.register_automation("cascade_issue_status", |params| {
