@@ -2035,27 +2035,34 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
         .await?;
 
     // Helper to create a session linked to this issue
-    let make_session = || Session {
-        prompt: "0".to_string(),
-        context: BundleSpec::None,
-        spawned_from: Some(issue_id.clone()),
-        creator: Username::from("test-creator"),
-        image: None,
-        model: None,
-        env_vars: HashMap::new(),
-        cpu_limit: None,
-        memory_limit: None,
-        secrets: None,
-        mcp_config: None,
-        interactive: None,
-        status: Status::Created,
-        last_message: None,
-        error: None,
-        deleted: false,
-        creation_time: None,
-        start_time: None,
-        end_time: None,
-        usage: None,
+    let make_session = || {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session {
+            creator: Username::from("test-creator"),
+            spawned_from: Some(issue_id.clone()),
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
+            image: None,
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            mode: SessionMode::Headless {
+                prompt: "0".to_string(),
+            },
+            conversation_resume_from: None,
+            status: Status::Created,
+            last_message: None,
+            error: None,
+            deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
+            usage: None,
+        }
     };
 
     // Session 1: Running (should be killed)

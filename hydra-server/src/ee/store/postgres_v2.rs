@@ -18,7 +18,7 @@ use crate::{
         notifications::Notification,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
         secrets::SecretRef,
-        sessions::{BundleSpec, InteractiveOptions, Session},
+        sessions::Session,
         task_status::{Status, TaskError},
         users::{User, Username},
     },
@@ -711,8 +711,18 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
         })?;
 
+        // Use the transitional `context` field as the legacy column. This
+        // preserves `ServiceRepository { name, rev }` rows during PR-2; PR-3
+        // moves the source of truth into the mount_spec.
         let context_json = serde_json::to_value(&session.context)
             .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
+        let legacy_prompt = session.mode.prompt_for_legacy_wire().to_string();
+        let legacy_model = session.agent_config.model.clone();
+        let legacy_mcp_config = session.agent_config.mcp_config.clone();
+        let legacy_interactive = session.is_interactive();
+        let legacy_conversation_id = session.conversation_id().cloned();
+        let legacy_conversation_resume_from = session.conversation_resume_from.map(|n| n as i64);
+
         let env_vars_json = serde_json::to_value(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
         let error_json = session
@@ -753,23 +763,27 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let mount_spec_json = crate::store::dual_write_mount_spec_json(id, &session.context)?;
+        let mount_spec_json = crate::store::dual_write_mount_spec_json(id, session)?;
         let agent_config_json = crate::store::dual_write_agent_config_json(session)?;
-        let mode_json = crate::store::dual_write_mode_json(session);
+        let mode_json = crate::store::dual_write_mode_json(session)?;
+        let resumed_from_str = session
+            .resumed_from
+            .as_ref()
+            .map(|s| s.as_ref().to_string());
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&session.prompt)
+            .bind(&legacy_prompt)
             .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
             .bind(session.image.as_deref())
-            .bind(session.model.as_deref())
+            .bind(legacy_model.as_deref())
             .bind(&env_vars_json)
             .bind(session.cpu_limit.as_deref())
             .bind(session.memory_limit.as_deref())
@@ -779,23 +793,18 @@ impl PostgresStoreV2 {
             .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
-            .bind(session.mcp_config.as_ref())
+            .bind(legacy_mcp_config.as_ref())
             .bind(session.creation_time)
             .bind(session.start_time)
             .bind(session.end_time)
-            .bind(session.interactive.is_some())
-            .bind(session.conversation_id().map(|c| c.as_ref()))
-            .bind(
-                session
-                    .interactive
-                    .as_ref()
-                    .and_then(|opts| opts.conversation_resume_from)
-                    .map(|n| n as i64),
-            )
+            .bind(legacy_interactive)
+            .bind(legacy_conversation_id.as_ref().map(|c| c.as_ref()))
+            .bind(legacy_conversation_resume_from)
             .bind(usage_json.as_ref())
             .bind(&mount_spec_json)
             .bind(&agent_config_json)
             .bind(&mode_json)
+            .bind(resumed_from_str.as_deref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -804,8 +813,6 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_session(&self, row: &TaskRow) -> Result<Session, StoreError> {
-        let context: BundleSpec = serde_json::from_value(row.context.clone())
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
         let env_vars: HashMap<String, String> = serde_json::from_value(row.env_vars.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize env_vars: {e}")))?;
         let error: Option<TaskError> = row
@@ -849,23 +856,6 @@ impl PostgresStoreV2 {
             }
         };
 
-        let conversation_id = row
-            .conversation_id
-            .as_deref()
-            .map(|c| {
-                c.parse::<ConversationId>()
-                    .map_err(|e| StoreError::Internal(format!("invalid conversation_id: {e}")))
-            })
-            .transpose()?;
-        let interactive = if row.interactive {
-            Some(InteractiveOptions {
-                conversation_id,
-                conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
-            })
-        } else {
-            None
-        };
-
         let usage = row
             .usage
             .as_ref()
@@ -876,19 +866,73 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        // Phase D step 13: prefer the new columns, fall back to the legacy
+        // columns if a row slipped through with NULL.
+        let mount_spec = match row.mount_spec.as_ref() {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize mount_spec: {e}"))
+            })?,
+            None => {
+                let context_json_str = serde_json::to_string(&row.context).map_err(|e| {
+                    StoreError::Internal(format!("failed to re-serialize context: {e}"))
+                })?;
+                crate::store::mount_spec_from_legacy_columns(&row.id, &context_json_str)?
+            }
+        };
+        let agent_config = match row.agent_config.as_ref() {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
+            })?,
+            None => {
+                let mcp_json_str = row
+                    .mcp_config
+                    .as_ref()
+                    .map(|v| {
+                        serde_json::to_string(v).map_err(|e| {
+                            StoreError::Internal(format!("failed to re-serialize mcp_config: {e}"))
+                        })
+                    })
+                    .transpose()?;
+                crate::store::agent_config_from_legacy_columns(
+                    row.model.as_deref(),
+                    mcp_json_str.as_deref(),
+                )?
+            }
+        };
+        let mode = match row.mode.as_ref() {
+            Some(v) => serde_json::from_value(v.clone())
+                .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?,
+            None => {
+                crate::store::mode_from_legacy_columns(&row.prompt, row.conversation_id.as_deref())?
+            }
+        };
+        let resumed_from = row
+            .resumed_from
+            .as_deref()
+            .map(|s| {
+                s.parse::<SessionId>()
+                    .map_err(|e| StoreError::Internal(format!("invalid resumed_from: {e}")))
+            })
+            .transpose()?;
+
+        let context: crate::domain::sessions::BundleSpec =
+            serde_json::from_value(row.context.clone())
+                .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
+
         Ok(Session {
-            prompt: row.prompt.clone(),
-            context,
-            spawned_from,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            spawned_from,
+            resumed_from,
+            agent_config,
+            mount_spec,
+            context,
             image: row.image.clone(),
-            model: row.model.clone(),
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
             secrets,
-            mcp_config: row.mcp_config.clone(),
-            interactive,
+            mode,
+            conversation_resume_from: row.conversation_resume_from.map(|n| n as usize),
             status,
             last_message: row.last_message.clone(),
             error,
@@ -1504,6 +1548,9 @@ struct TaskRow {
     start_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     end_time: Option<DateTime<Utc>>,
+    // See `sqlite_store::TaskRow::interactive`: retained for schema parity
+    // with the legacy column on writes, no longer read by `row_to_session`.
+    #[allow(dead_code)]
     #[sqlx(default)]
     interactive: bool,
     #[sqlx(default)]
@@ -1512,6 +1559,14 @@ struct TaskRow {
     conversation_resume_from: Option<i64>,
     #[sqlx(default)]
     usage: Option<Value>,
+    #[sqlx(default)]
+    mount_spec: Option<Value>,
+    #[sqlx(default)]
+    agent_config: Option<Value>,
+    #[sqlx(default)]
+    mode: Option<Value>,
+    #[sqlx(default)]
+    resumed_from: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2946,7 +3001,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2983,7 +3038,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3024,7 +3079,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage \
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -3116,7 +3171,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -5608,19 +5663,22 @@ mod tests {
     }
 
     fn sample_session() -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            Some("hydra-worker:latest".to_string()),
             Default::default(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "prompt".to_string(),
+            },
             Status::Created,
             None,
             None,
@@ -5629,19 +5687,22 @@ mod tests {
 
     /// Session with creator and other fields set for round-trip tests.
     fn session_with_creator_for_round_trip() -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "round-trip prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("alice"),
+            None,
+            None,
+            AgentConfig::new(None, Some("model-v1".to_string()), None, None),
+            mount_spec_for_session(&BundleSpec::None),
             Some("hydra-worker:latest".to_string()),
-            Some("model-v1".to_string()),
             Default::default(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "round-trip prompt".to_string(),
+            },
             Status::Created,
             None,
             None,
@@ -5665,21 +5726,23 @@ mod tests {
 
     /// Session with every optional field set so serialization round-trip can assert full equality.
     fn sample_session_all_fields() -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        let mcp_config = serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}});
         let mut session = Session::new(
-            "full prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("bob"),
+            None,
+            None,
+            AgentConfig::new(None, Some("model-x".to_string()), None, Some(mcp_config)),
+            mount_spec_for_session(&BundleSpec::None),
             Some("img:tag".to_string()),
-            Some("model-x".to_string()),
             [("K".to_string(), "V".to_string())].into_iter().collect(),
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
-            Some(
-                serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}}),
-            ),
-            None,
+            SessionMode::Headless {
+                prompt: "full prompt".to_string(),
+            },
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -5916,13 +5979,15 @@ mod tests {
             fetched.item.creator, task.creator,
             "creator must round-trip"
         );
-        assert_eq!(fetched.item.prompt, task.prompt);
+        assert_eq!(fetched.item.mode, task.mode);
         assert_eq!(fetched.item.image, task.image);
-        assert_eq!(fetched.item.model, task.model);
+        assert_eq!(fetched.item.agent_config.model, task.agent_config.model);
         assert_eq!(fetched.version, 1);
 
         let mut updated = fetched.item.clone();
-        updated.prompt = "updated prompt".to_string();
+        updated.mode = crate::domain::sessions::SessionMode::Headless {
+            prompt: "updated prompt".to_string(),
+        };
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -5933,7 +5998,10 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        assert_eq!(fetched2.item.prompt, "updated prompt");
+        assert_eq!(
+            fetched2.item.mode.prompt_for_legacy_wire(),
+            "updated prompt"
+        );
         assert_eq!(fetched2.version, 2);
     }
 
@@ -5943,10 +6011,11 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let conv_id = ConversationId::new();
         let mut task = sample_session();
-        task.interactive = Some(InteractiveOptions {
-            conversation_id: Some(conv_id.clone()),
-            conversation_resume_from: Some(7),
-        });
+        task.mode = crate::domain::sessions::SessionMode::Interactive {
+            conversation_id: conv_id.clone(),
+            idle_timeout_secs: 0,
+        };
+        task.conversation_resume_from = Some(7);
 
         let (task_id, _) = store
             .add_session(task.clone(), Utc::now(), &ActorRef::test())
@@ -5964,11 +6033,7 @@ mod tests {
             "conversation_id must be persisted"
         );
         assert_eq!(
-            fetched
-                .item
-                .interactive
-                .as_ref()
-                .and_then(|opts| opts.conversation_resume_from),
+            fetched.item.conversation_resume_from,
             Some(7),
             "conversation_resume_from must be persisted"
         );
@@ -9039,10 +9104,10 @@ mod tests {
         let conv_b = ConversationId::new();
 
         let mut task_a = sample_session();
-        task_a.interactive = Some(InteractiveOptions {
-            conversation_id: Some(conv_a.clone()),
-            conversation_resume_from: None,
-        });
+        task_a.mode = crate::domain::sessions::SessionMode::Interactive {
+            conversation_id: conv_a.clone(),
+            idle_timeout_secs: 0,
+        };
         let (task_a_id, _) = handles
             .store
             .add_session(task_a, Utc::now(), &ActorRef::test())
@@ -9050,10 +9115,10 @@ mod tests {
             .unwrap();
 
         let mut task_b = sample_session();
-        task_b.interactive = Some(InteractiveOptions {
-            conversation_id: Some(conv_b.clone()),
-            conversation_resume_from: None,
-        });
+        task_b.mode = crate::domain::sessions::SessionMode::Interactive {
+            conversation_id: conv_b.clone(),
+            idle_timeout_secs: 0,
+        };
         handles
             .store
             .add_session(task_b, Utc::now(), &ActorRef::test())
@@ -9374,22 +9439,29 @@ mod tests {
     // ---- Session event log + state ----
 
     fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        let mode = match conversation_id {
+            Some(cid) => SessionMode::Interactive {
+                conversation_id: cid,
+                idle_timeout_secs: 0,
+            },
+            None => SessionMode::Headless {
+                prompt: "interactive prompt".to_string(),
+            },
+        };
         Session::new(
-            "interactive prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            Some("hydra-worker:latest".to_string()),
             Default::default(),
             None,
             None,
             None,
-            None,
-            Some(InteractiveOptions {
-                conversation_id,
-                conversation_resume_from: None,
-            }),
+            mode,
             Status::Created,
             None,
             None,
@@ -9830,12 +9902,14 @@ mod tests {
     #[ignore]
     async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
+        use crate::app::sessions::mount_spec_for_session;
         let mut session = sample_session();
-        session.context = BundleSpec::GitRepository {
+        let bundle_ctx = BundleSpec::GitRepository {
             url: "https://github.com/example/repo".to_string(),
             rev: "main".to_string(),
         };
-        session.model = Some("gpt-4o".to_string());
+        session.mount_spec = mount_spec_for_session(&bundle_ctx);
+        session.agent_config.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store
             .add_session(session, Utc::now(), &ActorRef::test())

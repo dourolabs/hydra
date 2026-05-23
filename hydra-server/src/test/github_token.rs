@@ -109,23 +109,28 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         )
         .await?;
 
-    let task = Session::new(
-        "prompt".to_string(),
-        BundleSpec::None,
-        Some(issue_id),
-        Username::from("test-creator"),
-        None,
-        None,
-        HashMap::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Status::Created,
-        None,
-        None,
-    );
+    let task = {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session::new(
+            Username::from("test-creator"),
+            Some(issue_id),
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "prompt".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    };
     let (task_id, _) = handles
         .store
         .add_session(task, Utc::now(), &ActorRef::test())
@@ -234,23 +239,28 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         )
         .await?;
 
-    let task = Session::new(
-        "prompt".to_string(),
-        BundleSpec::None,
-        Some(issue_id),
-        Username::from("test-creator"),
-        None,
-        None,
-        HashMap::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Status::Created,
-        None,
-        None,
-    );
+    let task = {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session::new(
+            Username::from("test-creator"),
+            Some(issue_id),
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "prompt".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    };
     let (task_id, _) = handles
         .store
         .add_session(task, Utc::now(), &ActorRef::test())
@@ -330,23 +340,28 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         )
         .await?;
 
-    let task = Session::new(
-        "prompt".to_string(),
-        BundleSpec::None,
-        Some(issue_id),
-        Username::from("test-creator"),
-        None,
-        None,
-        HashMap::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Status::Created,
-        None,
-        None,
-    );
+    let task = {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        Session::new(
+            Username::from("test-creator"),
+            Some(issue_id),
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "prompt".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    };
     let (task_id, _) = handles
         .store
         .add_session(task, Utc::now(), &ActorRef::test())

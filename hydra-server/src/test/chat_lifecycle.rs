@@ -550,15 +550,16 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         "resume must create a brand-new session"
     );
 
-    // Inspect the resumed session's InteractiveOptions: conversation_resume_from
+    // Inspect the resumed session's resume hint: conversation_resume_from
     // should equal the event count captured before /resume appended Resumed.
     // At suspend we had: UserMessage, AssistantMessage, Suspending = 3 events.
     let resumed_session = store.get_session(&resumed_session_id, false).await?.item;
-    let opts = resumed_session
-        .interactive
-        .expect("resumed session must be interactive");
+    assert!(
+        resumed_session.is_interactive(),
+        "resumed session must be interactive"
+    );
     assert_eq!(
-        opts.conversation_resume_from,
+        resumed_session.conversation_resume_from,
         Some(3),
         "conversation_resume_from should equal pre-Resumed event count"
     );
@@ -570,7 +571,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     let catch_up = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: opts.conversation_resume_from,
+            resume_from_event_index: resumed_session.conversation_resume_from,
         },
     )
     .await?;
@@ -725,11 +726,12 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
     // set to the event count snapshotted by resume_conversation.
     let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
     let new_session = store.get_session(&new_session_id, false).await?.item;
-    let opts = new_session
-        .interactive
-        .expect("resumed session must be interactive");
     assert!(
-        opts.conversation_resume_from.is_some(),
+        new_session.is_interactive(),
+        "resumed session must be interactive"
+    );
+    assert!(
+        new_session.conversation_resume_from.is_some(),
         "conversation_resume_from must be set on a session created by /resume"
     );
 
@@ -986,14 +988,15 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     // ignore that value and return the full prior event log so the new
     // worker can reconstruct context.
     let new_session = store.get_session(&new_session_id, false).await?.item;
-    let new_opts = new_session
-        .interactive
-        .expect("resumed session must be interactive");
+    assert!(
+        new_session.is_interactive(),
+        "resumed session must be interactive"
+    );
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
     let catch_up2 = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: new_opts.conversation_resume_from,
+            resume_from_event_index: new_session.conversation_resume_from,
         },
     )
     .await?;
@@ -1231,10 +1234,11 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         "resume must create a brand-new session"
     );
     let new_session = store.get_session(&new_session_id, false).await?.item;
-    let new_opts = new_session
-        .interactive
-        .expect("resumed session must be interactive");
-    let events_len_at_resume = new_opts
+    assert!(
+        new_session.is_interactive(),
+        "resumed session must be interactive"
+    );
+    let events_len_at_resume = new_session
         .conversation_resume_from
         .expect("conversation_resume_from must be set on a session created by /resume");
 
@@ -1408,18 +1412,17 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     let new_session_id =
         find_new_session_for_conversation(&store, &conversation_id, &initial_session_id).await;
     assert_ne!(new_session_id, initial_session_id);
-    let new_opts = store
-        .get_session(&new_session_id, false)
-        .await?
-        .item
-        .interactive
-        .expect("resumed session must be interactive");
+    let new_session = store.get_session(&new_session_id, false).await?.item;
+    assert!(
+        new_session.is_interactive(),
+        "resumed session must be interactive"
+    );
 
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
     let catch_up = worker_handshake(
         &mut ws2,
         WorkerConnect::Fresh {
-            resume_from_event_index: new_opts.conversation_resume_from,
+            resume_from_event_index: new_session.conversation_resume_from,
         },
     )
     .await?;
@@ -1643,7 +1646,8 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     // resolved the prompt document body into the session's `prompt` field.
     let session = store.get_session(&session_id, false).await?.item;
     assert_eq!(
-        session.prompt, "you are a chat agent",
+        session.resolved_prompt(),
+        "you are a chat agent",
         "session prompt should be the resolved agent prompt body"
     );
 

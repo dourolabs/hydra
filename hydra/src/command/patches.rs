@@ -1407,6 +1407,88 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
+    fn sample_session(context: BundleSpec) -> Session {
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, Bundle, MountItem, MountSpec, RelativePath, SessionMode,
+        };
+        use hydra_common::SessionId;
+        let bundle = match &context {
+            BundleSpec::GitRepository { url, rev } => Bundle::GitRepository {
+                url: url.clone(),
+                rev: rev.clone(),
+            },
+            _ => Bundle::None,
+        };
+        let session_id = SessionId::new();
+        let mount_spec = MountSpec::new(
+            RelativePath::new("repo").unwrap(),
+            vec![
+                MountItem::Bundle {
+                    target: RelativePath::new("repo").unwrap(),
+                    bundle,
+                    session_id,
+                    issue_branch_id: None,
+                },
+                MountItem::Documents {
+                    target: RelativePath::new("documents").unwrap(),
+                },
+            ],
+        );
+        // ServiceRepository sessions still need to surface
+        // service_repo_name to `resolve_service_repo_name`; embed a
+        // BuildCache item so the lookup helper finds the name.
+        let mount_spec = if let BundleSpec::ServiceRepository { name, .. } = &context {
+            let cache_context = hydra_common::BuildCacheContext {
+                storage: hydra_common::BuildCacheStorageConfig::FileSystem {
+                    root_dir: "/tmp/cache".to_string(),
+                },
+                settings: hydra_common::BuildCacheSettings::default(),
+            };
+            let session_id_for_cache = SessionId::new();
+            let mut mounts = mount_spec.mounts;
+            mounts.insert(
+                1,
+                MountItem::BuildCache {
+                    repo_target: RelativePath::new("repo").unwrap(),
+                    service_repo_name: name.clone(),
+                    context: cache_context,
+                    session_id: session_id_for_cache,
+                },
+            );
+            MountSpec::new(mount_spec.working_dir, mounts)
+        } else {
+            mount_spec
+        };
+        let mut session = Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            mount_spec,
+            None,
+            Default::default(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "0".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        );
+        // Constructor defaults `context` to `BundleSpec::None`; populate
+        // the transitional field from the caller's BundleSpec so the CLI's
+        // `resolve_service_repo_name` (which reads `session.context`)
+        // continues to find the repo name.
+        session.context = context;
+        session
+    }
+
     fn hydra_client(server: &MockServer) -> HydraClient {
         HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
             .expect("failed to create hydra client")
@@ -1767,30 +1849,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: sample_repo_name(),
+                rev: None,
+            }),
             None,
         );
         let patch_title = "custom patch title".to_string();
@@ -1861,30 +1923,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: sample_repo_name(),
+                rev: None,
+            }),
             None,
         );
 
@@ -2030,30 +2072,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: RepoName::from_str("dourolabs/api")?,
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: RepoName::from_str("dourolabs/api")?,
+                rev: None,
+            }),
             None,
         );
         let expected_diff =
@@ -2136,30 +2158,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::GitRepository {
-                    url: "https://github.com/dourolabs/example".to_string(),
-                    rev: "main".to_string(),
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::GitRepository {
+                url: "https://github.com/dourolabs/example".to_string(),
+                rev: "main".to_string(),
+            }),
             None,
         );
         let session_mock = mock_get_session(&server, job_record.clone());
@@ -2853,30 +2855,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: sample_repo_name(),
+                rev: None,
+            }),
             None,
         );
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
@@ -2943,30 +2925,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: sample_repo_name(),
+                rev: None,
+            }),
             None,
         );
         let server = MockServer::start();
@@ -3028,30 +2990,10 @@ mod tests {
             job_id.clone(),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            sample_session(BundleSpec::ServiceRepository {
+                name: sample_repo_name(),
+                rev: None,
+            }),
             None,
         );
 

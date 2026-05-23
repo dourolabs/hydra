@@ -618,19 +618,22 @@ fn make_dummy_patch() -> crate::domain::patches::Patch {
 }
 
 fn make_dummy_task() -> crate::store::Session {
+    use crate::app::sessions::mount_spec_for_session;
+    use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
     crate::store::Session::new(
-        "test prompt".to_string(),
-        crate::domain::sessions::BundleSpec::None,
-        None,
         Username::from("test-creator"),
         None,
+        None,
+        AgentConfig::default(),
+        mount_spec_for_session(&BundleSpec::None),
         None,
         Default::default(),
         None,
         None,
         None,
-        None,
-        None,
+        SessionMode::Headless {
+            prompt: "test prompt".to_string(),
+        },
         crate::store::Status::Created,
         None,
         None,

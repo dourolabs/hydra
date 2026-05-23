@@ -976,19 +976,22 @@ mod tests {
     }
 
     fn dummy_task() -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
             Username::from("test-creator"),
-            Some("hydra-worker:latest".to_string()),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
+            Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: "test prompt".to_string(),
+            },
             Status::Created,
             None,
             None,

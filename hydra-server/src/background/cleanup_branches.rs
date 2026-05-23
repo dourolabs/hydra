@@ -495,23 +495,7 @@ mod tests {
     #[tokio::test]
     async fn is_branch_stale_returns_false_for_existing_task() {
         let handles = crate::test_utils::test_state_handles();
-        let task = crate::store::Session::new(
-            "test task".to_string(),
-            crate::domain::sessions::BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            None,
-            None,
-            std::collections::HashMap::new(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            crate::store::Status::Created,
-            None,
-            None,
-        );
+        let task = test_session("test task");
         let (task_id, _) = handles
             .store
             .add_session(task, chrono::Utc::now(), &ActorRef::test())
@@ -568,26 +552,33 @@ mod tests {
         assert!(worker.is_branch_stale(&branch).await);
     }
 
-    #[tokio::test]
-    async fn is_branch_stale_returns_true_for_deleted_task() {
-        let handles = crate::test_utils::test_state_handles();
-        let task = crate::store::Session::new(
-            "deleted task".to_string(),
-            crate::domain::sessions::BundleSpec::None,
-            None,
+    fn test_session(prompt: &str) -> crate::store::Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
+        crate::store::Session::new(
             Username::from("test-creator"),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&BundleSpec::None),
             None,
             std::collections::HashMap::new(),
             None,
             None,
             None,
-            None,
-            None,
+            SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
             crate::store::Status::Created,
             None,
             None,
-        );
+        )
+    }
+
+    #[tokio::test]
+    async fn is_branch_stale_returns_true_for_deleted_task() {
+        let handles = crate::test_utils::test_state_handles();
+        let task = test_session("deleted task");
         let (task_id, _) = handles
             .store
             .add_session(task, chrono::Utc::now(), &ActorRef::test())

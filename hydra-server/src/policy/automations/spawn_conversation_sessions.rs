@@ -220,8 +220,15 @@ async fn spawn_session(
         match ctx.store.get_session(&session_id, false).await {
             Ok(versioned) => {
                 let mut session = versioned.item;
-                if let Some(opts) = session.interactive.as_mut() {
-                    opts.conversation_resume_from = Some(resume_from);
+                // Stamp the legacy event-index hint and the new
+                // session-level lineage edge in the same update. The worker
+                // currently reads `conversation_resume_from` from
+                // `WorkerContext.interactive`; PR-4 will swap that for
+                // `SessionStateBlob`.
+                session.conversation_resume_from = Some(resume_from);
+                if let Some(prior) = find_prior_session_id(ctx, conversation_id, &session_id).await
+                {
+                    session.resumed_from = Some(prior);
                 }
                 if let Err(err) = ctx
                     .app_state
@@ -419,7 +426,7 @@ mod tests {
     use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
     use crate::domain::documents::Document;
     use crate::domain::issues::SessionSettings;
-    use crate::domain::sessions::{BundleSpec as DomainBundleSpec, InteractiveOptions, Session};
+    use crate::domain::sessions::{BundleSpec as DomainBundleSpec, Session};
     use crate::domain::task_status::Status as TaskStatus;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
@@ -519,22 +526,29 @@ mod tests {
         status: TaskStatus,
         conversation_id: Option<ConversationId>,
     ) -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        let mode = match conversation_id {
+            Some(cid) => SessionMode::Interactive {
+                conversation_id: cid,
+                idle_timeout_secs: 0,
+            },
+            None => SessionMode::Headless {
+                prompt: "prompt".to_string(),
+            },
+        };
         Session::new(
-            "prompt".to_string(),
-            DomainBundleSpec::None,
-            None,
             Username::from("creator"),
             None,
+            None,
+            AgentConfig::default(),
+            mount_spec_for_session(&DomainBundleSpec::None),
             None,
             std::collections::HashMap::new(),
             None,
             None,
             None,
-            None,
-            conversation_id.map(|cid| InteractiveOptions {
-                conversation_id: Some(cid),
-                conversation_resume_from: None,
-            }),
+            mode,
             status,
             None,
             None,
@@ -581,7 +595,7 @@ mod tests {
         sessions
             .into_iter()
             .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
-            .map(|(_, s)| s.item.prompt.clone())
+            .map(|(_, s)| s.item.resolved_prompt().to_string())
     }
 
     #[tokio::test]
@@ -1088,11 +1102,8 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         // No conversation_resume_from on a fresh spawn.
-        let opts = session
-            .interactive
-            .as_ref()
-            .expect("session should be interactive");
-        assert_eq!(opts.conversation_resume_from, None);
+        assert!(session.is_interactive(), "session should be interactive");
+        assert_eq!(session.conversation_resume_from, None);
 
         // No Resumed event on a fresh conversation.
         let events = state
@@ -1161,11 +1172,8 @@ mod tests {
         );
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
-        let opts = session
-            .interactive
-            .as_ref()
-            .expect("session should be interactive");
-        assert_eq!(opts.conversation_resume_from, Some(expected_resume_from));
+        assert!(session.is_interactive(), "session should be interactive");
+        assert_eq!(session.conversation_resume_from, Some(expected_resume_from));
 
         let events = state
             .store()
@@ -1237,11 +1245,8 @@ mod tests {
         );
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
-        let opts = session
-            .interactive
-            .as_ref()
-            .expect("session should be interactive");
-        assert_eq!(opts.conversation_resume_from, Some(2));
+        assert!(session.is_interactive(), "session should be interactive");
+        assert_eq!(session.conversation_resume_from, Some(2));
     }
 
     #[tokio::test]

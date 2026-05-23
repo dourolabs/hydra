@@ -150,19 +150,24 @@ mod tests {
     }
 
     fn make_session(spawned_from: Option<IssueId>) -> Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
         Session {
-            prompt: "test".to_string(),
-            context: BundleSpec::None,
-            spawned_from,
             creator: Username::from("test-creator"),
+            spawned_from,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
             image: None,
-            model: None,
             env_vars: HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mcp_config: None,
-            interactive: None,
+            mode: SessionMode::Headless {
+                prompt: "test".to_string(),
+            },
+            conversation_resume_from: None,
             status: Status::Created,
             last_message: None,
             error: None,

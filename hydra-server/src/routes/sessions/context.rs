@@ -36,11 +36,11 @@ pub async fn get_session_context(
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
 
-    let interactive = task.interactive.as_ref().map(|opts| {
+    let interactive = task.conversation_id().cloned().map(|conv_id| {
         v1::sessions::InteractiveOptions::new(
-            opts.conversation_id.clone(),
+            Some(conv_id),
             Some(state.config.job.interactive_idle_timeout_secs),
-            opts.conversation_resume_from,
+            task.conversation_resume_from,
         )
     });
 
@@ -72,11 +72,19 @@ pub async fn get_session_context(
     });
     let mount_spec = MountSpec::new(repo_target, mounts);
 
+    // Worker prompt: `SessionMode::Headless` carries it directly; for
+    // `Interactive` mode it lives on `agent_config.system_prompt`.
+    let wire_prompt = match &task.mode {
+        crate::domain::sessions::SessionMode::Headless { prompt } => prompt.clone(),
+        crate::domain::sessions::SessionMode::Interactive { .. } => {
+            task.agent_config.system_prompt.clone().unwrap_or_default()
+        }
+    };
     let context = v1::sessions::WorkerContext::new(
-        task.prompt,
-        task.model.clone(),
+        wire_prompt,
+        task.agent_config.model.clone(),
         env_vars,
-        task.mcp_config.clone(),
+        task.agent_config.mcp_config.clone(),
         interactive,
         mount_spec,
     );

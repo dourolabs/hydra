@@ -11,7 +11,7 @@ mod notifications;
 mod patches;
 mod repositories;
 mod resolved_task;
-mod sessions;
+pub(crate) mod sessions;
 #[cfg(test)]
 pub mod test_helpers;
 mod users;

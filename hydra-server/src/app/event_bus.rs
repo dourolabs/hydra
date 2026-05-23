@@ -2248,37 +2248,47 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn job_update_event_carries_old_and_new_payload() {
-        use crate::store::Session as StoreTask;
-
-        let bus = Arc::new(EventBus::new());
-        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
-        let store = StoreWithEvents::new(inner, bus.clone());
-        let mut rx = bus.subscribe();
-
-        let task = StoreTask {
-            prompt: "test task".to_string(),
-            context: crate::domain::sessions::BundleSpec::None,
-            spawned_from: None,
+    fn build_task_for_event_bus_test(
+        status: Status,
+        last_message: Option<String>,
+    ) -> crate::store::Session {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
+        crate::store::Session {
             creator: crate::domain::users::Username::from("test-user"),
+            spawned_from: None,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
             image: None,
-            model: None,
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mcp_config: None,
-            interactive: None,
-            status: Status::Created,
-            last_message: None,
+            mode: SessionMode::Headless {
+                prompt: "test task".to_string(),
+            },
+            conversation_resume_from: None,
+            status,
+            last_message,
             error: None,
             deleted: false,
             creation_time: None,
             start_time: None,
             end_time: None,
             usage: None,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn job_update_event_carries_old_and_new_payload() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let task = build_task_for_event_bus_test(Status::Created, None);
 
         let (task_id, _) = store
             .add_session_with_actor(task, chrono::Utc::now(), ActorRef::test())
@@ -2286,28 +2296,8 @@ mod tests {
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume SessionCreated
 
-        let updated_task = StoreTask {
-            prompt: "test task".to_string(),
-            context: crate::domain::sessions::BundleSpec::None,
-            spawned_from: None,
-            creator: crate::domain::users::Username::from("test-user"),
-            image: None,
-            model: None,
-            env_vars: std::collections::HashMap::new(),
-            cpu_limit: None,
-            memory_limit: None,
-            secrets: None,
-            mcp_config: None,
-            interactive: None,
-            status: Status::Running,
-            last_message: Some("doing work".to_string()),
-            error: None,
-            deleted: false,
-            creation_time: None,
-            start_time: None,
-            end_time: None,
-            usage: None,
-        };
+        let updated_task =
+            build_task_for_event_bus_test(Status::Running, Some("doing work".to_string()));
 
         store
             .update_session_with_actor(&task_id, updated_task, ActorRef::test())
@@ -2973,20 +2963,25 @@ mod tests {
     }
 
     async fn add_dummy_session(store: &StoreWithEvents) -> SessionId {
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
         use crate::store::Session as StoreSession;
         let session = StoreSession {
-            prompt: "test session".to_string(),
-            context: crate::domain::sessions::BundleSpec::None,
-            spawned_from: None,
             creator: crate::domain::users::Username::from("test-user"),
+            spawned_from: None,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
             image: None,
-            model: None,
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mcp_config: None,
-            interactive: None,
+            mode: SessionMode::Headless {
+                prompt: "test session".to_string(),
+            },
+            conversation_resume_from: None,
             status: Status::Created,
             last_message: None,
             error: None,

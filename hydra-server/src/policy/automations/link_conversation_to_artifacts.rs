@@ -175,7 +175,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::patches::{Patch, PatchStatus};
-    use crate::domain::sessions::{BundleSpec, InteractiveOptions, Session};
+    use crate::domain::sessions::{BundleSpec, Session};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::store::Status;
@@ -208,23 +208,31 @@ mod tests {
         spawned_from: Option<IssueId>,
         conversation_id: Option<ConversationId>,
     ) -> Session {
-        let interactive = conversation_id.map(|cid| InteractiveOptions {
-            conversation_id: Some(cid),
-            conversation_resume_from: None,
-        });
+        use crate::app::sessions::mount_spec_for_session;
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        let mode = match conversation_id {
+            Some(cid) => SessionMode::Interactive {
+                conversation_id: cid,
+                idle_timeout_secs: 0,
+            },
+            None => SessionMode::Headless {
+                prompt: "test".to_string(),
+            },
+        };
         Session {
-            prompt: "test".to_string(),
-            context: BundleSpec::None,
-            spawned_from,
             creator: Username::from("test-creator"),
+            spawned_from,
+            resumed_from: None,
+            agent_config: AgentConfig::default(),
+            mount_spec: mount_spec_for_session(&BundleSpec::None),
+            context: BundleSpec::None,
             image: None,
-            model: None,
             env_vars: HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mcp_config: None,
-            interactive,
+            mode,
+            conversation_resume_from: None,
             status: Status::Created,
             last_message: None,
             error: None,

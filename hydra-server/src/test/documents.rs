@@ -21,19 +21,22 @@ use reqwest::StatusCode;
 use std::collections::HashMap;
 
 fn sample_task(status: Status) -> Session {
+    use crate::app::sessions::mount_spec_for_session;
+    use crate::domain::sessions::{AgentConfig, SessionMode};
     Session::new(
-        "prompt".to_string(),
-        BundleSpec::None,
-        None,
         Username::from("test-creator"),
         None,
+        None,
+        AgentConfig::default(),
+        mount_spec_for_session(&BundleSpec::None),
         None,
         HashMap::new(),
         None,
         None,
         None,
-        None,
-        None,
+        SessionMode::Headless {
+            prompt: "prompt".to_string(),
+        },
         status,
         None,
         None,

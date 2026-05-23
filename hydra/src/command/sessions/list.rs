@@ -62,7 +62,7 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use hydra_common::sessions::{BundleSpec, ListSessionsResponse, Session, SessionVersionRecord};
+    use hydra_common::sessions::{ListSessionsResponse, Session, SessionVersionRecord};
     use hydra_common::task_status::Status;
     use hydra_common::users::Username;
     use std::collections::HashMap;
@@ -76,32 +76,45 @@ mod tests {
         }
     }
 
+    fn test_session_for_list() -> Session {
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
+        };
+        Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            MountSpec::new(
+                RelativePath::new("repo").unwrap(),
+                vec![MountItem::Documents {
+                    target: RelativePath::new("documents").unwrap(),
+                }],
+            ),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "0".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
+    }
+
     fn sample_session(id: &str) -> SessionSummaryRecord {
         SessionSummaryRecord::from(&SessionVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
-            Session::new(
-                "0".to_string(),
-                BundleSpec::None,
-                None,
-                Username::from("test-creator"),
-                None,
-                None,
-                HashMap::new(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Status::Created,
-                None,
-                None,
-                false,
-                None,
-                None,
-                None,
-            ),
+            test_session_for_list(),
             None,
         ))
     }
