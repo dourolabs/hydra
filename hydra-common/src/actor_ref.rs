@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn on_behalf_of_automation_unwraps_triggered_by() {
         let actor_ref = ActorRef::Automation {
-            automation_name: "patch_workflow".into(),
+            automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("carol")),
             })),
@@ -554,7 +554,7 @@ mod tests {
     fn on_behalf_of_automation_recurses_through_nested_automations() {
         // Automation -> Automation -> Authenticated(dave)
         let inner = ActorRef::Automation {
-            automation_name: "patch_workflow".into(),
+            automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("dave")),
             })),
@@ -574,7 +574,7 @@ mod tests {
         // Automation -> System(on_behalf_of=session)
         let session_id = SessionId::from_str("s-abcdef").unwrap();
         let actor_ref = ActorRef::Automation {
-            automation_name: "patch_workflow".into(),
+            automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(ActorRef::System {
                 worker_name: "task-spawner".into(),
                 on_behalf_of: Some(ActorId::Session(session_id.clone())),

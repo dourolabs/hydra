@@ -19,7 +19,6 @@ use hydra_common::{
         UpsertPatchRequest, UpsertPatchResponse,
     },
     repositories::SearchRepositoriesQuery,
-    review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     sessions::BundleSpec,
     PatchId, RelativeVersionNumber, RepoName, SessionId, Versioned,
 };
@@ -949,23 +948,6 @@ async fn merge_patch(
         }
     }
 
-    // 3. Validate review status. The server-side preflight above already
-    //    covers approval policy when the repo configures `merge_policy`, but
-    //    this legacy client-side check stays in place as belt-and-suspenders
-    //    for repos with no policy and is scheduled for removal in Phase 3.
-    let versions_response = client
-        .list_patch_versions(&patch_id)
-        .await
-        .with_context(|| format!("failed to fetch version history for patch '{patch_id}'"))?;
-    let staleness_cutoff = find_last_commit_range_change_timestamp(&versions_response.versions);
-    if !has_approved_non_dismissed_review(&patch.reviews, staleness_cutoff) {
-        bail!(
-            "Error: patch {patch_id} cannot be merged because it does not have an approved review.\n\n\
-             The patch is pending code review. To proceed, end your session now. \
-             A reviewer agent will provide a review, and the merge can be retried afterward."
-        );
-    }
-
     // 3. If the patch is linked to a GitHub PR, merge via the GitHub API.
     if let Some(github_pr) = &patch.github {
         let github_token = client
@@ -1403,8 +1385,8 @@ mod tests {
     use hydra_common::{
         issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, SessionSettings},
         patches::{
-            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
-            ListPatchesResponse, Patch, PatchVersionRecord, Review, UpsertPatchResponse,
+            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
+            PatchVersionRecord, Review, UpsertPatchResponse,
         },
         sessions::{BundleSpec, Session, SessionVersionRecord},
         task_status::Status,
@@ -1487,15 +1469,6 @@ mod tests {
                 .path(format!("/v1/patches/{}", patch_id.as_ref()))
                 .json_body_obj(&expected_request);
             then.status(200).json_body_obj(&response);
-        })
-    }
-
-    fn mock_merge_check_ok(server: &MockServer, patch_id: PatchId) -> Mock {
-        server.mock(move |when, then| {
-            when.method(POST)
-                .path(format!("/v1/patches/{}/merge_check", patch_id.as_ref()));
-            then.status(200)
-                .json_body(serde_json::json!({ "ok": true }));
         })
     }
 
@@ -2530,173 +2503,6 @@ mod tests {
         .await;
 
         assert!(result.is_err(), "expected update to reject empty payload");
-    }
-
-    #[tokio::test]
-    async fn merge_patch_rejects_without_approved_review() -> Result<()> {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let merge_patch_id = patch_id("p-merge-no-review");
-        let patch_record = PatchVersionRecord::new(
-            merge_patch_id.clone(),
-            1,
-            Utc::now(),
-            Patch::new(
-                "test patch".to_string(),
-                "description".to_string(),
-                sample_diff(),
-                PatchStatus::Open,
-                false,
-                None,
-                Username::from("test-creator"),
-                vec![],
-                sample_repo_name(),
-                None,
-                false,
-                Some("feature-branch".to_string()),
-                None,
-                Some("main".to_string()),
-            ),
-            None,
-            Utc::now(),
-            Vec::new(),
-        );
-        let versions_response = ListPatchVersionsResponse::new(vec![patch_record.clone()]);
-
-        let get_mock = mock_get_patch(&server, patch_record);
-        let preflight_mock = mock_merge_check_ok(&server, merge_patch_id.clone());
-        let versions_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
-            then.status(200).json_body_obj(&versions_response);
-        });
-
-        let result = merge_patch(&client, merge_patch_id, None, ResolvedOutputFormat::Pretty).await;
-
-        get_mock.assert();
-        preflight_mock.assert();
-        versions_mock.assert();
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("does not have an approved review"),
-            "expected review error, got: {error}"
-        );
-        assert!(
-            error.contains("end your session"),
-            "expected agent-friendly instruction, got: {error}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn merge_patch_rejects_with_stale_review() -> Result<()> {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let merge_patch_id = patch_id("p-merge-stale");
-        let now = Utc::now();
-
-        // Version 1: original commit range with an approval
-        let range_v1 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
-        ));
-        // Version 2: updated commit range (review is now stale)
-        let range_v2 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
-        ));
-
-        let approval = Review::new(
-            "LGTM".to_string(),
-            true,
-            "reviewer".to_string(),
-            Some(now - chrono::Duration::hours(2)),
-        );
-
-        let patch_v2 = Patch::new(
-            "test patch".to_string(),
-            "description".to_string(),
-            sample_diff(),
-            PatchStatus::Open,
-            false,
-            None,
-            Username::from("test-creator"),
-            vec![approval],
-            sample_repo_name(),
-            None,
-            false,
-            Some("feature-branch".to_string()),
-            range_v2.clone(),
-            Some("main".to_string()),
-        );
-
-        let version1 = PatchVersionRecord::new(
-            merge_patch_id.clone(),
-            1,
-            now - chrono::Duration::hours(3),
-            Patch::new(
-                "test patch".to_string(),
-                "description".to_string(),
-                sample_diff(),
-                PatchStatus::Open,
-                false,
-                None,
-                Username::from("test-creator"),
-                vec![],
-                sample_repo_name(),
-                None,
-                false,
-                Some("feature-branch".to_string()),
-                range_v1,
-                Some("main".to_string()),
-            ),
-            None,
-            now - chrono::Duration::hours(3),
-            Vec::new(),
-        );
-        let version2 = PatchVersionRecord::new(
-            merge_patch_id.clone(),
-            2,
-            now - chrono::Duration::hours(1),
-            patch_v2.clone(),
-            None,
-            now - chrono::Duration::hours(1),
-            Vec::new(),
-        );
-
-        let current_record = PatchVersionRecord::new(
-            merge_patch_id.clone(),
-            2,
-            now - chrono::Duration::hours(1),
-            patch_v2,
-            None,
-            now - chrono::Duration::hours(1),
-            Vec::new(),
-        );
-
-        let versions_response = ListPatchVersionsResponse::new(vec![version1, version2]);
-
-        let get_mock = mock_get_patch(&server, current_record);
-        let preflight_mock = mock_merge_check_ok(&server, merge_patch_id.clone());
-        let versions_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
-            then.status(200).json_body_obj(&versions_response);
-        });
-
-        let result = merge_patch(&client, merge_patch_id, None, ResolvedOutputFormat::Pretty).await;
-
-        get_mock.assert();
-        preflight_mock.assert();
-        versions_mock.assert();
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("does not have an approved review"),
-            "expected stale review error, got: {error}"
-        );
-
-        Ok(())
     }
 
     #[tokio::test]

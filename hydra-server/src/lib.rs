@@ -8,7 +8,6 @@ pub mod ee;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod migration_tool;
-pub mod migrations;
 pub mod policy;
 pub mod routes;
 pub mod store;
@@ -201,16 +200,6 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             engine
         }
     };
-
-    // Phase 3 PR-1 bootstrap: synthesise `merge_policy` from each repo's
-    // legacy `patch_workflow`, and close any lingering RR/MR issues whose
-    // parent patch already reached a terminal status. The pass is idempotent;
-    // a failure is logged and the server continues to boot rather than
-    // becoming unavailable on a bad row. See
-    // `/designs/merge-time-constraints.md` §4.6 + §6.6.
-    if let Err(err) = crate::migrations::synthesise_merge_policy::run(store.as_ref()).await {
-        tracing::error!(error = %err, "synthesise_merge_policy migration failed");
-    }
 
     let state = AppState::new(
         Arc::new(app_config),

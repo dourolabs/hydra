@@ -3,4 +3,12 @@ import type { BundleSpec } from "./BundleSpec";
 import type { ConversationId } from "./ConversationId";
 import type { IssueId } from "./IssueId";
 
-export type CreateSessionRequest = { prompt: string, image?: string | null, context: BundleSpec, variables?: { [key in string]: string }, issue_id?: IssueId | null, conversation_id?: ConversationId | null, interactive: boolean, };
+export type CreateSessionRequest = {
+  prompt: string;
+  image?: string | null;
+  context: BundleSpec;
+  variables?: { [key in string]: string };
+  issue_id?: IssueId | null;
+  conversation_id?: ConversationId | null;
+  interactive: boolean;
+};

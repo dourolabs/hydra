@@ -417,7 +417,6 @@ mod tests {
                 "https://gitlab.com/org/repo.git".to_string(),
                 None,
                 None,
-                None,
             ),
         )
         .await?;
@@ -718,7 +717,6 @@ mod tests {
             hydra_common::RepoName::from_str("testowner/testrepo").unwrap(),
             hydra_common::Repository::new(
                 "https://github.com/testowner/testrepo.git".to_string(),
-                None,
                 None,
                 None,
             ),

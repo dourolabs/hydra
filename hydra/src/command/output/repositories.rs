@@ -49,23 +49,6 @@ fn write_repository_details<W: Write>(repository: &RepositoryRecord, writer: &mu
         "  default_image: {}",
         config.default_image.as_deref().unwrap_or("<none>")
     )?;
-    if let Some(ref pw) = config.patch_workflow {
-        if !pw.review_requests.is_empty() {
-            let reviewers: Vec<&str> = pw
-                .review_requests
-                .iter()
-                .map(|r| r.assignee.as_str())
-                .collect();
-            writeln!(writer, "  reviewers: {}", reviewers.join(", "))?;
-        }
-        if let Some(ref mr) = pw.merge_request {
-            writeln!(
-                writer,
-                "  merger: {}",
-                mr.assignee.as_deref().unwrap_or("<none>")
-            )?;
-        }
-    }
     if let Some(ref policy) = config.merge_policy {
         let yaml = serde_yaml_ng::to_string(policy)?;
         writeln!(writer, "  merge_policy:")?;

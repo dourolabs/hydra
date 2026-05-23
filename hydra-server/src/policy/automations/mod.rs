@@ -1,27 +1,20 @@
 pub(crate) mod agent_queue;
 pub mod cascade_issue_status;
-pub mod close_merge_request_issues;
 pub mod inbox_label;
 pub mod kill_tasks_on_failure;
 pub mod link_artifacts_to_issue;
 pub mod link_conversation_to_artifacts;
 pub mod notification_automation;
-pub mod patch_workflow;
-mod review_helpers;
 pub mod spawn_conversation_sessions;
 pub mod spawn_sessions;
 pub mod start_created_sessions;
-pub mod sync_review_request_issues;
 
 pub use cascade_issue_status::CascadeIssueStatusAutomation;
-pub use close_merge_request_issues::CloseMergeRequestIssuesAutomation;
 pub use inbox_label::InboxLabelAutomation;
 pub use kill_tasks_on_failure::KillTasksOnFailureAutomation;
 pub use link_artifacts_to_issue::LinkArtifactsToIssueAutomation;
 pub use link_conversation_to_artifacts::LinkConversationToArtifactsAutomation;
 pub use notification_automation::NotificationAutomation;
-pub use patch_workflow::PatchWorkflowAutomation;
 pub use spawn_conversation_sessions::SpawnConversationSessionsAutomation;
 pub use spawn_sessions::SpawnSessionsAutomation;
 pub use start_created_sessions::StartCreatedSessionsAutomation;
-pub use sync_review_request_issues::SyncReviewRequestIssuesAutomation;

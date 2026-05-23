@@ -107,7 +107,6 @@ struct RepositoryRow {
     default_branch: Option<String>,
     default_image: Option<String>,
     deleted: bool,
-    patch_workflow: Option<String>,
     merge_policy: Option<String>,
     actor: Option<String>,
     created_at: String,
@@ -634,15 +633,6 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for repository '{id}'"))
         })?;
 
-        let patch_workflow_json = repo
-            .patch_workflow
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| {
-                StoreError::Internal(format!("failed to serialize patch_workflow: {e}"))
-            })?;
-
         let merge_policy_json = repo
             .merge_policy
             .as_ref()
@@ -662,8 +652,8 @@ impl SqliteStore {
 
         // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
         )
         .bind(id)
         .bind(version_number)
@@ -671,7 +661,6 @@ impl SqliteStore {
         .bind(repo.default_branch.as_deref())
         .bind(repo.default_image.as_deref())
         .bind(repo.deleted)
-        .bind(&patch_workflow_json)
         .bind(&merge_policy_json)
         .bind(actor)
         .execute(&mut *tx)
@@ -684,16 +673,6 @@ impl SqliteStore {
     }
 
     fn row_to_repository(&self, row: &RepositoryRow) -> Result<Repository, StoreError> {
-        let patch_workflow = row
-            .patch_workflow
-            .as_ref()
-            .map(|v| {
-                serde_json::from_str(v).map_err(|e| {
-                    StoreError::Internal(format!("failed to deserialize patch_workflow: {e}"))
-                })
-            })
-            .transpose()?;
-
         let merge_policy = row
             .merge_policy
             .as_ref()
@@ -708,7 +687,6 @@ impl SqliteStore {
             row.remote_url.clone(),
             row.default_branch.clone(),
             row.default_image.clone(),
-            patch_workflow,
         );
         repo.deleted = row.deleted;
         repo.merge_policy = merge_policy;
@@ -2373,7 +2351,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let row = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
              FROM repositories_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -2411,7 +2389,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let rows = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.deleted, r.patch_workflow, r.merge_policy, r.actor, r.created_at, r.updated_at
+            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.deleted, r.merge_policy, r.actor, r.created_at, r.updated_at
              FROM repositories_v2 r
              WHERE r.is_latest = 1
              ORDER BY r.id"
@@ -5629,7 +5607,6 @@ mod tests {
         Repository::new(
             "https://github.com/dourolabs/hydra".to_string(),
             Some("main".to_string()),
-            None,
             None,
         )
     }

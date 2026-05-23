@@ -805,15 +805,16 @@ mod tests {
 
     #[tokio::test]
     async fn links_patch_when_actor_is_automation_wrapping_session() {
-        // Regression: the patch workflow creates auto-issues using
-        // ActorRef::Automation { triggered_by: Some(session_actor) }. We must
-        // still link those issues back to the session's conversation.
+        // Regression: automations that wrap a session actor in
+        // ActorRef::Automation { triggered_by: Some(session_actor) } must
+        // still have their created artifacts linked back to the session's
+        // conversation.
         let handles = test_utils::test_state_handles();
         let cid = ConversationId::new();
         let session_id = add_session_to_store(&handles, None, Some(cid.clone())).await;
 
         let wrapping_actor = ActorRef::Automation {
-            automation_name: "patch_workflow".into(),
+            automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(session_actor(&session_id))),
         };
 

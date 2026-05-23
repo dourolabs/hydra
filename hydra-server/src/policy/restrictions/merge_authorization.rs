@@ -413,7 +413,7 @@ mod tests {
         policy: Option<MergePolicy>,
     ) -> hydra_common::RepoName {
         let name = repo_name();
-        let mut repo = Repository::new("https://example/repo.git".to_string(), None, None, None);
+        let mut repo = Repository::new("https://example/repo.git".to_string(), None, None);
         repo.merge_policy = policy;
         store
             .add_repository(name.clone(), repo, &DomainActorRef::test())

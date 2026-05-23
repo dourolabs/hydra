@@ -179,15 +179,6 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("kill_tasks_on_issue_failure", |params| {
         Ok(Box::new(KillTasksOnFailureAutomation::new(params)?))
     });
-    registry.register_automation("close_merge_request_issues", |params| {
-        Ok(Box::new(CloseMergeRequestIssuesAutomation::new(params)?))
-    });
-    registry.register_automation("patch_workflow", |params| {
-        Ok(Box::new(PatchWorkflowAutomation::new(params)?))
-    });
-    registry.register_automation("sync_review_request_issues", |params| {
-        Ok(Box::new(SyncReviewRequestIssuesAutomation::new(params)?))
-    });
     registry.register_automation("github_pr_sync", |params| {
         Ok(Box::new(
             super::integrations::github_pr_sync::GithubPrSyncAutomation::new(params)?,

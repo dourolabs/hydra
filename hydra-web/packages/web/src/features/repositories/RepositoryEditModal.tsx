@@ -1,13 +1,8 @@
 import { useState, useCallback } from "react";
 import { Button, Modal, Input } from "@hydra/ui";
-import type {
-  RepositoryRecord,
-  UpdateRepositoryRequest,
-  RepoWorkflowConfig,
-} from "@hydra/api";
+import type { RepositoryRecord, UpdateRepositoryRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
-import { PatchWorkflowSection } from "./PatchWorkflowSection";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 
 interface RepositoryEditModalProps {
@@ -24,16 +19,6 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
   const [defaultImage, setDefaultImage] = useState(
     repo.repository.default_image ?? "",
   );
-  const [reviewerAssignees, setReviewerAssignees] = useState<string[]>(
-    repo.repository.patch_workflow?.review_requests?.map((r) => r.assignee) ??
-      [],
-  );
-  const [mergeAssignee, setMergeAssignee] = useState(
-    repo.repository.patch_workflow?.merge_request?.assignee ?? "",
-  );
-  const [patchWorkflowEnabled, setPatchWorkflowEnabled] = useState(
-    !!repo.repository.patch_workflow,
-  );
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpdateRepositoryRequest, unknown>({
     mutationFn: (params) => apiClient.updateRepository(repo.name, params),
@@ -48,41 +33,12 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
-    let patch_workflow: RepoWorkflowConfig | null | undefined;
-    if (!patchWorkflowEnabled) {
-      patch_workflow = null;
-    } else {
-      const filteredReviewers = reviewerAssignees
-        .map((r) => r.trim())
-        .filter((r) => r.length > 0);
-      const trimmedMergeAssignee = mergeAssignee.trim();
-      const hasPatchWorkflow =
-        filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
-      patch_workflow = hasPatchWorkflow
-        ? {
-            review_requests: filteredReviewers.map((assignee) => ({ assignee })),
-            merge_request: trimmedMergeAssignee
-              ? { assignee: trimmedMergeAssignee }
-              : null,
-          }
-        : undefined;
-    }
     mutation.mutate({
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
       default_image: defaultImage.trim() || null,
-      patch_workflow,
     });
-  }, [
-    remoteUrl,
-    defaultBranch,
-    defaultImage,
-    reviewerAssignees,
-    mergeAssignee,
-    patchWorkflowEnabled,
-    isValid,
-    mutation,
-  ]);
+  }, [remoteUrl, defaultBranch, defaultImage, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${repo.name}`}>
@@ -105,14 +61,6 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           placeholder="ghcr.io/org/repo:latest"
           value={defaultImage}
           onChange={(e) => setDefaultImage(e.target.value)}
-        />
-        <PatchWorkflowSection
-          enabled={patchWorkflowEnabled}
-          onEnabledChange={setPatchWorkflowEnabled}
-          reviewerAssignees={reviewerAssignees}
-          onReviewerAssigneesChange={setReviewerAssignees}
-          mergeAssignee={mergeAssignee}
-          onMergeAssigneeChange={setMergeAssignee}
         />
         <div className={sharedStyles.formActions}>
           <Button

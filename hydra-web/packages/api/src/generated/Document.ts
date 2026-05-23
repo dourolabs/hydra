@@ -2,4 +2,10 @@
 import type { DocumentPath } from "./DocumentPath";
 import type { SessionId } from "./SessionId";
 
-export type Document = { title: string, body_markdown: string, path?: DocumentPath | null, created_by?: SessionId | null, deleted?: boolean, };
+export type Document = {
+  title: string;
+  body_markdown: string;
+  path?: DocumentPath | null;
+  created_by?: SessionId | null;
+  deleted?: boolean;
+};

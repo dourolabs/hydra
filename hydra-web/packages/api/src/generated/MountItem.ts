@@ -12,4 +12,20 @@ import type { SessionId } from "./SessionId";
  * constructor needs, including session metadata (`session_id`,
  * `issue_branch_id`) the server already knows at spec construction.
  */
-export type MountItem = { "type": "bundle", target: RelativePath, bundle: Bundle, session_id: SessionId, issue_branch_id?: string | null, } | { "type": "build_cache", repo_target: RelativePath, service_repo_name: RepoName, context: BuildCacheContext, session_id: SessionId, } | { "type": "documents", target: RelativePath, } | { "type": "unknown" };
+export type MountItem =
+  | {
+      type: "bundle";
+      target: RelativePath;
+      bundle: Bundle;
+      session_id: SessionId;
+      issue_branch_id?: string | null;
+    }
+  | {
+      type: "build_cache";
+      repo_target: RelativePath;
+      service_repo_name: RepoName;
+      context: BuildCacheContext;
+      session_id: SessionId;
+    }
+  | { type: "documents"; target: RelativePath }
+  | { type: "unknown" };

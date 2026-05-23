@@ -505,7 +505,6 @@ mod tests {
             "https://github.com/dourolabs/hydra.git".to_string(),
             Some("main".to_string()),
             Some("repo-image".to_string()),
-            None,
         );
 
         (repo_name, repository)

@@ -3,14 +3,19 @@ import type { InteractiveOptions } from "./InteractiveOptions";
 import type { MountSpec } from "./MountSpec";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type WorkerContext = { prompt: string, model?: string | null, variables: { [key in string]: string }, mcp_config?: JsonValue | null, 
-/**
- * Interactive-only settings. `Some` when the worker should run in
- * interactive mode; `None` for a one-shot session.
- */
-interactive?: InteractiveOptions | null, 
-/**
- * Server-supplied mount layout. The server always populates this; the
- * worker iterates `mount_spec.mounts` to build its per-run mounts.
- */
-mount_spec: MountSpec, };
+export type WorkerContext = {
+  prompt: string;
+  model?: string | null;
+  variables: { [key in string]: string };
+  mcp_config?: JsonValue | null;
+  /**
+   * Interactive-only settings. `Some` when the worker should run in
+   * interactive mode; `None` for a one-shot session.
+   */
+  interactive?: InteractiveOptions | null;
+  /**
+   * Server-supplied mount layout. The server always populates this; the
+   * worker iterates `mount_spec.mounts` to build its per-run mounts.
+   */
+  mount_spec: MountSpec;
+};

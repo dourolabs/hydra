@@ -2,4 +2,4 @@
 import type { RepoName } from "./RepoName";
 import type { Repository } from "./Repository";
 
-export type RepositoryRecord = { name: RepoName, repository: Repository, };
+export type RepositoryRecord = { name: RepoName; repository: Repository };
