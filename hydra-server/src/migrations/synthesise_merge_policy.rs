@@ -165,7 +165,10 @@ async fn synthesise_pass(
     actor: &ActorRef,
     report: &mut MigrationReport,
 ) -> anyhow::Result<()> {
-    let query = SearchRepositoriesQuery::new(Some(true));
+    // Exclude soft-deleted repos: writing a synthesised `merge_policy` to a
+    // tombstone is harmless but pointless, and bloats the migration report.
+    // Matches the convention used by `background::cleanup_branches`.
+    let query = SearchRepositoriesQuery::new(Some(false));
     let repos = store
         .list_repositories(&query)
         .await
@@ -713,6 +716,29 @@ mod tests {
 
         let after = store.get_repository(&repo_name, false).await.unwrap().item;
         assert!(after.merge_policy.is_none());
+    }
+
+    #[tokio::test]
+    async fn run_skips_soft_deleted_repos() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+        let repo_name = RepoName::new("acme", "service").unwrap();
+        let workflow = RepoWorkflowConfig {
+            review_requests: vec![ReviewRequestConfig {
+                assignee: "reviewer".to_string(),
+            }],
+            merge_request: None,
+        };
+        store
+            .add_repository(repo_name.clone(), make_repo_with_workflow(workflow), &actor)
+            .await
+            .unwrap();
+        store.delete_repository(&repo_name, &actor).await.unwrap();
+
+        let report = run(&store).await.unwrap();
+        assert_eq!(report.repos_migrated, 0);
+        assert_eq!(report.repos_already_migrated, 0);
+        assert_eq!(report.repos_with_synth_errors, 0);
     }
 
     #[tokio::test]
