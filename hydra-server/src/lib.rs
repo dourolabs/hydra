@@ -384,6 +384,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::sessions::get_session_version),
         )
         .route(
+            "/v1/sessions/:session_id/events",
+            get(routes::sessions::get_session_events),
+        )
+        .route(
             "/v1/sessions/:session_id/logs",
             get(routes::sessions::logs::get_session_logs),
         )
