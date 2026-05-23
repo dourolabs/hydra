@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, rewrite_local_bundle_url},
-    domain::sessions::BundleSpec,
+    domain::sessions::{BundleSpec, SessionMode},
     routes::sessions::{ApiError, SessionIdPath, mount_spec_from_create_request},
 };
 use axum::{Json, extract::State};
@@ -60,29 +60,30 @@ pub async fn get_session_context(
     session.env_vars = env_vars.clone();
     session.mount_spec = mount_spec.clone();
 
-    // Legacy WorkerContext fields are populated by reading off the embedded
-    // Session — no independent derivation from the task row. Workers still
-    // consume these directly until PR-4 retires them.
-    let prompt = match &session.mode {
-        v1::sessions::SessionMode::Headless { prompt } => prompt.clone(),
-        v1::sessions::SessionMode::Interactive { .. } => session
-            .agent_config
-            .system_prompt
-            .clone()
-            .unwrap_or_default(),
-        _ => String::new(),
-    };
-    let interactive = match &session.mode {
-        v1::sessions::SessionMode::Interactive {
+    // Legacy WorkerContext fields are populated from the session's mode.
+    // Match against the *domain* `SessionMode` (exhaustive in-crate) rather
+    // than the cross-crate `v1::sessions::SessionMode` (which is
+    // `#[non_exhaustive]`, forcing a wildcard arm) so the compiler catches
+    // any new variant added in PR-4. `task.mode` carries the same data the
+    // embedded API session was just constructed from.
+    let (prompt, interactive) = match &task.mode {
+        SessionMode::Headless { prompt } => (prompt.clone(), None),
+        SessionMode::Interactive {
             conversation_id,
             idle_timeout_secs,
             conversation_resume_from,
-        } => Some(v1::sessions::InteractiveOptions::new(
-            Some(conversation_id.clone()),
-            Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
-            *conversation_resume_from,
-        )),
-        _ => None,
+        } => (
+            session
+                .agent_config
+                .system_prompt
+                .clone()
+                .unwrap_or_default(),
+            Some(v1::sessions::InteractiveOptions::new(
+                Some(conversation_id.clone()),
+                Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
+                *conversation_resume_from,
+            )),
+        ),
     };
 
     let context = v1::sessions::WorkerContext::new(
