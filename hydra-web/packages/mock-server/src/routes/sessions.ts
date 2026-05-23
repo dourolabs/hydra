@@ -253,13 +253,26 @@ export function createSessionRoutes(store: Store): Hono {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
+    const bundle = task.context.type === "git_repository"
+      ? { type: "git_repository" as const, url: task.context.url, rev: task.context.rev }
+      : { type: "none" as const };
     const resp: WorkerContext = {
-      request_context: task.context.type === "git_repository"
-        ? { type: "git_repository", url: task.context.url, rev: task.context.rev }
-        : { type: "none" },
       prompt: task.prompt,
       model: task.model,
       variables: task.env_vars ?? {},
+      mount_spec: {
+        working_dir: "repo",
+        mounts: [
+          {
+            type: "bundle",
+            target: "repo",
+            bundle,
+            session_id: id,
+            issue_branch_id: null,
+          },
+          { type: "documents", target: "documents" },
+        ],
+      },
     };
     return c.json(resp);
   });

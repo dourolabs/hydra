@@ -9,13 +9,12 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
-    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
+    constants::ENV_HYDRA_DOCUMENTS_DIR,
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::WorkerContext,
     IssueId, SessionId,
 };
 
-use crate::command::patches::resolve_service_repo_name;
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
@@ -37,7 +36,7 @@ pub async fn run(
     client: Arc<dyn HydraClientInterface>,
     session: SessionId,
     dest: PathBuf,
-    issue_id: Option<IssueId>,
+    _issue_id: Option<IssueId>,
     use_tempdir: bool,
     _context: &CommandContext,
 ) -> Result<()> {
@@ -58,11 +57,9 @@ pub async fn run(
     let job = session;
 
     let WorkerContext {
-        request_context,
         variables,
         prompt,
         model,
-        build_cache,
         mcp_config,
         interactive,
         mount_spec,
@@ -84,10 +81,6 @@ pub async fn run(
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
     let worker_home_dir = resolve_worker_home_dir();
-    let issue_branch_id = issue_id
-        .as_ref()
-        .map(|value| value.to_string())
-        .or_else(|| execution_env.get(ENV_HYDRA_ISSUE_ID).cloned());
     let github_token = client.get_github_token().await.ok();
 
     // Pre-flight: compute the agent CWD and the per-mount list, and pin the
@@ -95,58 +88,29 @@ pub async fn run(
     // its own directory at `setup` time, so we deliberately do **not**
     // `mkdir` here.
     //
-    // - `Some(spec)` → the server populated a `MountSpec`; honor it. Errors
-    //   (e.g. an unsupported item) are fatal — no fallback to legacy.
-    // - `None` → legacy `build_mounts` path. Old servers (or transitional
-    //   payloads that omit the field) still work unchanged.
-    let (repo_path, mut mounts) = match mount_spec.as_ref() {
-        Some(spec) => {
-            if let Some(docs_target) = mounts::spec::find_documents_dir(spec) {
-                execution_env.insert(
-                    ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-                    dest.join(docs_target).to_string_lossy().into_owned(),
-                );
-            }
+    // The server always populates `mount_spec`; we instantiate from it and
+    // surface any unsupported item as a fatal error.
+    if let Some(docs_target) = mounts::spec::find_documents_dir(&mount_spec) {
+        execution_env.insert(
+            ENV_HYDRA_DOCUMENTS_DIR.to_string(),
+            dest.join(docs_target).to_string_lossy().into_owned(),
+        );
+    }
 
-            let mounts::spec::InstantiatedMounts {
-                working_dir,
-                mounts,
-            } = mounts::spec::instantiate(
-                spec,
-                mounts::spec::InstantiateInputs {
-                    github_token: github_token.clone(),
-                    worker_home_dir: worker_home_dir.clone(),
-                    dest: &dest,
-                    client: Arc::clone(&client),
-                },
-            )
-            .map_err(|err| anyhow!("failed to instantiate MountSpec: {err}"))?;
-            (working_dir, mounts)
-        }
-        None => {
-            let repo_path = dest.join("repo");
-            let documents_path = dest.join("documents");
-            execution_env.insert(
-                ENV_HYDRA_DOCUMENTS_DIR.to_string(),
-                documents_path.to_string_lossy().into_owned(),
-            );
-
-            let service_repo_name = resolve_service_repo_name(client.as_ref(), Some(&job)).await?;
-            let mounts = mounts::build_mounts(
-                &repo_path,
-                &documents_path,
-                Arc::clone(&client),
-                &request_context,
-                build_cache.as_ref(),
-                service_repo_name.as_ref(),
-                github_token,
-                issue_branch_id,
-                worker_home_dir.clone(),
-                job.clone(),
-            )?;
-            (repo_path, mounts)
-        }
-    };
+    let mounts::spec::InstantiatedMounts {
+        working_dir: repo_path,
+        mounts,
+    } = mounts::spec::instantiate(
+        &mount_spec,
+        mounts::spec::InstantiateInputs {
+            github_token: github_token.clone(),
+            worker_home_dir: worker_home_dir.clone(),
+            dest: &dest,
+            client: Arc::clone(&client),
+        },
+    )
+    .map_err(|err| anyhow!("failed to instantiate MountSpec: {err}"))?;
+    let mut mounts = mounts;
 
     let mut errors = Vec::new();
 

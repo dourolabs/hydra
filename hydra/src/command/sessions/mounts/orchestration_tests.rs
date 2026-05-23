@@ -237,20 +237,20 @@ async fn save_phase_none_skips_save_and_siblings_still_run() {
     );
 }
 
-/// Belt-and-braces end-to-end exercise of `build_mounts` for
-/// `Bundle::None`: this is the only scenario the design says is realistic
-/// to drive against the filesystem (empty repo, no network, mocked
-/// document store). The other matrix rows (with/without cache for
+/// Belt-and-braces end-to-end exercise of `spec::instantiate` for a
+/// `Bundle::None` mount spec: this is the only scenario the design says
+/// is realistic to drive against the filesystem (empty repo, no network,
+/// mocked document store). The other matrix rows (with/without cache for
 /// `Bundle::GitRepository`) are covered by mount-count assertions in
-/// `mod.rs` because exercising them would require hitting the network.
-mod build_mounts_e2e {
+/// `spec.rs` because exercising them would require hitting the network.
+mod mount_spec_e2e {
     use super::*;
     use crate::client::{HydraClient, HydraClientInterface};
-    use crate::command::sessions::mounts::build_mounts;
+    use crate::command::sessions::mounts::spec::{instantiate, InstantiateInputs};
     use crate::test_utils::ids::task_id;
     use httpmock::prelude::*;
     use hydra_common::documents::ListDocumentsResponse;
-    use hydra_common::sessions::Bundle;
+    use hydra_common::sessions::{Bundle, MountItem, MountSpec, RelativePath};
     use reqwest::Client as HttpClient;
 
     fn mock_client(server: &MockServer) -> Arc<dyn HydraClientInterface> {
@@ -271,32 +271,47 @@ mod build_mounts_e2e {
         let client = mock_client(&server);
 
         let tempdir = tempfile::tempdir().expect("dest tempdir");
-        let repo_path = tempdir.path().join("repo");
-        let documents_path = tempdir.path().join("documents");
+        let dest = tempdir.path().to_path_buf();
+        let repo_path = dest.join("repo");
+        let documents_path = dest.join("documents");
         assert!(
             !repo_path.exists(),
             "precondition: repo_path must not exist"
         );
 
-        let mut mounts = build_mounts(
-            &repo_path,
-            &documents_path,
-            client,
-            &Bundle::None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            task_id("t-bm-e2e-none"),
+        let repo_target = RelativePath::new("repo").expect("static `repo` is valid");
+        let spec = MountSpec::new(
+            repo_target.clone(),
+            vec![
+                MountItem::Bundle {
+                    target: repo_target,
+                    bundle: Bundle::None,
+                    session_id: task_id("t-bm-e2e-none"),
+                    issue_branch_id: None,
+                },
+                MountItem::Documents {
+                    target: RelativePath::new("documents").expect("static `documents` is valid"),
+                },
+            ],
+        );
+
+        let instantiated = instantiate(
+            &spec,
+            InstantiateInputs {
+                github_token: None,
+                worker_home_dir: None,
+                dest: &dest,
+                client,
+            },
         )
-        .expect("build_mounts");
+        .expect("instantiate");
         assert_eq!(
-            mounts.len(),
+            instantiated.mounts.len(),
             2,
             "Bundle::None must produce [BundleMount::empty, DocumentsMount]"
         );
 
+        let mut mounts = instantiated.mounts;
         let (result, errors) = drive_mounts(&mut mounts).await;
 
         assert!(result.is_ok(), "no fatal errors expected: {result:?}");

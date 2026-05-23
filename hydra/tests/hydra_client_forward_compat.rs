@@ -429,7 +429,15 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(fetched_session_after_status.session_id, job_id);
 
     let context = client.get_session_context(&job_id).await?;
-    assert!(matches!(context.request_context, Bundle::Unknown));
+    let bundle_item = context
+        .mount_spec
+        .mounts
+        .first()
+        .expect("mount_spec must include at least one item");
+    let hydra_common::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
+        panic!("expected Bundle item first, got {bundle_item:?}");
+    };
+    assert!(matches!(bundle, Bundle::Unknown));
 
     // Issues
     let issue = Issue::new(
@@ -810,9 +818,21 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
 
 fn forward_worker_context_json() -> Value {
     json!({
-        "request_context": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
         "prompt": "worker prompt",
         "variables": { "foo": "bar" },
+        "mount_spec": {
+            "working_dir": "repo",
+            "mounts": [
+                {
+                    "type": "bundle",
+                    "target": "repo",
+                    "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
+                    "session_id": "s-forwardct",
+                },
+                {"type": "documents", "target": "documents"}
+            ],
+            "note": "future-only key inside spec"
+        },
         "note": "context"
     })
 }

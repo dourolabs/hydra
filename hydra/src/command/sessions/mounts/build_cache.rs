@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use hydra_build_cache::{ApplyCacheTimings, UploadCacheTimings};
-use hydra_common::{sessions::Bundle, BuildCacheContext, RepoName};
+use hydra_common::{BuildCacheContext, RepoName};
 use tracing::{info, warn};
 
 use crate::build_cache::build_cache_client;
@@ -55,31 +55,6 @@ impl BuildCacheMount {
     #[cfg(test)]
     pub(crate) fn downloaded_cache_sha(&self) -> Option<&str> {
         self.downloaded_cache_sha.as_deref()
-    }
-}
-
-/// Construction-site gating helper.
-///
-/// Returns `Some` only when the bundle is `Bundle::GitRepository` AND
-/// both `build_cache` and `service_repo_name` are present — the three
-/// inputs the design doc requires for the mount to be applicable.
-/// Wrapping the if-let here keeps the worker_run.rs call site small and
-/// makes the gating logic testable in isolation.
-pub fn build_cache_mount(
-    bundle: &Bundle,
-    build_cache: Option<&BuildCacheContext>,
-    service_repo_name: Option<&RepoName>,
-    repo_path: PathBuf,
-    worker_home_dir: Option<PathBuf>,
-) -> Option<BuildCacheMount> {
-    match (bundle, build_cache, service_repo_name) {
-        (Bundle::GitRepository { .. }, Some(cache), Some(repo_name)) => Some(BuildCacheMount::new(
-            repo_path,
-            worker_home_dir,
-            cache.clone(),
-            repo_name.clone(),
-        )),
-        _ => None,
     }
 }
 
@@ -513,49 +488,5 @@ mod tests {
             "every attempt should have started"
         );
         Ok(())
-    }
-
-    #[test]
-    fn build_cache_mount_constructed_only_when_inputs_complete() {
-        let repo_path = PathBuf::from("/tmp/example-repo");
-        let cache_dir = PathBuf::from("/tmp/example-cache");
-        let cache = filesystem_cache_context(&cache_dir);
-        let repo_name = make_repo_name();
-        let git_bundle = Bundle::GitRepository {
-            url: "https://example.com/acme/widgets".to_string(),
-            rev: "main".to_string(),
-        };
-
-        assert!(
-            build_cache_mount(
-                &git_bundle,
-                Some(&cache),
-                Some(&repo_name),
-                repo_path.clone(),
-                None
-            )
-            .is_some(),
-            "all three inputs present → mount must be constructed"
-        );
-        assert!(
-            build_cache_mount(
-                &Bundle::None,
-                Some(&cache),
-                Some(&repo_name),
-                repo_path.clone(),
-                None
-            )
-            .is_none(),
-            "Bundle::None → no mount"
-        );
-        assert!(
-            build_cache_mount(&git_bundle, None, Some(&repo_name), repo_path.clone(), None)
-                .is_none(),
-            "no build_cache → no mount"
-        );
-        assert!(
-            build_cache_mount(&git_bundle, Some(&cache), None, repo_path, None).is_none(),
-            "no service_repo_name → no mount"
-        );
     }
 }
