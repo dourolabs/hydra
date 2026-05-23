@@ -614,3 +614,232 @@ mod tests {
         assert_eq!(stored.as_deref(), Some(&blob[..]));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Postgres integration tests
+// ---------------------------------------------------------------------------
+//
+// Mirrors the SQLite scenarios above against a real postgres backend. The
+// postgres SQL path uses `$N` placeholders, the `metis.` schema, and parses
+// JSONB actor values via `serde_json::Value::to_string()` — none of which the
+// sqlite tests exercise. CI runs these via `cargo nextest --features
+// enterprise --run-ignored all` against the workflow's postgres service; they
+// are `#[ignore]`d so default `cargo test` runs do not require docker/postgres.
+
+#[cfg(all(test, feature = "postgres"))]
+mod tests_postgres {
+    use super::{Backend, PlanAction, run};
+    use chrono::{Duration, Utc};
+    use hydra_common::{ActorId, ActorRef, ConversationId, SessionId};
+    use sqlx::PgPool;
+
+    /// Insert a `metis.conversation_session_state` row. The postgres pass
+    /// iterates this table directly (it is independent of `conversations_v2`).
+    async fn insert_session_state(pool: &PgPool, conv_id: &ConversationId, data: &[u8]) {
+        sqlx::query(
+            "INSERT INTO metis.conversation_session_state (conversation_id, data) \
+             VALUES ($1, $2)",
+        )
+        .bind(conv_id.as_ref())
+        .bind(data)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a minimally-valid `tasks_v2` row representing a session linked
+    /// to `conv_id` with the given creation time. The BEFORE INSERT trigger
+    /// sets `is_latest = true` automatically.
+    async fn insert_linked_session(
+        pool: &PgPool,
+        session_id: &SessionId,
+        conv_id: &ConversationId,
+        creator: &str,
+        creation_time: chrono::DateTime<chrono::Utc>,
+    ) {
+        sqlx::query(
+            "INSERT INTO metis.tasks_v2 \
+                (id, version_number, prompt, context, creator, env_vars, \
+                 status, deleted, creation_time, interactive, conversation_id) \
+             VALUES ($1, 1, '', '{\"type\":\"none\"}'::jsonb, $2, '{}'::jsonb, \
+                     'complete', FALSE, $3, FALSE, $4)",
+        )
+        .bind(session_id.as_ref())
+        .bind(creator)
+        .bind(creation_time)
+        .bind(conv_id.as_ref())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a `suspending` conversation event attributed to `actor_session`.
+    /// The `actor` column is JSONB and the resolver parses it via
+    /// `Value::to_string()` → `serde_json::from_str::<ActorRef>`.
+    async fn insert_suspending_event(
+        pool: &PgPool,
+        conv_id: &ConversationId,
+        version: i64,
+        actor_session: &SessionId,
+    ) {
+        let actor = ActorRef::Authenticated {
+            actor_id: ActorId::Session(actor_session.clone()),
+        };
+        let actor_json = serde_json::to_value(&actor).unwrap();
+        let event_data = serde_json::json!({
+            "type": "suspending",
+            "reason": "test",
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+        sqlx::query(
+            "INSERT INTO metis.conversation_events_v2 \
+                (conversation_id, version_number, event_type, event_data, actor) \
+             VALUES ($1, $2, 'suspending', $3, $4)",
+        )
+        .bind(conv_id.as_ref())
+        .bind(version)
+        .bind(event_data)
+        .bind(actor_json)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn read_session_state(pool: &PgPool, session_id: &SessionId) -> Option<Vec<u8>> {
+        sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT data FROM metis.session_state_v2 WHERE session_id = $1",
+        )
+        .bind(session_id.as_ref())
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migrate_state_keys_on_session_that_emitted_latest_suspending(pool: PgPool) {
+        // Chain A → B → C with C mid-flight: B emitted the most recent
+        // Suspending event. §3.5 step 4 requires the blob to be keyed under B,
+        // not the most-recently-linked session C.
+        let conv = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let sess_c = SessionId::new();
+        let blob = b"state-uploaded-by-b".to_vec();
+        insert_session_state(&pool, &conv, &blob).await;
+        let now = Utc::now();
+        insert_linked_session(&pool, &sess_a, &conv, "carol", now - Duration::hours(2)).await;
+        insert_linked_session(&pool, &sess_b, &conv, "carol", now - Duration::hours(1)).await;
+        insert_linked_session(&pool, &sess_c, &conv, "carol", now).await;
+        insert_suspending_event(&pool, &conv, 1, &sess_a).await;
+        insert_suspending_event(&pool, &conv, 2, &sess_b).await;
+
+        let backend = Backend::Postgres(pool.clone());
+        let plan = run(&backend, false).await.unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].producing_session_id, *sess_b.as_ref());
+        assert_eq!(plan[0].action, PlanAction::Wrote);
+
+        assert_eq!(
+            read_session_state(&pool, &sess_b).await.as_deref(),
+            Some(&blob[..])
+        );
+        assert!(read_session_state(&pool, &sess_c).await.is_none());
+        assert!(read_session_state(&pool, &sess_a).await.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migrate_state_falls_back_to_latest_linked_when_no_suspending_event(pool: PgPool) {
+        // Conversation 1: single session, no suspending event yet.
+        let conv_one = ConversationId::new();
+        let sess_one = SessionId::new();
+        let blob_one = b"state-for-conversation-one".to_vec();
+        insert_session_state(&pool, &conv_one, &blob_one).await;
+        insert_linked_session(&pool, &sess_one, &conv_one, "alice", Utc::now()).await;
+
+        // Conversation 2: three linked sessions, no suspending event yet.
+        // Latest linked = C.
+        let conv_two = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let sess_c = SessionId::new();
+        let blob_two = b"state-for-conversation-two".to_vec();
+        insert_session_state(&pool, &conv_two, &blob_two).await;
+        let now = Utc::now();
+        insert_linked_session(&pool, &sess_a, &conv_two, "bob", now - Duration::hours(2)).await;
+        insert_linked_session(&pool, &sess_b, &conv_two, "bob", now - Duration::hours(1)).await;
+        insert_linked_session(&pool, &sess_c, &conv_two, "bob", now).await;
+
+        let backend = Backend::Postgres(pool.clone());
+        let plan = run(&backend, false).await.unwrap();
+        assert_eq!(plan.len(), 2);
+
+        let entry_one = plan
+            .iter()
+            .find(|p| p.conversation_id == *conv_one.as_ref())
+            .unwrap();
+        let entry_two = plan
+            .iter()
+            .find(|p| p.conversation_id == *conv_two.as_ref())
+            .unwrap();
+        assert_eq!(entry_one.producing_session_id, *sess_one.as_ref());
+        assert_eq!(entry_two.producing_session_id, *sess_c.as_ref());
+        assert_eq!(
+            read_session_state(&pool, &sess_c).await.as_deref(),
+            Some(&blob_two[..])
+        );
+        assert!(read_session_state(&pool, &sess_a).await.is_none());
+        assert!(read_session_state(&pool, &sess_b).await.is_none());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migrate_state_is_idempotent_and_dry_run_matches_live_plan(pool: PgPool) {
+        let conv = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let blob = b"blob".to_vec();
+        insert_session_state(&pool, &conv, &blob).await;
+        let now = Utc::now();
+        insert_linked_session(&pool, &sess_a, &conv, "dave", now - Duration::hours(1)).await;
+        insert_linked_session(&pool, &sess_b, &conv, "dave", now).await;
+        insert_suspending_event(&pool, &conv, 1, &sess_a).await;
+
+        let backend = Backend::Postgres(pool.clone());
+
+        let dry = run(&backend, true).await.unwrap();
+        assert_eq!(dry.len(), 1);
+        assert_eq!(dry[0].producing_session_id, *sess_a.as_ref());
+        assert_eq!(dry[0].action, PlanAction::WouldWrite);
+        // Dry run must not write.
+        assert!(read_session_state(&pool, &sess_a).await.is_none());
+
+        let live = run(&backend, false).await.unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].producing_session_id, *sess_a.as_ref());
+        assert_eq!(live[0].action, PlanAction::Wrote);
+
+        let rerun = run(&backend, false).await.unwrap();
+        assert_eq!(rerun.len(), 1);
+        assert_eq!(rerun[0].action, PlanAction::Skipped);
+        assert_eq!(
+            read_session_state(&pool, &sess_a).await.as_deref(),
+            Some(&blob[..])
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migrate_state_skips_conversations_with_no_linked_session(pool: PgPool) {
+        let orphan = ConversationId::new();
+        insert_session_state(&pool, &orphan, b"orphan-blob").await;
+
+        let backend = Backend::Postgres(pool.clone());
+        let plan = run(&backend, false).await.unwrap();
+        assert!(
+            plan.is_empty(),
+            "orphan conversation should be skipped rather than emitted",
+        );
+    }
+}
