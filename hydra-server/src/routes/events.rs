@@ -393,6 +393,11 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::ConversationEventCreated {
             conversation_id, ..
         } => ("conversations", EntityId::Conversation(conversation_id)),
+
+        ServerEvent::SessionEventCreated { session_id, .. }
+        | ServerEvent::SessionStateUpdated { session_id, .. } => {
+            ("sessions", EntityId::Session(session_id))
+        }
     }
 }
 
@@ -557,6 +562,15 @@ async fn serialize_entity(
             let api_event: hydra_common::api::v1::conversations::ConversationEvent =
                 event.clone().into();
             serde_json::to_value(api_event).ok()?
+        }
+        MutationPayload::SessionEvent { event, .. } => {
+            let api_event: hydra_common::api::v1::sessions::SessionEvent = event.clone().into();
+            serde_json::to_value(api_event).ok()?
+        }
+        MutationPayload::SessionState { .. } => {
+            // The state blob itself is fetched by subscribers via
+            // `get_session_state`; the SSE notification carries no payload.
+            return None;
         }
     };
     Some(value)
@@ -817,6 +831,33 @@ async fn server_event_to_sse(
             "conversation_event",
             conversation_id.to_string(),
             *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::SessionEventCreated {
+            session_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::SessionEventCreated,
+            "session_event",
+            session_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::SessionStateUpdated {
+            session_id,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::SessionStateUpdated,
+            "session_state",
+            session_id.to_string(),
+            0,
             *timestamp,
             payload,
         ),
@@ -1577,5 +1618,125 @@ mod tests {
             .expect("labels should be an array");
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].get("name").unwrap().as_str().unwrap(), "docs");
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_session_event_created() {
+        use crate::domain::sessions::SessionEvent;
+        use hydra_common::SessionId;
+
+        let state = test_app_state();
+        let session_id = SessionId::new();
+        let session_event = SessionEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        };
+        let payload = Arc::new(MutationPayload::SessionEvent {
+            session_id: session_id.clone(),
+            event: session_event,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::SessionEventCreated {
+            seq: 7,
+            session_id: session_id.clone(),
+            version: 3,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
+        assert_eq!(event_type, SseEventType::SessionEventCreated);
+        assert_eq!(data.entity_type, "session_event");
+        assert_eq!(data.entity_id, session_id.to_string());
+        assert_eq!(data.version, 3);
+
+        // The session-event payload is serialized as the API SessionEvent JSON.
+        let entity = data.entity.expect("entity should be present");
+        let obj = entity.as_object().expect("entity should be a JSON object");
+        assert_eq!(obj.get("type").unwrap().as_str().unwrap(), "user_message");
+        assert_eq!(obj.get("content").unwrap().as_str().unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_session_state_updated() {
+        use hydra_common::SessionId;
+
+        let state = test_app_state();
+        let session_id = SessionId::new();
+        let payload = Arc::new(MutationPayload::SessionState {
+            session_id: session_id.clone(),
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::SessionStateUpdated {
+            seq: 11,
+            session_id: session_id.clone(),
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
+        assert_eq!(event_type, SseEventType::SessionStateUpdated);
+        assert_eq!(data.entity_type, "session_state");
+        assert_eq!(data.entity_id, session_id.to_string());
+        // No body — consumers must fetch the state blob via `get_session_state`.
+        assert!(data.entity.is_none());
+    }
+
+    #[test]
+    fn event_filter_sessions_matches_session_event_created() {
+        use hydra_common::SessionId;
+
+        let session_id = SessionId::new();
+        let payload = Arc::new(MutationPayload::SessionEvent {
+            session_id: session_id.clone(),
+            event: crate::domain::sessions::SessionEvent::Closed {
+                timestamp: Utc::now(),
+            },
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::SessionEventCreated {
+            seq: 1,
+            session_id: session_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Default filter (no types specified) matches.
+        let default_filter = EventFilter::from_query(&EventsQuery::default()).unwrap();
+        assert!(default_filter.matches(&event));
+
+        // types=sessions matches.
+        let sessions_query = EventsQuery {
+            types: Some("sessions".to_string()),
+            ..Default::default()
+        };
+        let sessions_filter = EventFilter::from_query(&sessions_query).unwrap();
+        assert!(sessions_filter.matches(&event));
+
+        // types=issues does NOT match.
+        let issues_query = EventsQuery {
+            types: Some("issues".to_string()),
+            ..Default::default()
+        };
+        let issues_filter = EventFilter::from_query(&issues_query).unwrap();
+        assert!(!issues_filter.matches(&event));
+
+        // session_ids filter targets a different session — no match.
+        let other_id = SessionId::new();
+        let other_query = EventsQuery {
+            session_ids: Some(other_id.to_string()),
+            ..Default::default()
+        };
+        let other_filter = EventFilter::from_query(&other_query).unwrap();
+        assert!(!other_filter.matches(&event));
+
+        // session_ids filter matches our id.
+        let matching_query = EventsQuery {
+            session_ids: Some(session_id.to_string()),
+            ..Default::default()
+        };
+        let matching_filter = EventFilter::from_query(&matching_query).unwrap();
+        assert!(matching_filter.matches(&event));
     }
 }

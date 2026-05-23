@@ -8,6 +8,7 @@ use crate::domain::{
     notifications::Notification,
     patches::Patch,
     secrets::SecretRef,
+    sessions::SessionEvent,
     users::{User, Username},
 };
 use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
@@ -79,6 +80,15 @@ pub enum MutationPayload {
         event: ConversationEvent,
         actor: ActorRef,
     },
+    SessionEvent {
+        session_id: SessionId,
+        event: SessionEvent,
+        actor: ActorRef,
+    },
+    SessionState {
+        session_id: SessionId,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -92,7 +102,9 @@ impl MutationPayload {
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Notification { actor, .. }
             | MutationPayload::Conversation { actor, .. }
-            | MutationPayload::ConversationEvent { actor, .. } => actor,
+            | MutationPayload::ConversationEvent { actor, .. }
+            | MutationPayload::SessionEvent { actor, .. }
+            | MutationPayload::SessionState { actor, .. } => actor,
         }
     }
 }
@@ -119,6 +131,8 @@ pub enum EventType {
     ConversationCreated,
     ConversationUpdated,
     ConversationEventCreated,
+    SessionEventCreated,
+    SessionStateUpdated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -257,6 +271,19 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    SessionEventCreated {
+        seq: u64,
+        session_id: SessionId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    SessionStateUpdated {
+        seq: u64,
+        session_id: SessionId,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -280,7 +307,9 @@ impl ServerEvent {
             | ServerEvent::NotificationCreated { seq, .. }
             | ServerEvent::ConversationCreated { seq, .. }
             | ServerEvent::ConversationUpdated { seq, .. }
-            | ServerEvent::ConversationEventCreated { seq, .. } => *seq,
+            | ServerEvent::ConversationEventCreated { seq, .. }
+            | ServerEvent::SessionEventCreated { seq, .. }
+            | ServerEvent::SessionStateUpdated { seq, .. } => *seq,
         }
     }
 
@@ -304,7 +333,9 @@ impl ServerEvent {
             | ServerEvent::NotificationCreated { payload, .. }
             | ServerEvent::ConversationCreated { payload, .. }
             | ServerEvent::ConversationUpdated { payload, .. }
-            | ServerEvent::ConversationEventCreated { payload, .. } => payload,
+            | ServerEvent::ConversationEventCreated { payload, .. }
+            | ServerEvent::SessionEventCreated { payload, .. }
+            | ServerEvent::SessionStateUpdated { payload, .. } => payload,
         }
     }
 
@@ -341,6 +372,8 @@ impl ServerEvent {
             ServerEvent::ConversationCreated { .. } => EventType::ConversationCreated,
             ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
             ServerEvent::ConversationEventCreated { .. } => EventType::ConversationEventCreated,
+            ServerEvent::SessionEventCreated { .. } => EventType::SessionEventCreated,
+            ServerEvent::SessionStateUpdated { .. } => EventType::SessionStateUpdated,
         }
     }
 }
@@ -649,6 +682,30 @@ impl EventBus {
             seq: self.next_seq(),
             conversation_id,
             version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_session_event_created(
+        &self,
+        session_id: SessionId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::SessionEventCreated {
+            seq: self.next_seq(),
+            session_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_session_state_updated(&self, session_id: SessionId, payload: Arc<MutationPayload>) {
+        self.send(ServerEvent::SessionStateUpdated {
+            seq: self.next_seq(),
+            session_id,
             timestamp: Utc::now(),
             payload,
         });
@@ -1086,6 +1143,40 @@ impl StoreWithEvents {
         data: Vec<u8>,
     ) -> Result<(), StoreError> {
         self.inner.store_conversation_session_state(id, data).await
+    }
+
+    pub async fn append_session_event_with_actor(
+        &self,
+        id: &SessionId,
+        event: SessionEvent,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let event_clone = event.clone();
+        let version = self.inner.append_session_event(id, event, &actor).await?;
+        let payload = Arc::new(MutationPayload::SessionEvent {
+            session_id: id.clone(),
+            event: event_clone,
+            actor,
+        });
+        self.event_bus
+            .emit_session_event_created(id.clone(), version, payload);
+        Ok(version)
+    }
+
+    pub async fn store_session_state_with_actor(
+        &self,
+        id: &SessionId,
+        data: Vec<u8>,
+        actor: ActorRef,
+    ) -> Result<(), StoreError> {
+        self.inner.store_session_state(id, data, &actor).await?;
+        let payload = Arc::new(MutationPayload::SessionState {
+            session_id: id.clone(),
+            actor,
+        });
+        self.event_bus
+            .emit_session_state_updated(id.clone(), payload);
+        Ok(())
     }
 
     // ---- Notification mutations ----
@@ -2879,5 +2970,141 @@ mod tests {
             rx.try_recv().is_err(),
             "no event should be emitted for no-op remove"
         );
+    }
+
+    async fn add_dummy_session(store: &StoreWithEvents) -> SessionId {
+        use crate::store::Session as StoreSession;
+        let session = StoreSession {
+            prompt: "test session".to_string(),
+            context: crate::domain::sessions::BundleSpec::None,
+            spawned_from: None,
+            creator: crate::domain::users::Username::from("test-user"),
+            image: None,
+            model: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            mcp_config: None,
+            interactive: None,
+            status: Status::Created,
+            last_message: None,
+            error: None,
+            deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
+            usage: None,
+        };
+        let (sid, _) = store
+            .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+        sid
+    }
+
+    #[tokio::test]
+    async fn append_session_event_emits_session_event_created() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+
+        let sid = add_dummy_session(&store).await;
+
+        // Subscribe AFTER session-creation event so we only see the
+        // session-event broadcast.
+        let mut rx = bus.subscribe();
+
+        let session_event = SessionEvent::UserMessage {
+            content: "hello".to_string(),
+            timestamp: Utc::now(),
+        };
+        let version = store
+            .append_session_event_with_actor(&sid, session_event.clone(), ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let event = rx.recv().await.expect("should receive SessionEventCreated");
+        match &event {
+            ServerEvent::SessionEventCreated {
+                session_id,
+                version,
+                payload,
+                ..
+            } => {
+                assert_eq!(*session_id, sid);
+                assert_eq!(*version, 1);
+                match payload.as_ref() {
+                    MutationPayload::SessionEvent {
+                        session_id: pid,
+                        event: ev,
+                        ..
+                    } => {
+                        assert_eq!(*pid, sid);
+                        assert_eq!(*ev, session_event);
+                    }
+                    other => panic!("expected SessionEvent payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected SessionEventCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn store_session_state_emits_session_state_updated() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+
+        let sid = add_dummy_session(&store).await;
+        let mut rx = bus.subscribe();
+
+        store
+            .store_session_state_with_actor(&sid, vec![1, 2, 3], ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = rx.recv().await.expect("should receive SessionStateUpdated");
+        match &event {
+            ServerEvent::SessionStateUpdated {
+                session_id,
+                payload,
+                ..
+            } => {
+                assert_eq!(*session_id, sid);
+                match payload.as_ref() {
+                    MutationPayload::SessionState {
+                        session_id: pid, ..
+                    } => {
+                        assert_eq!(*pid, sid);
+                    }
+                    other => panic!("expected SessionState payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected SessionStateUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn append_session_event_failure_does_not_emit() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        // No session exists for this id — append should fail and no event emit.
+        let bogus = SessionId::new();
+        let result = store
+            .append_session_event_with_actor(
+                &bogus,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                ActorRef::test(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(rx.try_recv().is_err(), "no event should be broadcast");
     }
 }
