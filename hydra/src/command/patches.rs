@@ -8,6 +8,10 @@ use chrono::Utc;
 use clap::{Args, Subcommand};
 use hydra_common::{
     activity_log_for_patch_versions,
+    api::v1::merge_check::{
+        BlockedAtLayer, EligiblePrincipal, MergeBlockedError, MergeBlockedReason,
+        MergeCheckResponse, SuggestedAction,
+    },
     constants::{ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
     issues::IssueId,
     patches::{
@@ -181,6 +185,13 @@ pub enum PatchesCommand {
         /// Base branch to squash-merge onto (defaults to the repo's configured default branch or 'main').
         #[arg(long = "base", value_name = "BASE")]
         base: Option<String>,
+
+        /// When the server-side preflight blocks the merge, print the raw
+        /// `MergeBlockedError` JSON body to stdout instead of the human
+        /// summary on stderr. Only affects the blocked path; the success
+        /// path is unchanged.
+        #[arg(long = "json")]
+        json: bool,
     },
     /// Manage patch assets.
     Assets {
@@ -298,7 +309,11 @@ pub async fn run(
             write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
-        PatchesCommand::Merge { patch_id, base } => merge_patch(client, patch_id, base).await,
+        PatchesCommand::Merge {
+            patch_id,
+            base,
+            json,
+        } => merge_patch(client, patch_id, base, json).await,
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
         }
@@ -726,10 +741,191 @@ async fn update_patch_inner(
     ))
 }
 
+/// Convert a server-side `MergeBlockedError` body into the user-facing error
+/// for `hydra patches merge`. The JSON body (if requested) is printed to
+/// stdout and the human summary is printed to stderr as a side effect; the
+/// returned `anyhow::Error` carries a short summary so the top-level CLI
+/// exits non-zero.
+fn handle_merge_blocked(body: MergeBlockedError, json: bool) -> anyhow::Error {
+    let mut stdout = std::io::stdout();
+    let mut stderr = std::io::stderr();
+    handle_merge_blocked_with_writers(body, json, &mut stdout, &mut stderr)
+}
+
+fn handle_merge_blocked_with_writers(
+    body: MergeBlockedError,
+    json: bool,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> anyhow::Error {
+    let patch_id = body.patch_id.clone();
+    let layer = body.blocked_at_layer;
+    if json {
+        match serde_json::to_string(&body) {
+            Ok(rendered) => {
+                if let Err(err) = writeln!(stdout, "{rendered}") {
+                    return anyhow!(
+                        "failed to write merge_blocked JSON for patch '{patch_id}': {err}"
+                    );
+                }
+            }
+            Err(err) => {
+                return anyhow!(
+                    "failed to serialise merge_blocked body for patch '{patch_id}': {err}"
+                );
+            }
+        }
+    } else if let Err(err) = writeln!(stderr, "{}", render_merge_blocked_human(&body)) {
+        return anyhow!("failed to write merge_blocked summary for patch '{patch_id}': {err}");
+    }
+    anyhow!(
+        "merge blocked at layer '{layer}' for patch '{patch_id}'",
+        layer = blocked_at_layer_str(layer),
+    )
+}
+
+fn blocked_at_layer_str(layer: BlockedAtLayer) -> &'static str {
+    match layer {
+        BlockedAtLayer::Reviews => "reviews",
+        BlockedAtLayer::Mergers => "mergers",
+    }
+}
+
+fn render_eligible_principal(principal: &EligiblePrincipal) -> String {
+    match principal {
+        EligiblePrincipal::User { username } => username.clone(),
+        EligiblePrincipal::Dynamic {
+            reference,
+            resolved_to,
+        } => {
+            let raw = serde_json::to_value(reference)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            match resolved_to {
+                Some(resolved) => format!("{raw} (resolved: {resolved})"),
+                None => format!("{raw} (resolved: <unresolved>)"),
+            }
+        }
+    }
+}
+
+fn render_principals(principals: &[EligiblePrincipal]) -> String {
+    if principals.is_empty() {
+        return "<none>".to_string();
+    }
+    principals
+        .iter()
+        .map(render_eligible_principal)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_assignees(names: &[String]) -> String {
+    if names.is_empty() {
+        return "<none>".to_string();
+    }
+    names.join(", ")
+}
+
+/// Render a `MergeBlockedError` body for human consumption on stderr. Keep
+/// the format stable enough for tests / SWE scripts to look for landmarks
+/// (`merge blocked`, the patch id, the layer name, suggested assignees).
+fn render_merge_blocked_human(body: &MergeBlockedError) -> String {
+    let mut out = String::new();
+    let patch_id = &body.patch_id;
+    match body.blocked_at_layer {
+        BlockedAtLayer::Reviews => {
+            out.push_str(&format!(
+                "error: merge blocked — patch {patch_id} needs approval\n"
+            ));
+            for reason in &body.reasons {
+                if let MergeBlockedReason::MissingApprovals {
+                    group_index,
+                    label,
+                    eligible_principals,
+                    current_approvals,
+                    needed,
+                    suggested_action,
+                } = reason
+                {
+                    let label_disp = label
+                        .clone()
+                        .unwrap_or_else(|| format!("group {group_index}"));
+                    out.push('\n');
+                    out.push_str(&format!(
+                        "  Group \"{label_disp}\" ({current} of {needed} approval{plural} needed):\n",
+                        current = current_approvals.len(),
+                        plural = if *needed == 1 { "" } else { "s" },
+                    ));
+                    out.push_str(&format!(
+                        "    eligible: {}\n",
+                        render_principals(eligible_principals)
+                    ));
+                    out.push_str(&format!(
+                        "    current approvals: {}\n",
+                        render_assignees(current_approvals)
+                    ));
+                    if let SuggestedAction::FileReviewRequest {
+                        assign_to_one_of,
+                        title_hint,
+                    } = suggested_action
+                    {
+                        out.push_str(&format!(
+                            "    suggested: file a review-request issue assigned to one of [{}]\n",
+                            render_assignees(assign_to_one_of),
+                        ));
+                        if let Some(first) = assign_to_one_of.first() {
+                            out.push_str(&format!(
+                                "               (e.g. hydra issues create --title \"{title_hint}\" --assignee {first} --type review-request)\n",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        BlockedAtLayer::Mergers => {
+            out.push_str(&format!(
+                "error: merge blocked — caller is not authorized to merge patch {patch_id}\n"
+            ));
+            for reason in &body.reasons {
+                if let MergeBlockedReason::NotInMergers {
+                    actor,
+                    allowed_mergers,
+                    suggested_action,
+                } = reason
+                {
+                    out.push('\n');
+                    out.push_str(&format!("  Acting actor: {actor}\n"));
+                    out.push_str(&format!(
+                        "  Allowed mergers: {}\n",
+                        render_principals(allowed_mergers)
+                    ));
+                    if let SuggestedAction::FileMergeRequest { assign_to_one_of } = suggested_action
+                    {
+                        out.push_str(&format!(
+                            "  Suggested: file a merge-request issue assigned to one of [{}]\n",
+                            render_assignees(assign_to_one_of),
+                        ));
+                        if let Some(first) = assign_to_one_of.first() {
+                            out.push_str(&format!(
+                                "             (e.g. hydra issues create --title \"Merge {patch_id}\" --assignee {first} --type merge-request)\n",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.push_str("\nRun with --json to get the machine-readable payload.");
+    out
+}
+
 async fn merge_patch(
     client: &dyn HydraClientInterface,
     patch_id: PatchId,
     base_override: Option<String>,
+    json: bool,
 ) -> Result<()> {
     // 1. Fetch the patch and its version history.
     let patch_record = client
@@ -738,7 +934,26 @@ async fn merge_patch(
         .with_context(|| format!("failed to fetch patch '{patch_id}'"))?;
     let patch = &patch_record.patch;
 
-    // 2. Validate review status.
+    // 2. Server-side preflight. Runs the same `merge_authorization` restriction
+    //    as the write path in read-only mode, so the CLI never starts a git
+    //    push it cannot finish. A blocked response carries the same structured
+    //    `MergeBlockedError` body the SWE agent already understands.
+    match client.merge_check(&patch_id).await {
+        Ok(MergeCheckResponse::Ok(_)) => {}
+        Ok(MergeCheckResponse::Blocked(body)) => {
+            return Err(handle_merge_blocked(body, json));
+        }
+        Err(err) => {
+            return Err(err.context(format!(
+                "merge_check preflight failed for patch '{patch_id}'; refusing to merge"
+            )));
+        }
+    }
+
+    // 3. Validate review status. The server-side preflight above already
+    //    covers approval policy when the repo configures `merge_policy`, but
+    //    this legacy client-side check stays in place as belt-and-suspenders
+    //    for repos with no policy and is scheduled for removal in Phase 3.
     let versions_response = client
         .list_patch_versions(&patch_id)
         .await
@@ -1274,6 +1489,94 @@ mod tests {
                 .json_body_obj(&expected_request);
             then.status(200).json_body_obj(&response);
         })
+    }
+
+    fn mock_merge_check_ok(server: &MockServer, patch_id: PatchId) -> Mock {
+        server.mock(move |when, then| {
+            when.method(POST)
+                .path(format!("/v1/patches/{}/merge_check", patch_id.as_ref()));
+            then.status(200)
+                .json_body(serde_json::json!({ "ok": true }));
+        })
+    }
+
+    fn mock_merge_check_blocked(
+        server: &MockServer,
+        patch_id: PatchId,
+        body: hydra_common::api::v1::merge_check::MergeBlockedError,
+    ) -> Mock {
+        server.mock(move |when, then| {
+            when.method(POST)
+                .path(format!("/v1/patches/{}/merge_check", patch_id.as_ref()));
+            then.status(422).json_body_obj(&body);
+        })
+    }
+
+    fn mock_merge_check_status(server: &MockServer, patch_id: PatchId, status: u16) -> Mock {
+        server.mock(move |when, then| {
+            when.method(POST)
+                .path(format!("/v1/patches/{}/merge_check", patch_id.as_ref()));
+            then.status(status);
+        })
+    }
+
+    fn sample_reviews_blocked(
+        patch_id: &PatchId,
+    ) -> hydra_common::api::v1::merge_check::MergeBlockedError {
+        use hydra_common::api::v1::merge_check::{
+            BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError,
+            MergeBlockedReason, SuggestedAction,
+        };
+        use hydra_common::api::v1::repositories::DynamicRef;
+        MergeBlockedError {
+            code: MergeBlockedCode::MergeBlocked,
+            patch_id: patch_id.clone(),
+            blocked_at_layer: BlockedAtLayer::Reviews,
+            reasons: vec![MergeBlockedReason::MissingApprovals {
+                group_index: 0,
+                label: Some("code-review".to_string()),
+                eligible_principals: vec![
+                    EligiblePrincipal::User {
+                        username: "reviewer".to_string(),
+                    },
+                    EligiblePrincipal::Dynamic {
+                        reference: DynamicRef::ParentIssueCreator,
+                        resolved_to: Some("jayantk".to_string()),
+                    },
+                ],
+                current_approvals: vec![],
+                needed: 1,
+                suggested_action: SuggestedAction::FileReviewRequest {
+                    assign_to_one_of: vec!["reviewer".to_string(), "jayantk".to_string()],
+                    title_hint: format!("Review {patch_id} (code-review)"),
+                },
+            }],
+        }
+    }
+
+    fn sample_mergers_blocked(
+        patch_id: &PatchId,
+    ) -> hydra_common::api::v1::merge_check::MergeBlockedError {
+        use hydra_common::api::v1::merge_check::{
+            BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError,
+            MergeBlockedReason, SuggestedAction,
+        };
+        use hydra_common::api::v1::repositories::DynamicRef;
+        MergeBlockedError {
+            code: MergeBlockedCode::MergeBlocked,
+            patch_id: patch_id.clone(),
+            blocked_at_layer: BlockedAtLayer::Mergers,
+            reasons: vec![MergeBlockedReason::NotInMergers {
+                actor: "swe-session-abcd".to_string(),
+                allowed_mergers: vec![EligiblePrincipal::Dynamic {
+                    reference: DynamicRef::ParentIssueCreator,
+                    resolved_to: Some("jayantk".to_string()),
+                }],
+                suggested_action: SuggestedAction::FileMergeRequest {
+                    assign_to_one_of: vec!["jayantk".to_string()],
+                },
+            }],
+        }
     }
 
     fn mock_get_issue(server: &MockServer, issue: IssueVersionRecord) -> Mock {
@@ -2262,15 +2565,17 @@ mod tests {
         let versions_response = ListPatchVersionsResponse::new(vec![patch_record.clone()]);
 
         let get_mock = mock_get_patch(&server, patch_record);
+        let preflight_mock = mock_merge_check_ok(&server, merge_patch_id.clone());
         let versions_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
             then.status(200).json_body_obj(&versions_response);
         });
 
-        let result = merge_patch(&client, merge_patch_id, None).await;
+        let result = merge_patch(&client, merge_patch_id, None, false).await;
 
         get_mock.assert();
+        preflight_mock.assert();
         versions_mock.assert();
         let error = result.unwrap_err().to_string();
         assert!(
@@ -2374,15 +2679,17 @@ mod tests {
         let versions_response = ListPatchVersionsResponse::new(vec![version1, version2]);
 
         let get_mock = mock_get_patch(&server, current_record);
+        let preflight_mock = mock_merge_check_ok(&server, merge_patch_id.clone());
         let versions_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
             then.status(200).json_body_obj(&versions_response);
         });
 
-        let result = merge_patch(&client, merge_patch_id, None).await;
+        let result = merge_patch(&client, merge_patch_id, None, false).await;
 
         get_mock.assert();
+        preflight_mock.assert();
         versions_mock.assert();
         let error = result.unwrap_err().to_string();
         assert!(
@@ -2391,6 +2698,223 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_patch_preflight_blocked_human_short_circuits() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let merge_patch_id = patch_id("p-merge-blocked");
+        let patch_record = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            1,
+            Utc::now(),
+            Patch::new(
+                "blocked patch".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                Some("feature-branch".to_string()),
+                None,
+                Some("main".to_string()),
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+
+        let get_mock = mock_get_patch(&server, patch_record);
+        let blocked_body = sample_reviews_blocked(&merge_patch_id);
+        let preflight_mock =
+            mock_merge_check_blocked(&server, merge_patch_id.clone(), blocked_body);
+
+        // If the preflight short-circuits properly, the versions endpoint
+        // (next step in `merge_patch`) is never queried — so a strict mock
+        // with `exactly(0)` would also work. We omit the negative mock to
+        // keep this test focused; the error assertion below proves we
+        // never reached the review check.
+        let result = merge_patch(&client, merge_patch_id.clone(), None, false).await;
+
+        get_mock.assert();
+        preflight_mock.assert();
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("merge blocked"),
+            "expected 'merge blocked' summary, got: {error}"
+        );
+        assert!(
+            error.contains(merge_patch_id.as_ref()),
+            "expected the patch id in the error, got: {error}"
+        );
+        assert!(
+            error.contains("reviews"),
+            "expected the blocked layer name in the error, got: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_patch_preflight_network_error_short_circuits() -> Result<()> {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let merge_patch_id = patch_id("p-merge-5xx");
+        let patch_record = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            1,
+            Utc::now(),
+            Patch::new(
+                "5xx patch".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                Some("feature-branch".to_string()),
+                None,
+                Some("main".to_string()),
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+
+        let get_mock = mock_get_patch(&server, patch_record);
+        let preflight_mock = mock_merge_check_status(&server, merge_patch_id.clone(), 500);
+
+        let result = merge_patch(&client, merge_patch_id.clone(), None, false).await;
+
+        get_mock.assert();
+        preflight_mock.assert();
+        let error = result.unwrap_err();
+        let chain = format!("{error:#}");
+        assert!(
+            chain.contains("merge_check"),
+            "expected preflight failure context in error chain, got: {chain}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle_merge_blocked_human_writes_summary_to_stderr() {
+        let pid = patch_id("p-render-reviews");
+        let body = sample_reviews_blocked(&pid);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let err = handle_merge_blocked_with_writers(body, false, &mut stdout, &mut stderr);
+
+        assert!(
+            stdout.is_empty(),
+            "stdout must be empty in the human path, got: {}",
+            String::from_utf8_lossy(&stdout)
+        );
+
+        let stderr_text = String::from_utf8(stderr).unwrap();
+        assert!(
+            stderr_text.contains("merge blocked"),
+            "stderr must include 'merge blocked', got: {stderr_text}"
+        );
+        assert!(
+            stderr_text.contains(pid.as_ref()),
+            "stderr must include patch id, got: {stderr_text}"
+        );
+        assert!(
+            stderr_text.contains("code-review"),
+            "stderr must include the group label, got: {stderr_text}"
+        );
+        assert!(
+            stderr_text.contains("reviewer"),
+            "stderr must list eligible reviewer, got: {stderr_text}"
+        );
+        assert!(
+            stderr_text.contains("jayantk"),
+            "stderr must show the resolved dynamic ref, got: {stderr_text}"
+        );
+        assert!(
+            stderr_text.contains("Run with --json"),
+            "stderr must include the --json hint, got: {stderr_text}"
+        );
+
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("reviews"),
+            "returned error must name the blocked layer, got: {err_text}"
+        );
+    }
+
+    #[test]
+    fn handle_merge_blocked_json_writes_verbatim_to_stdout() {
+        let pid = patch_id("p-render-json");
+        let body = sample_reviews_blocked(&pid);
+        let expected = serde_json::to_string(&body).unwrap();
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let _err = handle_merge_blocked_with_writers(body, true, &mut stdout, &mut stderr);
+
+        assert!(
+            stderr.is_empty(),
+            "stderr must be empty in the --json path, got: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+
+        let stdout_text = String::from_utf8(stdout).unwrap();
+        // Exactly one trailing newline; the line itself is the verbatim JSON.
+        assert_eq!(stdout_text, format!("{expected}\n"));
+    }
+
+    #[test]
+    fn handle_merge_blocked_human_renders_mergers_layer() {
+        let pid = patch_id("p-render-mergers");
+        let body = sample_mergers_blocked(&pid);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let _err = handle_merge_blocked_with_writers(body, false, &mut stdout, &mut stderr);
+
+        let stderr_text = String::from_utf8(stderr).unwrap();
+        assert!(stderr_text.contains("not authorized to merge"));
+        assert!(stderr_text.contains(pid.as_ref()));
+        assert!(stderr_text.contains("swe-session-abcd"));
+        assert!(stderr_text.contains("jayantk"));
+        assert!(stderr_text.contains("merge-request"));
+    }
+
+    #[test]
+    fn merge_clap_definition_exposes_json_flag() {
+        use clap::Parser;
+
+        #[derive(Parser, Debug)]
+        struct Cli {
+            #[command(subcommand)]
+            command: PatchesCommand,
+        }
+
+        let parsed = Cli::try_parse_from(["cli", "merge", "p-some", "--json"])
+            .expect("--json must be accepted by the merge subcommand");
+        match parsed.command {
+            PatchesCommand::Merge { json, .. } => assert!(json, "expected json=true after --json"),
+            other => panic!("expected merge variant, got: {other:?}"),
+        }
+
+        let parsed = Cli::try_parse_from(["cli", "merge", "p-some"])
+            .expect("merge must still parse without --json");
+        match parsed.command {
+            PatchesCommand::Merge { json, .. } => assert!(!json, "expected json=false by default"),
+            other => panic!("expected merge variant, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
