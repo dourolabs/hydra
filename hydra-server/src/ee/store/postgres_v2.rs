@@ -9776,4 +9776,118 @@ mod tests {
             .unwrap();
         assert!(empty.is_empty());
     }
+
+    // ---- Session-shape column dual-write round-trip (Phase D step 12) ----
+    //
+    // These tests cover the postgres `INSERT` path added in the same migration
+    // as `mount_spec`, `agent_config`, `mode` (see
+    // `20260523020000_add_session_shape_columns.sql`). The sqlite analogues
+    // live in `store/sqlite_store.rs::tests::dual_write_*`; this trio
+    // exercises the same shape across the postgres backend.
+
+    /// Fetches the three dual-written JSONB columns for a session id.
+    async fn fetch_postgres_session_shape(
+        store: &PostgresStoreV2,
+        id: &SessionId,
+    ) -> (Option<Value>, Option<Value>, Option<Value>) {
+        sqlx::query_as::<_, (Option<Value>, Option<Value>, Option<Value>)>(&format!(
+            "SELECT mount_spec, agent_config, mode \
+             FROM {TABLE_TASKS_V2} WHERE id = $1"
+        ))
+        .bind(id.as_ref())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn dual_write_headless_session_populates_mode_and_mount_spec_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (sid, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let (mount_spec, agent_config, mode) = fetch_postgres_session_shape(&store, &sid).await;
+
+        let mode = mode.expect("mode is non-null");
+        assert_eq!(mode["type"], "headless");
+        assert_eq!(mode["prompt"], "prompt");
+
+        let mount_spec = mount_spec.expect("mount_spec is non-null");
+        assert_eq!(mount_spec["working_dir"], "repo");
+        let mounts = mount_spec["mounts"].as_array().expect("mounts is an array");
+        assert_eq!(
+            mounts.len(),
+            2,
+            "headless dual-write emits Bundle + Documents"
+        );
+        assert_eq!(mounts[0]["type"], "bundle");
+        assert_eq!(mounts[0]["target"], "repo");
+        assert_eq!(mounts[0]["session_id"], sid.as_ref());
+        assert_eq!(mounts[0]["bundle"]["type"], "none");
+        assert_eq!(mounts[1]["type"], "documents");
+        assert_eq!(mounts[1]["target"], "documents");
+
+        let agent_config = agent_config.expect("agent_config is non-null");
+        assert!(agent_config["agent_name"].is_null());
+        assert!(agent_config["system_prompt"].is_null());
+        // sample_session() leaves model and mcp_config as None.
+        assert!(agent_config["model"].is_null());
+        assert!(agent_config["mcp_config"].is_null());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn dual_write_interactive_session_populates_mode_with_conversation_id_v2(
+        pool: PgStorePool,
+    ) {
+        let store = PostgresStoreV2::new(pool);
+        let (conv_id, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv_id.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let (_, _, mode) = fetch_postgres_session_shape(&store, &sid).await;
+        let mode = mode.expect("mode is non-null");
+        assert_eq!(mode["type"], "interactive");
+        assert_eq!(mode["conversation_id"], conv_id.as_ref());
+        assert_eq!(mode["idle_timeout_secs"], 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let mut session = sample_session();
+        session.context = BundleSpec::GitRepository {
+            url: "https://github.com/example/repo".to_string(),
+            rev: "main".to_string(),
+        };
+        session.model = Some("gpt-4o".to_string());
+
+        let (sid, _) = store
+            .add_session(session, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let (mount_spec, agent_config, _) = fetch_postgres_session_shape(&store, &sid).await;
+        let mount_spec = mount_spec.expect("mount_spec is non-null");
+        let bundle = &mount_spec["mounts"][0]["bundle"];
+        assert_eq!(bundle["type"], "git_repository");
+        assert_eq!(bundle["url"], "https://github.com/example/repo");
+        assert_eq!(bundle["rev"], "main");
+
+        let agent_config = agent_config.expect("agent_config is non-null");
+        assert_eq!(agent_config["model"], "gpt-4o");
+    }
 }

@@ -235,6 +235,18 @@ pub(crate) fn dual_write_agent_config_json(
 /// idle_timeout_secs }` otherwise. `idle_timeout_secs` is 0 because the
 /// timeout lives in server config, not on Session; PR-3 picks it up at
 /// runtime.
+///
+/// Note on divergence from design §6 step 12. The design wording keys the
+/// rule on the legacy `interactive` field — "Headless if `interactive` is
+/// None, Interactive otherwise." We key on `Session::conversation_id()`
+/// instead because the new `SessionMode::Interactive { conversation_id,
+/// idle_timeout_secs }` variant requires a non-null `conversation_id` (see
+/// design §1.3): the legacy edge case `interactive=Some(...) AND
+/// conversation_id=None` (constructible today via `request.interactive=true`
+/// with no `conversation_id`, see `app/sessions.rs`) cannot be represented
+/// as `SessionMode::Interactive` in the new shape, so we collapse it to
+/// `Headless { prompt }`. The migration's `mode` backfill uses the same
+/// rule (see `20260523020000_add_session_shape_columns.sql`).
 pub(crate) fn dual_write_mode_json(session: &Session) -> serde_json::Value {
     match session.conversation_id() {
         Some(conversation_id) => serde_json::json!({

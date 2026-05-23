@@ -67,6 +67,15 @@ WHERE agent_config IS NULL;
 -- `idle_timeout_secs` defaults to 0 for historical rows because the value was
 -- never persisted per-row (it lives in server config); PR-3 picks up the
 -- current config value at runtime.
+--
+-- Note on divergence from design §6 step 12. The design wording phrases the
+-- rule in terms of the legacy `interactive` column: "Headless if `interactive`
+-- is None, Interactive otherwise." We key on `conversation_id IS NULL` instead
+-- because the new `SessionMode::Interactive { conversation_id, idle_timeout_secs }`
+-- variant requires a non-null `conversation_id` (see design §1.3) — there is
+-- no way to represent the legacy edge case `interactive=true AND
+-- conversation_id IS NULL` in the new shape, so those rows collapse to
+-- Headless. The same rule lives in `store/mod.rs::dual_write_mode_json`.
 --------------------------------------------------------------------------------
 UPDATE metis.tasks_v2
 SET mode = CASE
