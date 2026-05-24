@@ -32,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_TEMPLATE="${SCRIPT_DIR}/config/test-config.yaml"
 CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
+MERGE_POLICY_FILE="${SCRIPT_DIR}/config/merge-policy.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
@@ -190,6 +191,20 @@ echo "    Server is healthy (waited ${WAITED}s)."
 echo "==> Registering dourolabs/hydra-test-fixture repository..."
 env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos create dourolabs/hydra-test-fixture https://github.com/dourolabs/hydra-test-fixture.git
 echo "    Repository registered."
+
+# --------------------------------------------------------------------------
+# 6b. Apply the merge policy fixture so e2e exercises the real
+#     merge-time-constraints workflow (SWE dry-runs the merge, sees
+#     `missing_approvals` from the reviewer agent, files a review-request,
+#     reviewer approves, SWE retries the merge).
+# --------------------------------------------------------------------------
+if [[ ! -f "${MERGE_POLICY_FILE}" ]]; then
+  echo "ERROR: Merge policy fixture not found at ${MERGE_POLICY_FILE}" >&2
+  exit 1
+fi
+echo "==> Applying merge policy from ${MERGE_POLICY_FILE}..."
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos update dourolabs/hydra-test-fixture --merge-policy-file "${MERGE_POLICY_FILE}"
+echo "    Merge policy applied."
 
 # --------------------------------------------------------------------------
 # Detach the server and exit cleanly. The server keeps running in the
