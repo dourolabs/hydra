@@ -43,7 +43,7 @@ function promptOf(session: Session): string {
   return legacy.prompt ?? "";
 }
 
-function conversationIdOf(session: Session): string | null {
+export function conversationIdOf(session: Session): string | null {
   const legacy = session as LegacySession;
   if (session.mode?.type === "interactive") return session.mode.conversation_id;
   return legacy.interactive?.conversation_id ?? null;
@@ -78,8 +78,58 @@ export function setSessionEvents(
   sessionEvents.set(sessionId, [...events]);
 }
 
+export function appendSessionEvent(
+  sessionId: string,
+  event: SessionEvent,
+): void {
+  const existing = sessionEvents.get(sessionId);
+  if (existing) {
+    existing.push(event);
+  } else {
+    sessionEvents.set(sessionId, [event]);
+  }
+}
+
 function getSessionEvents(sessionId: string): SessionEvent[] {
   return sessionEvents.get(sessionId) ?? [];
+}
+
+/**
+ * Spawn a fresh interactive session linked to `conversationId`. Mirrors the
+ * real-backend resume-on-send behaviour: when a conversation has no live
+ * session, the server materializes one and writes the user message to it.
+ * Returns the new session id.
+ */
+export function createInteractiveSessionForConversation(
+  store: Store,
+  conversationId: string,
+  now: string,
+): string {
+  const id = generateId("session");
+  const task: Session = {
+    mode: { type: "interactive", conversation_id: conversationId },
+    agent_config: {},
+    mount_spec: {
+      working_dir: "repo",
+      mounts: [
+        {
+          type: "bundle",
+          target: "repo",
+          bundle: { type: "none" },
+          session_id: id,
+          issue_branch_id: null,
+        },
+        { type: "documents", target: "documents" },
+      ],
+    },
+    context: { type: "none" },
+    creator: DEV_USERNAME,
+    status: "running" as Status,
+    creation_time: now,
+    start_time: now,
+  };
+  store.create<Session>(COLLECTION, id, task, SSE_PREFIX);
+  return id;
 }
 
 function toVersionRecord(
