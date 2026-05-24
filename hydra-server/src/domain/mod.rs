@@ -4,7 +4,6 @@ pub mod conversations;
 pub mod documents;
 pub mod issues;
 pub mod labels;
-pub mod notifications;
 pub mod patches;
 pub mod repositories;
 pub mod secrets;

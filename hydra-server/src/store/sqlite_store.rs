@@ -8,7 +8,6 @@ use crate::domain::{
         TodoItem,
     },
     labels::Label,
-    notifications::Notification,
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     secrets::SecretRef,
     users::{User, Username},
@@ -23,10 +22,9 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
-    api::v1::notifications::ListNotificationsQuery,
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -55,7 +53,6 @@ const TABLE_TASKS_V2: &str = "tasks_v2";
 const TABLE_AGENTS: &str = "agents";
 const TABLE_LABELS: &str = "labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
-const TABLE_NOTIFICATIONS: &str = "notifications";
 const TABLE_AUTH_TOKENS: &str = "auth_tokens";
 const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
@@ -84,7 +81,6 @@ struct RowCountCache {
     patches: OnceCell<AtomicI64>,
     documents: OnceCell<AtomicI64>,
     tasks: OnceCell<AtomicI64>,
-    notifications: OnceCell<AtomicI64>,
     labels: OnceCell<AtomicI64>,
     conversations: OnceCell<AtomicI64>,
 }
@@ -378,22 +374,6 @@ struct LabelRow {
     updated_at: String,
 }
 
-#[derive(sqlx::FromRow)]
-struct NotificationRow {
-    id: String,
-    recipient: String,
-    source_actor: Option<String>,
-    object_kind: String,
-    object_id: String,
-    object_version: i64,
-    event_type: String,
-    summary: String,
-    source_issue_id: Option<String>,
-    policy: String,
-    is_read: bool,
-    created_at: String,
-}
-
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     let created_at = parse_sqlite_timestamp(&row.created_at)?;
     let updated_at = parse_sqlite_timestamp(&row.updated_at)?;
@@ -477,25 +457,7 @@ impl SqliteStore {
         Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
     }
 
-    async fn cached_count_all(
-        &self,
-        cell: &OnceCell<AtomicI64>,
-        table: &str,
-    ) -> Result<u64, StoreError> {
-        let atomic = cell
-            .get_or_try_init(|| async {
-                let sql = format!("SELECT COUNT(*) FROM {table}");
-                let count = sqlx::query_scalar::<_, i64>(&sql)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                Ok::<_, StoreError>(AtomicI64::new(count.max(0)))
-            })
-            .await?;
-        Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
-    }
-
-    // Like `cached_count_all`, but seeds the cell with `WHERE deleted = 0`
+    // Like `cached_count_latest`, but seeds the cell with `WHERE deleted = 0`
     // so the cache tracks the live row count. `add_label` increments it and
     // `delete_label` decrements it to keep it consistent with the soft-delete
     // semantics; soft-deleted rows do not inflate `next_label_id`'s suffix.
@@ -549,14 +511,6 @@ impl SqliteStore {
         Ok(SessionId::generate(len).expect("length within bounds"))
     }
 
-    async fn next_notification_id(&self) -> Result<NotificationId, StoreError> {
-        let count = self
-            .cached_count_all(&self.row_counts.notifications, TABLE_NOTIFICATIONS)
-            .await?;
-        let len = random_len_for_count(count);
-        Ok(NotificationId::generate(len).expect("length within bounds"))
-    }
-
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
         let count = self
             .cached_count_undeleted(&self.row_counts.labels, TABLE_LABELS)
@@ -580,7 +534,6 @@ impl SqliteStore {
             TABLE_PATCHES_V2 => &self.row_counts.patches,
             TABLE_DOCUMENTS_V2 => &self.row_counts.documents,
             TABLE_TASKS_V2 => &self.row_counts.tasks,
-            TABLE_NOTIFICATIONS => &self.row_counts.notifications,
             TABLE_LABELS => &self.row_counts.labels,
             TABLE_CONVERSATIONS => &self.row_counts.conversations,
             _ => panic!("unknown table for row-count cache: {table}"),
@@ -1707,107 +1660,6 @@ impl SqliteStore {
             versioned.item.dependencies = deps_map.remove(&id_str).unwrap_or_default();
             versioned.item.patches = patches_map.remove(&id_str).unwrap_or_default();
         }
-
-        Ok(())
-    }
-
-    // ---- Notification helpers ----
-
-    fn row_to_notification(&self, row: &NotificationRow) -> Result<Notification, StoreError> {
-        let recipient = Actor::parse_name(&row.recipient).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid recipient '{}' stored for notification '{}'",
-                row.recipient, row.id
-            ))
-        })?;
-        let source_actor = row
-            .source_actor
-            .as_deref()
-            .map(|s| {
-                Actor::parse_name(s).map_err(|_| {
-                    StoreError::Internal(format!(
-                        "invalid source_actor '{}' stored for notification '{}'",
-                        s, row.id
-                    ))
-                })
-            })
-            .transpose()?;
-        let object_id = HydraId::from_str(&row.object_id).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid object_id '{}' stored for notification '{}'",
-                row.object_id, row.id
-            ))
-        })?;
-        let source_issue_id = row
-            .source_issue_id
-            .as_deref()
-            .map(|s| {
-                IssueId::from_str(s).map_err(|_| {
-                    StoreError::Internal(format!(
-                        "invalid source_issue_id '{}' stored for notification '{}'",
-                        s, row.id
-                    ))
-                })
-            })
-            .transpose()?;
-        let object_version = VersionNumber::try_from(row.object_version).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid object_version stored for notification '{}'",
-                row.id
-            ))
-        })?;
-        let created_at = parse_sqlite_timestamp(&row.created_at)?;
-
-        Ok(Notification {
-            recipient,
-            source_actor,
-            object_kind: row.object_kind.clone(),
-            object_id,
-            object_version,
-            event_type: row.event_type.clone(),
-            summary: row.summary.clone(),
-            source_issue_id,
-            policy: row.policy.clone(),
-            is_read: row.is_read,
-            created_at,
-        })
-    }
-
-    async fn insert_notification_row(
-        &self,
-        id: &NotificationId,
-        notification: &Notification,
-    ) -> Result<(), StoreError> {
-        let recipient_name = notification.recipient.to_string();
-        let source_actor_name = notification.source_actor.as_ref().map(|a| a.to_string());
-        let object_id_str = notification.object_id.to_string();
-        let source_issue_str = notification.source_issue_id.as_ref().map(|i| i.to_string());
-        let object_version = i64::try_from(notification.object_version).map_err(|_| {
-            StoreError::Internal(format!("object_version overflow for notification '{id}'"))
-        })?;
-        let created_at = notification.created_at.to_rfc3339();
-
-        sqlx::query(&format!(
-            "INSERT INTO {TABLE_NOTIFICATIONS} \
-             (id, recipient, source_actor, object_kind, object_id, object_version, \
-              event_type, summary, source_issue_id, policy, is_read, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
-        ))
-        .bind(id.as_ref())
-        .bind(&recipient_name)
-        .bind(&source_actor_name)
-        .bind(&notification.object_kind)
-        .bind(&object_id_str)
-        .bind(object_version)
-        .bind(&notification.event_type)
-        .bind(&notification.summary)
-        .bind(&source_issue_str)
-        .bind(&notification.policy)
-        .bind(notification.is_read)
-        .bind(&created_at)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
 
         Ok(())
     }
@@ -3489,94 +3341,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(users)
     }
 
-    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
-        let sql = format!(
-            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
-             event_type, summary, source_issue_id, policy, is_read, created_at \
-             FROM {TABLE_NOTIFICATIONS} WHERE id = ?1"
-        );
-        let row = sqlx::query_as::<_, NotificationRow>(&sql)
-            .bind(id.as_ref())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?
-            .ok_or_else(|| StoreError::NotificationNotFound(id.clone()))?;
-        self.row_to_notification(&row)
-    }
-
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
-        let limit = i64::from(query.limit.unwrap_or(50));
-        let mut conditions = Vec::new();
-        let mut bind_values: Vec<String> = Vec::new();
-
-        if let Some(ref recipient) = query.recipient {
-            conditions.push(format!("recipient = ?{}", bind_values.len() + 1));
-            bind_values.push(recipient.clone());
-        }
-        if let Some(is_read) = query.is_read {
-            conditions.push(format!("is_read = ?{}", bind_values.len() + 1));
-            bind_values.push(if is_read {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            });
-        }
-        if let Some(before) = query.before {
-            conditions.push(format!("created_at < ?{}", bind_values.len() + 1));
-            bind_values.push(before.to_rfc3339());
-        }
-        if let Some(after) = query.after {
-            conditions.push(format!("created_at > ?{}", bind_values.len() + 1));
-            bind_values.push(after.to_rfc3339());
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let limit_param = bind_values.len() + 1;
-        let sql = format!(
-            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
-             event_type, summary, source_issue_id, policy, is_read, created_at \
-             FROM {TABLE_NOTIFICATIONS}{where_clause} \
-             ORDER BY created_at DESC LIMIT ?{limit_param}"
-        );
-
-        let mut qb = sqlx::query_as::<_, NotificationRow>(&sql);
-        for val in &bind_values {
-            qb = qb.bind(val);
-        }
-        qb = qb.bind(limit);
-
-        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
-        let mut notifications = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let notification_id = row.id.parse::<NotificationId>().map_err(|err| {
-                StoreError::Internal(format!("invalid notification id stored in database: {err}"))
-            })?;
-            let notification = self.row_to_notification(row)?;
-            notifications.push((notification_id, notification));
-        }
-        Ok(notifications)
-    }
-
-    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
-        let recipient_name = recipient.to_string();
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS} WHERE recipient = ?1 AND is_read = 0"
-        ))
-        .bind(&recipient_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(u64::try_from(count).unwrap_or(0))
-    }
-
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
@@ -4833,61 +4597,6 @@ impl Store for SqliteStore {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
-    }
-
-    async fn insert_notification(
-        &self,
-        notification: Notification,
-    ) -> Result<NotificationId, StoreError> {
-        let id = self.next_notification_id().await?;
-        self.insert_notification_row(&id, &notification).await?;
-        bump_count(&self.row_counts.notifications);
-        Ok(id)
-    }
-
-    async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
-        let result = sqlx::query(&format!(
-            "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 WHERE id = ?1"
-        ))
-        .bind(id.as_ref())
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if result.rows_affected() == 0 {
-            return Err(StoreError::NotificationNotFound(id.clone()));
-        }
-        Ok(())
-    }
-
-    async fn mark_all_notifications_read(
-        &self,
-        recipient: &ActorId,
-        before: Option<DateTime<Utc>>,
-    ) -> Result<u64, StoreError> {
-        let recipient_name = recipient.to_string();
-        let result = if let Some(before_ts) = before {
-            let before_str = before_ts.to_rfc3339();
-            sqlx::query(&format!(
-                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 \
-                 WHERE recipient = ?1 AND is_read = 0 AND created_at < ?2"
-            ))
-            .bind(&recipient_name)
-            .bind(&before_str)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?
-        } else {
-            sqlx::query(&format!(
-                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 \
-                 WHERE recipient = ?1 AND is_read = 0"
-            ))
-            .bind(&recipient_name)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?
-        };
-        Ok(result.rows_affected())
     }
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
@@ -8592,205 +8301,6 @@ mod tests {
         let store = create_test_store().await;
         let result = store.get_labels_for_objects(&[]).await.unwrap();
         assert!(result.is_empty());
-    }
-
-    // ---- Notification tests ----
-
-    fn sample_notification(recipient: &ActorId) -> Notification {
-        Notification {
-            recipient: recipient.clone(),
-            source_actor: None,
-            object_kind: "issue".to_string(),
-            object_id: IssueId::new().into(),
-            object_version: 1,
-            event_type: "created".to_string(),
-            summary: "A test notification".to_string(),
-            source_issue_id: None,
-            policy: "walk_up".to_string(),
-            is_read: false,
-            created_at: Utc::now(),
-        }
-    }
-
-    #[tokio::test]
-    async fn insert_and_get_notification() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-        let notif = sample_notification(&recipient);
-
-        let id = store.insert_notification(notif.clone()).await.unwrap();
-        let fetched = store.get_notification(&id).await.unwrap();
-
-        assert_eq!(fetched.recipient, notif.recipient);
-        assert_eq!(fetched.object_kind, "issue");
-        assert_eq!(fetched.event_type, "created");
-        assert_eq!(fetched.summary, "A test notification");
-        assert!(!fetched.is_read);
-    }
-
-    #[tokio::test]
-    async fn get_notification_not_found() {
-        let store = create_test_store().await;
-        let id = NotificationId::from_str("nf-nonexistent").unwrap();
-        let err = store.get_notification(&id).await.unwrap_err();
-        assert!(matches!(err, StoreError::NotificationNotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn list_notifications_returns_inserted() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        let id = store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-
-        let mut query = ListNotificationsQuery::default();
-        query.recipient = Some("u-alice".to_string());
-        let results = store.list_notifications(&query).await.unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, id);
-    }
-
-    #[tokio::test]
-    async fn list_notifications_filters_by_is_read() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        let id1 = store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-        store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-
-        store.mark_notification_read(&id1).await.unwrap();
-
-        let mut query = ListNotificationsQuery::default();
-        query.recipient = Some("u-alice".to_string());
-        query.is_read = Some(false);
-        let unread = store.list_notifications(&query).await.unwrap();
-        assert_eq!(unread.len(), 1);
-
-        let mut query = ListNotificationsQuery::default();
-        query.recipient = Some("u-alice".to_string());
-        query.is_read = Some(true);
-        let read = store.list_notifications(&query).await.unwrap();
-        assert_eq!(read.len(), 1);
-        assert_eq!(read[0].0, id1);
-    }
-
-    #[tokio::test]
-    async fn count_unread_notifications_returns_correct_count() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        assert_eq!(
-            store.count_unread_notifications(&recipient).await.unwrap(),
-            0
-        );
-
-        let id1 = store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-        store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            store.count_unread_notifications(&recipient).await.unwrap(),
-            2
-        );
-
-        store.mark_notification_read(&id1).await.unwrap();
-        assert_eq!(
-            store.count_unread_notifications(&recipient).await.unwrap(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn mark_notification_read_not_found() {
-        let store = create_test_store().await;
-        let id = NotificationId::from_str("nf-nonexistent").unwrap();
-        let err = store.mark_notification_read(&id).await.unwrap_err();
-        assert!(matches!(err, StoreError::NotificationNotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn mark_all_notifications_read_marks_all() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-        store
-            .insert_notification(sample_notification(&recipient))
-            .await
-            .unwrap();
-
-        let count = store
-            .mark_all_notifications_read(&recipient, None)
-            .await
-            .unwrap();
-        assert_eq!(count, 2);
-
-        assert_eq!(
-            store.count_unread_notifications(&recipient).await.unwrap(),
-            0
-        );
-    }
-
-    #[tokio::test]
-    async fn mark_all_notifications_read_respects_before() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        let mut older = sample_notification(&recipient);
-        older.created_at = Utc::now() - Duration::hours(2);
-        store.insert_notification(older).await.unwrap();
-
-        let mut newer = sample_notification(&recipient);
-        newer.created_at = Utc::now() + Duration::hours(2);
-        store.insert_notification(newer).await.unwrap();
-
-        let cutoff = Utc::now();
-        let count = store
-            .mark_all_notifications_read(&recipient, Some(cutoff))
-            .await
-            .unwrap();
-        assert_eq!(count, 1);
-        assert_eq!(
-            store.count_unread_notifications(&recipient).await.unwrap(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn list_notifications_respects_limit() {
-        let store = create_test_store().await;
-        let recipient = ActorId::from_str("alice").unwrap();
-
-        for _ in 0..5 {
-            store
-                .insert_notification(sample_notification(&recipient))
-                .await
-                .unwrap();
-        }
-
-        let mut query = ListNotificationsQuery::default();
-        query.recipient = Some("u-alice".to_string());
-        query.limit = Some(3);
-        let results = store.list_notifications(&query).await.unwrap();
-        assert_eq!(results.len(), 3);
     }
 
     // ---- Auth token tests ----

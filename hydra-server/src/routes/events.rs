@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, channel::mpsc};
 use hydra_common::{
-    LabelId, NotificationId,
+    LabelId,
     api::v1::{
         documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
@@ -180,7 +180,6 @@ struct EventFilter {
     patch_ids: Option<Vec<PatchId>>,
     label_ids: Option<Vec<LabelId>>,
     document_ids: Option<Vec<DocumentId>>,
-    notification_ids: Option<Vec<NotificationId>>,
 }
 
 impl EventFilter {
@@ -245,17 +244,6 @@ impl EventFilter {
             .transpose()
             .map_err(|e| format!("invalid document_ids: {e}"))?;
 
-        let notification_ids = query
-            .notification_ids
-            .as_ref()
-            .map(|s| {
-                s.split(',')
-                    .map(|t| t.trim().parse::<NotificationId>())
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .transpose()
-            .map_err(|e| format!("invalid notification_ids: {e}"))?;
-
         Ok(Self {
             entity_types,
             issue_ids,
@@ -263,7 +251,6 @@ impl EventFilter {
             patch_ids,
             label_ids,
             document_ids,
-            notification_ids,
         })
     }
 
@@ -314,13 +301,6 @@ impl EventFilter {
                     }
                 }
             }
-            EntityId::Notification(id) => {
-                if let Some(ids) = &self.notification_ids {
-                    if !ids.contains(id) {
-                        return false;
-                    }
-                }
-            }
             EntityId::Conversation(_) => {
                 // No ID filter for conversations yet
             }
@@ -338,7 +318,6 @@ enum EntityId<'a> {
     Patch(&'a PatchId),
     Label(&'a LabelId),
     Document(&'a DocumentId),
-    Notification(&'a NotificationId),
     #[allow(dead_code)]
     Conversation(&'a hydra_common::ConversationId),
 }
@@ -368,10 +347,6 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::DocumentDeleted { document_id, .. } => {
             ("documents", EntityId::Document(document_id))
         }
-
-        ServerEvent::NotificationCreated {
-            notification_id, ..
-        } => ("notifications", EntityId::Notification(notification_id)),
 
         ServerEvent::ConversationCreated {
             conversation_id, ..
@@ -520,16 +495,6 @@ async fn serialize_entity(
                 new.updated_at,
             );
             serde_json::to_value(record).ok()?
-        }
-        MutationPayload::Notification { new, .. } => {
-            let api_notification: hydra_common::api::v1::notifications::Notification =
-                new.clone().into();
-            let notification_id: NotificationId = entity_id.parse().ok()?;
-            let response = hydra_common::api::v1::notifications::NotificationResponse::new(
-                notification_id,
-                api_notification,
-            );
-            serde_json::to_value(response).ok()?
         }
         MutationPayload::Conversation { new, .. } => {
             let conversation_id: hydra_common::ConversationId = entity_id.parse().ok()?;
@@ -763,20 +728,6 @@ async fn server_event_to_sse(
             SseEventType::LabelDeleted,
             "label",
             label_id.to_string(),
-            *version,
-            *timestamp,
-            payload,
-        ),
-        ServerEvent::NotificationCreated {
-            notification_id,
-            version,
-            timestamp,
-            payload,
-            ..
-        } => (
-            SseEventType::NotificationCreated,
-            "notification",
-            notification_id.to_string(),
             *version,
             *timestamp,
             payload,
@@ -1212,222 +1163,6 @@ mod tests {
             task_obj.get("start_time").is_none(),
             "start_time should be absent for a created (not yet running) job"
         );
-    }
-
-    fn dummy_notification() -> crate::domain::notifications::Notification {
-        crate::domain::notifications::Notification::new(
-            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
-            Some(crate::domain::actors::ActorId::Issue(
-                "i-abcdef".parse::<IssueId>().unwrap(),
-            )),
-            "issue".to_string(),
-            "i-abcdef".parse::<IssueId>().unwrap().into(),
-            1,
-            "updated".to_string(),
-            "Issue i-abcdef status changed from open to in-progress".to_string(),
-            None,
-            "walk_up".to_string(),
-        )
-    }
-
-    #[tokio::test]
-    async fn server_event_to_sse_notification_created() {
-        let state = test_app_state();
-        let notification_id = hydra_common::NotificationId::new();
-        let notification = dummy_notification();
-        let timestamp = Utc::now();
-
-        let payload = Arc::new(MutationPayload::Notification {
-            old: None,
-            new: notification,
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::NotificationCreated {
-            seq: 42,
-            notification_id: notification_id.clone(),
-            version: 1,
-            timestamp,
-            payload,
-        };
-
-        let (event_type, data) = server_event_to_sse(&event, &state).await;
-
-        assert_eq!(event_type, SseEventType::NotificationCreated);
-        assert_eq!(data.entity_type, "notification");
-        assert_eq!(data.entity_id, notification_id.to_string());
-        assert_eq!(data.version, 1);
-
-        let entity = data.entity.expect("entity should be present");
-        let obj = entity.as_object().expect("entity should be a JSON object");
-
-        // Verify it has the shape of a NotificationResponse.
-        assert_eq!(
-            obj.get("notification_id").unwrap().as_str().unwrap(),
-            notification_id.to_string()
-        );
-        let notif_obj = obj
-            .get("notification")
-            .expect("should contain notification field");
-        assert_eq!(
-            notif_obj.get("object_kind").unwrap().as_str().unwrap(),
-            "issue"
-        );
-        assert_eq!(
-            notif_obj.get("summary").unwrap().as_str().unwrap(),
-            "Issue i-abcdef status changed from open to in-progress"
-        );
-    }
-
-    #[test]
-    fn event_entity_info_notification_created() {
-        let notification_id = hydra_common::NotificationId::new();
-        let notification = dummy_notification();
-
-        let payload = Arc::new(MutationPayload::Notification {
-            old: None,
-            new: notification,
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::NotificationCreated {
-            seq: 1,
-            notification_id: notification_id.clone(),
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        let (entity_type, entity_id) = event_entity_info(&event);
-        assert_eq!(entity_type, "notifications");
-        match entity_id {
-            EntityId::Notification(id) => assert_eq!(*id, notification_id),
-            other => panic!("expected Notification, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn event_filter_notifications_entity_type() {
-        let notification_id = hydra_common::NotificationId::new();
-        let notification = dummy_notification();
-
-        let payload = Arc::new(MutationPayload::Notification {
-            old: None,
-            new: notification,
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::NotificationCreated {
-            seq: 1,
-            notification_id,
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        // Default filter (no types specified) should match notifications.
-        let default_filter = EventFilter::from_query(&EventsQuery::default()).unwrap();
-        assert!(default_filter.matches(&event));
-
-        // Filter with types=notifications should match.
-        let notif_query = EventsQuery {
-            types: Some("notifications".to_string()),
-            ..Default::default()
-        };
-        let notif_filter = EventFilter::from_query(&notif_query).unwrap();
-        assert!(notif_filter.matches(&event));
-
-        // Filter with types=issues should NOT match notifications.
-        let issue_query = EventsQuery {
-            types: Some("issues".to_string()),
-            ..Default::default()
-        };
-        let issue_filter = EventFilter::from_query(&issue_query).unwrap();
-        assert!(!issue_filter.matches(&event));
-    }
-
-    fn make_notification_event(recipient: crate::domain::actors::ActorId) -> ServerEvent {
-        let notification = crate::domain::notifications::Notification::new(
-            recipient,
-            Some(crate::domain::actors::ActorId::Issue(
-                "i-abcdef".parse::<IssueId>().unwrap(),
-            )),
-            "issue".to_string(),
-            "i-abcdef".parse::<IssueId>().unwrap().into(),
-            1,
-            "updated".to_string(),
-            "something happened".to_string(),
-            None,
-            "walk_up".to_string(),
-        );
-        let payload = Arc::new(MutationPayload::Notification {
-            old: None,
-            new: notification,
-            actor: ActorRef::test(),
-        });
-        ServerEvent::NotificationCreated {
-            seq: 1,
-            notification_id: hydra_common::NotificationId::new(),
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        }
-    }
-
-    #[test]
-    fn notification_filtered_by_recipient() {
-        use crate::domain::actors::ActorId;
-
-        let alice = ActorId::Username(Username::from("alice").into());
-        let bob = ActorId::Username(Username::from("bob").into());
-
-        let event_for_alice = make_notification_event(alice.clone());
-        let event_for_bob = make_notification_event(bob.clone());
-
-        // Simulate the filtering logic from get_events: notification events
-        // are only forwarded when the recipient matches the connected actor.
-        let should_forward = |event: &ServerEvent, actor_id: &ActorId| -> bool {
-            if let ServerEvent::NotificationCreated { payload, .. } = event {
-                if let MutationPayload::Notification { new, .. } = payload.as_ref() {
-                    return new.recipient == *actor_id;
-                }
-            }
-            true
-        };
-
-        // Alice should receive her own notification.
-        assert!(should_forward(&event_for_alice, &alice));
-        // Alice should NOT receive Bob's notification.
-        assert!(!should_forward(&event_for_bob, &alice));
-        // Bob should receive his own notification.
-        assert!(should_forward(&event_for_bob, &bob));
-        // Bob should NOT receive Alice's notification.
-        assert!(!should_forward(&event_for_alice, &bob));
-    }
-
-    #[test]
-    fn non_notification_events_unaffected_by_recipient_filter() {
-        use crate::domain::actors::ActorId;
-
-        let alice = ActorId::Username(Username::from("alice").into());
-        let issue = dummy_issue();
-        let payload = Arc::new(MutationPayload::Issue {
-            old: None,
-            new: issue,
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::IssueCreated {
-            seq: 1,
-            issue_id: IssueId::new(),
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        // Non-notification events should always pass the recipient filter.
-        if let ServerEvent::NotificationCreated { payload, .. } = &event {
-            if let MutationPayload::Notification { new, .. } = payload.as_ref() {
-                assert_eq!(new.recipient, alice, "should not reach here");
-            }
-        }
-        // The event is not NotificationCreated, so it passes through.
     }
 
     #[tokio::test]

@@ -1,11 +1,10 @@
 use crate::domain::{
-    actors::{Actor, ActorError, ActorId, ActorRef},
+    actors::{Actor, ActorError, ActorRef},
     agents::Agent,
     conversations::{Conversation, ConversationEvent},
     documents::Document,
     issues::Issue,
     labels::Label,
-    notifications::Notification,
     patches::Patch,
     secrets::SecretRef,
     task_status::Event,
@@ -20,10 +19,9 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
-    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::HashMap;
@@ -357,8 +355,6 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Document not found: {0}")]
     DocumentNotFound(DocumentId),
-    #[error("Notification not found: {0}")]
-    NotificationNotFound(NotificationId),
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
     #[error("Agent already exists: {0}")]
@@ -647,22 +643,6 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
-
-    // ---- Notification (read-only) ----
-
-    /// Retrieves a single notification by its ID.
-    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError>;
-
-    /// Lists notifications matching the query, returning each notification with its ID.
-    ///
-    /// Results are ordered by `created_at DESC` (most recent first).
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<Vec<(NotificationId, Notification)>, StoreError>;
-
-    /// Counts unread notifications for the given recipient.
-    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError>;
 
     // ---- Agent (read-only) ----
 
@@ -1124,27 +1104,6 @@ pub trait Store: ReadOnlyStore {
     /// but will be filtered from `get_user` with `include_deleted: false` and from
     /// `list_users` by default (unless `include_deleted: true` is in the query).
     async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
-
-    // ---- Notification mutations ----
-
-    /// Inserts a new notification and returns the generated NotificationId.
-    async fn insert_notification(
-        &self,
-        notification: Notification,
-    ) -> Result<NotificationId, StoreError>;
-
-    /// Marks a single notification as read.
-    async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError>;
-
-    /// Marks all notifications as read for the given recipient.
-    ///
-    /// If `before` is provided, only notifications created before that timestamp are marked.
-    /// Returns the number of notifications that were marked as read.
-    async fn mark_all_notifications_read(
-        &self,
-        recipient: &ActorId,
-        before: Option<DateTime<Utc>>,
-    ) -> Result<u64, StoreError>;
 
     // ---- Agent mutations ----
 

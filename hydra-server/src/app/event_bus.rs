@@ -1,11 +1,10 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
-    actors::{Actor, ActorId, ActorRef},
+    actors::{Actor, ActorRef},
     agents::Agent,
     documents::Document,
     issues::Issue,
     labels::Label,
-    notifications::Notification,
     patches::Patch,
     secrets::SecretRef,
     sessions::SessionEvent,
@@ -21,10 +20,9 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, LabelId, NotificationId, PatchId,
-    RepoName, SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
-    api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -65,11 +63,6 @@ pub enum MutationPayload {
         new: Label,
         actor: ActorRef,
     },
-    Notification {
-        old: Option<Notification>,
-        new: Notification,
-        actor: ActorRef,
-    },
     Conversation {
         old: Option<Conversation>,
         new: Conversation,
@@ -100,7 +93,6 @@ impl MutationPayload {
             | MutationPayload::Session { actor, .. }
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
-            | MutationPayload::Notification { actor, .. }
             | MutationPayload::Conversation { actor, .. }
             | MutationPayload::ConversationEvent { actor, .. }
             | MutationPayload::SessionEvent { actor, .. }
@@ -127,7 +119,6 @@ pub enum EventType {
     LabelCreated,
     LabelUpdated,
     LabelDeleted,
-    NotificationCreated,
     ConversationCreated,
     ConversationUpdated,
     ConversationEventCreated,
@@ -243,13 +234,6 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
-    NotificationCreated {
-        seq: u64,
-        notification_id: NotificationId,
-        version: u64,
-        timestamp: DateTime<Utc>,
-        payload: Arc<MutationPayload>,
-    },
     ConversationCreated {
         seq: u64,
         conversation_id: ConversationId,
@@ -304,7 +288,6 @@ impl ServerEvent {
             | ServerEvent::LabelCreated { seq, .. }
             | ServerEvent::LabelUpdated { seq, .. }
             | ServerEvent::LabelDeleted { seq, .. }
-            | ServerEvent::NotificationCreated { seq, .. }
             | ServerEvent::ConversationCreated { seq, .. }
             | ServerEvent::ConversationUpdated { seq, .. }
             | ServerEvent::ConversationEventCreated { seq, .. }
@@ -330,7 +313,6 @@ impl ServerEvent {
             | ServerEvent::LabelCreated { payload, .. }
             | ServerEvent::LabelUpdated { payload, .. }
             | ServerEvent::LabelDeleted { payload, .. }
-            | ServerEvent::NotificationCreated { payload, .. }
             | ServerEvent::ConversationCreated { payload, .. }
             | ServerEvent::ConversationUpdated { payload, .. }
             | ServerEvent::ConversationEventCreated { payload, .. }
@@ -368,7 +350,6 @@ impl ServerEvent {
             ServerEvent::LabelCreated { .. } => EventType::LabelCreated,
             ServerEvent::LabelUpdated { .. } => EventType::LabelUpdated,
             ServerEvent::LabelDeleted { .. } => EventType::LabelDeleted,
-            ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
             ServerEvent::ConversationCreated { .. } => EventType::ConversationCreated,
             ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
             ServerEvent::ConversationEventCreated { .. } => EventType::ConversationEventCreated,
@@ -621,21 +602,6 @@ impl EventBus {
         self.send(ServerEvent::LabelDeleted {
             seq: self.next_seq(),
             label_id,
-            version,
-            timestamp: Utc::now(),
-            payload,
-        });
-    }
-
-    pub fn emit_notification_created(
-        &self,
-        notification_id: NotificationId,
-        version: u64,
-        payload: Arc<MutationPayload>,
-    ) {
-        self.send(ServerEvent::NotificationCreated {
-            seq: self.next_seq(),
-            notification_id,
             version,
             timestamp: Utc::now(),
             payload,
@@ -1171,39 +1137,6 @@ impl StoreWithEvents {
         Ok(())
     }
 
-    // ---- Notification mutations ----
-
-    pub async fn insert_notification_with_actor(
-        &self,
-        notification: Notification,
-        actor: ActorRef,
-    ) -> Result<NotificationId, StoreError> {
-        let new_notification = notification.clone();
-        let notification_id = self.inner.insert_notification(notification).await?;
-        let payload = Arc::new(MutationPayload::Notification {
-            old: None,
-            new: new_notification,
-            actor,
-        });
-        self.event_bus
-            .emit_notification_created(notification_id.clone(), 1, payload);
-        Ok(notification_id)
-    }
-
-    pub async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
-        self.inner.mark_notification_read(id).await
-    }
-
-    pub async fn mark_all_notifications_read(
-        &self,
-        recipient: &ActorId,
-        before: Option<DateTime<Utc>>,
-    ) -> Result<u64, StoreError> {
-        self.inner
-            .mark_all_notifications_read(recipient, before)
-            .await
-    }
-
     // ---- Agent mutations ----
 
     pub async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
@@ -1636,23 +1569,6 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
-    }
-
-    // ---- Notification (read-only) ----
-
-    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
-        self.inner.get_notification(id).await
-    }
-
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
-        self.inner.list_notifications(query).await
-    }
-
-    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
-        self.inner.count_unread_notifications(recipient).await
     }
 
     // ---- Agent (read-only) ----
