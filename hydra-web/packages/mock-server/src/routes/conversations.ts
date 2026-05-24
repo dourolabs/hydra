@@ -2,6 +2,11 @@ import { Hono } from "hono";
 import type { Store } from "../store.js";
 import { generateId } from "../id.js";
 import { DEV_USERNAME } from "../auth.js";
+import {
+  appendSessionEvent,
+  conversationIdOf,
+  createInteractiveSessionForConversation,
+} from "./sessions.js";
 import type {
   Conversation,
   ConversationEvent,
@@ -9,6 +14,7 @@ import type {
   ConversationSummary,
   CreateConversationRequest,
   SendMessageRequest,
+  Session,
 } from "@hydra/api";
 
 const COLLECTION = "conversations";
@@ -44,11 +50,8 @@ function appendEvent(conversationId: string, event: ConversationEvent): void {
 
 function eventPreview(event: ConversationEvent): string {
   switch (event.type) {
-    case "user_message":
-    case "assistant_message":
-      return event.content;
     case "suspending":
-      return `Suspended: ${event.reason}`;
+      return `Suspending: ${event.reason}`;
     case "resumed":
       return "Resumed";
     case "closed":
@@ -73,6 +76,25 @@ function toSummary(
     created_at: conversation.created_at,
     updated_at: conversation.updated_at,
   };
+}
+
+// Locate the most-recently-created interactive session linked to this
+// conversation. Mirrors the real backend's resolve-session-for-conversation
+// path used by send_message.
+function latestSessionForConversation(
+  store: Store,
+  conversationId: string,
+): string | null {
+  const items = store.list<Session>("sessions", false);
+  let chosen: { id: string; creation_time: string } | null = null;
+  for (const { id, entry } of items) {
+    if (conversationIdOf(entry.data) !== conversationId) continue;
+    const ct = entry.data.creation_time ?? "";
+    if (!chosen || ct > chosen.creation_time) {
+      chosen = { id, creation_time: ct };
+    }
+  }
+  return chosen?.id ?? null;
 }
 
 export function createConversationRoutes(store: Store): Hono {
@@ -158,7 +180,8 @@ export function createConversationRoutes(store: Store): Hono {
     };
     store.create<Conversation>(COLLECTION, id, conversation, SSE_PREFIX);
     if (body.message) {
-      appendEvent(id, {
+      const sessionId = createInteractiveSessionForConversation(store, id, now);
+      appendSessionEvent(sessionId, {
         type: "user_message",
         content: body.message,
         timestamp: now,
@@ -176,7 +199,10 @@ export function createConversationRoutes(store: Store): Hono {
     }
     const body = await c.req.json<SendMessageRequest>();
     const now = new Date().toISOString();
-    appendEvent(id, {
+    const sessionId =
+      latestSessionForConversation(store, id) ??
+      createInteractiveSessionForConversation(store, id, now);
+    appendSessionEvent(sessionId, {
       type: "user_message",
       content: body.content,
       timestamp: now,

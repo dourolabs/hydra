@@ -1853,6 +1853,40 @@
       "status": "running",
       "creation_time": "2026-04-01T10:00:00.000Z",
       "start_time": "2026-04-01T10:00:30.000Z"
+    },
+    "t-seed00016": {
+      "prompt": "Interactive session for the Welcome conversation.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-seed00001"
+      },
+      "creator": "dev-user",
+      "status": "running",
+      "creation_time": "2026-05-10T14:00:15.000Z",
+      "start_time": "2026-05-10T14:00:20.000Z"
+    },
+    "t-seed00017": {
+      "prompt": "Interactive session for Q1 retro notes.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-seed00002"
+      },
+      "creator": "alice",
+      "status": "complete",
+      "creation_time": "2026-05-08T09:30:00.000Z",
+      "start_time": "2026-05-08T09:30:05.000Z",
+      "end_time": "2026-05-08T10:15:00.000Z"
+    },
+    "t-seed00018": {
+      "prompt": "Interactive session for the realtime collab design conversation.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-seed00004"
+      },
+      "creator": "bob",
+      "status": "running",
+      "creation_time": "2026-05-13T11:00:15.000Z",
+      "start_time": "2026-05-13T11:00:20.000Z"
     }
   },
   "patches": {
@@ -2467,7 +2501,21 @@
     }
   },
   "conversation_events": {
-    "c-seed00001": [
+    "c-seed00002": [
+      {
+        "type": "closed",
+        "timestamp": "2026-05-08T10:15:00.000Z"
+      }
+    ],
+    "c-seed00006": [
+      {
+        "type": "closed",
+        "timestamp": "2026-05-09T11:20:00.000Z"
+      }
+    ]
+  },
+  "session_events": {
+    "t-seed00016": [
       {
         "type": "user_message",
         "content": "Hi",
@@ -2489,7 +2537,7 @@
         "timestamp": "2026-05-10T14:05:00.000Z"
       }
     ],
-    "c-seed00002": [
+    "t-seed00017": [
       {
         "type": "user_message",
         "content": "Summarize what shipped this quarter",
@@ -2499,13 +2547,9 @@
         "type": "assistant_message",
         "content": "Q1 highlights: auth migration, initial DB schema rollout, and the documents UI refresh.",
         "timestamp": "2026-05-08T09:31:00.000Z"
-      },
-      {
-        "type": "closed",
-        "timestamp": "2026-05-08T10:15:00.000Z"
       }
     ],
-    "c-seed00003": [
+    "t-seed00011": [
       {
         "type": "user_message",
         "content": "Where are we on the OAuth2 migration? I need to update the steering doc.",
@@ -2527,7 +2571,7 @@
         "timestamp": "2026-05-12T16:05:00.000Z"
       }
     ],
-    "c-seed00004": [
+    "t-seed00018": [
       {
         "type": "user_message",
         "content": "I'm trying to map out the realtime collab work. Can you walk me through what's outstanding?",
@@ -2549,7 +2593,7 @@
         "timestamp": "2026-05-13T12:30:00.000Z"
       }
     ],
-    "c-seed00005": [
+    "t-seed00006": [
       {
         "type": "user_message",
         "content": "What's the state of the GraphQL gateway rollout?",
@@ -2571,7 +2615,7 @@
         "timestamp": "2026-05-14T10:00:00.000Z"
       }
     ],
-    "c-seed00006": [
+    "t-seed00008": [
       {
         "type": "user_message",
         "content": "We're seeing SSE clients drop and memory climb on the broadcaster. Where do we start?",
@@ -2591,14 +2635,8 @@
         "type": "assistant_message",
         "content": "Unrelated — the leak is in the SSE broadcaster's per-client listener registry, not the websocket gateway. Different process.",
         "timestamp": "2026-05-09T10:32:00.000Z"
-      },
-      {
-        "type": "closed",
-        "timestamp": "2026-05-09T11:20:00.000Z"
       }
-    ]
-  },
-  "session_events": {
+    ],
     "t-seed00014": [
       {
         "type": "user_message",
