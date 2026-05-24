@@ -28,7 +28,6 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
     patch.status === "Open" && patch.reviews.some((r) => r.is_approved)
       ? "approved"
       : normalizePatchStatus(patch.status);
-  const authorKind = patch.created_by ? "agent" : "human";
 
   return (
     <div className={styles.page}>
@@ -45,7 +44,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
           <div className={styles.keyval}>
             <span className={styles.keyvalLabel}>Author</span>
             <span className={styles.keyvalValue}>
-              <Avatar name={patch.creator} kind={authorKind} size="md" />
+              <Avatar name={patch.creator} size="md" />
               <span className={styles.keyvalText}>{patch.creator}</span>
             </span>
           </div>
@@ -88,17 +87,6 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
               <span className={styles.keyvalLabel}>Linked issue</span>
               <Link to={`/issues/${referringIssueId}`} className={`${styles.keyvalValue} ${styles.linkAcc} ${styles.keyvalValueMono}`}>
                 <span className={styles.keyvalText}>{referringIssueId}</span>
-              </Link>
-            </div>
-          )}
-          {patch.created_by && (
-            <div className={styles.keyval}>
-              <span className={styles.keyvalLabel}>Linked session</span>
-              <Link
-                to={`/sessions/${patch.created_by}`}
-                className={`${styles.keyvalValue} ${styles.linkAcc} ${styles.keyvalValueMono}`}
-              >
-                <span className={styles.keyvalText}>{patch.created_by}</span>
               </Link>
             </div>
           )}

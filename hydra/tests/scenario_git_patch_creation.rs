@@ -9,7 +9,7 @@ use std::str::FromStr;
 ///
 /// Tests the fundamental SWE agent workflow: clone repo, create branch,
 /// make changes, commit, push, and create a patch. Verifies patch metadata
-/// (title, description, branch_name, creator, created_by) and diff content.
+/// (title, description, branch_name, creator) and diff content.
 #[tokio::test]
 async fn worker_git_operations_and_patch_creation() -> Result<()> {
     let harness = TestHarness::builder()
@@ -74,12 +74,7 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
     patch.assert_diff_contains("greet.rs");
     patch.assert_diff_contains("fn greet()");
 
-    // Verify patch.created_by references the task ID.
-    assert_eq!(
-        patch.patch.created_by,
-        Some(job_id.clone()),
-        "patch.created_by should reference the worker's task ID"
-    );
+    let _ = job_id;
 
     // Verify patch.creator is set (resolved from actor chain to the issue creator).
     assert_eq!(

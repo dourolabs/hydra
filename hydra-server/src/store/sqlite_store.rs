@@ -272,7 +272,6 @@ struct PatchRow {
     diff: String,
     status: String,
     is_automatic_backup: bool,
-    created_by: Option<String>,
     creator: Option<String>,
     base_branch: Option<String>,
     branch_name: Option<String>,
@@ -1112,8 +1111,8 @@ impl SqliteStore {
         // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, is_latest)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, is_latest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)"
             )
         )
         .bind(id.as_ref())
@@ -1123,7 +1122,6 @@ impl SqliteStore {
         .bind(&patch.diff)
         .bind(patch.status.as_str())
         .bind(patch.is_automatic_backup)
-        .bind(patch.created_by.as_ref().map(|t| t.as_ref()))
         .bind(patch.creator.as_str())
         .bind(patch.base_branch.as_deref())
         .bind(patch.branch_name.as_deref())
@@ -1157,14 +1155,6 @@ impl SqliteStore {
             .transpose()?;
         let service_repo_name = RepoName::from_str(&row.service_repo_name)
             .map_err(|e| StoreError::Internal(format!("invalid service_repo_name: {e}")))?;
-        let created_by = row
-            .created_by
-            .as_ref()
-            .map(|s| {
-                SessionId::from_str(s)
-                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
-            })
-            .transpose()?;
         let commit_range: Option<CommitRange> = row
             .commit_range
             .as_ref()
@@ -1182,7 +1172,6 @@ impl SqliteStore {
             diff: row.diff.clone(),
             status,
             is_automatic_backup: row.is_automatic_backup,
-            created_by,
             creator,
             reviews,
             service_repo_name,
@@ -2659,7 +2648,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let row = sqlx::query_as::<_, PatchRow>(&format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = ?1
@@ -2700,7 +2689,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let rows = sqlx::query_as::<_, PatchRow>(&format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -2746,7 +2735,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let subquery = format!(
-            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.deleted, p.actor, p.created_at, p.updated_at,
+            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.deleted, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = p.id) AS creation_time
              FROM {TABLE_PATCHES_V2} p
              WHERE p.is_latest = 1"
@@ -6633,7 +6622,6 @@ mod tests {
             dummy_diff(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
@@ -6683,7 +6671,6 @@ mod tests {
             dummy_diff(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
@@ -6962,7 +6949,7 @@ mod tests {
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
-    fn sample_patch_all_fields(created_by: Option<SessionId>) -> Patch {
+    fn sample_patch_all_fields() -> Patch {
         use crate::domain::patches::GitOid;
         use std::str::FromStr;
 
@@ -6974,7 +6961,6 @@ mod tests {
             "full diff".to_string(),
             PatchStatus::Open,
             true,
-            created_by,
             Username::from("test-creator"),
             vec![Review::new(
                 "looks good".to_string(),
@@ -7003,8 +6989,7 @@ mod tests {
     #[tokio::test]
     async fn patch_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task_id = SessionId::new();
-        let patch = sample_patch_all_fields(Some(task_id));
+        let patch = sample_patch_all_fields();
 
         let (patch_id, _) = store
             .add_patch(patch.clone(), &ActorRef::test())
@@ -7022,7 +7007,7 @@ mod tests {
     async fn list_patches_text_search_matches_github_fields() {
         let store = create_test_store().await;
 
-        let patch = sample_patch_all_fields(None);
+        let patch = sample_patch_all_fields();
         store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Search by github owner

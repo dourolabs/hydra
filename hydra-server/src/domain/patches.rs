@@ -2,8 +2,8 @@ use super::users::Username;
 use crate::domain::actors::UNKNOWN_CREATOR;
 use chrono::{DateTime, Utc};
 use git2::Oid;
+use hydra_common::RepoName;
 use hydra_common::api::v1 as api;
-use hydra_common::{RepoName, SessionId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -203,8 +203,6 @@ pub struct Patch {
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
     #[serde(default)]
     pub is_automatic_backup: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<SessionId>,
     /// The resolved username of the human/agent that authored the patch.
     /// Uses a serde default for backward compatibility with v1 JSONB payloads that lack the field.
     #[serde(default = "default_patch_creator")]
@@ -240,7 +238,6 @@ impl Patch {
         diff: String,
         status: PatchStatus,
         is_automatic_backup: bool,
-        created_by: Option<SessionId>,
         creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,
@@ -255,7 +252,6 @@ impl Patch {
             diff,
             status,
             is_automatic_backup,
-            created_by,
             creator,
             reviews,
             service_repo_name,
@@ -415,7 +411,6 @@ impl From<api::patches::Patch> for Patch {
             diff: value.diff,
             status: value.status.into(),
             is_automatic_backup: value.is_automatic_backup,
-            created_by: value.created_by,
             creator: value.creator.into(),
             reviews: value.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: value.service_repo_name,
@@ -436,7 +431,6 @@ impl From<Patch> for api::patches::Patch {
             value.diff,
             value.status.into(),
             value.is_automatic_backup,
-            value.created_by,
             value.creator.into(),
             value.reviews.into_iter().map(Into::into).collect(),
             value.service_repo_name,
@@ -566,7 +560,6 @@ mod tests {
             diff: "diff".to_string(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
-            created_by: None,
             creator: Username::from("test-creator"),
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
@@ -596,7 +589,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             vec![],
             "org/repo".parse().unwrap(),

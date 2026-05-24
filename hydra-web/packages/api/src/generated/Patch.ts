@@ -4,7 +4,6 @@ import type { GithubPr } from "./GithubPr";
 import type { PatchStatus } from "./PatchStatus";
 import type { RepoName } from "./RepoName";
 import type { Review } from "./Review";
-import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
 export type Patch = {
@@ -16,7 +15,6 @@ export type Patch = {
    * True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
    */
   is_automatic_backup: boolean;
-  created_by?: SessionId | null;
   /**
    * The resolved username of the human/agent that authored the patch.
    */

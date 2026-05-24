@@ -74,7 +74,6 @@ async fn state_with_repo_and_patch(
         diff,
         PatchStatus::Open,
         false,
-        None,
         Username::from("test-creator"),
         Vec::new(),
         repo.clone(),

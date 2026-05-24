@@ -636,7 +636,7 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
         }
         UpsertPatchError::JobNotRunning { job_id, .. } => {
             error!(job_id = %job_id, "job not running when recording patch metadata");
-            ApiError::bad_request("created_by must reference a running job")
+            ApiError::bad_request("actor must reference a running job")
         }
         UpsertPatchError::PatchNotFound { patch_id, .. } => {
             error!(patch_id = %patch_id, "patch not found");
@@ -804,7 +804,6 @@ mod merge_check_tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("author"),
             reviews,
             repo_name(),
