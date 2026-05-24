@@ -15,8 +15,8 @@ Create an issue via the dashboard assigned to an SWE agent, wait for the agent t
 1. Navigate to the issues page at `http://localhost:8080`
 2. Click the "Create issue" button
 3. Fill in the issue creation form:
-   - Title: "Add a Code of Conduct section to the CONTRIBUTING.md in hydra-test-fixture"
-   - Description: "Update the CONTRIBUTING.md file in the dourolabs/hydra-test-fixture repo to add a Code of Conduct section with guidelines for respectful collaboration."
+   - Title: "Make a small improvement to the hydra-test-fixture repo"
+   - Description: "Make any small, low-risk improvement to the dourolabs/hydra-test-fixture repo at your discretion — for example, a typo fix, a minor wording polish, a tiny docs improvement, or an obviously-harmless cleanup. Use your judgment to pick the change. The goal is to submit a PR with a trivial change, not to make any specific edit."
    - Repository: dourolabs/hydra-test-fixture
    - Assignee: swe
 4. Submit the issue form
@@ -27,7 +27,11 @@ Create an issue via the dashboard assigned to an SWE agent, wait for the agent t
 9. Monitor the issue detail page for status transitions (open -> in-progress -> closed)
 10. Wait until the issue status reaches "closed" (allow up to 10 minutes for agent execution)
 11. Verify that the issue detail page shows the final "closed" status
-12. Check if any patches were created by navigating to the patches page and filtering for this issue
+12. Verify a patch was produced by navigating to the patches page and filtering for this issue.
+    Assert that at least one patch is listed for this issue and that the patch has a non-empty
+    diff (any non-zero number of changed lines counts as a pass). The scenario is intentionally
+    open-ended about *what* the SWE changes — we only care that the patch-submission path was
+    exercised with real content.
 13. Verify the agent reported session-level token-usage statistics on completion:
     - Find the session that ran for this issue. From the dashboard, navigate to the
       sessions page and locate the session whose `spawned_from` matches this issue id.
@@ -46,7 +50,7 @@ Create an issue via the dashboard assigned to an SWE agent, wait for the agent t
 - An agent session starts within a reasonable time
 - The issue transitions through expected states: open -> in-progress -> closed
 - The issue reaches "closed" status, indicating the agent completed the task
-- If the agent created a patch, it is visible in the patches list
+- The agent submits at least one patch with a non-empty diff, visible in the patches list
 - The issue detail page shows a complete activity log of the lifecycle
 - The session record exposes a `usage` object whose `input_tokens` and `output_tokens`
   are both strictly positive (this is the assertion added in step 13 — see
