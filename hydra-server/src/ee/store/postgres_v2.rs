@@ -617,8 +617,8 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -628,7 +628,6 @@ impl PostgresStoreV2 {
             .bind(&patch.diff)
             .bind(patch.status.as_str())
             .bind(patch.is_automatic_backup)
-            .bind(patch.created_by.as_ref().map(|t| t.as_ref()))
             .bind(&reviews_json)
             .bind(patch.service_repo_name.as_str())
             .bind(&github_json)
@@ -660,14 +659,6 @@ impl PostgresStoreV2 {
             .transpose()?;
         let service_repo_name = RepoName::from_str(&row.service_repo_name)
             .map_err(|e| StoreError::Internal(format!("invalid service_repo_name: {e}")))?;
-        let created_by = row
-            .created_by
-            .as_ref()
-            .map(|s| {
-                SessionId::from_str(s)
-                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
-            })
-            .transpose()?;
 
         let commit_range: Option<CommitRange> = row
             .commit_range
@@ -687,7 +678,6 @@ impl PostgresStoreV2 {
             diff: row.diff.clone(),
             status,
             is_automatic_backup: row.is_automatic_backup,
-            created_by,
             creator,
             reviews,
             service_repo_name,
@@ -1464,7 +1454,6 @@ struct PatchRow {
     diff: String,
     status: String,
     is_automatic_backup: bool,
-    created_by: Option<String>,
     reviews: Value,
     service_repo_name: String,
     github: Option<Value>,
@@ -2475,7 +2464,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
@@ -2511,7 +2500,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2557,7 +2546,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.title, p.description, '' AS diff, p.status, p.is_automatic_backup, p.created_by, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.title, p.description, '' AS diff, p.status, p.is_automatic_backup, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(p2.created_at) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id) AS creation_time \
              FROM {TABLE_PATCHES_V2} p"
         );
@@ -5593,7 +5582,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
@@ -5715,7 +5703,7 @@ mod tests {
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
-    fn sample_patch_all_fields(created_by: Option<SessionId>) -> Patch {
+    fn sample_patch_all_fields() -> Patch {
         let base_oid = GitOid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
         let head_oid = GitOid::from_str("fedcba9876543210fedcba9876543210fedcba98").unwrap();
         let mut patch = Patch::new(
@@ -5724,7 +5712,6 @@ mod tests {
             "full diff".to_string(),
             PatchStatus::Open,
             true,
-            created_by,
             Username::from("test-creator"),
             vec![Review::new(
                 "looks good".to_string(),
@@ -6618,11 +6605,7 @@ mod tests {
     #[ignore]
     async fn patch_serialization_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let (task_id, _) = store
-            .add_session(sample_session_all_fields(), Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-        let patch = sample_patch_all_fields(Some(task_id));
+        let patch = sample_patch_all_fields();
 
         let (patch_id, _) = store
             .add_patch(patch.clone(), &ActorRef::test())
@@ -6874,7 +6857,6 @@ mod tests {
             "diff content".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
@@ -6892,7 +6874,6 @@ mod tests {
             "diff content".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),

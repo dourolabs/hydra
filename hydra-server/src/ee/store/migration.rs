@@ -482,7 +482,6 @@ async fn migrate_patches_internal(pool: &PgStorePool) -> Result<u64> {
                 .get("is_automatic_backup")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let created_by = row.payload.get("created_by").and_then(|v| v.as_str());
             let reviews = row
                 .payload
                 .get("reviews")
@@ -503,8 +502,8 @@ async fn migrate_patches_internal(pool: &PgStorePool) -> Result<u64> {
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_PATCHES}
                  (id, version_number, title, description, diff, status, is_automatic_backup,
-                  created_by, reviews, service_repo_name, github, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                  reviews, service_repo_name, github, deleted, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -514,7 +513,6 @@ async fn migrate_patches_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(diff)
             .bind(status)
             .bind(is_automatic_backup)
-            .bind(created_by)
             .bind(&reviews)
             .bind(service_repo_name)
             .bind(&github)

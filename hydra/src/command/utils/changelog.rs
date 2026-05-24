@@ -5,7 +5,7 @@ use hydra_common::{
     patches::{PatchStatus, Review},
     sessions::Session,
     task_status::Status,
-    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, HydraId, RepoName, SessionId,
+    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, HydraId, RepoName,
     VersionNumber,
 };
 use owo_colors::OwoColorize;
@@ -65,7 +65,6 @@ pub enum ActivityObjectSummary {
         description: String,
         status: PatchStatus,
         repo: RepoName,
-        created_by_job: Option<SessionId>,
         reviews: Vec<ReviewSummary>,
     },
     Session {
@@ -133,7 +132,6 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
                 description: patch.description,
                 status: patch.status,
                 repo: patch.service_repo_name,
-                created_by_job: patch.created_by,
                 reviews: patch
                     .reviews
                     .into_iter()
@@ -265,7 +263,6 @@ pub fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&
                     "/status" => Some("Status"),
                     "/diff" => Some("Diff"),
                     "/service_repo_name" => Some("Repo"),
-                    "/created_by" => Some("Created By Job"),
                     _ => None,
                 }
             }
@@ -485,7 +482,6 @@ pub fn write_activity_object_summary(
             description,
             status,
             repo,
-            created_by_job,
             reviews,
         } => {
             write_activity_scalar_field(
@@ -506,13 +502,6 @@ pub fn write_activity_object_summary(
                 "Repo",
                 &Value::String(repo.to_string()),
                 change_map.get("Repo").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_optional_scalar_field(
-                "Created By Job",
-                created_by_job.as_ref().map(|id| id.to_string()).as_deref(),
-                change_map.get("Created By Job").copied(),
                 indent,
                 writer,
             )?;

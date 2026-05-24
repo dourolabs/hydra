@@ -149,7 +149,6 @@ mod tests {
             String::new(),
             PatchStatus::Open,
             false,
-            None,
             "test-creator".into(),
             vec![],
             RepoName::new("test", "repo").unwrap(),

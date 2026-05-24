@@ -192,7 +192,6 @@ impl UserHandle {
             String::new(), // empty diff
             PatchStatus::Open,
             false,
-            None,
             Username::from(self.name.clone()),
             Vec::new(),
             repo.clone(),
@@ -235,7 +234,6 @@ impl UserHandle {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from(self.name.clone()),
             Vec::new(),
             repo.clone(),

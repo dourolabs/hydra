@@ -578,7 +578,6 @@ async fn create_patch(
         diff,
         title,
         description,
-        job_id.clone(),
         is_automatic_backup,
         force,
         service_repo_name,
@@ -1197,7 +1196,6 @@ pub async fn create_patch_artifact_from_repo(
     diff: String,
     title: String,
     description: String,
-    job_id: Option<SessionId>,
     is_automatic_backup: bool,
     force: bool,
     service_repo_name: RepoName,
@@ -1229,7 +1227,6 @@ pub async fn create_patch_artifact_from_repo(
         diff,
         PatchStatus::Open,
         is_automatic_backup,
-        job_id.clone(),
         creator,
         Vec::new(),
         service_repo_name.clone(),
@@ -1855,7 +1852,6 @@ mod tests {
         );
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
-        let job_id_clone = job_id.clone();
         let expected_diff =
             git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = Patch::new(
@@ -1864,7 +1860,6 @@ mod tests {
             expected_diff.clone(),
             PatchStatus::Open,
             false,
-            Some(job_id_clone.clone()),
             Username::from("test-user"),
             Vec::new(),
             sample_repo_name(),
@@ -1912,82 +1907,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_sets_created_by_from_job_id() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let branch_name = current_branch(&repo_path)?;
-
-        let job_id = task_id("t-job-1234");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: sample_repo_name(),
-                rev: None,
-            }),
-            None,
-        );
-
-        let title = "patch with job title".to_string();
-        let job_id_opt = Some(job_id.clone());
-        let description = "patch with job id".to_string();
-        let expected_diff =
-            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let patch = Patch::new(
-            title.clone(),
-            description.clone(),
-            expected_diff,
-            PatchStatus::Open,
-            false,
-            job_id_opt.clone(),
-            Username::from("test-user"),
-            Vec::new(),
-            sample_repo_name(),
-            None,
-            false,
-            Some(branch_name.to_string()),
-            Some(CommitRange::new(base_commit, head_commit)),
-            Some("main".to_string()),
-        );
-        let expected_request = UpsertPatchRequest::new(patch.clone());
-        let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
-        let patch_record = PatchVersionRecord::new(
-            patch_id("p-2"),
-            0,
-            Utc::now(),
-            patch,
-            None,
-            Utc::now(),
-            Vec::new(),
-        );
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let session_mock = mock_get_session(&server, job_record.clone());
-        let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
-        let get_patch_mock = mock_get_patch(&server, patch_record);
-        mock_get_github_token_failure(&server);
-        mock_whoami(&server);
-
-        create_patch(
-            &client,
-            title.clone(),
-            description.clone(),
-            job_id_opt.clone(),
-            false,
-            false,
-            "origin/main",
-            Some(&repo_path),
-        )
-        .await?;
-
-        session_mock.assert();
-        patch_mock.assert();
-        get_patch_mock.assert();
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn create_patch_errors_without_job_id() -> Result<()> {
         let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
@@ -2018,14 +1937,12 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let branch_name = current_branch(&repo_path)?;
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let job_id = task_id("t-job-automatic");
         let expected_patch = Patch::new(
             "backup patch".to_string(),
             "backup description".to_string(),
             diff.clone(),
             PatchStatus::Open,
             true,
-            Some(job_id.clone()),
             Username::from("test-user"),
             Vec::new(),
             sample_repo_name(),
@@ -2048,7 +1965,6 @@ mod tests {
             diff.clone(),
             "backup patch".to_string(),
             "backup description".to_string(),
-            Some(job_id.clone()),
             true,
             false,
             sample_repo_name(),
@@ -2084,7 +2000,6 @@ mod tests {
             expected_diff,
             PatchStatus::Open,
             false,
-            Some(job_id.clone()),
             Username::from("test-user"),
             Vec::new(),
             RepoName::from_str("dourolabs/api")?,
@@ -2193,7 +2108,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![existing_review.clone()],
                 sample_repo_name(),
@@ -2260,7 +2174,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![],
                 sample_repo_name(),
@@ -2324,7 +2237,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![],
                 sample_repo_name(),
@@ -2416,7 +2328,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![Review::new(
                     "looks ok".to_string(),
@@ -2441,7 +2352,6 @@ mod tests {
             sample_diff(),
             PatchStatus::Closed,
             false,
-            None,
             Username::from("test-creator"),
             vec![Review::new(
                 "looks ok".to_string(),
@@ -2520,7 +2430,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![],
                 sample_repo_name(),
@@ -2587,7 +2496,6 @@ mod tests {
                 sample_diff(),
                 PatchStatus::Open,
                 false,
-                None,
                 Username::from("test-creator"),
                 vec![],
                 sample_repo_name(),
@@ -2866,7 +2774,6 @@ mod tests {
             diff,
             PatchStatus::Open,
             false,
-            Some(job_id.clone()),
             Username::from("test-user"),
             Vec::new(),
             sample_repo_name(),

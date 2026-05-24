@@ -145,7 +145,6 @@ export function PatchesView() {
                     p.status === "Open" && p.review_summary.approved
                       ? "approved"
                       : normalizePatchStatus(p.status);
-                  const authorKind = p.created_by ? "agent" : "human";
                   return (
                     <tr key={rec.patch_id} onClick={() => handleRowClick(rec.patch_id)}>
                       <td className={styles.colTitle}>
@@ -158,7 +157,7 @@ export function PatchesView() {
                       </td>
                       <td className={styles.colAuthor}>
                         <span className={styles.author}>
-                          <Avatar name={p.creator} kind={authorKind} size="md" />
+                          <Avatar name={p.creator} size="md" />
                           <span className={styles.authorName}>{p.creator}</span>
                         </span>
                       </td>

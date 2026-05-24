@@ -187,7 +187,6 @@ async fn patch_labels_returned_from_all_routes() -> anyhow::Result<()> {
         patch_diff(),
         PatchStatus::Open,
         false,
-        None,
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),

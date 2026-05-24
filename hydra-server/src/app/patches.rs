@@ -138,7 +138,6 @@ impl AppState {
                             other => UpsertPatchError::Store { source: other },
                         })?;
 
-                patch.created_by = existing_patch.item.created_by;
                 if patch.github.is_none() {
                     patch.github = existing_patch.item.github.clone();
                 }
@@ -206,7 +205,7 @@ mod tests {
     use chrono::Utc;
     use httpmock::Method::PATCH;
     use httpmock::prelude::*;
-    use hydra_common::{RepoName, SessionId, api::v1 as api};
+    use hydra_common::{RepoName, api::v1 as api};
 
     #[tokio::test]
     async fn upsert_patch_sync_github_updates_existing_pr() -> anyhow::Result<()> {
@@ -264,7 +263,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            Some(SessionId::new()),
             Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
@@ -294,7 +292,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name,
@@ -413,7 +410,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            Some(task_id),
             Username::from("test-creator"),
             Vec::new(),
             repo_name,
@@ -466,7 +462,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
@@ -496,7 +491,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name,
@@ -525,7 +519,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
@@ -548,7 +541,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name,
@@ -595,7 +587,6 @@ mod tests {
             "diff content".to_string(),
             PatchStatus::Open,
             false,
-            None,
             creator_username.clone(),
             Vec::new(),
             repo_name,

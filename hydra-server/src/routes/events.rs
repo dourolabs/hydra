@@ -1509,7 +1509,6 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("creator"),
             Vec::new(),
             "test/repo".parse().unwrap(),

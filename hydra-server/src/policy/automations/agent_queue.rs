@@ -823,7 +823,6 @@ mod tests {
             "diff --git a/file b/file\n".to_string(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),

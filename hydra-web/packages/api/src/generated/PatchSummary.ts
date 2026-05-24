@@ -4,7 +4,6 @@ import type { LabelSummary } from "./LabelSummary";
 import type { PatchStatus } from "./PatchStatus";
 import type { RepoName } from "./RepoName";
 import type { ReviewSummary } from "./ReviewSummary";
-import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
 /**
@@ -16,7 +15,6 @@ export type PatchSummary = {
   title: string;
   status: PatchStatus;
   is_automatic_backup: boolean;
-  created_by?: SessionId | null;
   creator: Username;
   review_summary: ReviewSummary;
   service_repo_name: RepoName;

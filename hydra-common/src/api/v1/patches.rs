@@ -3,7 +3,7 @@ use super::{
     serde_helpers::{deserialize_comma_separated, serialize_comma_separated},
     users::Username,
 };
-use crate::{PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
+use crate::{PatchId, RepoName, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -222,8 +222,6 @@ pub struct Patch {
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
     #[serde(default)]
     pub is_automatic_backup: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<SessionId>,
     /// The resolved username of the human/agent that authored the patch.
     pub creator: Username,
     #[serde(default)]
@@ -257,7 +255,6 @@ impl Patch {
         diff: String,
         status: PatchStatus,
         is_automatic_backup: bool,
-        created_by: Option<SessionId>,
         creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,
@@ -273,7 +270,6 @@ impl Patch {
             diff,
             status,
             is_automatic_backup,
-            created_by,
             creator,
             reviews,
             service_repo_name,
@@ -562,8 +558,6 @@ pub struct PatchSummary {
     pub status: PatchStatus,
     #[serde(default)]
     pub is_automatic_backup: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<SessionId>,
     pub creator: Username,
     pub review_summary: ReviewSummary,
     pub service_repo_name: RepoName,
@@ -585,7 +579,6 @@ impl From<&Patch> for PatchSummary {
             title: patch.title.clone(),
             status: patch.status,
             is_automatic_backup: patch.is_automatic_backup,
-            created_by: patch.created_by.clone(),
             creator: patch.creator.clone(),
             review_summary: ReviewSummary::from_reviews(&patch.reviews),
             service_repo_name: patch.service_repo_name.clone(),
@@ -806,7 +799,6 @@ mod tests {
             diff: "diff content".to_string(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
-            created_by: None,
             creator: Username::from("test-creator"),
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
@@ -868,7 +860,6 @@ mod tests {
             diff: "diff --git a/file.rs\n+added line\n".to_string(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
-            created_by: Some(crate::SessionId::new()),
             creator: Username::from("alice"),
             reviews: vec![
                 Review::new("looks good".to_string(), true, "bob".to_string(), None),
@@ -940,7 +931,6 @@ mod tests {
         assert_eq!(summary.title, "fix bug");
         assert_eq!(summary.status, PatchStatus::Open);
         assert!(!summary.is_automatic_backup);
-        assert!(summary.created_by.is_some());
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.review_summary.count, 2);
         assert!(summary.review_summary.approved);

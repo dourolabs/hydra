@@ -51,9 +51,9 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_record_body = forward_issue_json(&issue_id, &dependency_id, &patch_id);
     let issue_record_for_get = issue_record_body.clone();
     let issue_record_for_list = issue_record_body.clone();
-    let patch_record_body = forward_patch_json(&patch_id, &repo_name, &job_id, now);
+    let patch_record_body = forward_patch_json(&patch_id, &repo_name, now);
     let patch_record_for_get = patch_record_body.clone();
-    let patch_summary_record = forward_patch_summary_json(&patch_id, &repo_name, &job_id);
+    let patch_summary_record = forward_patch_summary_json(&patch_id, &repo_name);
     let document_id = DocumentId::new();
     let document_record_body = forward_document_json(&document_id, &job_id);
     let document_record_for_get = document_record_body.clone();
@@ -488,7 +488,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "diff".to_string(),
         PatchStatus::Open,
         false,
-        None,
         Username::from("test-creator"),
         vec![],
         repo_name.clone(),
@@ -689,12 +688,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
     })
 }
 
-fn forward_patch_json(
-    patch_id: &PatchId,
-    repo_name: &RepoName,
-    job_id: &SessionId,
-    now: DateTime<Utc>,
-) -> Value {
+fn forward_patch_json(patch_id: &PatchId, repo_name: &RepoName, now: DateTime<Utc>) -> Value {
     json!({
         "patch_id": patch_id,
         "version": 0,
@@ -705,7 +699,6 @@ fn forward_patch_json(
             "diff": "diff",
             "status": "stale",
             "is_automatic_backup": false,
-            "created_by": job_id,
             "creator": "test-creator",
             "reviews": [
                 { "contents": "looks ok", "is_approved": true, "author": "reviewer", "submitted_at": now, "confidence": "medium" }
@@ -736,11 +729,7 @@ fn forward_patch_json(
     })
 }
 
-fn forward_patch_summary_json(
-    patch_id: &PatchId,
-    repo_name: &RepoName,
-    job_id: &SessionId,
-) -> Value {
+fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName) -> Value {
     json!({
         "patch_id": patch_id,
         "version": 0,
@@ -749,7 +738,6 @@ fn forward_patch_summary_json(
             "title": "future patch",
             "status": "stale",
             "is_automatic_backup": false,
-            "created_by": job_id,
             "creator": "test-creator",
             "review_summary": { "count": 1, "approved": true },
             "service_repo_name": repo_name,

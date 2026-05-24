@@ -185,7 +185,6 @@ mod tests {
             String::new(),
             PatchStatus::Open,
             false,
-            None,
             Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/hydra").unwrap(),

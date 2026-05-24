@@ -84,7 +84,6 @@ mod tests {
             is_automatic_backup: false,
             branch_name: branch_name.map(String::from),
             service_repo_name: RepoName::from_str("test/repo").unwrap(),
-            created_by: None,
             creator: Username::from("test-creator"),
             github: None,
             commit_range: None,

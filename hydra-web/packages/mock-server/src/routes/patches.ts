@@ -48,7 +48,6 @@ function toSummaryRecord(
     title: patch.title,
     status: patch.status,
     is_automatic_backup: patch.is_automatic_backup,
-    created_by: patch.created_by,
     creator: patch.creator,
     review_summary: reviewSummary,
     service_repo_name: patch.service_repo_name,
