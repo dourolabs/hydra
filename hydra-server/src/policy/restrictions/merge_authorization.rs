@@ -20,7 +20,7 @@ use crate::domain::actors::ActorRef;
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
 use crate::policy::restrictions::principal_resolver::{
-    ResolutionContext, ResolvedPrincipal, resolve_any_of, resolve_parent_issue,
+    ResolutionContext, ResolvedPrincipal, resolve_any_of,
 };
 use crate::policy::{PolicyViolation, Restriction};
 use crate::store::ReadOnlyStore;
@@ -83,15 +83,10 @@ impl Restriction for MergeAuthorizationRestriction {
             return Ok(());
         };
 
-        // 3. Resolve parent issue once and stash it for principal resolution.
-        let parent_issue = resolve_parent_issue(ctx.store, patch_id, new)
-            .await
-            .map_err(|e| internal_violation(format!("failed to resolve parent issue: {e}")))?;
-
+        // 3. Build the resolution context for principal resolution.
         let resolution_ctx = ResolutionContext {
             patch: new,
             patch_id,
-            parent_issue: parent_issue.as_ref(),
             store: ctx.store,
         };
 
@@ -353,7 +348,6 @@ fn internal_violation(message: String) -> PolicyViolation {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef as DomainActorRef;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
@@ -363,8 +357,7 @@ mod tests {
         BlockedAtLayer, MergeBlockedError, MergeBlockedReason,
     };
     use hydra_common::api::v1::repositories::{
-        DynamicRef as ApiDynamicRef, MergePolicy, MergerRule, Principal as ApiPrincipal,
-        ReviewerGroup,
+        MergePolicy, MergerRule, Principal as ApiPrincipal, ReviewerGroup,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
     use hydra_common::{ActorId, ActorRef as CommonActorRef, Repository};
@@ -652,141 +645,6 @@ mod tests {
         evaluate(&r, &store, patch, Some(old), &user_actor("author"))
             .await
             .expect("alice review counts even when author also approved");
-    }
-
-    // ---- §8.6: dynamic ref resolution ----------------------------------
-
-    async fn add_parent_issue(store: &MemoryStore, creator: &str) -> hydra_common::IssueId {
-        let issue = Issue::new(
-            IssueType::Task,
-            "parent".to_string(),
-            String::new(),
-            Username::from(creator),
-            String::new(),
-            IssueStatus::Open,
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let (id, _) = store
-            .add_issue(issue, &DomainActorRef::test())
-            .await
-            .expect("add issue");
-        id
-    }
-
-    async fn add_session_for_issue(
-        store: &MemoryStore,
-        issue_id: hydra_common::IssueId,
-    ) -> hydra_common::SessionId {
-        use crate::app::sessions::mount_spec_for_session;
-        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
-        use crate::store::Session;
-        use chrono::Utc;
-        let session = Session::new(
-            Username::from("test-creator"),
-            Some(issue_id),
-            None,
-            AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
-            None,
-            std::collections::HashMap::new(),
-            None,
-            None,
-            None,
-            SessionMode::Headless {
-                prompt: "p".to_string(),
-            },
-            crate::store::Status::Created,
-            None,
-            None,
-        );
-        let (id, _) = store
-            .add_session(session, Utc::now(), &DomainActorRef::test())
-            .await
-            .expect("add session");
-        id
-    }
-
-    #[tokio::test]
-    async fn dynamic_ref_parent_issue_creator_resolves_and_satisfies() {
-        let store = MemoryStore::new();
-        let issue_id = add_parent_issue(&store, "jayantk").await;
-        let session_id = add_session_for_issue(&store, issue_id.clone()).await;
-
-        let policy = MergePolicy {
-            reviewers: vec![ReviewerGroup {
-                label: None,
-                any_of: vec![ApiPrincipal::Dynamic(ApiDynamicRef::ParentIssueCreator)],
-                count: 1,
-                exclude_author: true,
-            }],
-            mergers: None,
-        };
-        add_repo_with_policy(&store, Some(policy)).await;
-
-        let r = MergeAuthorizationRestriction::new();
-        let mut patch = make_patch_with(vec![approval("jayantk")], "author");
-        patch.created_by = Some(session_id);
-        let old = {
-            let mut p = patch.clone();
-            p.status = PatchStatus::Open;
-            p.reviews.clear();
-            p
-        };
-        evaluate(&r, &store, patch, Some(old), &user_actor("anyone"))
-            .await
-            .expect("jayantk approval should satisfy @parent_issue.creator");
-    }
-
-    #[tokio::test]
-    async fn dynamic_ref_unresolves_when_parent_creator_changes() {
-        let store = MemoryStore::new();
-        let issue_id = add_parent_issue(&store, "jayantk").await;
-        let session_id = add_session_for_issue(&store, issue_id.clone()).await;
-
-        let policy = MergePolicy {
-            reviewers: vec![ReviewerGroup {
-                label: None,
-                any_of: vec![ApiPrincipal::Dynamic(ApiDynamicRef::ParentIssueCreator)],
-                count: 1,
-                exclude_author: true,
-            }],
-            mergers: None,
-        };
-        add_repo_with_policy(&store, Some(policy)).await;
-
-        let r = MergeAuthorizationRestriction::new();
-        let mut patch = make_patch_with(vec![approval("jayantk")], "author");
-        patch.created_by = Some(session_id);
-
-        // Reassign parent issue creator. The prior jayantk approval no longer
-        // satisfies the group because `@parent_issue.creator` now resolves to
-        // someone else.
-        let current = store.get_issue(&issue_id, false).await.expect("get parent");
-        let mut updated = current.item.clone();
-        updated.creator = Username::from("newperson");
-        store
-            .update_issue(&issue_id, updated, &DomainActorRef::test())
-            .await
-            .expect("update issue creator");
-
-        let old = {
-            let mut p = patch.clone();
-            p.status = PatchStatus::Open;
-            p.reviews.clear();
-            p
-        };
-        let err = evaluate(&r, &store, patch, Some(old), &user_actor("anyone"))
-            .await
-            .unwrap_err();
-        let body = parse_message(&err);
-        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Reviews);
     }
 
     // ---- Layer priority -------------------------------------------------

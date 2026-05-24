@@ -8,11 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::PatchId;
 use crate::api::v1::repositories::DynamicRef;
 
-// `DynamicRef` already (de)serialises as the `@parent_issue.creator` /
-// `@parent_issue.assignee` / `@patch.author` shorthand the design assumes
-// (see `hydra-common/src/api/v1/repositories.rs`). We reuse it verbatim for
-// the `ref` field of [`EligiblePrincipal::Dynamic`] rather than introducing
-// a parallel enum.
+// `DynamicRef` already (de)serialises as the `@patch.author` shorthand the
+// design assumes (see `hydra-common/src/api/v1/repositories.rs`). We reuse it
+// verbatim for the `ref` field of [`EligiblePrincipal::Dynamic`] rather than
+// introducing a parallel enum.
 
 /// Response body of `POST /v1/patches/:id/merge_check`.
 ///
@@ -195,11 +194,7 @@ mod tests {
                     "label": "code-review",
                     "eligible_principals": [
                         { "kind": "user", "username": "reviewer" },
-                        {
-                            "kind": "dynamic",
-                            "ref": "@parent_issue.creator",
-                            "resolved_to": "jayantk"
-                        }
+                        { "kind": "user", "username": "jayantk" }
                     ],
                     "current_approvals": [],
                     "needed": 1,
@@ -225,7 +220,7 @@ mod tests {
                     "allowed_mergers": [
                         {
                             "kind": "dynamic",
-                            "ref": "@parent_issue.creator",
+                            "ref": "@patch.author",
                             "resolved_to": "jayantk"
                         }
                     ],
@@ -281,9 +276,8 @@ mod tests {
                 );
                 assert_eq!(
                     eligible_principals[1],
-                    EligiblePrincipal::Dynamic {
-                        reference: DynamicRef::ParentIssueCreator,
-                        resolved_to: Some("jayantk".to_string()),
+                    EligiblePrincipal::User {
+                        username: "jayantk".to_string()
                     }
                 );
                 assert!(current_approvals.is_empty());
@@ -317,7 +311,7 @@ mod tests {
                 assert_eq!(
                     allowed_mergers,
                     &vec![EligiblePrincipal::Dynamic {
-                        reference: DynamicRef::ParentIssueCreator,
+                        reference: DynamicRef::PatchAuthor,
                         resolved_to: Some("jayantk".to_string()),
                     }]
                 );
@@ -335,7 +329,7 @@ mod tests {
     #[test]
     fn dynamic_principal_with_unresolved_ref_serialises_as_null() {
         let principal = EligiblePrincipal::Dynamic {
-            reference: DynamicRef::ParentIssueAssignee,
+            reference: DynamicRef::PatchAuthor,
             resolved_to: None,
         };
         let value = serde_json::to_value(&principal).unwrap();
@@ -343,7 +337,7 @@ mod tests {
             value,
             json!({
                 "kind": "dynamic",
-                "ref": "@parent_issue.assignee",
+                "ref": "@patch.author",
                 "resolved_to": null,
             })
         );

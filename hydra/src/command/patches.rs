@@ -1581,7 +1581,6 @@ mod tests {
             BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError,
             MergeBlockedReason, SuggestedAction,
         };
-        use hydra_common::api::v1::repositories::DynamicRef;
         MergeBlockedError {
             code: MergeBlockedCode::MergeBlocked,
             patch_id: patch_id.clone(),
@@ -1593,9 +1592,8 @@ mod tests {
                     EligiblePrincipal::User {
                         username: "reviewer".to_string(),
                     },
-                    EligiblePrincipal::Dynamic {
-                        reference: DynamicRef::ParentIssueCreator,
-                        resolved_to: Some("jayantk".to_string()),
+                    EligiblePrincipal::User {
+                        username: "jayantk".to_string(),
                     },
                 ],
                 current_approvals: vec![],
@@ -1623,7 +1621,7 @@ mod tests {
             reasons: vec![MergeBlockedReason::NotInMergers {
                 actor: "swe-session-abcd".to_string(),
                 allowed_mergers: vec![EligiblePrincipal::Dynamic {
-                    reference: DynamicRef::ParentIssueCreator,
+                    reference: DynamicRef::PatchAuthor,
                     resolved_to: Some("jayantk".to_string()),
                 }],
                 suggested_action: SuggestedAction::FileMergeRequest {

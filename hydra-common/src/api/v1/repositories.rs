@@ -28,18 +28,8 @@ fn is_default_exclude_author(b: &bool) -> bool {
 /// repo-policy YAML and JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts",
-    ts(
-        export,
-        type = "\"@parent_issue.creator\" | \"@parent_issue.assignee\" | \"@patch.author\""
-    )
-)]
+#[cfg_attr(feature = "ts", ts(export, type = "\"@patch.author\""))]
 pub enum DynamicRef {
-    /// The user who created the patch's parent issue.
-    ParentIssueCreator,
-    /// The current assignee of the patch's parent issue.
-    ParentIssueAssignee,
     /// The patch's author. Only useful inside `mergers`.
     PatchAuthor,
 }
@@ -48,8 +38,6 @@ impl DynamicRef {
     /// The wire form *without* the leading `@`.
     pub fn shorthand(self) -> &'static str {
         match self {
-            DynamicRef::ParentIssueCreator => "parent_issue.creator",
-            DynamicRef::ParentIssueAssignee => "parent_issue.assignee",
             DynamicRef::PatchAuthor => "patch.author",
         }
     }
@@ -58,12 +46,9 @@ impl DynamicRef {
     /// listing the accepted values when the input does not match a known ref.
     pub fn from_shorthand(s: &str) -> Result<Self, String> {
         match s {
-            "parent_issue.creator" => Ok(DynamicRef::ParentIssueCreator),
-            "parent_issue.assignee" => Ok(DynamicRef::ParentIssueAssignee),
             "patch.author" => Ok(DynamicRef::PatchAuthor),
             other => Err(format!(
-                "unknown dynamic reference '@{other}'; expected one of \
-                 @parent_issue.creator, @parent_issue.assignee, @patch.author"
+                "unknown dynamic reference '@{other}'; expected one of @patch.author"
             )),
         }
     }
@@ -491,10 +476,7 @@ mod tests {
             reviewers: vec![
                 ReviewerGroup {
                     label: Some("code-review".to_string()),
-                    any_of: vec![
-                        user("reviewer"),
-                        Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                    ],
+                    any_of: vec![user("reviewer"), user("carol")],
                     count: 2,
                     exclude_author: false,
                 },
@@ -506,10 +488,7 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![
-                    Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                    user("alice"),
-                ],
+                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice")],
             }),
         }
     }
@@ -530,7 +509,7 @@ reviewers:
   - label: code-review
     any_of:
       - reviewer
-      - "@parent_issue.creator"
+      - carol
     count: 1
     exclude_author: true
   - label: human-signoff
@@ -541,7 +520,7 @@ reviewers:
 
 mergers:
   any_of:
-    - "@parent_issue.creator"
+    - "@patch.author"
     - alice
 "#;
         let policy: MergePolicy = serde_yaml_ng::from_str(yaml).unwrap();
@@ -549,19 +528,13 @@ mergers:
         assert_eq!(policy.reviewers[0].label.as_deref(), Some("code-review"));
         assert_eq!(
             policy.reviewers[0].any_of,
-            vec![
-                user("reviewer"),
-                Principal::Dynamic(DynamicRef::ParentIssueCreator),
-            ]
+            vec![user("reviewer"), user("carol")]
         );
         assert_eq!(policy.reviewers[0].count, 1);
         assert!(policy.reviewers[0].exclude_author);
         assert_eq!(
             policy.mergers.as_ref().unwrap().any_of,
-            vec![
-                Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                user("alice"),
-            ]
+            vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
         );
 
         let serialized = serde_yaml_ng::to_string(&policy).unwrap();
@@ -579,17 +552,13 @@ mergers:
 
     #[test]
     fn dynamic_ref_shorthands_round_trip() {
-        for (variant, wire) in [
-            (DynamicRef::ParentIssueCreator, "@parent_issue.creator"),
-            (DynamicRef::ParentIssueAssignee, "@parent_issue.assignee"),
-            (DynamicRef::PatchAuthor, "@patch.author"),
-        ] {
-            let principal = Principal::Dynamic(variant);
-            let value = serde_json::to_value(&principal).unwrap();
-            assert_eq!(value, json!(wire), "serialize {variant:?}");
-            let back: Principal = serde_json::from_value(json!(wire)).unwrap();
-            assert_eq!(back, principal, "deserialize {wire}");
-        }
+        let variant = DynamicRef::PatchAuthor;
+        let wire = "@patch.author";
+        let principal = Principal::Dynamic(variant);
+        let value = serde_json::to_value(&principal).unwrap();
+        assert_eq!(value, json!(wire), "serialize {variant:?}");
+        let back: Principal = serde_json::from_value(json!(wire)).unwrap();
+        assert_eq!(back, principal, "deserialize {wire}");
     }
 
     #[test]
@@ -601,9 +570,24 @@ mergers:
             "error should name the offending ref, got: {msg}"
         );
         assert!(
-            msg.contains("@parent_issue.creator"),
+            msg.contains("@patch.author"),
             "error should list accepted refs, got: {msg}"
         );
+    }
+
+    #[test]
+    fn removed_parent_issue_dynamic_refs_now_fail_validation() {
+        // Once expressive options for the parent issue, these are no longer
+        // accepted: policies that mention them must fail to parse with the
+        // same error a typo would produce.
+        for removed in ["@parent_issue.creator", "@parent_issue.assignee"] {
+            let err = serde_json::from_value::<Principal>(json!(removed)).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains(removed),
+                "error should name the offending ref {removed}, got: {msg}"
+            );
+        }
     }
 
     #[test]

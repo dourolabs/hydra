@@ -5,4 +5,4 @@
  * merge-attempt time. Serialised as the `@…` shorthand string used in
  * repo-policy YAML and JSON.
  */
-export type DynamicRef = "@parent_issue.creator" | "@parent_issue.assignee" | "@patch.author";
+export type DynamicRef = "@patch.author";
