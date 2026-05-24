@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use hydra_common::{
     constants::ENV_HYDRA_DOCUMENTS_DIR,
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
-    sessions::WorkerContext,
+    sessions::{InteractiveOptions, SessionMode, WorkerContext},
     IssueId, SessionId,
 };
 
@@ -57,18 +57,46 @@ pub async fn run(
     let job = session;
 
     let WorkerContext {
-        variables,
-        prompt,
-        model,
-        mcp_config,
-        interactive,
-        mount_spec,
+        session,
+        resolved_env,
         ..
     } = client.get_session_context(&job).await?;
-    let mcp_config_json = mcp_config
-        .map(|c| serde_json::to_string(&c))
+    let mount_spec = session.mount_spec.clone();
+    let model = session.agent_config.model.clone();
+    let mcp_config_json = session
+        .agent_config
+        .mcp_config
+        .as_ref()
+        .map(serde_json::to_string)
         .transpose()
         .context("failed to serialize MCP config")?;
+    let (prompt, interactive) = match &session.mode {
+        SessionMode::Headless { prompt } => (prompt.clone(), None),
+        SessionMode::Interactive {
+            conversation_id,
+            idle_timeout_secs,
+            conversation_resume_from,
+        } => (
+            session
+                .agent_config
+                .system_prompt
+                .clone()
+                .unwrap_or_default(),
+            Some(InteractiveOptions::new(
+                Some(conversation_id.clone()),
+                *idle_timeout_secs,
+                *conversation_resume_from,
+            )),
+        ),
+        // The `SessionMode` enum is `#[non_exhaustive]` across the crate
+        // boundary. A future variant should crash loudly here rather than
+        // silently fall through to either branch.
+        other => {
+            return Err(anyhow!(
+                "worker received an unsupported SessionMode: {other:?}"
+            ));
+        }
+    };
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
         let tmp_path = tmp.keep();
@@ -78,7 +106,7 @@ pub async fn run(
         ensure_clean_destination(&dest)?;
         dest
     };
-    let mut execution_env = variables;
+    let mut execution_env = resolved_env;
     ensure_color_output_env(&mut execution_env);
     let worker_home_dir = resolve_worker_home_dir();
     let github_token = client.get_github_token().await.ok();

@@ -333,14 +333,20 @@ async fn worker_context_includes_configured_idle_timeout() -> anyhow::Result<()>
         .await?
         .json()
         .await?;
-    let interactive = context
-        .interactive
-        .expect("interactive session must include InteractiveOptions");
+    let hydra_common::sessions::SessionMode::Interactive {
+        idle_timeout_secs, ..
+    } = &context.session.mode
+    else {
+        panic!(
+            "interactive session must surface Interactive mode on the embedded session, got {:?}",
+            context.session.mode
+        );
+    };
     assert_eq!(
-        interactive.idle_timeout_secs,
+        *idle_timeout_secs,
         Some(2),
-        "WorkerContext must surface the configured interactive_idle_timeout_secs so the \
-         worker idle-timer fires at the test-tuned interval"
+        "WorkerContext.session.mode must surface the configured interactive_idle_timeout_secs \
+         so the worker idle-timer fires at the test-tuned interval"
     );
 
     Ok(())

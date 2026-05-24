@@ -24,11 +24,12 @@ export type Session = {
    */
   mount_spec: MountSpec;
   /**
-   * Transitional bundle spec, retained until PR-3 routes
-   * `CreateSessionRequest` → `mount_spec` through the resolver. The
-   * in-memory `mount_spec` lowers `ServiceRepository` to a placeholder
-   * `Bundle::None`, so the resolver still relies on this field for
-   * service-repository → git-url translation. Removed in PR-3.
+   * Transitional bundle spec. Retained through PR-3 (Phase D step 14)
+   * because the in-memory `mount_spec` lowers `ServiceRepository` to a
+   * placeholder `Bundle::None`; the resolver still consults this field
+   * for the service-repository → git-url translation. Removed in PR-4
+   * (Phase D step 15) once `mount_spec` carries the resolved bundle
+   * end-to-end.
    */
   context?: BundleSpec;
   image?: string | null;

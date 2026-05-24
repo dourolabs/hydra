@@ -55,46 +55,32 @@ pub async fn get_session_context(
     // Build the API `Session` that the worker will see. Start from the stored
     // task, then overlay the runtime-resolved env vars and the freshly-built
     // mount spec so the embedded Session matches what the worker will actually
-    // run with. `resumed_state` plumbing is out of scope (PR-4 follow-up).
+    // run with. The worker reads `prompt` / `model` / `mcp_config` / mode
+    // settings off this embedded value — there is no more legacy WorkerContext
+    // duplication of those fields.
     let mut session: v1::sessions::Session = task.clone().into();
     session.env_vars = env_vars.clone();
-    session.mount_spec = mount_spec.clone();
+    session.mount_spec = mount_spec;
+    // For interactive sessions, fill in the server-configured idle-timeout
+    // default into the embedded `SessionMode::Interactive` so the worker can
+    // read it directly off `session.mode` without a separate handshake field.
+    // Matches the domain `SessionMode` exhaustively so a new variant in a
+    // future PR forces this site to be revisited (the cross-crate API
+    // `SessionMode` is `#[non_exhaustive]`).
+    if let SessionMode::Interactive { .. } = &task.mode {
+        if let v1::sessions::SessionMode::Interactive {
+            idle_timeout_secs, ..
+        } = &mut session.mode
+        {
+            if idle_timeout_secs.is_none() {
+                *idle_timeout_secs = Some(state.config.job.interactive_idle_timeout_secs);
+            }
+        }
+    }
 
-    // Legacy WorkerContext fields are populated from the session's mode.
-    // Match against the *domain* `SessionMode` (exhaustive in-crate) rather
-    // than the cross-crate `v1::sessions::SessionMode` (which is
-    // `#[non_exhaustive]`, forcing a wildcard arm) so the compiler catches
-    // any new variant added in PR-4. `task.mode` carries the same data the
-    // embedded API session was just constructed from.
-    let (prompt, interactive) = match &task.mode {
-        SessionMode::Headless { prompt } => (prompt.clone(), None),
-        SessionMode::Interactive {
-            conversation_id,
-            idle_timeout_secs,
-            conversation_resume_from,
-        } => (
-            session
-                .agent_config
-                .system_prompt
-                .clone()
-                .unwrap_or_default(),
-            Some(v1::sessions::InteractiveOptions::new(
-                Some(conversation_id.clone()),
-                Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
-                *conversation_resume_from,
-            )),
-        ),
-    };
-
-    let context = v1::sessions::WorkerContext::new(
-        prompt,
-        session.agent_config.model.clone(),
-        env_vars,
-        session.agent_config.mcp_config.clone(),
-        interactive,
-        mount_spec,
-        Some(session),
-    );
+    // `resumed_state` plumbing is a follow-up to Phase D step 15 (design §3.2);
+    // until then the field is always `None`.
+    let context = v1::sessions::WorkerContext::new(session, env_vars, None, None);
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
 }

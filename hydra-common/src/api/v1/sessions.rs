@@ -129,7 +129,8 @@ pub enum SessionMode {
         /// `Interactive` variant because resumption is only meaningful for
         /// interactive sessions; making it part of the mode means a
         /// `Headless` session can never carry a meaningless value.
-        /// Transitional until PR-4 introduces `SessionStateBlob`.
+        /// Transitional until [`SessionStateBlob`] is wired with a real
+        /// payload (follow-up to Phase D step 15).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation_resume_from: Option<usize>,
     },
@@ -662,53 +663,45 @@ impl<'de> Deserialize<'de> for MountItem {
     }
 }
 
+/// Opaque serialized session state included in a resumed session's
+/// [`WorkerContext`]. Placeholder per design §2.2 / §3.2 — Phase D step 15
+/// reserves the wire field; populating it with a real payload is a
+/// follow-up. Until then the server always serializes `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SessionStateBlob(pub Vec<u8>);
+
+/// Everything a worker needs to run a session. The embedded [`Session`]
+/// is the single source of truth for mount layout, agent config, and
+/// mode; per-fetch resolutions (`resolved_env`, `github_token`,
+/// `resumed_state`) live alongside it but are never persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct WorkerContext {
-    pub prompt: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    pub session: Session,
     #[serde(default)]
-    pub variables: HashMap<String, String>,
+    pub resolved_env: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_config: Option<McpConfig>,
-    /// Interactive-only settings. `Some` when the worker should run in
-    /// interactive mode; `None` for a one-shot session.
+    pub github_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interactive: Option<InteractiveOptions>,
-    /// Server-supplied mount layout. The server always populates this; the
-    /// worker iterates `mount_spec.mounts` to build its per-run mounts.
-    pub mount_spec: MountSpec,
-    /// Full server-resolved [`Session`] the worker should run. Optional
-    /// during the Phase D transition (PR-3 ships server-side population;
-    /// PR-4 deletes the redundant `prompt` / `model` / `mcp_config` /
-    /// `interactive` / `variables` fields once workers consume this
-    /// directly). Newer workers prefer-read this field but must still
-    /// tolerate the legacy ones being populated.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<Session>,
+    pub resumed_state: Option<SessionStateBlob>,
 }
 
 impl WorkerContext {
     pub fn new(
-        prompt: String,
-        model: Option<String>,
-        variables: HashMap<String, String>,
-        mcp_config: Option<McpConfig>,
-        interactive: Option<InteractiveOptions>,
-        mount_spec: MountSpec,
-        session: Option<Session>,
+        session: Session,
+        resolved_env: HashMap<String, String>,
+        github_token: Option<String>,
+        resumed_state: Option<SessionStateBlob>,
     ) -> Self {
         Self {
-            prompt,
-            model,
-            variables,
-            mcp_config,
-            interactive,
-            mount_spec,
             session,
+            resolved_env,
+            github_token,
+            resumed_state,
         }
     }
 }
@@ -1560,65 +1553,56 @@ mod tests {
     }
 
     #[test]
-    fn worker_context_serializes_mcp_config() {
+    fn worker_context_serializes_session_agent_config_mcp_config() {
         let mcp_config = serde_json::json!({
             "mcpServers": {
                 "browser": {"command": "mcp-browser"}
             }
         });
-        let context = WorkerContext::new(
-            "test prompt".to_string(),
-            None,
-            HashMap::new(),
-            Some(mcp_config.clone()),
-            None,
-            standard_mount_spec(false),
-            None,
-        );
+        let mut session = make_test_session("test prompt");
+        session.agent_config.mcp_config = Some(mcp_config.clone());
+        let context = WorkerContext::new(session, HashMap::new(), None, None);
 
         let json = serde_json::to_value(&context).unwrap();
-        assert_eq!(json.get("mcp_config").unwrap(), &mcp_config);
+        assert_eq!(
+            json["session"]["agent_config"].get("mcp_config").unwrap(),
+            &mcp_config
+        );
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.mcp_config, Some(mcp_config));
+        assert_eq!(
+            deserialized.session.agent_config.mcp_config,
+            Some(mcp_config)
+        );
     }
 
     #[test]
-    fn worker_context_serializes_interactive_options() {
-        let opts = InteractiveOptions::new(None, Some(600), Some(42));
-        let context = WorkerContext::new(
-            "test prompt".to_string(),
-            None,
-            HashMap::new(),
-            None,
-            Some(opts.clone()),
-            standard_mount_spec(false),
-            None,
-        );
+    fn worker_context_serializes_interactive_mode_on_session() {
+        let conv_id = crate::ConversationId::new();
+        let mut session = make_test_session("test prompt");
+        session.mode = SessionMode::Interactive {
+            conversation_id: conv_id.clone(),
+            idle_timeout_secs: Some(600),
+            conversation_resume_from: Some(42),
+        };
+        let context = WorkerContext::new(session, HashMap::new(), None, None);
 
         let json = serde_json::to_value(&context).unwrap();
-        let interactive = json.get("interactive").expect("interactive present");
-        assert_eq!(interactive.get("idle_timeout_secs").unwrap(), 600);
-        assert_eq!(interactive.get("conversation_resume_from").unwrap(), 42);
+        let mode = &json["session"]["mode"];
+        assert_eq!(mode["type"], "interactive");
+        assert_eq!(mode["idle_timeout_secs"], 600);
+        assert_eq!(mode["conversation_resume_from"], 42);
+        assert_eq!(mode["conversation_id"], conv_id.as_ref());
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.interactive, Some(opts));
-    }
-
-    #[test]
-    fn worker_context_omits_interactive_when_none() {
-        let context = WorkerContext::new(
-            "test prompt".to_string(),
-            None,
-            HashMap::new(),
-            None,
-            None,
-            standard_mount_spec(false),
-            None,
-        );
-
-        let json = serde_json::to_value(&context).unwrap();
-        assert!(json.get("interactive").is_none());
+        assert!(matches!(
+            deserialized.session.mode,
+            SessionMode::Interactive {
+                idle_timeout_secs: Some(600),
+                conversation_resume_from: Some(42),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1771,71 +1755,47 @@ mod tests {
     }
 
     #[test]
-    fn worker_context_requires_mount_spec_for_deserialization() {
+    fn worker_context_requires_session_for_deserialization() {
         let json = serde_json::json!({
-            "prompt": "hello",
-            "variables": {},
+            "resolved_env": {},
         });
         let result: Result<WorkerContext, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
-            "WorkerContext deserialization must fail without mount_spec",
+            "WorkerContext deserialization must fail without session",
         );
     }
 
     #[test]
-    fn worker_context_rejects_legacy_request_context_and_build_cache() {
-        let spec = standard_mount_spec(true);
-        let context = WorkerContext::new(
-            "test prompt".to_string(),
-            None,
-            HashMap::new(),
-            None,
-            None,
-            spec.clone(),
-            None,
-        );
+    fn worker_context_drops_legacy_top_level_fields() {
+        let session = make_test_session("legacy check");
+        let context = WorkerContext::new(session, HashMap::new(), None, None);
         let json = serde_json::to_value(&context).unwrap();
-        assert!(
-            json.get("request_context").is_none(),
-            "serialized payload must not include legacy request_context"
-        );
-        assert!(
-            json.get("build_cache").is_none(),
-            "serialized payload must not include legacy build_cache"
-        );
-    }
-
-    #[test]
-    fn worker_context_serializes_mount_spec_when_present() {
-        let spec = standard_mount_spec(true);
-        let context = WorkerContext::new(
-            "test prompt".to_string(),
-            None,
-            HashMap::new(),
-            None,
-            None,
-            spec.clone(),
-            None,
-        );
-        let json = serde_json::to_value(&context).unwrap();
-        assert!(json.get("mount_spec").is_some());
-        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.mount_spec, spec);
+        for legacy in [
+            "prompt",
+            "model",
+            "variables",
+            "mcp_config",
+            "interactive",
+            "mount_spec",
+            "request_context",
+            "build_cache",
+        ] {
+            assert!(
+                json.get(legacy).is_none(),
+                "serialized payload must not include legacy {legacy}"
+            );
+        }
     }
 
     #[test]
     fn worker_context_round_trips_embedded_session() {
         let session = make_test_session("embedded round trip");
-        let spec = standard_mount_spec(false);
         let context = WorkerContext::new(
-            "embedded round trip".to_string(),
+            session.clone(),
+            HashMap::from([("KEY".to_string(), "VAL".to_string())]),
+            Some("ghp_test".to_string()),
             None,
-            HashMap::new(),
-            None,
-            None,
-            spec,
-            Some(session.clone()),
         );
         let json = serde_json::to_value(&context).unwrap();
         assert!(
@@ -1843,25 +1803,35 @@ mod tests {
             "session field must serialize"
         );
         let parsed: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.session, Some(session));
+        assert_eq!(parsed.session, session);
+        assert_eq!(
+            parsed.resolved_env.get("KEY").map(String::as_str),
+            Some("VAL")
+        );
+        assert_eq!(parsed.github_token.as_deref(), Some("ghp_test"));
+        assert!(parsed.resumed_state.is_none());
     }
 
     #[test]
-    fn worker_context_omits_session_when_absent() {
-        let context = WorkerContext::new(
-            "no session".to_string(),
-            None,
-            HashMap::new(),
-            None,
-            None,
-            standard_mount_spec(false),
-            None,
-        );
+    fn worker_context_omits_resumed_state_when_none() {
+        let session = make_test_session("no resumed state");
+        let context = WorkerContext::new(session, HashMap::new(), None, None);
         let json = serde_json::to_value(&context).unwrap();
         assert!(
-            json.get("session").is_none(),
-            "session field must be skipped when None"
+            json.get("resumed_state").is_none(),
+            "resumed_state must be skipped when None"
         );
+    }
+
+    #[test]
+    fn worker_context_round_trips_resumed_state() {
+        let session = make_test_session("with resumed state");
+        let blob = SessionStateBlob(vec![0xde, 0xad, 0xbe, 0xef]);
+        let context = WorkerContext::new(session, HashMap::new(), None, Some(blob.clone()));
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(json.get("resumed_state").is_some());
+        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.resumed_state, Some(blob));
     }
 
     #[test]

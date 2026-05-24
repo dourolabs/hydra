@@ -321,10 +321,11 @@ async fn drive_worker_lifecycle(
         Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
     };
     let WorkerContext {
-        mut variables,
-        mount_spec,
+        session,
+        resolved_env: mut variables,
         ..
     } = context;
+    let mount_spec = session.mount_spec.clone();
 
     let temp_dir = match tempfile::tempdir() {
         Ok(t) => t,

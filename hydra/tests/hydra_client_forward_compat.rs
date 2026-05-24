@@ -430,6 +430,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let context = client.get_session_context(&job_id).await?;
     let bundle_item = context
+        .session
         .mount_spec
         .mounts
         .first()
@@ -830,21 +831,30 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
 
 fn forward_worker_context_json() -> Value {
     json!({
-        "prompt": "worker prompt",
-        "variables": { "foo": "bar" },
-        "mount_spec": {
-            "working_dir": "repo",
-            "mounts": [
-                {
-                    "type": "bundle",
-                    "target": "repo",
-                    "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
-                    "session_id": "s-forwardct",
-                },
-                {"type": "documents", "target": "documents"}
-            ],
-            "note": "future-only key inside spec"
+        "session": {
+            "creator": "future-creator",
+            "agent_config": {
+                "model": "future-model",
+                "extra_agent_field": true
+            },
+            "mount_spec": {
+                "working_dir": "repo",
+                "mounts": [
+                    {
+                        "type": "bundle",
+                        "target": "repo",
+                        "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
+                        "session_id": "s-forwardct",
+                    },
+                    {"type": "documents", "target": "documents"}
+                ],
+                "note": "future-only key inside spec"
+            },
+            "mode": { "type": "headless", "prompt": "worker prompt" },
+            "future_field": "future"
         },
+        "resolved_env": { "foo": "bar" },
+        "github_token": null,
         "note": "context"
     })
 }
