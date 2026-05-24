@@ -15,7 +15,8 @@ tests/e2e/
 ├── README.md              # This file
 ├── run.sh                 # E2E test runner script
 ├── config/
-│   └── test-config.yaml   # Server init config for test runs
+│   ├── test-config.yaml   # Server init config for test runs
+│   └── merge-policy.yaml  # Merge policy applied to the test-fixture repo
 └── scenarios/
     ├── server-init.md           # P0: Server initialization and dashboard load
     ├── add-github-repo.md       # P0: Verify pre-registered GitHub repo
@@ -107,6 +108,7 @@ The `run.sh` script is a lightweight utility that bootstraps a fresh Hydra singl
 5. **Initializes the server** -- runs `hydra-sp server init` with the test config
 6. **Starts the server** -- runs `hydra-sp server start` in the background and waits for the health check at `http://localhost:8080/health`
 7. **Registers test fixture repo** -- runs `hydra-sp repos create` with explicit `HYDRA_SERVER_URL` to pre-register `dourolabs/hydra-test-fixture`
+8. **Applies a merge policy** -- runs `hydra-sp repos update dourolabs/hydra-test-fixture --merge-policy-file tests/e2e/config/merge-policy.yaml` so e2e scenarios exercise the real merge-time-constraints workflow (required `reviewer` approval; anyone may merge)
 
 The `hydra-sp` symlink points to the `hydra` binary and exists to avoid conflicting with a production `hydra` CLI when testing Hydra-in-Hydra. The `HYDRA_SERVER_URL` env var is set explicitly on repo registration to target the local test instance.
 

@@ -1086,6 +1086,30 @@ mergers:
         );
     }
 
+    /// Regression test for the e2e bootstrap fixture (tests/e2e/run.sh applies
+    /// this policy to the test-fixture repo). If a future schema change breaks
+    /// this YAML, we want a unit-test failure rather than a runtime failure in
+    /// `run.sh`.
+    #[test]
+    fn load_merge_policy_file_parses_e2e_fixture() {
+        use hydra_common::repositories::Principal;
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("tests/e2e/config/merge-policy.yaml");
+        let policy = load_merge_policy_file(&path).expect("e2e fixture must parse");
+        assert_eq!(policy.reviewers.len(), 1, "exactly one reviewer group");
+        let group = &policy.reviewers[0];
+        assert_eq!(group.any_of, vec![Principal::User("reviewer".into())]);
+        assert_eq!(group.count, 1);
+        assert!(group.exclude_author);
+        assert!(
+            policy.mergers.is_none(),
+            "mergers omitted == anyone may merge"
+        );
+    }
+
     #[tokio::test]
     async fn update_repository_with_merge_policy_file() {
         let dir = tempfile::tempdir().unwrap();
