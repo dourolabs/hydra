@@ -762,6 +762,56 @@ pub(crate) fn transcript_path(home_dir: &Path, working_dir: &Path, session_id: &
         .join(format!("{session_id}.jsonl"))
 }
 
+/// Rewrite every `cwd` field in a Claude on-disk JSONL transcript to point at
+/// `new_cwd`. Claude bakes the working directory into each line of the
+/// transcript it writes to `~/.claude/projects/<encoded-cwd>/<UUID>.jsonl`.
+/// When we install that transcript in a different container so we can
+/// `claude --resume <UUID>` against it, the inner `cwd` strings still name
+/// the suspend-side path. Empirically Claude refuses to produce a reply for
+/// the trailing stdin input when the on-disk `cwd` does not match its own
+/// `current_dir`, so we normalize every line's `cwd` to `new_cwd` before
+/// writing.
+///
+/// Lines that do not parse as JSON or do not have a `cwd` field are returned
+/// unchanged. The original line endings (including a trailing newline, if
+/// any) are preserved so the file round-trips byte-for-byte aside from the
+/// rewrite.
+pub(crate) fn rewrite_transcript_cwd(bytes: &[u8], new_cwd: &Path) -> Vec<u8> {
+    let new_cwd_str = new_cwd.to_string_lossy();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut start = 0;
+    while start < bytes.len() {
+        let end = bytes[start..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map(|i| start + i + 1)
+            .unwrap_or(bytes.len());
+        let (line, terminator_len) = if bytes[end - 1] == b'\n' {
+            (&bytes[start..end - 1], 1usize)
+        } else {
+            (&bytes[start..end], 0usize)
+        };
+        match std::str::from_utf8(line)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        {
+            Some(mut value) if value.get("cwd").is_some_and(|v| v.is_string()) => {
+                value["cwd"] = serde_json::Value::String(new_cwd_str.to_string());
+                match serde_json::to_vec(&value) {
+                    Ok(rewritten) => out.extend_from_slice(&rewritten),
+                    Err(_) => out.extend_from_slice(line),
+                }
+            }
+            _ => out.extend_from_slice(line),
+        }
+        if terminator_len == 1 {
+            out.push(b'\n');
+        }
+        start = end;
+    }
+    out
+}
+
 /// Write `bytes` to `path` atomically: create parent directories, write to a
 /// sibling `*.jsonl.tmp` file, then `rename(2)` it over the target.
 pub(crate) fn write_transcript_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -1085,6 +1135,68 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rewrite_transcript_cwd_replaces_cwd_on_lines_that_have_it() {
+        let new_cwd = Path::new("/tmp/resumed-container/workdir");
+        let input = b"{\"type\":\"summary\",\"session_id\":\"abc\"}\n\
+{\"type\":\"user\",\"cwd\":\"/tmp/suspend-container/repo\",\"sessionId\":\"abc\"}\n\
+{\"type\":\"assistant\",\"cwd\":\"/tmp/suspend-container/repo\",\"message\":{\"text\":\"hi\"}}\n";
+
+        let out = rewrite_transcript_cwd(input, new_cwd);
+
+        let out_str = std::str::from_utf8(&out).unwrap();
+        assert!(
+            !out_str.contains("/tmp/suspend-container/repo"),
+            "old cwd must be gone, got: {out_str}"
+        );
+        let new_cwd_count = out_str.matches("/tmp/resumed-container/workdir").count();
+        assert_eq!(
+            new_cwd_count, 2,
+            "new cwd must appear once per line that originally had cwd, got: {out_str}"
+        );
+        // Trailing newline preserved.
+        assert!(out.ends_with(b"\n"));
+        // Lines without `cwd` are passed through unchanged.
+        assert!(out_str.contains(r#"{"type":"summary","session_id":"abc"}"#));
+    }
+
+    #[test]
+    fn rewrite_transcript_cwd_passes_through_non_json_lines() {
+        let new_cwd = Path::new("/new");
+        let input = b"not-json garbage\n{\"cwd\":\"/old\"}\n";
+        let out = rewrite_transcript_cwd(input, new_cwd);
+        let out_str = std::str::from_utf8(&out).unwrap();
+        assert!(out_str.starts_with("not-json garbage\n"));
+        assert!(out_str.contains(r#""cwd":"/new""#));
+        assert!(!out_str.contains("/old"));
+    }
+
+    #[test]
+    fn rewrite_transcript_cwd_handles_missing_trailing_newline() {
+        let new_cwd = Path::new("/new");
+        let input = br#"{"cwd":"/old","x":1}"#;
+        let out = rewrite_transcript_cwd(input, new_cwd);
+        assert!(!out.ends_with(b"\n"));
+        let out_str = std::str::from_utf8(&out).unwrap();
+        assert!(out_str.contains(r#""cwd":"/new""#));
+    }
+
+    #[test]
+    fn rewrite_transcript_cwd_leaves_lines_without_cwd_field_unchanged() {
+        let new_cwd = Path::new("/new");
+        let input = b"{\"type\":\"summary\"}\n{\"cwd\":\"/old\",\"k\":1}\n";
+        let out = rewrite_transcript_cwd(input, new_cwd);
+        let out_str = std::str::from_utf8(&out).unwrap();
+        assert!(out_str.contains(r#"{"type":"summary"}"#));
+        assert!(out_str.contains(r#""cwd":"/new""#));
+    }
+
+    #[test]
+    fn rewrite_transcript_cwd_empty_input_returns_empty() {
+        let out = rewrite_transcript_cwd(b"", Path::new("/new"));
+        assert!(out.is_empty());
     }
 
     #[test]
