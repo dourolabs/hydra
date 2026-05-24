@@ -4,7 +4,8 @@
 //!
 //! See `designs/worker-model-commands-refactor.md` §2.3 for the design. This
 //! module owns:
-//! * the `WorkerConnect` handshake and catch-up drain,
+//! * the `WorkerConnect` handshake and `WorkerCatchUp` drain,
+//! * the primary transcript-based resume install,
 //! * the bidirectional pump between the WebSocket and the generic channels,
 //! * idle-timeout / SIGTERM detection and the suspend-emission flow.
 //!
@@ -21,7 +22,9 @@ use chrono::Utc;
 use futures::{Sink, SinkExt, StreamExt};
 use hydra_common::{
     api::v1::{
-        conversations::{ServerMessage, SessionStatePayload, WorkerConnect, WorkerMessage},
+        conversations::{
+            ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect, WorkerMessage,
+        },
         sessions::SessionEvent,
     },
     SessionId,
@@ -31,7 +34,7 @@ use tokio_tungstenite::tungstenite;
 use tracing::{error, info, warn};
 
 use crate::client::RelayWebSocket;
-use crate::worker::claude::transcript_path;
+use crate::worker::claude::{rewrite_transcript_cwd, transcript_path, write_transcript_atomic};
 use crate::worker::report::{SessionResume, WorkerEvent, WorkerInputMessage};
 
 /// Handles returned by [`spawn_relay_adapter`].
@@ -152,29 +155,49 @@ async fn run_pump(
         "catch_up_received"
     );
 
-    // We previously attempted a "primary" `claude --resume <UUID>` path that
-    // wrote `catch_up.session_state`'s transcript bytes to disk and spawned
-    // claude with `--resume`. In practice that path produced no assistant reply
-    // for the trailing user message in the cross-container chat-close/resume
-    // scenario (see issue i-tayyxxxf): claude was spawned but never responded.
-    // Falling back to the primer-merge path — building a `<prior-conversation>`
-    // block from the catch-up events and merging it with the trailing user
-    // message into a single stdin input — is reliable, so we now take that
-    // path unconditionally. The suspend-side `SessionStateUpload` mechanism is
-    // left intact so the wire envelope continues to round-trip cleanly; the
-    // bytes are simply ignored on the resume side now.
-    let _ = initial_resume_tx.send(None);
+    let primary_resume = try_primary_resume(&catch_up, &home_dir, &working_dir);
+    let resume_session_id: Option<String> = primary_resume.as_ref().map(|p| p.session_id.clone());
+
+    match (&primary_resume, &catch_up.session_state) {
+        (Some(p), _) => info!(
+            %session_id,
+            resume_session_id = %p.session_id,
+            transcript_bytes = p.transcript_bytes,
+            "resume_path=primary_transcript"
+        ),
+        (None, Some(bytes)) => warn!(
+            %session_id,
+            session_state_bytes = bytes.len(),
+            "resume_path=primer_fallback session_state_present_but_unusable"
+        ),
+        (None, None) => info!(
+            %session_id,
+            "resume_path=primer_fallback no_session_state"
+        ),
+    }
+
+    let initial_resume_value = resume_session_id.clone().map(SessionResume::BySessionId);
+    let _ = initial_resume_tx.send(initial_resume_value);
 
     let mut prompt_prepend = PromptPrepend::new(prompt, &catch_up.events);
 
-    // Feed catch-up: build a primer wrapping the prior transcript and merge it
-    // with the first pending `UserMessage` into a single `WorkerInputMessage`,
-    // so the model sees prior context and the actual question as one turn.
-    feed_catch_up_to_channel(&input_tx, &catch_up.events, prompt, &mut prompt_prepend).await?;
+    // Feed catch-up: if we restored the transcript Claude already has the
+    // prior history; only the trailing pending UserMessages are forwarded.
+    // Otherwise we synthesize a single primer wrapping the prior transcript
+    // and forward it before any pending input.
+    feed_catch_up_to_channel(
+        &input_tx,
+        &catch_up.events,
+        primary_resume.is_some(),
+        prompt,
+        &mut prompt_prepend,
+    )
+    .await?;
 
     // Track the model session id reported via WorkerEvent::SessionInit so the
-    // suspend-upload code can find the transcript on disk.
-    let mut model_session_id: Option<String> = None;
+    // suspend-upload code can find the transcript on disk. Pre-seed with the
+    // resumed session id, if any.
+    let mut model_session_id: Option<String> = resume_session_id;
 
     let idle_deadline = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle_deadline);
@@ -310,28 +333,121 @@ async fn run_pump(
     Ok(())
 }
 
+/// Outcome of attempting the primary transcript-based resume path.
+struct PrimaryResume {
+    session_id: String,
+    transcript_bytes: usize,
+}
+
+/// Try to apply the primary resume path: parse `catch_up.session_state` as
+/// `SessionStatePayload::V1 { transcript: Some(..) }`, then write the
+/// transcript bytes to the on-disk location Claude reads on `--resume`.
+fn try_primary_resume(
+    catch_up: &WorkerCatchUp,
+    home_dir: &Path,
+    working_dir: &Path,
+) -> Option<PrimaryResume> {
+    let Some(bytes) = catch_up.session_state.as_deref() else {
+        info!("try_primary_resume session_state=absent");
+        return None;
+    };
+    info!(
+        bytes = bytes.len(),
+        "try_primary_resume session_state=present"
+    );
+
+    let payload: SessionStatePayload = match serde_json::from_slice(bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            error!(
+                error = %err,
+                "try_primary_resume parse_failed falling_back_to_primer"
+            );
+            return None;
+        }
+    };
+
+    let (session_id, transcript) = match payload {
+        SessionStatePayload::V1 {
+            session_id,
+            transcript,
+        } => (session_id, transcript),
+    };
+
+    let bytes = match transcript {
+        Some(t) => {
+            info!(
+                resume_session_id = %session_id,
+                transcript_bytes = t.len(),
+                "try_primary_resume parsed transcript=present"
+            );
+            t
+        }
+        None => {
+            warn!(
+                resume_session_id = %session_id,
+                "try_primary_resume transcript=absent falling_back_to_primer"
+            );
+            return None;
+        }
+    };
+
+    // Each line of the Claude transcript carries the suspend-side container's
+    // `cwd`. When we install it for `--resume` in a fresh container with a
+    // different working directory, Claude refuses to produce a reply for the
+    // trailing stdin input unless the on-disk `cwd` matches its own. Rewrite
+    // every line's `cwd` to point at this container's working_dir before
+    // writing to disk.
+    let rewritten = rewrite_transcript_cwd(&bytes, working_dir);
+    let rewritten_bytes = rewritten.len();
+
+    let path = transcript_path(home_dir, working_dir, &session_id);
+    if let Err(err) = write_transcript_atomic(&path, &rewritten) {
+        error!(
+            transcript_path = %path.display(),
+            error = %err,
+            "try_primary_resume write_failed falling_back_to_primer"
+        );
+        return None;
+    }
+    info!(
+        transcript_path = %path.display(),
+        transcript_bytes = rewritten_bytes,
+        original_bytes = bytes.len(),
+        "try_primary_resume write_succeeded"
+    );
+
+    Some(PrimaryResume {
+        session_id,
+        transcript_bytes: rewritten_bytes,
+    })
+}
+
 /// Feed catch-up events into the generic input channel.
 ///
-/// We build a context primer wrapping the prior conversation transcript and
-/// merge it with the first pending `UserMessage` into a single
-/// `WorkerInputMessage`, so the model sees prior context and the actual
-/// question as one turn. Without this merge, sending the primer as its own
-/// input elicits a content-free meta-ack (e.g. "Ready when you are.")
-/// because the primer alone has no question to answer.
-///
-/// If there are no prior events the primer step is skipped. If there are no
-/// pending user messages (e.g. `/resume` without an attached message), the
-/// primer is deferred via [`PromptPrepend::defer_primer`] and prepended to
-/// the first relay-loop user message instead.
+/// * When `using_resumed_transcript` is true (primary path), only trailing
+///   pending `UserMessage`s are forwarded — the prior history is already
+///   restored on disk.
+/// * Otherwise (primer path) we build a context primer wrapping the prior
+///   transcript and merge it with the first pending `UserMessage` into a
+///   single `WorkerInputMessage`, so the model sees prior context and the
+///   actual question as one turn. Without this merge, sending the primer
+///   as its own input elicits a content-free meta-ack (e.g. "Ready when
+///   you are.") because the primer alone has no question to answer.
+/// * If the primer path runs but there are no pending user messages
+///   (e.g. `/resume` without an attached message), the primer is deferred
+///   via [`PromptPrepend::defer_primer`] and prepended to the first
+///   relay-loop user message instead.
 async fn feed_catch_up_to_channel(
     input_tx: &mpsc::Sender<WorkerInputMessage>,
     events: &[SessionEvent],
+    using_resumed_transcript: bool,
     prompt: &str,
     prompt_prepend: &mut PromptPrepend,
 ) -> Result<()> {
     let (past_context, pending_user_messages) = partition_events(events);
 
-    let primer = if !past_context.is_empty() {
+    let primer = if !using_resumed_transcript && !past_context.is_empty() {
         Some(build_context_primer(prompt, &past_context))
     } else {
         None
@@ -740,7 +856,7 @@ mod tests {
             user_msg("new question"),
         ];
         let mut prepend = PromptPrepend::new("agent", &events);
-        feed_catch_up_to_channel(&tx, &events, "agent", &mut prepend).await?;
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
         drop(tx);
 
         let received = drain(&mut rx).await;
@@ -774,7 +890,7 @@ mod tests {
             user_msg("second pending"),
         ];
         let mut prepend = PromptPrepend::new("agent", &events);
-        feed_catch_up_to_channel(&tx, &events, "agent", &mut prepend).await?;
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
         drop(tx);
 
         let received = drain(&mut rx).await;
@@ -795,7 +911,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
         let events = vec![user_msg("u1"), assistant_msg("a1")];
         let mut prepend = PromptPrepend::new("agent", &events);
-        feed_catch_up_to_channel(&tx, &events, "agent", &mut prepend).await?;
+        feed_catch_up_to_channel(&tx, &events, false, "agent", &mut prepend).await?;
         drop(tx);
 
         let received = drain(&mut rx).await;
@@ -819,91 +935,104 @@ mod tests {
         Ok(())
     }
 
-    /// Regression test for i-tayyxxxf: chat close→reopen→send. The catch-up
-    /// the resumed worker receives is the cross-session SessionEvent log —
-    /// it carries the full prior chat history, lifecycle markers
-    /// (`Suspending` / `Resumed`), and the post-close trailing user message.
-    /// `feed_catch_up_to_channel` must merge the prior history into a primer
-    /// and combine it with the trailing user message into one stdin input so
-    /// the model has both context and an unanswered question to respond to.
-    /// Lifecycle events between the last assistant message and the trailing
-    /// user message must be ignored.
     #[tokio::test]
-    async fn feed_catch_up_chat_close_then_resume_merges_history_with_trailing_user_message(
-    ) -> Result<()> {
+    async fn feed_catch_up_primary_resume_path_unchanged() -> Result<()> {
         let (tx, mut rx) = mpsc::channel::<WorkerInputMessage>(8);
-        // Mirrors the cross-session catch-up that `build_catch_up` returns
-        // after the user closes a chat with three completed turns and sends
-        // a fourth message on the resumed session.
-        let suspending = SessionEvent::Suspending {
-            reason: "idle_timeout".to_string(),
-            timestamp: Utc::now(),
-        };
-        let resumed = SessionEvent::Resumed {
-            from_session_id: hydra_common::SessionId::new(),
-            timestamp: Utc::now(),
-        };
-        let events = vec![
-            user_msg("My name is Alice. What's 2+2?"),
-            assistant_msg("4"),
-            user_msg("I'm a software engineer. What's 3+3?"),
-            assistant_msg("6"),
-            user_msg("I work on Rust projects. What's 4+4?"),
-            assistant_msg("8"),
-            suspending,
-            resumed,
-            user_msg("What's my name and what do I work on?"),
-        ];
+        let events = vec![user_msg("u1"), assistant_msg("a1"), user_msg("pending msg")];
         let mut prepend = PromptPrepend::new("agent", &events);
-        feed_catch_up_to_channel(&tx, &events, "agent", &mut prepend).await?;
+        feed_catch_up_to_channel(&tx, &events, true, "agent", &mut prepend).await?;
         drop(tx);
 
         let received = drain(&mut rx).await;
-        assert_eq!(
-            received.len(),
-            1,
-            "expected exactly one merged input — the primer + trailing user \
-             message — got {received:?}"
-        );
-        let merged = &received[0];
+        assert_eq!(received.len(), 1, "expected 1 input, got {received:?}");
         assert!(
-            merged.contains("<prior-conversation>"),
-            "merged input must wrap the prior history in a <prior-conversation> \
-             block, got: {merged}"
+            !received[0].contains("<prior-conversation>"),
+            "primary resume must not emit the primer"
         );
-        // Each completed turn from the prior history must appear in the primer.
-        for needle in [
-            "My name is Alice. What's 2+2?",
-            "I'm a software engineer. What's 3+3?",
-            "I work on Rust projects. What's 4+4?",
-        ] {
-            assert!(
-                merged.contains(needle),
-                "primer must carry prior user message {needle:?}, got: {merged}"
-            );
-        }
-        for needle in ["4", "6", "8"] {
-            assert!(
-                merged.contains(needle),
-                "primer must carry prior assistant reply {needle:?}, got: {merged}"
-            );
-        }
-        // Lifecycle markers must not bleed into the primer text — only
-        // `UserMessage` / `AssistantMessage` events are part of the prior log.
-        assert!(
-            !merged.contains("idle_timeout"),
-            "Suspending reason must not appear in the primer, got: {merged}"
-        );
-        // The trailing user message after the last assistant reply must be the
-        // tail of the merged input so the model sees it as the active question.
-        assert!(
-            merged.contains("What's my name and what do I work on?"),
-            "merged input must include the trailing user message, got: {merged}"
-        );
+        assert_eq!(received[0], "pending msg");
         assert!(
             prepend.primer_pending.is_none(),
-            "primer must not also be deferred when it was merged"
+            "primary resume must not defer a primer"
         );
         Ok(())
+    }
+
+    /// Regression test for i-bhsochzh / i-tayyxxxf chat-close-resume-history:
+    /// the suspend-side transcript bakes the prior container's `cwd` into
+    /// every line. On resume we install it at
+    /// `<home>/.claude/projects/<encoded(new_cwd)>/<UUID>.jsonl` so
+    /// `claude --resume <UUID>` finds it, but the on-disk lines previously
+    /// still named the old `cwd` — which empirically made Claude refuse to
+    /// reply to the trailing stdin input. `try_primary_resume` must rewrite
+    /// every `cwd` field to the new container's working directory before
+    /// writing.
+    #[test]
+    fn try_primary_resume_rewrites_cwd_to_new_container_working_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("home");
+        let suspend_cwd = "/tmp/suspend-container/repo";
+        let resume_cwd = tmp.path().join("resumed/workdir");
+        std::fs::create_dir_all(&resume_cwd).unwrap();
+        let session_id = "11111111-2222-3333-4444-555555555555";
+
+        let transcript = format!(
+            "{{\"type\":\"summary\",\"session_id\":\"{session_id}\"}}\n\
+{{\"type\":\"user\",\"cwd\":\"{suspend_cwd}\",\"sessionId\":\"{session_id}\",\"message\":{{\"text\":\"hi\"}}}}\n\
+{{\"type\":\"assistant\",\"cwd\":\"{suspend_cwd}\",\"sessionId\":\"{session_id}\",\"message\":{{\"text\":\"hello\"}}}}\n"
+        );
+
+        let payload = SessionStatePayload::V1 {
+            session_id: session_id.to_string(),
+            transcript: Some(transcript.into_bytes()),
+        };
+        let catch_up = WorkerCatchUp {
+            events: vec![],
+            session_state: Some(serde_json::to_vec(&payload).unwrap()),
+        };
+
+        let result = try_primary_resume(&catch_up, &home_dir, &resume_cwd)
+            .expect("primary resume should succeed when session_state carries a transcript");
+        assert_eq!(result.session_id, session_id);
+
+        let installed = transcript_path(&home_dir, &resume_cwd, session_id);
+        let installed_bytes = std::fs::read(&installed).expect("transcript must be installed");
+        let installed_str = std::str::from_utf8(&installed_bytes).unwrap();
+
+        let resume_cwd_str = resume_cwd.to_string_lossy().to_string();
+        assert!(
+            !installed_str.contains(suspend_cwd),
+            "suspend-side cwd must not appear on disk; got: {installed_str}"
+        );
+        let new_cwd_hits = installed_str.matches(resume_cwd_str.as_str()).count();
+        assert_eq!(
+            new_cwd_hits, 2,
+            "resume-side cwd must replace cwd on every line that had it; got: {installed_str}"
+        );
+        // Lines without `cwd` pass through unchanged.
+        assert!(installed_str.contains(r#"{"type":"summary""#));
+    }
+
+    #[test]
+    fn try_primary_resume_returns_none_when_session_state_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let catch_up = WorkerCatchUp {
+            events: vec![],
+            session_state: None,
+        };
+        assert!(try_primary_resume(&catch_up, tmp.path(), tmp.path()).is_none());
+    }
+
+    #[test]
+    fn try_primary_resume_returns_none_when_transcript_field_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = SessionStatePayload::V1 {
+            session_id: "abc".to_string(),
+            transcript: None,
+        };
+        let catch_up = WorkerCatchUp {
+            events: vec![],
+            session_state: Some(serde_json::to_vec(&payload).unwrap()),
+        };
+        assert!(try_primary_resume(&catch_up, tmp.path(), tmp.path()).is_none());
     }
 }
