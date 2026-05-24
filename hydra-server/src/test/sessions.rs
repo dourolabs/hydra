@@ -2,19 +2,19 @@ use super::common::{default_image, patch_diff, service_repo_name, service_reposi
 use crate::app::{AppState, ServiceState, sessions::mount_spec_for_session};
 use crate::config::BuildCacheSection;
 use crate::domain::{
-    actors::ActorRef,
+    actors::{ActorRef, store_github_token_secrets},
     issues::{Issue, IssueStatus, IssueType, SessionSettings},
     patches::{Patch, PatchStatus},
     sessions::{AgentConfig, Bundle, BundleSpec, SessionMode},
-    users::Username,
+    users::{User, Username},
 };
 use crate::{
     job_engine::JobStatus,
     store::{MemoryStore, Session, Status},
     test_utils::{
-        MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
-        test_app_config, test_client, test_secret_manager, test_state_handles,
-        test_state_with_engine_handles,
+        MockJobEngine, add_repository, github_user_response, spawn_test_server,
+        spawn_test_server_with_state, test_app_config, test_client, test_secret_manager,
+        test_state_handles, test_state_with_engine_handles, test_state_with_github_urls,
     },
 };
 use chrono::{Duration, Utc};
@@ -1426,6 +1426,147 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
         panic!("expected Interactive mode, got {:?}", body.session.mode);
     };
     assert_eq!(*idle_timeout_secs, Some(expected_idle_timeout));
+    Ok(())
+}
+
+/// Regression: `/v1/sessions/:id/context` must populate
+/// `WorkerContext.github_token` from the creator's stored GitHub token. After
+/// PR-6 part A removed the worker's `client.get_github_token()` fallback,
+/// `WorkerContext.github_token` is the only source of truth for clone auth
+/// on the worker, so a `None` here is a hard outage for any session whose
+/// bundle requires authenticated clone.
+#[tokio::test]
+async fn get_session_context_populates_github_token_from_creator_secret() -> anyhow::Result<()> {
+    // Mock GitHub `/user` so `get_github_token_for_user`'s validity check
+    // accepts the stored token without going out to api.github.com.
+    let github_server = httpmock::MockServer::start_async().await;
+    let _user_mock = github_server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/user");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_user_response("octo", 42));
+    });
+
+    let handles = test_state_with_github_urls(github_server.base_url(), github_server.base_url());
+    let state = handles.state.clone();
+    let creator = Username::from("test-creator");
+
+    // Seed the creator user and an encrypted GitHub token in user_secrets so
+    // `get_github_token_for_user` can read it back.
+    handles
+        .store
+        .add_user(
+            User::new(creator.clone(), Some(101), false),
+            &ActorRef::test(),
+        )
+        .await?;
+    store_github_token_secrets(&state, &creator, "creator-token", "creator-refresh").await;
+
+    let context_spec = BundleSpec::GitRepository {
+        url: "https://example.com/repo.git".to_string(),
+        rev: "main".to_string(),
+    };
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                creator: creator.clone(),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&context_spec),
+                context: context_spec.clone(),
+                image: Some(default_image()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+                usage: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::sessions::WorkerContext = response.json().await?;
+    assert_eq!(body.github_token.as_deref(), Some("creator-token"));
+    Ok(())
+}
+
+/// Sessions whose creator has no GitHub token on file must still get a
+/// `WorkerContext` back — the field is `None` and the worker fails later at
+/// clone time with a clear auth error (matching the pre-refactor
+/// `client.get_github_token().await.ok()` semantics).
+#[tokio::test]
+async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state;
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: mount_spec_for_session(&BundleSpec::None),
+                context: BundleSpec::None,
+                image: Some(default_image()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mode: SessionMode::Headless {
+                    prompt: "0".to_string(),
+                },
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+                usage: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::sessions::WorkerContext = response.json().await?;
+    assert_eq!(body.github_token, None);
     Ok(())
 }
 

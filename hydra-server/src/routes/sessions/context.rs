@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, rewrite_local_bundle_url},
-    domain::sessions::SessionMode,
+    domain::{actors::get_github_token_for_user, sessions::SessionMode},
     routes::sessions::{ApiError, SessionIdPath, mount_spec_from_create_request},
 };
 use axum::{Json, extract::State};
@@ -8,7 +8,7 @@ use hydra_common::{
     api::v1,
     constants::{ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub async fn get_session_context(
     State(state): State<AppState>,
@@ -75,9 +75,26 @@ pub async fn get_session_context(
         }
     }
 
+    // Resolve the creator's GitHub token server-side so the worker can clone
+    // repos. Best-effort: if no token is on file we hand back `None` and the
+    // worker fails at clone time with a clear auth error, matching the
+    // pre-refactor `client.get_github_token().await.ok()` semantics.
+    let github_token = match get_github_token_for_user(&state, &task.creator).await {
+        Ok(response) => Some(response.github_token),
+        Err(err) => {
+            warn!(
+                session_id = %session_id,
+                creator = %task.creator,
+                error = ?err,
+                "no GitHub token for session creator; clone-needed sessions will fail"
+            );
+            None
+        }
+    };
+
     // `resumed_state` plumbing is a follow-up to Phase D step 15 (design §3.2);
     // until then the field is always `None`.
-    let context = v1::sessions::WorkerContext::new(session, env_vars, None, None);
+    let context = v1::sessions::WorkerContext::new(session, env_vars, github_token, None);
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
 }
