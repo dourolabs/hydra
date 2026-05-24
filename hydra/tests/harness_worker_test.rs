@@ -232,7 +232,6 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
         wrapper.clone() as Arc<dyn HydraClientInterface>,
         session_id,
         worker_dir,
-        None,
         true,
         &context,
     )

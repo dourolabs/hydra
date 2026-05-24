@@ -12,7 +12,7 @@ use hydra_common::{
     constants::ENV_HYDRA_DOCUMENTS_DIR,
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{InteractiveOptions, SessionMode, WorkerContext},
-    IssueId, SessionId,
+    SessionId,
 };
 
 use crate::command::sessions::mounts;
@@ -36,7 +36,6 @@ pub async fn run(
     client: Arc<dyn HydraClientInterface>,
     session: SessionId,
     dest: PathBuf,
-    _issue_id: Option<IssueId>,
     use_tempdir: bool,
     _context: &CommandContext,
 ) -> Result<()> {
@@ -59,6 +58,7 @@ pub async fn run(
     let WorkerContext {
         session,
         resolved_env,
+        github_token,
         ..
     } = client.get_session_context(&job).await?;
     let mount_spec = session.mount_spec.clone();
@@ -109,7 +109,6 @@ pub async fn run(
     let mut execution_env = resolved_env;
     ensure_color_output_env(&mut execution_env);
     let worker_home_dir = resolve_worker_home_dir();
-    let github_token = client.get_github_token().await.ok();
 
     // Pre-flight: compute the agent CWD and the per-mount list, and pin the
     // agent's `HYDRA_DOCUMENTS_DIR` before any mount runs. Each mount creates

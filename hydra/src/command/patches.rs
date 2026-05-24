@@ -33,7 +33,7 @@ use crate::git::{
     resolve_ref_oid as git_resolve_ref_oid, squash_merge_onto as git_squash_merge_onto, PushError,
 };
 use crate::{
-    client::HydraClientInterface,
+    client::HydraClient,
     command::{
         output::{render, CommandContext, PatchRecords, PatchSummaryRecords, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
@@ -226,7 +226,7 @@ pub struct PatchAssetCreateArgs {
 }
 
 pub async fn run(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     command: PatchesCommand,
     context: &CommandContext,
 ) -> Result<()> {
@@ -322,7 +322,7 @@ pub async fn run(
 }
 
 async fn patch_assets(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     command: PatchAssetsCommand,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
@@ -332,7 +332,7 @@ async fn patch_assets(
 }
 
 async fn create_patch_asset(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: PatchAssetCreateArgs,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
@@ -350,7 +350,7 @@ async fn create_patch_asset(
 }
 
 async fn create_patch_asset_with_writer(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     patch_id: &PatchId,
     file_path: &Path,
     output_format: ResolvedOutputFormat,
@@ -419,7 +419,7 @@ struct ListPatchesArgs {
     output_format: ResolvedOutputFormat,
 }
 
-async fn list_patches(client: &dyn HydraClientInterface, args: ListPatchesArgs) -> Result<()> {
+async fn list_patches(client: &HydraClient, args: ListPatchesArgs) -> Result<()> {
     let mut buffer = Vec::new();
     list_patches_with_writer(client, args, &mut buffer).await?;
     write_stdout(&buffer)?;
@@ -427,7 +427,7 @@ async fn list_patches(client: &dyn HydraClientInterface, args: ListPatchesArgs) 
 }
 
 async fn list_patches_with_writer(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: ListPatchesArgs,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -461,7 +461,7 @@ async fn list_patches_with_writer(
 }
 
 async fn get_patch_by_version(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     patch_id: &PatchId,
     version: Option<i64>,
     output_format: ResolvedOutputFormat,
@@ -486,7 +486,7 @@ async fn get_patch_by_version(
 }
 
 async fn fetch_patches(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     query: Option<String>,
     include_deleted: bool,
     repo_name: Option<String>,
@@ -509,7 +509,7 @@ async fn fetch_patches(
 /// Otherwise, if an `issue_id` is given, the issue's `session_settings.branch`
 /// is used (prefixed with `origin/`). Falls back to `"origin/main"`.
 async fn resolve_base_ref(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     base_ref: Option<String>,
     issue_id: Option<&IssueId>,
 ) -> Result<String> {
@@ -536,7 +536,7 @@ async fn resolve_base_ref(
 }
 
 async fn create_patch(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     title: String,
     description: String,
     job_id: Option<SessionId>,
@@ -609,7 +609,7 @@ fn write_patch_output(
 }
 
 async fn update_patch(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     patch_id: PatchId,
     title: Option<String>,
     description: Option<String>,
@@ -631,7 +631,7 @@ async fn update_patch(
 }
 
 async fn update_patch_inner(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     patch_id: PatchId,
     title: Option<String>,
     description: Option<String>,
@@ -920,7 +920,7 @@ fn render_merge_blocked_human(body: &MergeBlockedError) -> String {
 }
 
 async fn merge_patch(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     patch_id: PatchId,
     base_override: Option<String>,
     output_format: ResolvedOutputFormat,
@@ -1173,7 +1173,7 @@ async fn merge_patch(
 }
 
 pub async fn resolve_service_repo_name(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     job_id: Option<&SessionId>,
 ) -> Result<Option<RepoName>> {
     let job_id = job_id.ok_or_else(|| {
@@ -1192,7 +1192,7 @@ pub async fn resolve_service_repo_name(
 }
 
 pub async fn create_patch_artifact_from_repo(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     repo_root: &Path,
     diff: String,
     title: String,
@@ -1262,7 +1262,7 @@ fn git_repository_root() -> Result<PathBuf> {
     git::repository_root(None)
 }
 
-async fn apply_patch_record(client: &dyn HydraClientInterface, id: PatchId) -> Result<()> {
+async fn apply_patch_record(client: &HydraClient, id: PatchId) -> Result<()> {
     let patch_record = client
         .get_patch(&id)
         .await
@@ -1286,7 +1286,7 @@ fn apply_patch_to_repo(patch: &Patch, git_root: &Path) -> Result<()> {
 }
 
 async fn review_patch(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     id: PatchId,
     author: String,
     contents: String,
@@ -1326,7 +1326,7 @@ async fn review_patch(
 }
 
 async fn changelog_patch(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     id: PatchId,
     output_format: ResolvedOutputFormat,
     limit: usize,

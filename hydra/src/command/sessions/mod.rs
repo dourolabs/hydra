@@ -123,8 +123,6 @@ pub enum SessionsCommand {
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
-        #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_HYDRA_ISSUE_ID)]
-        issue_id: Option<IssueId>,
 
         /// Use a temporary directory as the working destination instead of PATH.
         #[arg(long = "tempdir")]
@@ -189,9 +187,8 @@ pub async fn run(
         SessionsCommand::WorkerRun {
             session,
             path,
-            issue_id,
             tempdir,
-        } => worker_run::run(client, session, path, issue_id, tempdir, context).await?,
+        } => worker_run::run(client, session, path, tempdir, context).await?,
     }
 
     Ok(())

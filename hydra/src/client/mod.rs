@@ -304,7 +304,6 @@ pub trait HydraClientInterface: Send + Sync {
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
-    async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
     async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse>;
@@ -2523,10 +2522,6 @@ impl HydraClientInterface for HydraClient {
 
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
         HydraClient::delete_repository(self, repo_name).await
-    }
-
-    async fn get_github_token(&self) -> Result<String> {
-        HydraClient::get_github_token(self).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {
