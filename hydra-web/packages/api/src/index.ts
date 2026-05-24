@@ -13,7 +13,6 @@ export {
   isSessionId,
   isLabelId,
   isConversationId,
-  isNotificationId,
 } from "./hydra-id";
 export type { HydraIdKind } from "./hydra-id";
 

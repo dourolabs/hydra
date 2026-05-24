@@ -6,7 +6,6 @@ import {
   isDocumentId,
   isIssueId,
   isLabelId,
-  isNotificationId,
   isPatchId,
   isSessionId,
 } from "@hydra/api";
@@ -20,7 +19,6 @@ describe("hydraIdKind", () => {
     ["s-abcdef", "session"],
     ["l-abcdef", "label"],
     ["c-abcdef", "conversation"],
-    ["nf-abcdef", "notification"],
   ];
 
   for (const [id, expected] of cases) {
@@ -37,12 +35,6 @@ describe("hydraIdKind", () => {
     expect(hydraIdKind("xyz-foo")).toBeNull();
     expect(hydraIdKind("foobar")).toBeNull();
     expect(hydraIdKind("z-abcdef")).toBeNull();
-  });
-
-  it("classifies notification ids by the longest prefix first", () => {
-    // `nf-` must win over any hypothetical single-char `n-` prefix, mirroring
-    // the Rust validator's ordering in hydra-common/src/ids.rs:124-142.
-    expect(hydraIdKind("nf-abc")).toBe("notification");
   });
 
   it("does not validate the suffix character set", () => {
@@ -89,7 +81,7 @@ describe("type guards", () => {
 
   it("isDocumentId matches only document ids", () => {
     expect(isDocumentId("d-abc")).toBe(true);
-    expect(isDocumentId("nf-abc")).toBe(false);
+    expect(isDocumentId("c-abc")).toBe(false);
   });
 
   it("isSessionId matches only session ids", () => {
@@ -107,12 +99,6 @@ describe("type guards", () => {
     expect(isConversationId("i-abc")).toBe(false);
   });
 
-  it("isNotificationId matches only notification ids", () => {
-    expect(isNotificationId("nf-abc")).toBe(true);
-    expect(isNotificationId("i-abc")).toBe(false);
-    expect(isNotificationId("")).toBe(false);
-  });
-
   it("all guards return false for unknown prefixes", () => {
     const unknown = "xyz-foo";
     expect(isIssueId(unknown)).toBe(false);
@@ -121,7 +107,6 @@ describe("type guards", () => {
     expect(isSessionId(unknown)).toBe(false);
     expect(isLabelId(unknown)).toBe(false);
     expect(isConversationId(unknown)).toBe(false);
-    expect(isNotificationId(unknown)).toBe(false);
   });
 
   it("all guards return false for empty string", () => {
@@ -131,6 +116,5 @@ describe("type guards", () => {
     expect(isSessionId("")).toBe(false);
     expect(isLabelId("")).toBe(false);
     expect(isConversationId("")).toBe(false);
-    expect(isNotificationId("")).toBe(false);
   });
 });
