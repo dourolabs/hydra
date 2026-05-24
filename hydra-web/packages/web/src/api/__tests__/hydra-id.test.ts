@@ -49,7 +49,7 @@ describe("hydraIdKind", () => {
 describe("HYDRA_ID_PREFIXES", () => {
   it("mirrors the Rust enum kinds", () => {
     expect(Object.keys(HYDRA_ID_PREFIXES).sort()).toEqual(
-      ["conversation", "document", "issue", "label", "notification", "patch", "session"].sort(),
+      ["conversation", "document", "issue", "label", "patch", "session"].sort(),
     );
   });
 
@@ -61,7 +61,6 @@ describe("HYDRA_ID_PREFIXES", () => {
       session: "s-",
       label: "l-",
       conversation: "c-",
-      notification: "nf-",
     });
   });
 });
