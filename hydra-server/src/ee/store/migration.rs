@@ -617,21 +617,63 @@ async fn migrate_tasks_internal(pool: &PgStorePool) -> Result<u64> {
                 .get("deleted")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let mcp_config = row.payload.get("mcp_config").cloned();
+            let conversation_id = row
+                .payload
+                .get("interactive")
+                .and_then(|v| v.get("conversation_id"))
+                .and_then(|v| v.as_str());
+
+            // Phase E step 16 dropped the legacy `prompt` / `context` /
+            // `model` / `mcp_config` / `interactive` /
+            // `conversation_resume_from` columns; this v1→v2 migration now
+            // assembles the equivalent shape into the surviving
+            // `mount_spec` / `agent_config` / `mode` columns directly,
+            // mirroring the 20260523020000 backfill rules.
+            let mount_spec = serde_json::json!({
+                "working_dir": "repo",
+                "mounts": [
+                    {
+                        "type": "bundle",
+                        "target": "repo",
+                        "bundle": context,
+                        "session_id": row.id,
+                    },
+                    {
+                        "type": "documents",
+                        "target": "documents",
+                    },
+                ],
+            });
+            let agent_config = serde_json::json!({
+                "agent_name": Value::Null,
+                "model": model,
+                "system_prompt": Value::Null,
+                "mcp_config": mcp_config,
+            });
+            let mode = match conversation_id {
+                Some(conv_id) => serde_json::json!({
+                    "type": "interactive",
+                    "conversation_id": conv_id,
+                }),
+                None => serde_json::json!({
+                    "type": "headless",
+                    "prompt": prompt,
+                }),
+            };
 
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_TASKS}
-                 (id, version_number, prompt, context, spawned_from, image, model, env_vars,
-                  cpu_limit, memory_limit, status, last_message, error, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                 (id, version_number, spawned_from, image, env_vars,
+                  cpu_limit, memory_limit, status, last_message, error, deleted,
+                  conversation_id, mount_spec, agent_config, mode, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
             .bind(row.version_number)
-            .bind(prompt)
-            .bind(&context)
             .bind(spawned_from)
             .bind(image)
-            .bind(model)
             .bind(&env_vars)
             .bind(cpu_limit)
             .bind(memory_limit)
@@ -639,6 +681,10 @@ async fn migrate_tasks_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(last_message)
             .bind(&error)
             .bind(deleted)
+            .bind(conversation_id)
+            .bind(&mount_spec)
+            .bind(&agent_config)
+            .bind(&mode)
             .bind(row.created_at)
             .execute(pool)
             .await

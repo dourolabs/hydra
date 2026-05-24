@@ -55,7 +55,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let resolved = resolver_state.resolve_task(&task).await?;
 
     assert_eq!(task.mode.prompt_for_legacy_wire(), "0");
-    assert_eq!(task.context, BundleSpec::None);
+    assert!(task.service_repo_name().is_none());
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -94,13 +94,7 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
     let body: CreateSessionResponse = response.json().await?;
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
-    assert_eq!(
-        task.context,
-        BundleSpec::ServiceRepository {
-            name: repo_name.clone(),
-            rev: None
-        }
-    );
+    assert_eq!(task.service_repo_name(), Some(&repo_name));
     assert_eq!(
         resolved.context.bundle,
         Bundle::GitRepository {

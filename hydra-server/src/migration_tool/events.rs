@@ -777,12 +777,20 @@ mod tests {
         creator: &str,
         creation_time: DateTime<Utc>,
     ) {
+        // Phase E step 16 dropped `prompt` / `context` / `interactive`;
+        // hand-crafted rows now only populate the surviving columns
+        // (mount_spec / agent_config / mode / conversation_id).
         sqlx::query(
             "INSERT INTO tasks_v2 \
-                (id, version_number, prompt, context, creator, image, env_vars, \
-                 status, deleted, creation_time, interactive, conversation_id, is_latest) \
-             VALUES (?1, 1, '', '{\"type\":\"none\"}', ?2, NULL, '{}', \
-                     'complete', 0, ?3, 1, ?4, 1)",
+                (id, version_number, creator, image, env_vars, \
+                 status, deleted, creation_time, conversation_id, \
+                 mount_spec, agent_config, mode, is_latest) \
+             VALUES (?1, 1, ?2, NULL, '{}', \
+                     'complete', 0, ?3, ?4, \
+                     '{\"working_dir\":\"repo\",\"mounts\":[]}', \
+                     '{}', \
+                     json_object('type', 'interactive', 'conversation_id', ?4), \
+                     1)",
         )
         .bind(session_id.as_ref())
         .bind(creator)

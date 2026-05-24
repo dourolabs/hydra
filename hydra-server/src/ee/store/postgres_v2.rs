@@ -710,18 +710,7 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
         })?;
 
-        // Use the transitional `context` field as the legacy column. This
-        // preserves `ServiceRepository { name, rev }` rows during PR-2; PR-3
-        // moves the source of truth into the mount_spec.
-        let context_json = serde_json::to_value(&session.context)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
-        let legacy_prompt = session.mode.prompt_for_legacy_wire().to_string();
-        let legacy_model = session.agent_config.model.clone();
-        let legacy_mcp_config = session.agent_config.mcp_config.clone();
-        let legacy_interactive = session.is_interactive();
         let legacy_conversation_id = session.conversation_id().cloned();
-        let legacy_conversation_resume_from =
-            session.mode.conversation_resume_from().map(|n| n as i64);
 
         let env_vars_json = serde_json::to_value(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
@@ -772,18 +761,15 @@ impl PostgresStoreV2 {
             .map(|s| s.as_ref().to_string());
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&legacy_prompt)
-            .bind(&context_json)
             .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
             .bind(session.creator.as_str())
             .bind(session.image.as_deref())
-            .bind(legacy_model.as_deref())
             .bind(&env_vars_json)
             .bind(session.cpu_limit.as_deref())
             .bind(session.memory_limit.as_deref())
@@ -793,13 +779,10 @@ impl PostgresStoreV2 {
             .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
-            .bind(legacy_mcp_config.as_ref())
             .bind(session.creation_time)
             .bind(session.start_time)
             .bind(session.end_time)
-            .bind(legacy_interactive)
             .bind(legacy_conversation_id.as_ref().map(|c| c.as_ref()))
-            .bind(legacy_conversation_resume_from)
             .bind(usage_json.as_ref())
             .bind(&mount_spec_json)
             .bind(&agent_config_json)
@@ -866,48 +849,17 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        // Phase D step 13: prefer the new columns, fall back to the legacy
-        // columns if a row slipped through with NULL.
-        let mount_spec = match row.mount_spec.as_ref() {
-            Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize mount_spec: {e}"))
-            })?,
-            None => {
-                let context_json_str = serde_json::to_string(&row.context).map_err(|e| {
-                    StoreError::Internal(format!("failed to re-serialize context: {e}"))
-                })?;
-                crate::store::mount_spec_from_legacy_columns(&row.id, &context_json_str)?
-            }
-        };
-        let agent_config = match row.agent_config.as_ref() {
-            Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
-            })?,
-            None => {
-                let mcp_json_str = row
-                    .mcp_config
-                    .as_ref()
-                    .map(|v| {
-                        serde_json::to_string(v).map_err(|e| {
-                            StoreError::Internal(format!("failed to re-serialize mcp_config: {e}"))
-                        })
-                    })
-                    .transpose()?;
-                crate::store::agent_config_from_legacy_columns(
-                    row.model.as_deref(),
-                    mcp_json_str.as_deref(),
-                )?
-            }
-        };
-        let mode = match row.mode.as_ref() {
-            Some(v) => serde_json::from_value(v.clone())
-                .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?,
-            None => crate::store::mode_from_legacy_columns(
-                &row.prompt,
-                row.conversation_id.as_deref(),
-                row.conversation_resume_from.map(|n| n as usize),
-            )?,
-        };
+        // Phase E step 16: the legacy `context` / `prompt` / `model` /
+        // `mcp_config` / `interactive` / `conversation_resume_from` columns
+        // are gone. `mount_spec`, `agent_config`, and `mode` are NOT NULL
+        // in every row (backfilled by PR-1, dual-written since PR-2).
+        let mount_spec = serde_json::from_value(row.mount_spec.clone())
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
+        let agent_config = serde_json::from_value(row.agent_config.clone()).map_err(|e| {
+            StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
+        })?;
+        let mode = serde_json::from_value(row.mode.clone())
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?;
         let resumed_from = row
             .resumed_from
             .as_deref()
@@ -917,9 +869,15 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let context: crate::domain::sessions::BundleSpec =
-            serde_json::from_value(row.context.clone())
-                .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
+        // The legacy `context` column is gone; recover the transitional
+        // `Session.context` from the same mount_spec JSON the dual-write
+        // path stamps into `mount_spec.mounts[0].bundle`.
+        let mount_spec_json_str = serde_json::to_string(&row.mount_spec).map_err(|e| {
+            StoreError::Internal(format!(
+                "failed to re-serialize mount_spec for context derivation: {e}"
+            ))
+        })?;
+        let context = crate::store::session_context_from_mount_spec_json(&mount_spec_json_str)?;
 
         Ok(Session {
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
@@ -1523,11 +1481,8 @@ struct PatchRow {
 struct TaskRow {
     id: String,
     version_number: i64,
-    prompt: String,
-    context: Value,
     spawned_from: Option<String>,
     image: Option<String>,
-    model: Option<String>,
     env_vars: Value,
     cpu_limit: Option<String>,
     memory_limit: Option<String>,
@@ -1542,30 +1497,28 @@ struct TaskRow {
     creator: Option<String>,
     secrets: Option<Value>,
     #[sqlx(default)]
-    mcp_config: Option<Value>,
-    #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     start_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     end_time: Option<DateTime<Utc>>,
-    // See `sqlite_store::TaskRow::interactive`: retained for schema parity
-    // with the legacy column on writes, no longer read by `row_to_session`.
+    // Denormalized from `mode.Interactive.conversation_id` at insert time
+    // and never edited independently. Retained per design §6 step 16 as
+    // the §3.4.1 single-query lookup index; SELECTed to keep the row
+    // shape consistent with the table even though the read path reads
+    // `mode` JSON.
     #[allow(dead_code)]
-    #[sqlx(default)]
-    interactive: bool,
     #[sqlx(default)]
     conversation_id: Option<String>,
     #[sqlx(default)]
-    conversation_resume_from: Option<i64>,
-    #[sqlx(default)]
     usage: Option<Value>,
-    #[sqlx(default)]
-    mount_spec: Option<Value>,
-    #[sqlx(default)]
-    agent_config: Option<Value>,
-    #[sqlx(default)]
-    mode: Option<Value>,
+    // Phase E step 16: the legacy `context` / `prompt` / `model` /
+    // `mcp_config` / `interactive` / `conversation_resume_from` columns
+    // are gone; `mount_spec` / `agent_config` / `mode` are the sole source
+    // of session shape (NOT NULL after the backfill in PR-1).
+    mount_spec: Value,
+    agent_config: Value,
+    mode: Value,
     #[sqlx(default)]
     resumed_from: Option<String>,
 }
@@ -2074,7 +2027,7 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         let idx_status = bindings.len() + 3;
         predicates.push(format!(
             "(LOWER(id) LIKE ${idx_id} \
-             OR LOWER(prompt) LIKE ${idx_prompt} \
+             OR LOWER(COALESCE(mode->>'prompt', '')) LIKE ${idx_prompt} \
              OR LOWER(status) LIKE ${idx_status})"
         ));
         let pattern = format!("%{term}%");
@@ -3002,7 +2955,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -3039,7 +2992,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3080,7 +3033,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.mcp_config, t.creation_time, t.start_time, t.end_time, t.interactive, t.conversation_id, t.conversation_resume_from, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from \
+            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -3172,7 +3125,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, mcp_config, creation_time, start_time, end_time, interactive, conversation_id, conversation_resume_from, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -9242,8 +9195,8 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, env_vars, status, deleted, is_latest)
-                 VALUES ($1, 1, '', '{{}}'::jsonb, '{{}}'::jsonb, 'complete', false, true)"
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, mount_spec, agent_config, mode, is_latest)
+                 VALUES ($1, 1, '{{}}'::jsonb, 'complete', false, '{{\"working_dir\":\"repo\",\"mounts\":[]}}'::jsonb, '{{}}'::jsonb, '{{\"type\":\"headless\",\"prompt\":\"\"}}'::jsonb, true)"
             ))
             .bind(&id)
             .execute(&store.pool)

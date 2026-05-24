@@ -220,6 +220,19 @@ impl Session {
         matches!(self.mode, SessionMode::Interactive { .. })
     }
 
+    /// Returns the configured service-repository name backing this session,
+    /// if the create-time `BundleSpec` selected one. Reads the transitional
+    /// `Session.context` field; the §6 step 16 PR-5 read path recovers that
+    /// field from `mount_spec.mounts[0].bundle` so the value remains stable
+    /// across DB round-trips even after the legacy `tasks_v2.context`
+    /// column was dropped.
+    pub fn service_repo_name(&self) -> Option<&RepoName> {
+        match &self.context {
+            BundleSpec::ServiceRepository { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
     /// Returns the prompt string for the worker, regardless of mode.
     /// Headless sessions return `mode.Headless.prompt`; Interactive
     /// sessions return `agent_config.system_prompt` (the agent's prompt,

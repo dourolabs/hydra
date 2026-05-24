@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, rewrite_local_bundle_url},
-    domain::sessions::{BundleSpec, SessionMode},
+    domain::sessions::SessionMode,
     routes::sessions::{ApiError, SessionIdPath, mount_spec_from_create_request},
 };
 use axum::{Json, extract::State};
@@ -40,10 +40,7 @@ pub async fn get_session_context(
     // create-time builder in `app/sessions.rs::mount_spec_for_session` and
     // the migration backfill in `20260523020000_*` both mirror this shape).
     let bundle: v1::sessions::Bundle = resolved.context.bundle.clone().into();
-    let service_repo_name = match &task.context {
-        BundleSpec::ServiceRepository { name, .. } => Some(name.clone()),
-        _ => None,
-    };
+    let service_repo_name = task.service_repo_name().cloned();
     let issue_branch_id = env_vars.get(ENV_HYDRA_ISSUE_ID).cloned();
     let build_cache = match (service_repo_name, state.config.build_cache.to_context()) {
         (Some(name), Some(ctx)) => Some((name, ctx)),
