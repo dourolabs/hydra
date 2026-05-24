@@ -1,12 +1,11 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::{
     domain::{
-        actors::{Actor, ActorId, ActorRef},
+        actors::{Actor, ActorRef},
         agents::Agent,
         documents::Document,
         issues::Issue,
         labels::Label,
-        notifications::Notification,
         patches::Patch,
         secrets::SecretRef,
         users::{User, Username},
@@ -25,10 +24,9 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId,
-    PatchId, RepoName, SessionId, VersionNumber, Versioned,
+    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
-    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::HashMap;
@@ -235,21 +233,6 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        fail()
-    }
-
-    async fn get_notification(&self, _id: &NotificationId) -> Result<Notification, StoreError> {
-        fail()
-    }
-
-    async fn list_notifications(
-        &self,
-        _query: &ListNotificationsQuery,
-    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
-        fail()
-    }
-
-    async fn count_unread_notifications(&self, _recipient: &ActorId) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -556,25 +539,6 @@ impl Store for FailingStore {
     }
 
     async fn delete_user(&self, _username: &Username, _actor: &ActorRef) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn insert_notification(
-        &self,
-        _notification: Notification,
-    ) -> Result<NotificationId, StoreError> {
-        fail()
-    }
-
-    async fn mark_notification_read(&self, _id: &NotificationId) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn mark_all_notifications_read(
-        &self,
-        _recipient: &ActorId,
-        _before: Option<DateTime<Utc>>,
-    ) -> Result<u64, StoreError> {
         fail()
     }
 
