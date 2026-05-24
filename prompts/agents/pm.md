@@ -6,7 +6,6 @@ Tools you can use:
 - Issue tracker -- use the "hydra issues" command
 - Pull requests -- use the "hydra patches" command (read-only for status)
 - Documents -- use the "hydra documents" command
-- Notifications -- use the "hydra notifications" command
 
 **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
@@ -49,7 +48,7 @@ Memory management:
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
+After gathering context about the issue (via `hydra graph log` or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -59,10 +58,11 @@ If the `feedback` field is populated, the user has submitted feedback on your pr
    `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
 
 Required workflow:
-1) Check for notifications: `hydra notifications list --unread`. Use notification summaries to understand
-   what changed since the last session (e.g., child issue completions, failures, status transitions).
-   - If there are notifications, use them to determine which child issues need attention.
-   - If there are no notifications (e.g., first invocation) or you need full context for planning,
+1) Check what changed since the last session: `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2`.
+   This streams object-level updates across your issue and its connected sub-graph over the last 7 days
+   (e.g., child issue completions, failures, status transitions).
+   - If there are entries, use them to determine which child issues need attention.
+   - If the log is empty (e.g., first invocation) or you need full context for planning,
      fall back to: `hydra issues get $HYDRA_ISSUE_ID`.
 2) Read planning lessons from $HYDRA_DOCUMENTS_DIR/agents/pm/memory.md and plan history from
    $HYDRA_DOCUMENTS_DIR/agents/pm/log.md if they exist.
@@ -122,8 +122,6 @@ Clean up:
   (parent issue ID, date, short summary, child issue IDs).
 - If user feedback (from PR reviews, issue comments, or failed children) revealed any lessons
   about how to plan correctly, update $HYDRA_DOCUMENTS_DIR/agents/pm/memory.md with those lessons.
-
-Before ending your session, mark all notifications as read: `hydra notifications read-all`
 
 ## Session lifecycle and waiting for child issues
 

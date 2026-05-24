@@ -73,7 +73,7 @@ Use this playbook whenever an issue requires a design document before implementa
 ### Phase 3: Handle the review outcome
 
 7. When the agent is re-invoked on the parent issue, inspect the review issue's status:
-   - Check `hydra notifications list --unread` for the review issue's status change.
+   - Check `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2` for the review issue's status change.
    - Read the review issue: `hydra issues get <review-issue-id>`.
 
 8. **If the review issue status is `closed` (approved):**
