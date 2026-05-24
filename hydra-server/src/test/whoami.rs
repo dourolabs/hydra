@@ -1,10 +1,12 @@
-use crate::domain::actors::ActorRef;
+use crate::domain::actors::{Actor, ActorRef};
+use crate::domain::users::Username;
 use crate::test::{
-    github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
-    test_client, test_state_with_github_api_base_url,
+    github_user_response, spawn_test_server_with_state, test_state_handles,
+    test_state_with_github_api_base_url,
 };
 use httpmock::prelude::*;
 use hydra_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
+use hydra_common::{ActorId, SessionId};
 use reqwest::{Client, StatusCode, header};
 
 fn client_with_token(token: &str) -> Client {
@@ -66,16 +68,17 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn whoami_returns_task_identity() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
-    let token = test_auth_token();
-    let actor_name = token
-        .split_once(':')
-        .map(|(name, _)| name)
-        .expect("expected token to include actor name");
-    let expected_task_id = actor_name
-        .strip_prefix("w-")
-        .expect("expected worker actor token");
+    let handles = test_state_handles();
+    let task_id = SessionId::new();
+    let (actor, auth_token) = Actor::new_for_session(task_id.clone(), Username::from("creator"));
+    handles
+        .store
+        .as_ref()
+        .add_actor(actor.clone(), &ActorRef::test())
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(&auth_token);
 
     let response = client
         .get(format!("{}/v1/whoami", server.base_url()))
@@ -90,17 +93,20 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
             session_id,
             creator,
         } => {
-            assert_eq!(session_id.as_ref(), expected_task_id);
+            assert_eq!(session_id, task_id);
             assert_eq!(
                 creator.as_str(),
-                "test-creator",
-                "creator should match the task's creator"
+                "creator",
+                "creator should match the actor's creator"
             );
         }
         other => {
             panic!("expected task identity, got {other:?}");
         }
     }
+
+    // Sanity check: ActorId on the actor is Session-typed.
+    assert!(matches!(actor.actor_id, ActorId::Session(_)));
 
     Ok(())
 }

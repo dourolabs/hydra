@@ -25,7 +25,7 @@ pub enum UpsertPatchError {
         source: StoreError,
         job_id: SessionId,
     },
-    #[error("created_by must reference a running job")]
+    #[error("actor must reference a running job")]
     JobNotRunning {
         job_id: SessionId,
         status: Option<Status>,
@@ -572,7 +572,15 @@ mod tests {
         let repo_name = RepoName::new("octo", "repo")?;
 
         let creator_username = Username::from("the-human");
-        let task_id = SessionId::new();
+        // Add a Running session so the actor-based running-job restriction
+        // is satisfied for the upsert below.
+        let mut task = sample_task();
+        task.status = Status::Running;
+        let (task_id, _) = handles
+            .store
+            .as_ref()
+            .add_session(task, Utc::now(), &ActorRef::test())
+            .await?;
         let (actor, _auth_token) =
             Actor::new_for_session(task_id.clone(), creator_username.clone());
         handles

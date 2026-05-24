@@ -24,7 +24,7 @@ pub enum UpsertDocumentError {
         source: StoreError,
         job_id: SessionId,
     },
-    #[error("created_by must reference a running job")]
+    #[error("actor must reference a running job")]
     JobNotRunning {
         job_id: SessionId,
         status: Option<Status>,

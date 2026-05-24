@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::ActorRef,
+        actors::{Actor, ActorRef},
         sessions::{BundleSpec, Session},
         users::Username,
     },
@@ -17,7 +17,7 @@ use hydra_common::{
         ListDocumentsResponse, SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
     },
 };
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode, header};
 use std::collections::HashMap;
 
 fn sample_task(status: Status) -> Session {
@@ -162,78 +162,88 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
-    // Missing job returns 400
-    let server = spawn_test_server().await?;
-    let client = test_client();
-    let missing_job = SessionId::new();
-    let response = client
-        .post(format!("{}/v1/documents", server.base_url()))
-        .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc".to_string(),
-                "body".to_string(),
-                None,
-                Some(missing_job.clone()),
-                false,
-            )
-            .unwrap(),
-        ))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+/// Helpers shared by the actor-based running-job tests.
+fn client_with_token(token: &str) -> Client {
+    let mut headers = header::HeaderMap::new();
+    let auth_value = format!("Bearer {token}");
+    headers.insert(
+        header::AUTHORIZATION,
+        header::HeaderValue::from_str(&auth_value).expect("valid auth header"),
+    );
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build client")
+}
 
-    // Non-running job also returns 400
+fn empty_doc() -> Document {
+    Document::new("Doc".to_string(), "body".to_string(), None, None, false).unwrap()
+}
+
+#[tokio::test]
+async fn documents_require_running_session_actor() -> anyhow::Result<()> {
+    // (a) session actor whose session is missing from the store → 400
     let handles = test_state_handles();
-    let task = sample_task(Status::Created);
-    let (non_running, _) = handles
+    let creator = Username::from("test-creator");
+    let missing_session_id = SessionId::new();
+    let (actor, auth_token) = Actor::new_for_session(missing_session_id.clone(), creator.clone());
+    handles
         .store
-        .add_session(task, Utc::now(), &ActorRef::test())
+        .as_ref()
+        .add_actor(actor, &ActorRef::test())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = client_with_token(&auth_token);
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
-        .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc".to_string(),
-                "body".to_string(),
-                None,
-                Some(non_running.clone()),
-                false,
-            )
-            .unwrap(),
-        ))
+        .json(&UpsertDocumentRequest::new(empty_doc()))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    // Running job succeeds
+    // (b) session actor whose session is non-running → 400
     let handles = test_state_handles();
-    let task = sample_task(Status::Running);
-    let (running_job, _) = handles
+    let (non_running_id, _) = handles
         .store
-        .add_session(task.clone(), Utc::now(), &ActorRef::test())
+        .add_session(sample_task(Status::Created), Utc::now(), &ActorRef::test())
+        .await?;
+    let (actor, auth_token) = Actor::new_for_session(non_running_id.clone(), creator.clone());
+    handles
+        .store
+        .as_ref()
+        .add_actor(actor, &ActorRef::test())
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(&auth_token);
+    let response = client
+        .post(format!("{}/v1/documents", server.base_url()))
+        .json(&UpsertDocumentRequest::new(empty_doc()))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // (c) session actor whose session is Running → 200
+    let handles = test_state_handles();
+    let running_task = sample_task(Status::Running);
+    let (running_id, _) = handles
+        .store
+        .add_session(running_task.clone(), Utc::now(), &ActorRef::test())
         .await?;
     handles
         .store
-        .update_session(&running_job, task, &ActorRef::test())
+        .update_session(&running_id, running_task, &ActorRef::test())
+        .await?;
+    let (actor, auth_token) = Actor::new_for_session(running_id.clone(), creator);
+    handles
+        .store
+        .as_ref()
+        .add_actor(actor, &ActorRef::test())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = client_with_token(&auth_token);
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
-        .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc".to_string(),
-                "body".to_string(),
-                None,
-                Some(running_job.clone()),
-                false,
-            )
-            .unwrap(),
-        ))
+        .json(&UpsertDocumentRequest::new(empty_doc()))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
