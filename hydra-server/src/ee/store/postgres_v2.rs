@@ -51,7 +51,11 @@ use sqlx::{
     migrate::Migrator,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+    time::Duration,
+};
 
 use crate::config::DatabaseSection;
 
@@ -1571,10 +1575,15 @@ struct ConversationEventRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct ConversationEventSummaryRow {
+struct ConversationEventCountRow {
     conversation_id: String,
     event_count: i64,
-    last_event_data: Option<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ConversationPreviewRow {
+    conversation_id: String,
+    event_data: Value,
 }
 
 #[derive(sqlx::FromRow)]
@@ -4036,43 +4045,72 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
-        let query = format!(
-            "SELECT e.conversation_id, COUNT(*) AS event_count, \
-             (SELECT e2.event_data FROM {TABLE_CONVERSATION_EVENTS_V2} e2 \
-              WHERE e2.conversation_id = e.conversation_id ORDER BY e2.id DESC LIMIT 1) AS last_event_data \
-             FROM {TABLE_CONVERSATION_EVENTS_V2} e \
-             WHERE e.conversation_id = ANY($1) \
-             GROUP BY e.conversation_id"
-        );
 
-        let rows = sqlx::query_as::<_, ConversationEventSummaryRow>(&query)
+        // Query 1: ConversationEvent count per conversation_id.
+        let count_query = format!(
+            "SELECT conversation_id, COUNT(*) AS event_count \
+             FROM {TABLE_CONVERSATION_EVENTS_V2} \
+             WHERE conversation_id = ANY($1) \
+             GROUP BY conversation_id"
+        );
+        let count_rows = sqlx::query_as::<_, ConversationEventCountRow>(&count_query)
             .bind(&id_strings)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
-        let mut result = HashMap::new();
-        for row in rows {
+        // Query 2: latest chat-text SessionEvent (UserMessage / AssistantMessage)
+        // per conversation_id. Ordered by latest linked session first
+        // (creation_time DESC), then latest event within that session.
+        let preview_query = format!(
+            "SELECT DISTINCT ON (t.conversation_id) \
+                 t.conversation_id AS conversation_id, e.event_data AS event_data \
+             FROM {TABLE_SESSION_EVENTS_V2} e \
+             JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
+                 AND t.is_latest = TRUE \
+                 AND t.deleted = FALSE \
+             WHERE t.conversation_id = ANY($1) \
+               AND e.event_type IN ('user_message', 'assistant_message') \
+             ORDER BY t.conversation_id, t.creation_time DESC, t.id DESC, e.id DESC"
+        );
+        let preview_rows = sqlx::query_as::<_, ConversationPreviewRow>(&preview_query)
+            .bind(&id_strings)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut counts: HashMap<ConversationId, usize> = HashMap::new();
+        for row in count_rows {
             let conv_id = row
                 .conversation_id
                 .parse::<ConversationId>()
                 .map_err(|e| StoreError::Internal(format!("invalid conversation id: {e}")))?;
-            let last_event_preview = row
-                .last_event_data
-                .map(|data| {
-                    serde_json::from_value::<ConversationEvent>(data)
-                        .map(|event| event.preview())
-                        .map_err(|e| {
-                            StoreError::Internal(format!(
-                                "failed to deserialize conversation event: {e}"
-                            ))
-                        })
-                })
-                .transpose()?;
+            counts.insert(conv_id, row.event_count as usize);
+        }
+
+        let mut previews: HashMap<ConversationId, String> = HashMap::new();
+        for row in preview_rows {
+            let conv_id = row
+                .conversation_id
+                .parse::<ConversationId>()
+                .map_err(|e| StoreError::Internal(format!("invalid conversation id: {e}")))?;
+            let event: SessionEvent = serde_json::from_value(row.event_data).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize session event: {e}"))
+            })?;
+            previews.insert(conv_id, event.preview());
+        }
+
+        let mut result = HashMap::new();
+        let mut all_ids: HashSet<ConversationId> = HashSet::new();
+        all_ids.extend(counts.keys().cloned());
+        all_ids.extend(previews.keys().cloned());
+        for conv_id in all_ids {
+            let event_count = counts.get(&conv_id).copied().unwrap_or(0);
+            let last_event_preview = previews.get(&conv_id).cloned();
             result.insert(
                 conv_id,
                 ConversationEventSummary {
-                    event_count: row.event_count as usize,
+                    event_count,
                     last_event_preview,
                 },
             );
@@ -9611,6 +9649,267 @@ mod tests {
         // Empty input returns empty map.
         let empty = store.get_session_event_summaries(&[]).await.unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn conversation_event_summaries_sources_preview_from_chat_text_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (conv_only_lifecycle, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (conv_user_only, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (conv_user_then_assistant, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (conv_cross_session, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let (conv_empty, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // 1. Lifecycle-only ConversationEvents → event_count > 0, preview None.
+        store
+            .append_conversation_event(
+                &conv_only_lifecycle,
+                ConversationEvent::Suspending {
+                    reason: "sigterm".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_conversation_event(
+                &conv_only_lifecycle,
+                ConversationEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // 2. Single UserMessage in a single session.
+        let (sid_user_only, _) = store
+            .add_session(
+                interactive_session(Some(conv_user_only.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_user_only,
+                SessionEvent::UserMessage {
+                    content: "hello".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // 3. UserMessage then AssistantMessage in one session — Assistant wins.
+        // Followed by a lifecycle ConversationEvent, which must not bleed in.
+        let (sid_chat, _) = store
+            .add_session(
+                interactive_session(Some(conv_user_then_assistant.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_chat,
+                SessionEvent::UserMessage {
+                    content: "hi".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_chat,
+                SessionEvent::AssistantMessage {
+                    content: "hey".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_conversation_event(
+                &conv_user_then_assistant,
+                ConversationEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // 4. Chat-text in older session, only tool/lifecycle in newer session.
+        let t_old = Utc::now() - chrono::Duration::seconds(60);
+        let (sid_old, _) = store
+            .add_session(
+                interactive_session(Some(conv_cross_session.clone())),
+                t_old,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_old,
+                SessionEvent::UserMessage {
+                    content: "from old".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (sid_new, _) = store
+            .add_session(
+                interactive_session(Some(conv_cross_session.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::ToolUse {
+                    tool_name: "bash".to_string(),
+                    payload: serde_json::json!({}),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[
+                conv_only_lifecycle.clone(),
+                conv_user_only.clone(),
+                conv_user_then_assistant.clone(),
+                conv_cross_session.clone(),
+                conv_empty.clone(),
+            ])
+            .await
+            .unwrap();
+
+        let s = summaries.get(&conv_only_lifecycle).expect("lifecycle conv");
+        assert_eq!(s.event_count, 2);
+        assert_eq!(s.last_event_preview, None);
+
+        let s = summaries.get(&conv_user_only).expect("user-only conv");
+        assert_eq!(s.event_count, 0);
+        assert_eq!(s.last_event_preview.as_deref(), Some("User: hello"));
+
+        let s = summaries
+            .get(&conv_user_then_assistant)
+            .expect("user+assistant conv");
+        assert_eq!(s.event_count, 1);
+        assert_eq!(s.last_event_preview.as_deref(), Some("Assistant: hey"));
+
+        let s = summaries.get(&conv_cross_session).expect("cross-session");
+        assert_eq!(s.event_count, 0);
+        assert_eq!(s.last_event_preview.as_deref(), Some("User: from old"));
+
+        assert!(!summaries.contains_key(&conv_empty));
+
+        // Empty input → empty output.
+        let empty = store.get_conversation_event_summaries(&[]).await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn conversation_event_summaries_latest_session_wins_over_older_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (conv, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+        let t_old = Utc::now() - chrono::Duration::seconds(60);
+        let (sid_old, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                t_old,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        // Older session, but message wall-clock timestamp is *later* — to verify
+        // ordering is by session-creation, not by per-event time.
+        store
+            .append_session_event(
+                &sid_old,
+                SessionEvent::UserMessage {
+                    content: "from older session, written later".to_string(),
+                    timestamp: Utc::now() + chrono::Duration::seconds(60),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (sid_new, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::AssistantMessage {
+                    content: "from newer".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        assert_eq!(
+            s.last_event_preview.as_deref(),
+            Some("Assistant: from newer")
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]
