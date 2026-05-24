@@ -61,9 +61,9 @@ After gathering context, check the `feedback` field. If populated:
   `--deps child-of:$HYDRA_ISSUE_ID` for follow-ups — reserve `child-of` for sub-tasks of the current
   issue.
 - **ChangesRequested** (review left without closing the PR): address all comments, then reopen with
-  `hydra patches update --status Open` (you MUST pass `--status Open` to trigger another review —
-  same patch id). After reopening, attempt the merge again so the preflight tells you what's still
-  outstanding.
+  `hydra patches update <PATCH_ID> --status Open` (you MUST pass `--status Open` to trigger another
+  review — same patch id). After reopening, attempt the merge again so the preflight tells you
+  what's still outstanding.
 - **Open**: attempt the merge with `hydra patches merge <patch-id>`. The preflight surfaces any
   remaining reviews or merger constraints — handle the response per the section below.
 - **Closed**: significant feedback — rework the patch and resubmit a new one, then attempt the
@@ -79,12 +79,13 @@ unsatisfied one); drive purely off the next response, never speculatively ahead.
 
 - **`blocked_at_layer == "reviews"`** (one or more `missing_approvals` reasons): for each reason in
   `reasons[]`, create ONE review-request issue with
-  `hydra issues create --title "<title_hint from the reason>" --assignee <pick one from suggested_action.assign_to_one_of> --deps blocked-on:$HYDRA_ISSUE_ID`.
+  `hydra issues create "<description>" --type review-request --title "<title_hint from the reason>" --assignee <pick one from suggested_action.assign_to_one_of> --deps blocked-on:$HYDRA_ISSUE_ID`.
   End the session. The next SWE reinvocation (after the RRs close) retries `hydra patches merge`.
 - **`blocked_at_layer == "mergers"`** (the single `not_in_mergers` reason): create ONE
-  merge-request issue assigned to one of `suggested_action.assign_to_one_of`. End the session. The
-  merger runs `hydra patches merge` themselves — **THIS SWE does NOT retry**; the work is handed
-  off.
+  merge-request issue with
+  `hydra issues create "<description>" --type merge-request --title "<title_hint from the reason>" --assignee <pick one from suggested_action.assign_to_one_of> --deps blocked-on:$HYDRA_ISSUE_ID`.
+  End the session. The merger runs `hydra patches merge` themselves — **THIS SWE does NOT retry**;
+  the work is handed off.
 - **NEVER file MR issues while `blocked_at_layer == "reviews"`** — reviews are gated ahead of
   mergers, and a `not_in_mergers` reason will not appear until every reviewer group is satisfied.
   **NEVER speculatively file ahead** of the next `merge_blocked` response; it is the only source of
