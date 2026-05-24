@@ -1,5 +1,5 @@
 use crate::{
-    client::HydraClientInterface,
+    client::HydraClient,
     command::output::{render, CommandContext, RepositoryRecords},
     git::clone_repo,
     output_writer::write_stdout,
@@ -143,7 +143,7 @@ pub struct CloneRepositoryArgs {
 }
 
 pub async fn run(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     command: ReposCommand,
     context: &CommandContext,
 ) -> Result<()> {
@@ -191,7 +191,7 @@ pub async fn run(
 }
 
 async fn fetch_repositories(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     include_deleted: bool,
 ) -> Result<Vec<RepositoryRecord>> {
     let query = SearchRepositoriesQuery::new(if include_deleted { Some(true) } else { None });
@@ -203,7 +203,7 @@ async fn fetch_repositories(
 }
 
 async fn delete_repository(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: DeleteRepositoryArgs,
 ) -> Result<RepositoryRecord> {
     let deleted = client
@@ -214,7 +214,7 @@ async fn delete_repository(
 }
 
 async fn create_repository(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: CreateRepositoryArgs,
 ) -> Result<RepositoryRecord> {
     let request = build_create_request(&args)?;
@@ -226,7 +226,7 @@ async fn create_repository(
 }
 
 async fn update_repository(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: UpdateRepositoryArgs,
 ) -> Result<RepositoryRecord> {
     let (repo_name, request) = build_update_request(client, &args).await?;
@@ -237,10 +237,7 @@ async fn update_repository(
     Ok(response.repository)
 }
 
-async fn clone_repository(
-    client: &dyn HydraClientInterface,
-    args: CloneRepositoryArgs,
-) -> Result<()> {
+async fn clone_repository(client: &HydraClient, args: CloneRepositoryArgs) -> Result<()> {
     let repositories = fetch_repositories(client, false).await?;
     let repository = repositories
         .into_iter()
@@ -285,7 +282,7 @@ fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryR
 }
 
 async fn build_update_request(
-    client: &dyn HydraClientInterface,
+    client: &HydraClient,
     args: &UpdateRepositoryArgs,
 ) -> Result<(RepoName, UpdateRepositoryRequest)> {
     let current = fetch_current_repository(client, &args.name).await?;
@@ -350,10 +347,7 @@ fn load_merge_policy_file(path: &Path) -> Result<MergePolicy> {
         .with_context(|| format!("failed to parse merge policy YAML at '{}'", path.display()))
 }
 
-async fn fetch_current_repository(
-    client: &dyn HydraClientInterface,
-    name: &RepoName,
-) -> Result<Repository> {
+async fn fetch_current_repository(client: &HydraClient, name: &RepoName) -> Result<Repository> {
     let repositories = fetch_repositories(client, false).await?;
     let record = repositories
         .into_iter()

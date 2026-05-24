@@ -304,10 +304,6 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.delete_repository(repo_name).await
     }
 
-    async fn get_github_token(&self) -> Result<String> {
-        self.inner.get_github_token().await
-    }
-
     async fn whoami(&self) -> Result<WhoAmIResponse> {
         self.inner.whoami().await
     }

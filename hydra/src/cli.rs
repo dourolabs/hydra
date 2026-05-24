@@ -217,7 +217,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
-    let client: Arc<dyn HydraClientInterface> = Arc::new(client);
+    let client: Arc<HydraClient> = Arc::new(client);
     let result = dispatch(cli, client, &context).await;
     if let Err(ref err) = result {
         if is_broken_pipe(err) {
@@ -271,11 +271,7 @@ pub async fn resolve_client(
     .await
 }
 
-pub async fn dispatch(
-    cli: Cli,
-    client: Arc<dyn HydraClientInterface>,
-    context: &CommandContext,
-) -> Result<()> {
+pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandContext) -> Result<()> {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
@@ -283,8 +279,14 @@ pub async fn dispatch(
             return Ok(());
         }
     };
+    // Commands that drive worker-style flows (sessions) need the
+    // `Arc<dyn HydraClientInterface>` upcast so they can pass the client
+    // through trait-object plumbing (e.g. mount instantiation).
+    let trait_client: Arc<dyn HydraClientInterface> = client.clone();
     match command {
-        Commands::Sessions { command } => command::sessions::run(client, command, context).await?,
+        Commands::Sessions { command } => {
+            command::sessions::run(trait_client, command, context).await?
+        }
         Commands::Agents { command } => {
             command::agents::run(client.as_ref(), command, context).await?
         }

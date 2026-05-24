@@ -323,6 +323,7 @@ async fn drive_worker_lifecycle(
     let WorkerContext {
         session,
         resolved_env: mut variables,
+        github_token,
         ..
     } = context;
     let mount_spec = session.mount_spec.clone();
@@ -339,7 +340,6 @@ async fn drive_worker_lifecycle(
     let dest = temp_dir.path().to_path_buf();
 
     let worker_home_dir = std::env::var_os("HOME").map(PathBuf::from);
-    let github_token = client.get_github_token().await.ok();
 
     if let Some(docs_target) = mounts::spec::find_documents_dir(&mount_spec) {
         variables.insert(
