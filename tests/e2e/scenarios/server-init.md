@@ -31,13 +31,13 @@ Verify that the Hydra server initializes successfully using the `--config` flag 
 2. Run `hydra server init --config <path-to-config>` to start the server
 3. Wait for the server health check to pass (GET `http://localhost:8080/health`)
 4. Navigate to `http://localhost:8080` using Playwright MCP
-5. Verify the dashboard loads by checking for the sidebar containing the "All chats" entry and a "Workspace" section with Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
+5. Verify the dashboard loads by checking for the sidebar containing the "My chats" entry and a "Workspace" section with Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
 6. Take an accessibility snapshot of the landing page to confirm key UI elements render
 7. Stop the server by running `hydra-sp server stop` via bash
 8. Start the server again by running `hydra-sp server start &` in the background and capture the new PID
 9. Wait for the health check to pass again (poll GET `http://localhost:8080/health`, up to 30s)
 10. Navigate to `http://localhost:8080` using Playwright MCP
-11. Verify the dashboard loads correctly by checking for the same sidebar items as in step 5 ("All chats" plus the "Workspace" section with Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets)
+11. Verify the dashboard loads correctly by checking for the same sidebar items as in step 5 ("My chats" plus the "Workspace" section with Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets)
 12. Take an accessibility snapshot to confirm all key UI elements render correctly after restart
 
 ## Expected Results
@@ -45,7 +45,7 @@ Verify that the Hydra server initializes successfully using the `--config` flag 
 - The server starts without interactive prompts
 - The health check endpoint returns a success response
 - The dashboard loads at `http://localhost:8080` with no errors
-- The sidebar is visible with the "All chats" entry and a "Workspace" section listing Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
+- The sidebar is visible with the "My chats" entry and a "Workspace" section listing Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
 - No JavaScript errors or broken page elements are present
 - The server stops cleanly without errors
 - The server restarts and passes the health check
