@@ -554,8 +554,7 @@ impl TestHarnessBuilder {
         let mut user_credentials: Vec<(String, String)> = Vec::new();
 
         // Default user
-        let (default_actor, default_token) =
-            Actor::new_for_user(Username::from("default").into());
+        let (default_actor, default_token) = Actor::new_for_user(Username::from("default").into());
         store.add_actor(default_actor, &ActorRef::test()).await?;
         let default_user = User::new(Username::from("default"), Some(1), false);
         store
