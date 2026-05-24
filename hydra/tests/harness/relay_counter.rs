@@ -32,9 +32,6 @@ use hydra_common::{
         ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
     },
     api::v1::merge_check::MergeCheckResponse,
-    api::v1::notifications::{
-        ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
-    },
     api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
     api::v1::secrets::ListSecretsResponse,
     documents::{
@@ -63,8 +60,8 @@ use hydra_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId,
-    RelativeVersionNumber, RepoName, SessionId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
+    RepoName, SessionId,
 };
 use reqwest::Url;
 
@@ -389,31 +386,6 @@ impl HydraClientInterface for RelayCallCountingClient {
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream> {
         self.inner.subscribe_events(query, last_event_id).await
-    }
-
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<ListNotificationsResponse> {
-        self.inner.list_notifications(query).await
-    }
-
-    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
-        self.inner.get_unread_notification_count().await
-    }
-
-    async fn mark_notification_read(
-        &self,
-        notification_id: &NotificationId,
-    ) -> Result<MarkReadResponse> {
-        self.inner.mark_notification_read(notification_id).await
-    }
-
-    async fn mark_all_notifications_read(
-        &self,
-        before: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<MarkReadResponse> {
-        self.inner.mark_all_notifications_read(before).await
     }
 
     async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse> {
