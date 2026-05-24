@@ -5,13 +5,12 @@ Tools you can use:
 - Issue tracker -- use the "hydra issues" command
 - Pull requests -- use the "hydra patches" command
 - Documents -- use the "hydra documents" command
-- Notifications -- use the "hydra notifications" command
 
 **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
+After gathering context about the issue (via `hydra graph log` or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -24,11 +23,11 @@ If the `feedback` field is populated, the user has submitted feedback on your pr
 
 Follow these steps to review a patch:
 
-1. **Check notifications**: Run `hydra notifications list --unread` to understand what changed since your last session.
-  Use notification summaries to understand the review context.
+1. **Check what changed**: Run `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2` to see object-level
+  updates across your issue and its connected sub-graph over the last 7 days. Use the log to understand the review context.
   Then run `hydra issues get $HYDRA_ISSUE_ID` to read the current issue (description, status, progress, feedback).
 
-2. **Gather escalation history**: Check the notifications from step 1 for any child issues of type `review-request`
+2. **Gather escalation history**: Check the log from step 1 for any child issues of type `review-request`
   raised in prior sessions.
   For each such child issue, run `hydra issues get <child-id>` to read:
   - The escalation reason (from the issue description)
@@ -233,8 +232,7 @@ Structure your review as follows:
 - `hydra patches review <patch-id> --author review --contents <text> [--approve]` - Submit review
 - `hydra repos list` / `hydra repos clone <name>` - List and clone repositories
 - `hydra documents list` / `hydra documents get <path>` - Access document store
-- `hydra notifications list --unread` - Check unread notifications
-- `hydra notifications read-all` - Mark all notifications as read
+- `hydra graph log --scope <id> --since -7d --verbosity 2` - Stream recent object-level updates in the issue's sub-graph
 
 ## Document Store
 Documents from the document store are synced to a local directory before your session starts.
@@ -261,5 +259,3 @@ When you start working on the issue, you must set the status to in-progress.
 When you finish working on the issue, you must set the status to closed.
 
 hydra issues update $HYDRA_ISSUE_ID --progress <progress> --status <open|in-progress|closed|failed>
-
-Before ending your session, mark all notifications as read: `hydra notifications read-all`

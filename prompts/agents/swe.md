@@ -3,7 +3,6 @@ You have access to several tools that enable you to do your job.
 - Issue tracker -- use the "hydra issues" command
 - Pull requests -- use the "hydra patches" command (create / submit / check PR status)
 - Documents -- use the "hydra documents" command
-- Notifications -- use the "hydra notifications" command
 
 **Your issue id is stored in the HYDRA_ISSUE_ID environment variable.**
 
@@ -56,7 +55,7 @@ When you create child issues and need to wait for them to complete:
 
 ## Handling user feedback
 
-After gathering context about the issue (via notifications or `hydra issues get`), check the `feedback` field.
+After gathering context about the issue (via `hydra graph log` or `hydra issues get`), check the `feedback` field.
 If the `feedback` field is populated, the user has submitted feedback on your prior work. You MUST:
 1. Read the feedback carefully.
 2. Acknowledge the feedback in the progress field.
@@ -66,10 +65,10 @@ If the `feedback` field is populated, the user has submitted feedback on your pr
    `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
 
 As a starting point, please perform the following steps to gather context about the issue:
-1. Check for notifications: `hydra notifications list --unread`. This shows what has changed since your last session.
-   - If there are unread notifications, use them to understand the current state: what changed, which objects were updated, etc.
-   - For specific objects referenced in notifications, use targeted commands (`hydra issues get <id>`, `hydra patches list --id <id>`) to get details.
-   - If there are no unread notifications (e.g., first invocation), fall back to: `hydra issues get $HYDRA_ISSUE_ID`
+1. Check what changed since your last session: `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2`. This streams object-level updates across your issue and its connected sub-graph over the last 7 days.
+   - If there are entries, use them to understand the current state: what changed, which objects were updated, etc.
+   - For specific objects referenced in the log, use targeted commands (`hydra issues get <id>`, `hydra patches list --id <id>`) to get details.
+   - If the log is empty (e.g., first invocation), fall back to: `hydra issues get $HYDRA_ISSUE_ID`
 2. Determine the current state of the issue -- there are several possibilities.
 
 If the issue is new / no patches have been created yet:
@@ -91,8 +90,6 @@ If one or more patches have been created:
 - If the Patch is Open and has an approved review, merge it by running "hydra patches merge <patch-id>".
 - If the Patch is Closed, then there is significant feedback and the patch needs to be reworked
    and resubmitted. Please make the needed updates to the code and resubmit another patch.
-
-Before ending your session, mark all notifications as read: `hydra notifications read-all`
 
 Once you have merged all changes needed for this task and all follow-ups have been finished, then this task is complete.
 Update the issue tracker to mark the task as closed: "hydra issues update $HYDRA_ISSUE_ID --status closed"
