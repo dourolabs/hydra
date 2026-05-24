@@ -43,7 +43,6 @@ pub async fn get_events(
         .and_then(|s| s.parse::<u64>().ok());
 
     let filter = EventFilter::from_query(&query).map_err(ApiError::bad_request)?;
-    let actor_id = actor.actor_id.clone();
 
     info!(
         last_event_id = ?last_event_id,
@@ -121,16 +120,6 @@ pub async fn get_events(
                         Ok(event) => {
                             if !filter.matches(&event) {
                                 continue;
-                            }
-
-                            // Filter notification events by recipient: only send
-                            // notifications addressed to the authenticated user.
-                            if let ServerEvent::NotificationCreated { payload, .. } = &event {
-                                if let MutationPayload::Notification { new, .. } = payload.as_ref() {
-                                    if new.recipient != actor_id {
-                                        continue;
-                                    }
-                                }
                             }
 
                             let sse_event = build_sse_event(&event, &state).await;

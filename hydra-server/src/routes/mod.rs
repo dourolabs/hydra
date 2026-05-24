@@ -10,7 +10,6 @@ pub mod issues;
 pub mod labels;
 pub mod login;
 pub mod merge_queues;
-pub mod notifications;
 pub mod patches;
 pub mod relations;
 pub mod repositories;
