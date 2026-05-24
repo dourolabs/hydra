@@ -22,7 +22,7 @@ describe("conversationTitle", () => {
   it("returns the explicit title when present", () => {
     expect(
       conversationTitle(
-        summary({ title: "Casual chat with Alice", last_event_preview: "Suspending: sigterm" }),
+        summary({ title: "Casual chat with Alice", last_event_preview: "User: hello" }),
       ),
     ).toBe("Casual chat with Alice");
   });
@@ -33,36 +33,16 @@ describe("conversationTitle", () => {
     ).toBe("what's 2+2?");
   });
 
+  it("surfaces a backend chat-text preview verbatim", () => {
+    expect(
+      conversationTitle(summary({ last_event_preview: "User: hello" })),
+    ).toBe("User: hello");
+  });
+
   it("trims surrounding whitespace from the preview", () => {
     expect(
       conversationTitle(summary({ last_event_preview: "  hello world  " })),
     ).toBe("hello world");
-  });
-
-  it("rejects a Suspending lifecycle preview and shows the placeholder", () => {
-    // Server-emitted form: ConversationEvent::Suspending.preview() in Rust.
-    expect(
-      conversationTitle(summary({ last_event_preview: "Suspending: sigterm" })),
-    ).toBe("Untitled conversation");
-  });
-
-  it("rejects a Suspended lifecycle preview and shows the placeholder", () => {
-    // Mock-server emitted form (`Suspended:` vs `Suspending:`).
-    expect(
-      conversationTitle(summary({ last_event_preview: "Suspended: sigterm" })),
-    ).toBe("Untitled conversation");
-  });
-
-  it("rejects a Resumed lifecycle preview and shows the placeholder", () => {
-    expect(
-      conversationTitle(summary({ last_event_preview: "Resumed" })),
-    ).toBe("Untitled conversation");
-  });
-
-  it("rejects a Closed lifecycle preview and shows the placeholder", () => {
-    expect(
-      conversationTitle(summary({ last_event_preview: "Closed" })),
-    ).toBe("Untitled conversation");
   });
 
   it("falls back to the placeholder when the preview is null", () => {
