@@ -110,14 +110,15 @@ async fn handle_relay_socket(
     );
 
     // Step 2: Build WorkerCatchUp response.
-    let catch_up = match build_catch_up(&state, &conversation_id, &worker_connect).await {
-        Ok(catch_up) => catch_up,
-        Err(err) => {
-            error!(%session_id, error = %err, "failed to build catch-up");
-            let _ = ws_sender.send(Message::Close(None)).await;
-            return;
-        }
-    };
+    let catch_up =
+        match build_catch_up(&state, &conversation_id, &session_id, &worker_connect).await {
+            Ok(catch_up) => catch_up,
+            Err(err) => {
+                error!(%session_id, error = %err, "failed to build catch-up");
+                let _ = ws_sender.send(Message::Close(None)).await;
+                return;
+            }
+        };
 
     // Send catch-up to worker.
     let catch_up_msg = ServerMessage::CatchUp(catch_up);
@@ -171,29 +172,7 @@ async fn handle_relay_socket(
                                     bytes,
                                     "received SessionStateUpload — storing"
                                 );
-                                let conv_result = state
-                                    .store
-                                    .store_conversation_session_state(&conversation_id, data.clone())
-                                    .await;
-                                match conv_result {
-                                    Ok(()) => info!(
-                                        %session_id,
-                                        %conversation_id,
-                                        bytes,
-                                        "session_state stored"
-                                    ),
-                                    Err(err) => error!(
-                                        %session_id,
-                                        %conversation_id,
-                                        bytes,
-                                        error = %err,
-                                        "failed to store session state"
-                                    ),
-                                }
-                                // Dual-write the same blob onto the session,
-                                // keyed by SessionId (Phase C step 7 of the
-                                // sessions-orthogonality redesign).
-                                let _ = chat_relay::dual_write_session_state(
+                                let _ = chat_relay::store_session_state(
                                     &state,
                                     &session_id,
                                     data,
@@ -275,6 +254,7 @@ async fn handle_relay_socket(
 async fn build_catch_up(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
+    session_id: &SessionId,
     worker_connect: &WorkerConnect,
 ) -> Result<WorkerCatchUp, StoreError> {
     let all_events = state
@@ -295,11 +275,19 @@ async fn build_catch_up(
         .map(|v| v.item.into())
         .collect();
 
+    // Per Phase E of the sessions-orthogonality redesign, session_state is keyed
+    // on the session that produced it. For a fresh resume the producing session
+    // is `resumed_from` (the predecessor); a same-session reconnect after a
+    // worker crash reads back its own latest upload.
     let session_state = if include_session_state {
-        state
-            .store()
-            .get_conversation_session_state(conversation_id)
-            .await?
+        let store = state.store();
+        match store.get_session_state(session_id).await? {
+            Some(blob) => Some(blob),
+            None => match state.get_latest_session(session_id).await?.resumed_from {
+                Some(prev) => store.get_session_state(&prev).await?,
+                None => None,
+            },
+        }
     } else {
         None
     };
@@ -307,6 +295,7 @@ async fn build_catch_up(
     let session_state_bytes = session_state.as_ref().map(|b| b.len());
     info!(
         %conversation_id,
+        %session_id,
         events = events.len(),
         include_session_state,
         session_state_bytes = ?session_state_bytes,

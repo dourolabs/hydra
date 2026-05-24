@@ -380,13 +380,6 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_conversation_session_state(
-        &self,
-        _id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        fail()
-    }
-
     async fn get_session_events(
         &self,
         _id: &SessionId,
@@ -692,14 +685,6 @@ impl Store for FailingStore {
         _event: ConversationEvent,
         _actor: &ActorRef,
     ) -> Result<ConversationEventId, StoreError> {
-        fail()
-    }
-
-    async fn store_conversation_session_state(
-        &self,
-        _id: &ConversationId,
-        _data: Vec<u8>,
-    ) -> Result<(), StoreError> {
         fail()
     }
 

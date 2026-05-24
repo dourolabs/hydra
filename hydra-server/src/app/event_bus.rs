@@ -1137,14 +1137,6 @@ impl StoreWithEvents {
         Ok(result)
     }
 
-    pub async fn store_conversation_session_state(
-        &self,
-        id: &ConversationId,
-        data: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        self.inner.store_conversation_session_state(id, data).await
-    }
-
     pub async fn append_session_event_with_actor(
         &self,
         id: &SessionId,
@@ -1808,13 +1800,6 @@ impl ReadOnlyStore for StoreWithEvents {
         ids: &[ConversationId],
     ) -> Result<HashMap<ConversationId, crate::store::ConversationEventSummary>, StoreError> {
         self.inner.get_conversation_event_summaries(ids).await
-    }
-
-    async fn get_conversation_session_state(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.inner.get_conversation_session_state(id).await
     }
 
     async fn get_session_events(
