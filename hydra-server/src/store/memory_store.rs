@@ -1718,17 +1718,45 @@ impl ReadOnlyStore for MemoryStore {
     ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
         let mut result = HashMap::new();
         for id in ids {
-            if let Some(entry) = self.conversation_events.get(id) {
-                let events = entry.value();
-                if !events.is_empty() {
-                    result.insert(
-                        id.clone(),
-                        ConversationEventSummary {
-                            event_count: events.len(),
-                            last_event_preview: events.last().map(|v| v.item.preview()),
-                        },
-                    );
+            let event_count = self
+                .conversation_events
+                .get(id)
+                .map(|entry| entry.value().len())
+                .unwrap_or(0);
+
+            // Walk linked sessions latest-first; within each session walk events
+            // in reverse append order looking for the first chat-text event
+            // (UserMessage / AssistantMessage). ToolUse, Suspending, Resumed,
+            // and Closed are skipped — only chat text is surfaced.
+            let session_ids = self.list_session_ids_by_conversation_id(id).await?;
+            let mut last_event_preview = None;
+            for sid in session_ids.into_iter().rev() {
+                if let Some(events_entry) = self.session_events.get(&sid) {
+                    let preview =
+                        events_entry
+                            .value()
+                            .iter()
+                            .rev()
+                            .find_map(|(_seq, v)| match v.item {
+                                SessionEvent::UserMessage { .. }
+                                | SessionEvent::AssistantMessage { .. } => Some(v.item.preview()),
+                                _ => None,
+                            });
+                    if preview.is_some() {
+                        last_event_preview = preview;
+                        break;
+                    }
                 }
+            }
+
+            if event_count > 0 || last_event_preview.is_some() {
+                result.insert(
+                    id.clone(),
+                    ConversationEventSummary {
+                        event_count,
+                        last_event_preview,
+                    },
+                );
             }
         }
         Ok(result)
@@ -8366,7 +8394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_conversation_event_summaries_returns_counts_and_previews() {
+    async fn get_conversation_event_summaries_counts_lifecycle_events_only() {
         let store = MemoryStore::new();
         let (id1, _) = store
             .add_conversation(sample_conversation(), &test_actor())
@@ -8381,7 +8409,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Add 2 events to conversation 1
+        // Conversation 1: 2 lifecycle ConversationEvents and no sessions.
+        // event_count == 2, but preview is None because lifecycle strings must
+        // never bleed into `last_event_preview`.
         store
             .append_conversation_event(
                 &id1,
@@ -8404,7 +8434,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Add 1 event to conversation 2
+        // Conversation 2: 1 lifecycle ConversationEvent, no sessions.
         store
             .append_conversation_event(
                 &id2,
@@ -8417,28 +8447,296 @@ mod tests {
             .await
             .unwrap();
 
-        // conversation 3 has no events
+        // Conversation 3: nothing at all.
 
         let summaries = store
             .get_conversation_event_summaries(&[id1.clone(), id2.clone(), id3.clone()])
             .await
             .unwrap();
 
-        // Conversation 1: 2 events, last is Closed
         let s1 = summaries.get(&id1).expect("should have summary for id1");
         assert_eq!(s1.event_count, 2);
-        assert_eq!(s1.last_event_preview.as_deref(), Some("Closed"));
+        assert_eq!(s1.last_event_preview, None);
 
-        // Conversation 2: 1 event
         let s2 = summaries.get(&id2).expect("should have summary for id2");
         assert_eq!(s2.event_count, 1);
-        assert_eq!(
-            s2.last_event_preview.as_deref(),
-            Some("Suspending: sigterm")
-        );
+        assert_eq!(s2.last_event_preview, None);
 
-        // Conversation 3: no events, omitted
+        // Conversation 3: no events at all, omitted.
         assert!(!summaries.contains_key(&id3));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_previews_chat_text_from_sessions() {
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid,
+                SessionEvent::UserMessage {
+                    content: "hello world".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        // No ConversationEvents — count is 0.
+        assert_eq!(s.event_count, 0);
+        assert_eq!(s.last_event_preview.as_deref(), Some("User: hello world"));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_prefers_latest_chat_text_within_session() {
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid,
+                SessionEvent::UserMessage {
+                    content: "hi".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid,
+                SessionEvent::AssistantMessage {
+                    content: "hey there".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        assert_eq!(
+            s.last_event_preview.as_deref(),
+            Some("Assistant: hey there")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_skips_non_chat_session_events() {
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        // Older session has a chat-text event…
+        let (older, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now() - chrono::Duration::seconds(10),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &older,
+                SessionEvent::UserMessage {
+                    content: "early greeting".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        // …and a newer session has only lifecycle/tool-use events.
+        let (newer, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &newer,
+                SessionEvent::ToolUse {
+                    tool_name: "bash".to_string(),
+                    payload: serde_json::json!({}),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &newer,
+                SessionEvent::Suspending {
+                    reason: "idle".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &newer,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        assert_eq!(
+            s.last_event_preview.as_deref(),
+            Some("User: early greeting")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_chat_text_overrides_lifecycle_conversation_event() {
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        let (sid, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid,
+                SessionEvent::UserMessage {
+                    content: "first".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_conversation_event(
+                &conv,
+                ConversationEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        assert_eq!(s.event_count, 1);
+        assert_eq!(s.last_event_preview.as_deref(), Some("User: first"));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_latest_session_wins_over_older() {
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+        // Older session, with a chat-text event timestamped *later* than the
+        // event in the newer session — to verify that ordering is by session,
+        // not by per-event wall-clock timestamp.
+        let (older, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now() - chrono::Duration::seconds(10),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &older,
+                SessionEvent::UserMessage {
+                    content: "from older session, written later".to_string(),
+                    timestamp: Utc::now() + chrono::Duration::seconds(60),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        let (newer, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &newer,
+                SessionEvent::AssistantMessage {
+                    content: "from newer session".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        assert_eq!(
+            s.last_event_preview.as_deref(),
+            Some("Assistant: from newer session")
+        );
     }
 
     #[tokio::test]
