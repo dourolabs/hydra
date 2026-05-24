@@ -177,8 +177,9 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 /// `[MountItem::Bundle, MountItem::Documents]` produced by the migration
 /// backfill (see `20260523020000_add_session_shape_columns.sql`). The
 /// BuildCache item is config-derived and intentionally omitted; runtime spec
-/// construction in `routes/sessions/context.rs::build_mount_spec` adds it
-/// when applicable. PR-3 replaces this with the resolved spec.
+/// construction in `routes/sessions/mount_spec.rs::mount_spec_from_create_request`
+/// (called from `routes/sessions/context.rs::get_session_context`) adds it
+/// when applicable.
 pub(crate) fn dual_write_mount_spec_json(
     id: &SessionId,
     session: &Session,

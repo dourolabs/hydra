@@ -40,14 +40,26 @@ function makePatch(overrides: Partial<Patch> = {}): Patch {
   };
 }
 
-function makeSession(overrides: Partial<Session> = {}): Session {
+function makeSession(
+  overrides: Partial<Session> & { prompt?: string } = {},
+): Session {
+  // `prompt` was a top-level Session field pre-PR-2; it now lives on
+  // `mode` (headless variant). Accept it as a convenience override and
+  // funnel it into the headless mode so call sites stay terse.
+  const { prompt, ...rest } = overrides;
+  const mode: Session["mode"] = rest.mode ?? {
+    type: "headless",
+    prompt: prompt ?? "Default task prompt",
+  };
   return {
-    prompt: "Default task prompt",
     context: { type: "none" },
     creator: "testuser",
+    agent_config: {},
+    mount_spec: { working_dir: "repo", mounts: [] },
     status: "pending" as Status,
     creation_time: new Date().toISOString(),
-    ...overrides,
+    ...rest,
+    mode,
   };
 }
 

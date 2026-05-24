@@ -243,7 +243,10 @@ describe("Sessions", () => {
     // Get
     const fetched = await client.getSession(sessionId);
     expect(fetched.session_id).toBe(sessionId);
-    expect(fetched.session.prompt).toBe("Contract test session prompt");
+    expect(fetched.session.mode).toEqual({
+      type: "headless",
+      prompt: "Contract test session prompt",
+    });
     expect(fetched.session.status).toBe("pending");
 
     // List

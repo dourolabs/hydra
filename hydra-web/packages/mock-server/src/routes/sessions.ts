@@ -5,6 +5,7 @@ import { generateId } from "../id.js";
 import { DEV_USERNAME } from "../auth.js";
 import type {
   Session,
+  SessionMode,
   CreateSessionRequest,
   CreateSessionResponse,
   SessionEvent,
@@ -19,6 +20,50 @@ import type {
   WorkerContext,
   Status,
 } from "@hydra/api";
+
+// `Session` lost its top-level `prompt` / `interactive` / `model` fields in
+// Phase D step 13 (PR-2); the equivalents now live on `session.mode` and
+// `session.agent_config`. These helpers narrow the discriminated union so
+// the mock-server's filtering / summary / context paths keep working
+// against the post-PR-2 wire shape. They also fall back to the legacy
+// fields when present (seed.json fixtures still use the pre-PR-2 shape;
+// the Rust deserializer has the same tolerance via a custom `Deserialize`
+// impl).
+type LegacySession = Session & {
+  prompt?: string;
+  model?: string | null;
+  interactive?: { conversation_id?: string } | null;
+};
+
+function promptOf(session: Session): string {
+  const legacy = session as LegacySession;
+  if (session.mode?.type === "headless") return session.mode.prompt;
+  if (session.mode?.type === "interactive") {
+    return session.agent_config?.system_prompt ?? "";
+  }
+  return legacy.prompt ?? "";
+}
+
+function conversationIdOf(session: Session): string | null {
+  const legacy = session as LegacySession;
+  if (session.mode?.type === "interactive") return session.mode.conversation_id;
+  return legacy.interactive?.conversation_id ?? null;
+}
+
+function modelOf(session: Session): string | null | undefined {
+  const legacy = session as LegacySession;
+  return session.agent_config?.model ?? legacy.model;
+}
+
+function modeFromCreateRequest(body: CreateSessionRequest): SessionMode {
+  if (body.interactive) {
+    return {
+      type: "interactive",
+      conversation_id: body.conversation_id ?? generateId("conversation"),
+    };
+  }
+  return { type: "headless", prompt: body.prompt };
+}
 
 const COLLECTION = "sessions";
 const SSE_PREFIX = "session";
@@ -64,9 +109,9 @@ function toSummaryRecord(
   task: Session,
 ): SessionSummaryRecord {
   const summary: SessionSummary = {
-    prompt: task.prompt.slice(0, 100),
+    prompt: promptOf(task).slice(0, 100),
     spawned_from: task.spawned_from,
-    conversation_id: task.interactive?.conversation_id ?? null,
+    conversation_id: conversationIdOf(task),
     creator: task.creator,
     status: task.status,
     error: task.error,
@@ -93,7 +138,24 @@ export function createSessionRoutes(store: Store): Hono {
     const id = generateId("session");
     const now = new Date().toISOString();
     const task: Session = {
-      prompt: body.prompt,
+      mode: modeFromCreateRequest(body),
+      agent_config: {},
+      mount_spec: {
+        working_dir: "repo",
+        mounts: [
+          {
+            type: "bundle",
+            target: "repo",
+            bundle:
+              body.context.type === "git_repository"
+                ? { type: "git_repository", url: body.context.url, rev: body.context.rev }
+                : { type: "none" },
+            session_id: id,
+            issue_branch_id: null,
+          },
+          { type: "documents", target: "documents" },
+        ],
+      },
       context: body.context,
       spawned_from: body.issue_id,
       creator: DEV_USERNAME,
@@ -124,7 +186,7 @@ export function createSessionRoutes(store: Store): Hono {
     if (q) {
       const lower = q.toLowerCase();
       filtered = filtered.filter(({ entry }) =>
-        entry.data.prompt.toLowerCase().includes(lower),
+        promptOf(entry.data).toLowerCase().includes(lower),
       );
     }
     if (spawnedFrom) {
@@ -140,7 +202,7 @@ export function createSessionRoutes(store: Store): Hono {
     }
     if (conversationId) {
       filtered = filtered.filter(
-        ({ entry }) => entry.data.interactive?.conversation_id === conversationId,
+        ({ entry }) => conversationIdOf(entry.data) === conversationId,
       );
     }
 
@@ -253,13 +315,15 @@ export function createSessionRoutes(store: Store): Hono {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
-    const bundle = task.context.type === "git_repository"
-      ? { type: "git_repository" as const, url: task.context.url, rev: task.context.rev }
-      : { type: "none" as const };
+    const bundle =
+      task.context?.type === "git_repository"
+        ? { type: "git_repository" as const, url: task.context.url, rev: task.context.rev }
+        : { type: "none" as const };
     const resp: WorkerContext = {
-      prompt: task.prompt,
-      model: task.model,
+      prompt: promptOf(task),
+      model: modelOf(task),
       variables: task.env_vars ?? {},
+      mcp_config: task.agent_config?.mcp_config,
       mount_spec: {
         working_dir: "repo",
         mounts: [
@@ -273,6 +337,7 @@ export function createSessionRoutes(store: Store): Hono {
           { type: "documents", target: "documents" },
         ],
       },
+      session: task,
     };
     return c.json(resp);
   });

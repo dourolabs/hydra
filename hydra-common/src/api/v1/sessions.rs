@@ -189,11 +189,12 @@ pub struct Session {
     /// Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
     /// serde default; deserialization fails loudly if the field is missing.
     pub mount_spec: MountSpec,
-    /// Transitional bundle spec, retained until PR-3 routes
-    /// `CreateSessionRequest` → `mount_spec` through the resolver. The
-    /// in-memory `mount_spec` lowers `ServiceRepository` to a placeholder
-    /// `Bundle::None`, so the resolver still relies on this field for
-    /// service-repository → git-url translation. Removed in PR-3.
+    /// Transitional bundle spec. Retained through PR-3 (Phase D step 14)
+    /// because the in-memory `mount_spec` lowers `ServiceRepository` to a
+    /// placeholder `Bundle::None`; the resolver still consults this field
+    /// for the service-repository → git-url translation. Removed in PR-4
+    /// (Phase D step 15) once `mount_spec` carries the resolved bundle
+    /// end-to-end.
     #[serde(default, skip_serializing_if = "BundleSpec::is_none")]
     pub context: BundleSpec,
 
@@ -680,6 +681,14 @@ pub struct WorkerContext {
     /// Server-supplied mount layout. The server always populates this; the
     /// worker iterates `mount_spec.mounts` to build its per-run mounts.
     pub mount_spec: MountSpec,
+    /// Full server-resolved [`Session`] the worker should run. Optional
+    /// during the Phase D transition (PR-3 ships server-side population;
+    /// PR-4 deletes the redundant `prompt` / `model` / `mcp_config` /
+    /// `interactive` / `variables` fields once workers consume this
+    /// directly). Newer workers prefer-read this field but must still
+    /// tolerate the legacy ones being populated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Session>,
 }
 
 impl WorkerContext {
@@ -690,6 +699,7 @@ impl WorkerContext {
         mcp_config: Option<McpConfig>,
         interactive: Option<InteractiveOptions>,
         mount_spec: MountSpec,
+        session: Option<Session>,
     ) -> Self {
         Self {
             prompt,
@@ -698,6 +708,7 @@ impl WorkerContext {
             mcp_config,
             interactive,
             mount_spec,
+            session,
         }
     }
 }
@@ -1562,6 +1573,7 @@ mod tests {
             Some(mcp_config.clone()),
             None,
             standard_mount_spec(false),
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1581,6 +1593,7 @@ mod tests {
             None,
             Some(opts.clone()),
             standard_mount_spec(false),
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1601,6 +1614,7 @@ mod tests {
             None,
             None,
             standard_mount_spec(false),
+            None,
         );
 
         let json = serde_json::to_value(&context).unwrap();
@@ -1779,6 +1793,7 @@ mod tests {
             None,
             None,
             spec.clone(),
+            None,
         );
         let json = serde_json::to_value(&context).unwrap();
         assert!(
@@ -1801,11 +1816,52 @@ mod tests {
             None,
             None,
             spec.clone(),
+            None,
         );
         let json = serde_json::to_value(&context).unwrap();
         assert!(json.get("mount_spec").is_some());
         let parsed: WorkerContext = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.mount_spec, spec);
+    }
+
+    #[test]
+    fn worker_context_round_trips_embedded_session() {
+        let session = make_test_session("embedded round trip");
+        let spec = standard_mount_spec(false);
+        let context = WorkerContext::new(
+            "embedded round trip".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            spec,
+            Some(session.clone()),
+        );
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(
+            json.get("session").is_some(),
+            "session field must serialize"
+        );
+        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.session, Some(session));
+    }
+
+    #[test]
+    fn worker_context_omits_session_when_absent() {
+        let context = WorkerContext::new(
+            "no session".to_string(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            standard_mount_spec(false),
+            None,
+        );
+        let json = serde_json::to_value(&context).unwrap();
+        assert!(
+            json.get("session").is_none(),
+            "session field must be skipped when None"
+        );
     }
 
     #[test]

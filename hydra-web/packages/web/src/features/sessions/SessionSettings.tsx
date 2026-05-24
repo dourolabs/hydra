@@ -10,6 +10,7 @@ interface SessionSettingsProps {
 }
 
 function formatContext(context: Session["context"]): string {
+  if (!context) return "None";
   switch (context.type) {
     case "git_repository":
       return `${context.url}${context.rev ? ` @ ${context.rev}` : ""}`;
@@ -20,6 +21,11 @@ function formatContext(context: Session["context"]): string {
     default:
       return "Unknown";
   }
+}
+
+function promptOf(task: Session): string | null {
+  if (task.mode.type === "headless") return task.mode.prompt;
+  return task.agent_config.system_prompt ?? null;
 }
 
 function formatError(error: Session["error"]): string | null {
@@ -39,12 +45,13 @@ export function SessionSettings({ task }: SessionSettingsProps) {
   const entries: { label: string; value: React.ReactNode; stacked?: boolean }[] =
     [];
 
-  if (task.prompt) {
+  const prompt = promptOf(task);
+  if (prompt) {
     entries.push({
       label: "Prompt",
       value: (
         <div className={styles.promptContent}>
-          <MarkdownViewer content={task.prompt} />
+          <MarkdownViewer content={prompt} />
         </div>
       ),
       stacked: true,
@@ -75,8 +82,8 @@ export function SessionSettings({ task }: SessionSettingsProps) {
     entries.push({ label: "Image", value: task.image });
   }
 
-  if (task.model) {
-    entries.push({ label: "Model", value: task.model });
+  if (task.agent_config.model) {
+    entries.push({ label: "Model", value: task.agent_config.model });
   }
 
   if (task.cpu_limit) {
