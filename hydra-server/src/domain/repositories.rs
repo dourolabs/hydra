@@ -9,8 +9,6 @@ use thiserror::Error;
 /// Domain mirror of [`api::repositories::DynamicRef`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DynamicRef {
-    ParentIssueCreator,
-    ParentIssueAssignee,
     PatchAuthor,
 }
 
@@ -18,20 +16,15 @@ impl DynamicRef {
     /// The wire form *without* the leading `@`.
     pub fn shorthand(self) -> &'static str {
         match self {
-            DynamicRef::ParentIssueCreator => "parent_issue.creator",
-            DynamicRef::ParentIssueAssignee => "parent_issue.assignee",
             DynamicRef::PatchAuthor => "patch.author",
         }
     }
 
     pub fn from_shorthand(s: &str) -> Result<Self, String> {
         match s {
-            "parent_issue.creator" => Ok(DynamicRef::ParentIssueCreator),
-            "parent_issue.assignee" => Ok(DynamicRef::ParentIssueAssignee),
             "patch.author" => Ok(DynamicRef::PatchAuthor),
             other => Err(format!(
-                "unknown dynamic reference '@{other}'; expected one of \
-                 @parent_issue.creator, @parent_issue.assignee, @patch.author"
+                "unknown dynamic reference '@{other}'; expected one of @patch.author"
             )),
         }
     }
@@ -280,8 +273,6 @@ pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyVali
 impl From<api::repositories::DynamicRef> for DynamicRef {
     fn from(value: api::repositories::DynamicRef) -> Self {
         match value {
-            api::repositories::DynamicRef::ParentIssueCreator => DynamicRef::ParentIssueCreator,
-            api::repositories::DynamicRef::ParentIssueAssignee => DynamicRef::ParentIssueAssignee,
             api::repositories::DynamicRef::PatchAuthor => DynamicRef::PatchAuthor,
         }
     }
@@ -290,8 +281,6 @@ impl From<api::repositories::DynamicRef> for DynamicRef {
 impl From<DynamicRef> for api::repositories::DynamicRef {
     fn from(value: DynamicRef) -> Self {
         match value {
-            DynamicRef::ParentIssueCreator => api::repositories::DynamicRef::ParentIssueCreator,
-            DynamicRef::ParentIssueAssignee => api::repositories::DynamicRef::ParentIssueAssignee,
             DynamicRef::PatchAuthor => api::repositories::DynamicRef::PatchAuthor,
         }
     }
@@ -397,10 +386,7 @@ mod tests {
             reviewers: vec![
                 ReviewerGroup {
                     label: Some("code-review".to_string()),
-                    any_of: vec![
-                        user("reviewer"),
-                        Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                    ],
+                    any_of: vec![user("reviewer"), user("carol")],
                     count: 1,
                     exclude_author: true,
                 },
@@ -412,10 +398,7 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![
-                    Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                    user("alice"),
-                ],
+                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice")],
             }),
         }
     }
@@ -425,10 +408,7 @@ mod tests {
             reviewers: vec![
                 api_repos::ReviewerGroup {
                     label: Some("code-review".to_string()),
-                    any_of: vec![
-                        api_user("reviewer"),
-                        api_repos::Principal::Dynamic(api_repos::DynamicRef::ParentIssueCreator),
-                    ],
+                    any_of: vec![api_user("reviewer"), api_user("carol")],
                     count: 1,
                     exclude_author: true,
                 },
@@ -441,7 +421,7 @@ mod tests {
             ],
             mergers: Some(api_repos::MergerRule {
                 any_of: vec![
-                    api_repos::Principal::Dynamic(api_repos::DynamicRef::ParentIssueCreator),
+                    api_repos::Principal::Dynamic(api_repos::DynamicRef::PatchAuthor),
                     api_user("alice"),
                 ],
             }),

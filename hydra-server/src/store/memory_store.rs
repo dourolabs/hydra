@@ -2864,10 +2864,7 @@ mod tests {
         config.merge_policy = Some(MergePolicy {
             reviewers: vec![ReviewerGroup {
                 label: Some("code-review".to_string()),
-                any_of: vec![
-                    Principal::User(ApiUsername::from("reviewer")),
-                    Principal::Dynamic(DynamicRef::ParentIssueCreator),
-                ],
+                any_of: vec![Principal::User(ApiUsername::from("reviewer"))],
                 count: 1,
                 exclude_author: true,
             }],
