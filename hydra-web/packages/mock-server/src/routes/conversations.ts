@@ -6,6 +6,8 @@ import {
   appendSessionEvent,
   conversationIdOf,
   createInteractiveSessionForConversation,
+  getSessionEventsFor,
+  listSessionIdsByConversationId,
 } from "./sessions.js";
 import type {
   Conversation,
@@ -48,30 +50,66 @@ function appendEvent(conversationId: string, event: ConversationEvent): void {
   }
 }
 
-function eventPreview(event: ConversationEvent): string {
-  switch (event.type) {
-    case "suspending":
-      return `Suspending: ${event.reason}`;
-    case "resumed":
-      return "Resumed";
-    case "closed":
-      return "Closed";
+function chatTextPreview(content: string, prefix: string): string {
+  const MAX_LEN = 100;
+  const remaining = MAX_LEN - prefix.length;
+  if (content.length <= remaining) return `${prefix}${content}`;
+  return `${prefix}${Array.from(content).slice(0, remaining).join("")}…`;
+}
+
+/**
+ * Aggregate chat-text events (user_message / assistant_message) across
+ * every session linked to `conversationId`. Returns the total count and
+ * the preview of the most recent chat-text event found — matching the
+ * backend's `ConversationEventSummary` semantics. ConversationEvents are
+ * lifecycle-only and do not contribute.
+ */
+function chatTextSummaryFor(
+  store: Store,
+  conversationId: string,
+): { event_count: number; last_event_preview: string | null } {
+  const sessionIds = listSessionIdsByConversationId(store, conversationId);
+  let count = 0;
+  let preview: string | null = null;
+  // Walk sessions newest-last → reverse to find the most recent chat-text
+  // event while still summing every session's chat-text count.
+  for (let i = sessionIds.length - 1; i >= 0; i -= 1) {
+    const events = getSessionEventsFor(sessionIds[i]);
+    for (const event of events) {
+      if (event.type === "user_message" || event.type === "assistant_message") {
+        count += 1;
+      }
+    }
+    if (preview === null) {
+      for (let j = events.length - 1; j >= 0; j -= 1) {
+        const event = events[j];
+        if (event.type === "user_message") {
+          preview = chatTextPreview(event.content, "User: ");
+          break;
+        }
+        if (event.type === "assistant_message") {
+          preview = chatTextPreview(event.content, "Assistant: ");
+          break;
+        }
+      }
+    }
   }
+  return { event_count: count, last_event_preview: preview };
 }
 
 function toSummary(
+  store: Store,
   id: string,
   conversation: Conversation,
 ): ConversationSummary {
-  const events = getEvents(id);
-  const last = events.length > 0 ? events[events.length - 1] : null;
+  const { event_count, last_event_preview } = chatTextSummaryFor(store, id);
   return {
     conversation_id: id,
     title: conversation.title,
     agent_name: conversation.agent_name,
     status: conversation.status,
-    event_count: events.length,
-    last_event_preview: last ? eventPreview(last).slice(0, 200) : null,
+    event_count,
+    last_event_preview,
     creator: conversation.creator,
     created_at: conversation.created_at,
     updated_at: conversation.updated_at,
@@ -138,7 +176,7 @@ export function createConversationRoutes(store: Store): Hono {
     }
 
     const summaries: ConversationSummary[] = filtered.map(({ id, entry }) =>
-      toSummary(id, entry.data),
+      toSummary(store, id, entry.data),
     );
     return c.json(summaries);
   });

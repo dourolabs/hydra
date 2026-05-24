@@ -766,20 +766,22 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns event summaries for multiple conversations in a single batch
     /// operation.
     ///
-    /// `event_count` is the count of [`ConversationEvent`]s
-    /// (`Suspending` / `Resumed` / `Closed`) for the conversation.
+    /// `event_count` is the count of chat-text `SessionEvent`s
+    /// (`UserMessage` / `AssistantMessage`) summed across every session
+    /// linked to the conversation. `ToolUse`, lifecycle session events
+    /// (`Suspending` / `Resumed` / `Closed`), and lifecycle
+    /// [`ConversationEvent`]s never contribute — only events that the chat
+    /// UI surfaces as "messages" are counted.
     ///
     /// `last_event_preview` is the prefixed preview of the latest chat-text
-    /// `SessionEvent` (`UserMessage` / `AssistantMessage`) across the
-    /// conversation's linked sessions — latest session first, then latest
-    /// chat-text event within that session. Non-chat session events
-    /// (`ToolUse`, `Suspending`, `Resumed`, `Closed`) are skipped, and
-    /// [`ConversationEvent`] previews are never surfaced here. `None` when no
-    /// chat-text session event exists for the conversation.
+    /// `SessionEvent` across the conversation's linked sessions — latest
+    /// session first, then latest chat-text event within that session.
+    /// [`ConversationEvent`] previews are never surfaced here. `None` when
+    /// no chat-text session event exists for the conversation.
     ///
-    /// A conversation appears in the result whenever it has *either* a
-    /// [`ConversationEvent`] or a chat-text [`SessionEvent`] to summarize;
-    /// `event_count` may be `0` alongside a non-`None` preview.
+    /// A conversation is omitted from the result entirely when it has no
+    /// chat-text events — i.e. `event_count == 0` and `last_event_preview
+    /// == None`.
     async fn get_conversation_event_summaries(
         &self,
         ids: &[ConversationId],
