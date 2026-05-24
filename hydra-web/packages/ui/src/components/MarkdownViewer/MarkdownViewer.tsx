@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { escapeBareOrderedListMarkers } from "./escapeBareOrderedListMarkers";
 import styles from "./MarkdownViewer.module.css";
 
 export interface MarkdownViewerProps {
@@ -24,7 +25,7 @@ export function MarkdownViewer({ content, className }: MarkdownViewerProps) {
           ),
         }}
       >
-        {content}
+        {escapeBareOrderedListMarkers(content)}
       </ReactMarkdown>
     </div>
   );
