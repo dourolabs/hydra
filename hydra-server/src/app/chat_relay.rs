@@ -1,6 +1,5 @@
 use dashmap::DashMap;
-use hydra_common::api::v1::conversations::ConversationEvent;
-use hydra_common::api::v1::sessions::SearchSessionsQuery;
+use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent};
 use hydra_common::{ConversationId, SessionId};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -19,8 +18,9 @@ use crate::store::StoreError;
 pub struct RelayEntry {
     /// The session id of the worker currently connected to this conversation.
     pub session_id: SessionId,
-    /// Send user messages TO the worker (server -> worker direction).
-    pub to_worker: mpsc::Sender<ConversationEvent>,
+    /// Send session events (currently only `UserMessage`) TO the worker
+    /// (server -> worker direction).
+    pub to_worker: mpsc::Sender<ApiSessionEvent>,
 }
 
 /// In-memory map of active conversation relays. Maps conversation IDs to
@@ -37,7 +37,7 @@ pub fn register_relay(
     relay_map: &ChatRelayMap,
     conversation_id: ConversationId,
     session_id: SessionId,
-) -> mpsc::Receiver<ConversationEvent> {
+) -> mpsc::Receiver<ApiSessionEvent> {
     let (to_worker_tx, to_worker_rx) = mpsc::channel(TO_WORKER_CAPACITY);
 
     let entry = RelayEntry {
@@ -54,12 +54,12 @@ pub fn unregister_relay(relay_map: &ChatRelayMap, conversation_id: &Conversation
     relay_map.remove(conversation_id);
 }
 
-/// Send a conversation event to the worker for the given conversation.
+/// Send a session event to the worker for the given conversation.
 /// Returns an error if the conversation has no active relay or the channel is full.
 pub async fn send_to_worker(
     relay_map: &ChatRelayMap,
     conversation_id: &ConversationId,
-    event: ConversationEvent,
+    event: ApiSessionEvent,
 ) -> Result<(), SendToWorkerError> {
     let entry = relay_map
         .get(conversation_id)
@@ -81,13 +81,13 @@ pub enum SendToWorkerError {
 
 /// Resolve the session that "owns" the given conversation right now.
 ///
-/// Used by the dual-write path (Phase C step 7 of the sessions-orthogonality
-/// redesign) to find the session id to attach a `SessionEvent` to when the
-/// caller only has a `ConversationId` in hand. Prefers the in-memory
-/// `chat_relay_map` (set by a live worker WebSocket); falls back to picking
-/// the most-recently-created session linked to the conversation. Returns
-/// `None` if no session has been spawned yet — the dual-write is best-effort
-/// and is skipped (with a warn log at the call site) in that case.
+/// Used by `send_message` and the lifecycle write paths to find the session
+/// id to attach a `SessionEvent` to when the caller only has a
+/// `ConversationId` in hand. Prefers the in-memory `chat_relay_map` (set by
+/// a live worker WebSocket); falls back to picking the most-recently-created
+/// session linked to the conversation. Returns `None` if no session has been
+/// spawned yet — the write is best-effort and is skipped (with a warn log at
+/// the call site) in that case.
 pub async fn resolve_session_for_conversation(
     state: &AppState,
     conversation_id: &ConversationId,
@@ -102,6 +102,58 @@ pub async fn resolve_session_for_conversation(
         .into_iter()
         .max_by_key(|(_, v)| v.creation_time)
         .map(|(id, _)| id)
+}
+
+/// Like [`resolve_session_for_conversation`] but polls briefly for the
+/// session to appear. Used by the chat-content write path
+/// (`send_message`) on a brand-new conversation, where
+/// `SpawnConversationSessionsAutomation` is spawning the companion session
+/// concurrently and may not have produced it yet when `send_message` lands.
+///
+/// The retry budget is short on purpose: this path is on the user-facing
+/// `POST /v1/conversations/:id/messages` (and the immediate-after-create
+/// follow-up from `create_conversation`), so we want to bound the worst
+/// case. If the session still isn't there after the budget, the caller
+/// proceeds without a session-event write and a warn fires.
+pub async fn resolve_session_for_conversation_with_retry(
+    state: &AppState,
+    conversation_id: &ConversationId,
+) -> Option<SessionId> {
+    const RETRIES: u32 = 20;
+    const DELAY_MS: u64 = 100;
+    for _ in 0..RETRIES {
+        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
+            return Some(id);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
+    }
+    resolve_session_for_conversation(state, conversation_id).await
+}
+
+/// Like [`resolve_session_for_conversation_with_retry`] but waits for a
+/// session strictly *newer* than `prior` to appear. Used by `send_message`
+/// in the resume-on-send path so the user message lands on the freshly
+/// spawned session rather than the prior (now-closed) one. If `prior` is
+/// `None`, falls back to the standard retry resolver.
+pub async fn wait_for_new_session_for_conversation(
+    state: &AppState,
+    conversation_id: &ConversationId,
+    prior: Option<&SessionId>,
+) -> Option<SessionId> {
+    let Some(prior) = prior else {
+        return resolve_session_for_conversation_with_retry(state, conversation_id).await;
+    };
+    const RETRIES: u32 = 20;
+    const DELAY_MS: u64 = 100;
+    for _ in 0..RETRIES {
+        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
+            if &id != prior {
+                return Some(id);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
+    }
+    resolve_session_for_conversation(state, conversation_id).await
 }
 
 /// Dual-write a `SessionEvent` to the session backing this conversation.
@@ -166,28 +218,24 @@ pub async fn dual_write_session_event(
     }
 }
 
-/// Map a `ConversationEvent` to its `SessionEvent` twin per design §3.2.
+/// Map a lifecycle [`DomainConversationEvent`] to its [`SessionEvent`] twin
+/// per design §3.2. Used by `close_conversation` (and other lifecycle write
+/// paths) to dual-write the matching session event alongside the legacy
+/// conversation event.
 ///
 /// `Resumed` is mapped to `None` here because the producing session id is the
 /// new session and the prior `from_session_id` only exists in the automation
-/// that created the new session — the relay handler dispatches Resumed events
-/// via the automation, not via this mapping.
+/// that created the new session — the automation writes the SessionEvent
+/// directly, not via this mapping.
+///
+/// Chat-content variants (`UserMessage`, `AssistantMessage`) no longer live
+/// on `ConversationEvent` after Phase E step 18; the worker emits them as
+/// `SessionEvent` directly and `send_message` writes them as `SessionEvent`,
+/// so they don't appear in this mapping.
 pub fn conversation_event_to_session_event(
     event: &DomainConversationEvent,
 ) -> Option<SessionEvent> {
     match event {
-        DomainConversationEvent::UserMessage { content, timestamp } => {
-            Some(SessionEvent::UserMessage {
-                content: content.clone(),
-                timestamp: *timestamp,
-            })
-        }
-        DomainConversationEvent::AssistantMessage { content, timestamp } => {
-            Some(SessionEvent::AssistantMessage {
-                content: content.clone(),
-                timestamp: *timestamp,
-            })
-        }
         DomainConversationEvent::Suspending { reason, timestamp } => {
             Some(SessionEvent::Suspending {
                 reason: reason.clone(),
@@ -269,7 +317,7 @@ mod tests {
         let session_id = SessionId::new();
         let mut rx = register_relay(&map, conversation_id.clone(), session_id);
 
-        let event = ConversationEvent::UserMessage {
+        let event = ApiSessionEvent::UserMessage {
             content: "hello".to_string(),
             timestamp: Utc::now(),
         };
@@ -286,7 +334,7 @@ mod tests {
         let map = test_relay_map();
         let conversation_id = ConversationId::new();
 
-        let event = ConversationEvent::UserMessage {
+        let event = ApiSessionEvent::UserMessage {
             content: "hello".to_string(),
             timestamp: Utc::now(),
         };

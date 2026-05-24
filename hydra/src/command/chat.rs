@@ -1,8 +1,12 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use hydra_common::api::v1::{
-    conversations::{ConversationEvent, CreateConversationRequest, SendMessageRequest},
-    events::{EventsQuery, SseEventType},
+use hydra_common::{
+    api::v1::{
+        conversations::{CreateConversationRequest, SendMessageRequest},
+        events::{EventsQuery, SseEventType},
+        sessions::{SearchSessionsQuery, SessionEvent},
+    },
+    ConversationId,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -18,6 +22,27 @@ pub async fn run(
         Some(prompt) => run_noninteractive(client, &prompt, agent).await,
         None => run_interactive(client, agent).await,
     }
+}
+
+/// Look up the session ids currently linked to the conversation. Used to
+/// scope the session-event SSE stream to events for our conversation only.
+/// May return an empty list if the companion session hasn't been spawned yet
+/// (the automation runs asynchronously after the conversation is created).
+async fn list_session_ids_for_conversation(
+    client: &dyn HydraClientInterface,
+    conversation_id: &ConversationId,
+) -> Result<Vec<String>> {
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    let records = client
+        .list_sessions(&query)
+        .await
+        .context("failed to list sessions for conversation")?;
+    Ok(records
+        .sessions
+        .into_iter()
+        .map(|r| r.session_id.to_string())
+        .collect())
 }
 
 async fn run_noninteractive(
@@ -36,9 +61,12 @@ async fn run_noninteractive(
         .context("failed to create conversation")?;
     let conversation_id = &conversation.conversation_id;
 
-    // Subscribe to SSE events and wait for the assistant response.
+    // Subscribe to SSE events and wait for the assistant response. We use
+    // the session_event_created stream because chat content (UserMessage /
+    // AssistantMessage) now lives on SessionEvent — see
+    // `designs/sessions-orthogonality-redesign.md` Phase E step 18.
     let query = EventsQuery {
-        types: Some("conversation_event_created".to_string()),
+        types: Some("session_event_created".to_string()),
         ..Default::default()
     };
     let mut event_stream = client
@@ -49,27 +77,30 @@ async fn run_noninteractive(
     let event_loop = async {
         while let Some(event_result) = event_stream.next().await {
             let sse_event = event_result.context("SSE stream error")?;
-            if sse_event.event_type != SseEventType::ConversationEventCreated {
+            if sse_event.event_type != SseEventType::SessionEventCreated {
                 continue;
             }
             let entity = sse_event
                 .as_entity_event()
                 .context("failed to parse entity event")?;
-            if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+            // Filter to our conversation's sessions. We re-list on each
+            // event because new sessions can be spawned mid-conversation
+            // (on resume).
+            let session_ids = list_session_ids_for_conversation(client, conversation_id).await?;
+            if !session_ids.contains(&entity.entity_id) {
                 continue;
             }
 
-            // Parse the conversation event from the entity payload.
             if let Some(entity_value) = &entity.entity {
-                if let Ok(conv_event) =
-                    serde_json::from_value::<ConversationEvent>(entity_value.clone())
+                if let Ok(session_event) =
+                    serde_json::from_value::<SessionEvent>(entity_value.clone())
                 {
-                    match &conv_event {
-                        ConversationEvent::AssistantMessage { content, .. } => {
+                    match &session_event {
+                        SessionEvent::AssistantMessage { content, .. } => {
                             println!("{content}");
                             break;
                         }
-                        ConversationEvent::Closed { .. } => break,
+                        SessionEvent::Closed { .. } => break,
                         _ => {}
                     }
                 }
@@ -116,9 +147,10 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
         .context("failed to create conversation")?;
     let conversation_id = conversation.conversation_id.clone();
 
-    // Subscribe to SSE events for this conversation.
+    // Subscribe to SSE events for this conversation. Chat content lives on
+    // SessionEvent post-Phase-E-step-18.
     let query = EventsQuery {
-        types: Some("conversation_event_created".to_string()),
+        types: Some("session_event_created".to_string()),
         ..Default::default()
     };
     let mut event_stream = client
@@ -139,32 +171,34 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
                         break;
                     }
                 };
-                if sse_event.event_type != SseEventType::ConversationEventCreated {
+                if sse_event.event_type != SseEventType::SessionEventCreated {
                     continue;
                 }
                 let entity = match sse_event.as_entity_event() {
                     Ok(e) => e,
                     Err(_) => continue,
                 };
-                if !entity.entity_id.starts_with(&conversation_id.to_string()) {
+                let session_ids =
+                    list_session_ids_for_conversation(client, &conversation_id).await?;
+                if !session_ids.contains(&entity.entity_id) {
                     continue;
                 }
 
                 if let Some(entity_value) = &entity.entity {
-                    if let Ok(conv_event) =
-                        serde_json::from_value::<ConversationEvent>(entity_value.clone())
+                    if let Ok(session_event) =
+                        serde_json::from_value::<SessionEvent>(entity_value.clone())
                     {
-                        match &conv_event {
-                            ConversationEvent::AssistantMessage { content, .. } => {
+                        match &session_event {
+                            SessionEvent::AssistantMessage { content, .. } => {
                                 println!("{content}");
                                 got_response = true;
                                 break;
                             }
-                            ConversationEvent::Closed { .. } => {
+                            SessionEvent::Closed { .. } => {
                                 eprintln!("Conversation closed by server.");
                                 return Ok(());
                             }
-                            ConversationEvent::Suspending { reason, .. } => {
+                            SessionEvent::Suspending { reason, .. } => {
                                 eprintln!("Session suspending: {reason}");
                             }
                             _ => {}
@@ -212,7 +246,7 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hydra_common::api::v1::conversations::ConversationEvent;
+    use hydra_common::api::v1::sessions::SessionEvent;
 
     #[test]
     fn create_conversation_request_serializes_correctly() {
@@ -254,9 +288,9 @@ mod tests {
             "content": "Hello! How can I help?",
             "timestamp": "2026-01-01T00:00:00Z"
         });
-        let event: ConversationEvent = serde_json::from_value(json).unwrap();
+        let event: SessionEvent = serde_json::from_value(json).unwrap();
         match event {
-            ConversationEvent::AssistantMessage { content, .. } => {
+            SessionEvent::AssistantMessage { content, .. } => {
                 assert_eq!(content, "Hello! How can I help?");
             }
             _ => panic!("expected AssistantMessage"),
@@ -269,7 +303,7 @@ mod tests {
             "type": "closed",
             "timestamp": "2026-01-01T00:00:00Z"
         });
-        let event: ConversationEvent = serde_json::from_value(json).unwrap();
-        assert!(matches!(event, ConversationEvent::Closed { .. }));
+        let event: SessionEvent = serde_json::from_value(json).unwrap();
+        assert!(matches!(event, SessionEvent::Closed { .. }));
     }
 }

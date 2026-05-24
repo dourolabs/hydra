@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 /// (pre-event) snapshot on its own.
 ///
 /// Event semantics applied to the snapshot:
-/// - `UserMessage`, `AssistantMessage`, `Resumed` → `status = Active`.
+/// - `Resumed` → `status = Active`.
 /// - `Suspending` → `status = Idle`.
 /// - `Closed` → `status = Closed`.
 /// - Every event updates `updated_at` to the event's timestamp.
@@ -53,12 +53,6 @@ fn apply_event(conv: &Conversation, event: &ConversationEvent) -> Conversation {
 
 fn event_effect(event: &ConversationEvent) -> (DateTime<Utc>, ConversationStatus) {
     match event {
-        ConversationEvent::UserMessage { timestamp, .. } => {
-            (*timestamp, ConversationStatus::Active)
-        }
-        ConversationEvent::AssistantMessage { timestamp, .. } => {
-            (*timestamp, ConversationStatus::Active)
-        }
         ConversationEvent::Suspending { timestamp, .. } => (*timestamp, ConversationStatus::Idle),
         ConversationEvent::Resumed { timestamp, .. } => (*timestamp, ConversationStatus::Active),
         ConversationEvent::Closed { timestamp } => (*timestamp, ConversationStatus::Closed),
@@ -99,31 +93,6 @@ mod tests {
         let initial = sample_conversation(Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap());
         let out = events_to_versions(&initial, &[]);
         assert!(out.is_empty());
-    }
-
-    #[test]
-    fn single_user_message_flips_status_active_and_updates_timestamp() {
-        let created_at = Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap();
-        let mut initial = sample_conversation(created_at);
-        initial.status = ConversationStatus::Idle;
-
-        let event_ts = created_at + Duration::seconds(30);
-        let events = vec![versioned_event(
-            ConversationEvent::UserMessage {
-                content: "hi".to_string(),
-                timestamp: event_ts,
-            },
-            1,
-            event_ts,
-        )];
-
-        let out = events_to_versions(&initial, &events);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].item.status, ConversationStatus::Active);
-        assert_eq!(out[0].item.updated_at, event_ts);
-        assert_eq!(out[0].item.created_at, created_at);
-        assert_eq!(out[0].version, 1);
-        assert_eq!(out[0].timestamp, event_ts);
     }
 
     #[test]
@@ -183,41 +152,32 @@ mod tests {
         let ts1 = created_at + Duration::seconds(10);
         let ts2 = created_at + Duration::seconds(20);
         let ts3 = created_at + Duration::seconds(30);
-        let ts4 = created_at + Duration::seconds(40);
 
         let events = vec![
             versioned_event(
-                ConversationEvent::UserMessage {
-                    content: "hi".to_string(),
+                ConversationEvent::Suspending {
+                    reason: "idle".to_string(),
                     timestamp: ts1,
                 },
                 1,
                 ts1,
             ),
             versioned_event(
-                ConversationEvent::AssistantMessage {
-                    content: "hello".to_string(),
+                ConversationEvent::Resumed {
+                    session_id: SessionId::new(),
                     timestamp: ts2,
                 },
                 2,
                 ts2,
             ),
-            versioned_event(
-                ConversationEvent::Suspending {
-                    reason: "idle".to_string(),
-                    timestamp: ts3,
-                },
-                3,
-                ts3,
-            ),
-            versioned_event(ConversationEvent::Closed { timestamp: ts4 }, 4, ts4),
+            versioned_event(ConversationEvent::Closed { timestamp: ts3 }, 3, ts3),
         ];
 
         let out = events_to_versions(&initial, &events);
         assert_eq!(out.len(), events.len());
 
         let versions: Vec<u64> = out.iter().map(|v| v.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4]);
+        assert_eq!(versions, vec![1, 2, 3]);
         for w in versions.windows(2) {
             assert!(w[0] < w[1], "versions must be strictly increasing");
         }
@@ -225,7 +185,9 @@ mod tests {
         // Final snapshot reflects the Closed event.
         assert_eq!(out.last().unwrap().item.status, ConversationStatus::Closed);
         // Mid-stream Suspending entry shows Idle.
-        assert_eq!(out[2].item.status, ConversationStatus::Idle);
+        assert_eq!(out[0].item.status, ConversationStatus::Idle);
+        // Resumed flips back to Active.
+        assert_eq!(out[1].item.status, ConversationStatus::Active);
     }
 
     #[test]
@@ -236,8 +198,8 @@ mod tests {
         let ts1 = created_at + Duration::seconds(1);
         let ts2 = created_at + Duration::seconds(2);
         let event1 = Versioned::with_actor(
-            ConversationEvent::UserMessage {
-                content: "a".to_string(),
+            ConversationEvent::Suspending {
+                reason: "idle".to_string(),
                 timestamp: ts1,
             },
             1,
@@ -245,15 +207,7 @@ mod tests {
             ActorRef::test(),
             ts1,
         );
-        let event2 = Versioned::new(
-            ConversationEvent::AssistantMessage {
-                content: "b".to_string(),
-                timestamp: ts2,
-            },
-            2,
-            ts2,
-            ts2,
-        );
+        let event2 = Versioned::new(ConversationEvent::Closed { timestamp: ts2 }, 2, ts2, ts2);
 
         let out = events_to_versions(&initial, &[event1.clone(), event2.clone()]);
         assert_eq!(out[0].timestamp, event1.timestamp);
@@ -272,17 +226,17 @@ mod tests {
         let ts2 = created_at + Duration::seconds(20);
 
         let closed = versioned_event(ConversationEvent::Closed { timestamp: ts1 }, 1, ts1);
-        let user_msg = versioned_event(
-            ConversationEvent::UserMessage {
-                content: "hi".to_string(),
+        let resumed = versioned_event(
+            ConversationEvent::Resumed {
+                session_id: SessionId::new(),
                 timestamp: ts2,
             },
             2,
             ts2,
         );
 
-        let in_order = events_to_versions(&initial, &[closed.clone(), user_msg.clone()]);
-        let reversed = events_to_versions(&initial, &[user_msg, closed]);
+        let in_order = events_to_versions(&initial, &[closed.clone(), resumed.clone()]);
+        let reversed = events_to_versions(&initial, &[resumed, closed]);
 
         assert_eq!(
             in_order.last().unwrap().item.status,

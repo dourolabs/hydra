@@ -231,11 +231,12 @@ async fn diff_conversation_modified_uses_event_fold() -> Result<()> {
     let to_v = record["version"]["to"]
         .as_u64()
         .expect("to version present");
-    // Two events were appended (UserMessage + Closed) plus any extra events
-    // from send_message/close_conversation internals — at minimum 2.
+    // Only lifecycle events land on the conversation events log
+    // post-Phase-E step 18 (chat content moved to `SessionEvent`), so the
+    // fold sees a single `Closed` event for this scenario.
     assert!(
-        to_v >= 2,
-        "expected fold to produce >=2 versions, got {to_v}"
+        to_v >= 1,
+        "expected fold to produce >=1 version, got {to_v}"
     );
     Ok(())
 }

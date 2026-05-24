@@ -367,13 +367,12 @@ async fn compute_resume_index(
             return None;
         }
     };
-    for (i, e) in events.iter().enumerate().rev() {
+    if let Some((i, e)) = events.iter().enumerate().next_back() {
         match &e.item {
             ConversationEvent::Closed { .. } | ConversationEvent::Suspending { .. } => {
                 return Some(i + 1);
             }
             ConversationEvent::Resumed { .. } => return Some(events.len()),
-            _ => continue,
         }
     }
     Some(events.len())
@@ -651,8 +650,8 @@ mod tests {
 
         let payload = Arc::new(MutationPayload::ConversationEvent {
             conversation_id: conversation_id.clone(),
-            event: ConversationEvent::UserMessage {
-                content: "hi".to_string(),
+            event: ConversationEvent::Suspending {
+                reason: "idle_timeout".to_string(),
                 timestamp: Utc::now(),
             },
             actor: ActorRef::test(),
@@ -1142,13 +1141,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate a closed conversation with prior history: UserMessage then Closed.
+        // Simulate a closed conversation with prior history: Suspending then Closed.
         state
             .store
             .append_conversation_event_with_actor(
                 &conversation_id,
-                ConversationEvent::UserMessage {
-                    content: "hello".into(),
+                ConversationEvent::Suspending {
+                    reason: "idle_timeout".into(),
                     timestamp: Utc::now(),
                 },
                 ActorRef::test(),
@@ -1215,11 +1214,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_spawn_uses_position_after_last_closed_when_user_message_races_in() {
-        // Simulates the race where, between status flip (Closed → Active) and
-        // the automation firing, the caller has already appended a follow-up
-        // UserMessage. The resume snapshot must still point to the post-close
-        // boundary, not to events.len() at automation time.
+    async fn resume_spawn_uses_position_after_most_recent_lifecycle_event() {
+        // `compute_resume_index` scans the conversation events log newest-to-
+        // oldest and returns the index just after the first Suspending/Closed
+        // it finds. Post-Phase-E step 18 the log carries only lifecycle
+        // events (Suspending/Resumed/Closed), so the previous "UserMessage
+        // races in after Closed" scenario no longer applies. This regression
+        // test guards the boundary-after-most-recent-lifecycle invariant
+        // directly: Suspending → Closed → Suspending yields
+        // `events.len() == 3`.
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
@@ -1231,15 +1234,15 @@ mod tests {
             .unwrap();
 
         for ev in [
-            ConversationEvent::UserMessage {
-                content: "first".into(),
+            ConversationEvent::Suspending {
+                reason: "idle_timeout".into(),
                 timestamp: Utc::now(),
             },
             ConversationEvent::Closed {
                 timestamp: Utc::now(),
             },
-            ConversationEvent::UserMessage {
-                content: "follow-up".into(),
+            ConversationEvent::Suspending {
+                reason: "sigterm".into(),
                 timestamp: Utc::now(),
             },
         ] {
@@ -1250,8 +1253,6 @@ mod tests {
                 .unwrap();
         }
 
-        // The expected resume index is the position just after the Closed
-        // event (= 2), NOT events.len() (= 3).
         let event = conversation_updated_event(
             conversation_id.clone(),
             conversation,
@@ -1260,7 +1261,7 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.mode.conversation_resume_from(), Some(2));
+        assert_eq!(session.mode.conversation_resume_from(), Some(3));
     }
 
     #[tokio::test]

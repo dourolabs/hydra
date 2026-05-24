@@ -168,7 +168,7 @@ pub async fn send_message(
     Extension(actor): Extension<Actor>,
     ConversationIdPath(conversation_id): ConversationIdPath,
     Json(payload): Json<api_conversations::SendMessageRequest>,
-) -> Result<Json<api_conversations::ConversationEvent>, ApiError> {
+) -> Result<Json<hydra_common::api::v1::sessions::SessionEvent>, ApiError> {
     info!(conversation_id = %conversation_id, "send_message invoked");
 
     let actor_ref = ActorRef::from(&actor);
@@ -349,51 +349,12 @@ mod tests {
     }
 
     #[test]
-    fn event_preview_user_message() {
-        let event = DomainEvent::UserMessage {
-            content: "Hello".to_string(),
+    fn event_preview_suspending() {
+        let event = DomainEvent::Suspending {
+            reason: "idle_timeout".to_string(),
             timestamp: chrono::Utc::now(),
         };
-        assert_eq!(event.preview(), "User: Hello");
-    }
-
-    #[test]
-    fn event_preview_truncates_long_content() {
-        let long_content = "x".repeat(200);
-        let event = DomainEvent::UserMessage {
-            content: long_content,
-            timestamp: chrono::Utc::now(),
-        };
-        let preview = event.preview();
-        assert!(preview.len() <= 110); // prefix + 100 chars + ellipsis
-        assert!(preview.ends_with('…'));
-    }
-
-    #[test]
-    fn event_preview_truncates_multibyte_without_panic() {
-        // Content with multi-byte chars (emoji = 4 bytes each) that would panic with byte slicing
-        let content = "🎉".repeat(50);
-        let event = DomainEvent::UserMessage {
-            content,
-            timestamp: chrono::Utc::now(),
-        };
-        let preview = event.preview();
-        assert!(preview.starts_with("User: "));
-        assert!(preview.ends_with('…'));
-    }
-
-    #[test]
-    fn truncate_preview_at_char_boundary() {
-        // 'é' is 2 bytes; 47 * 2 = 94 bytes for 47 chars
-        let content = "é".repeat(50);
-        let event = DomainEvent::UserMessage {
-            content,
-            timestamp: chrono::Utc::now(),
-        };
-        let result = event.preview();
-        // Should not panic, and should end with ellipsis
-        assert!(result.ends_with('…'));
-        assert!(result.starts_with("User: "));
+        assert_eq!(event.preview(), "Suspending: idle_timeout");
     }
 
     #[test]
