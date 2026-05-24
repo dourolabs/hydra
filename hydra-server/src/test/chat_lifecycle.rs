@@ -448,13 +448,11 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
     );
 
     // Verify session_state was persisted via the store API.
-    let stored_state = store
-        .get_conversation_session_state(&created.conversation_id)
-        .await?;
+    let stored_state = store.get_session_state(&session_id).await?;
     assert_eq!(
         stored_state.as_deref(),
         Some(b"claude-session-abc".as_slice()),
-        "SessionStateUpload payload should be persisted on the conversation"
+        "SessionStateUpload payload should be persisted on the producing session"
     );
 
     Ok(())
@@ -1213,9 +1211,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     assert_eq!(closed.status, ConversationStatus::Closed);
 
     // Sanity: confirm no session_state was persisted by the prior worker.
-    let stored_state = store
-        .get_conversation_session_state(&conversation_id)
-        .await?;
+    let stored_state = store.get_session_state(&initial_session_id).await?;
     assert!(
         stored_state.is_none(),
         "no SessionStateUpload was ever sent, so session_state must be None"
@@ -1391,10 +1387,9 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     )
     .await?;
 
-    // The store must have persisted the exact payload bytes.
-    let stored_state = store
-        .get_conversation_session_state(&conversation_id)
-        .await?;
+    // The store must have persisted the exact payload bytes on the producing
+    // session.
+    let stored_state = store.get_session_state(&initial_session_id).await?;
     assert_eq!(
         stored_state.as_deref(),
         Some(payload_bytes.as_slice()),
@@ -1484,7 +1479,7 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
 
     // Persist some session_state so the Fresh path would otherwise return it.
     store
-        .store_conversation_session_state(&conversation_id, b"opaque-bytes".to_vec())
+        .store_session_state(&session_id, b"opaque-bytes".to_vec(), &ActorRef::test())
         .await?;
 
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
@@ -1940,22 +1935,13 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
         "SessionEvent::Resumed on s2 must carry s1 as from_session_id"
     );
 
-    // session_state dual-write: the upload from worker #1 must appear under
-    // both `conversation_session_state` (old key) and `session_state` (new
-    // key) for s1.
-    let conv_state = store
-        .get_conversation_session_state(&conversation_id)
-        .await?;
+    // session_state: the upload from worker #1 must appear keyed on the
+    // producing session id (s1).
     let session_state = store.get_session_state(&s1).await?;
-    assert_eq!(
-        conv_state.as_deref(),
-        Some(upload_bytes.as_slice()),
-        "conversation_session_state must contain the uploaded bytes"
-    );
     assert_eq!(
         session_state.as_deref(),
         Some(upload_bytes.as_slice()),
-        "session_state must contain the same bytes for s1 (dual-write)"
+        "session_state must contain the uploaded bytes for s1"
     );
 
     Ok(())

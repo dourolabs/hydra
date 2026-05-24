@@ -810,12 +810,6 @@ pub trait ReadOnlyStore: Send + Sync {
         ids: &[ConversationId],
     ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError>;
 
-    /// Retrieves the stored session state blob for a conversation, if any.
-    async fn get_conversation_session_state(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError>;
-
     // ---- Session event log (read-only) ----
 
     /// Retrieves the append-only session event log for a session.
@@ -1060,13 +1054,6 @@ pub trait Store: ReadOnlyStore {
         event: ConversationEvent,
         actor: &ActorRef,
     ) -> Result<ConversationEventId, StoreError>;
-
-    /// Stores a session state blob for a conversation (used for session resumption).
-    async fn store_conversation_session_state(
-        &self,
-        id: &ConversationId,
-        data: Vec<u8>,
-    ) -> Result<(), StoreError>;
 
     // ---- Session event log mutations ----
 

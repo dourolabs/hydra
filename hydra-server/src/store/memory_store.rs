@@ -80,8 +80,6 @@ pub struct MemoryStore {
     conversations: DashMap<ConversationId, Vec<Versioned<Conversation>>>,
     /// Maps conversation IDs to their versioned events
     conversation_events: DashMap<ConversationId, Vec<Versioned<ConversationEvent>>>,
-    /// Maps conversation IDs to their session state blobs
-    conversation_session_state: DashMap<ConversationId, Vec<u8>>,
     /// Maps session IDs to their versioned session events. Each entry pairs
     /// the event with the monotonic `next_session_event_seq` value assigned
     /// at append time, which serves as the global ordering primitive used by
@@ -118,7 +116,6 @@ impl MemoryStore {
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
             conversation_events: DashMap::new(),
-            conversation_session_state: DashMap::new(),
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
@@ -1737,19 +1734,6 @@ impl ReadOnlyStore for MemoryStore {
         Ok(result)
     }
 
-    async fn get_conversation_session_state(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        if !self.conversations.contains_key(id) {
-            return Err(StoreError::ConversationNotFound(id.clone()));
-        }
-        Ok(self
-            .conversation_session_state
-            .get(id)
-            .map(|entry| entry.value().clone()))
-    }
-
     async fn get_session_events(
         &self,
         id: &SessionId,
@@ -2552,18 +2536,6 @@ impl Store for MemoryStore {
             conversation_id: id.clone(),
             event_index,
         })
-    }
-
-    async fn store_conversation_session_state(
-        &self,
-        id: &ConversationId,
-        data: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        if !self.conversations.contains_key(id) {
-            return Err(StoreError::ConversationNotFound(id.clone()));
-        }
-        self.conversation_session_state.insert(id.clone(), data);
-        Ok(())
     }
 
     async fn append_session_event(
@@ -8318,49 +8290,6 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.item.status, ConversationStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn store_and_get_session_state() {
-        let store = MemoryStore::new();
-        let (id, _) = store
-            .add_conversation(sample_conversation(), &test_actor())
-            .await
-            .unwrap();
-
-        // Initially no session state
-        let state = store.get_conversation_session_state(&id).await.unwrap();
-        assert!(state.is_none());
-
-        // Store session state
-        let data = vec![1, 2, 3, 4, 5];
-        store
-            .store_conversation_session_state(&id, data.clone())
-            .await
-            .unwrap();
-
-        let state = store.get_conversation_session_state(&id).await.unwrap();
-        assert_eq!(state, Some(data));
-
-        // Overwrite
-        let data2 = vec![10, 20, 30];
-        store
-            .store_conversation_session_state(&id, data2.clone())
-            .await
-            .unwrap();
-        let state = store.get_conversation_session_state(&id).await.unwrap();
-        assert_eq!(state, Some(data2));
-    }
-
-    #[tokio::test]
-    async fn session_state_not_found_for_missing_conversation() {
-        let store = MemoryStore::new();
-        let id = hydra_common::ConversationId::new();
-        let result = store.get_conversation_session_state(&id).await;
-        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
-
-        let result = store.store_conversation_session_state(&id, vec![1]).await;
-        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 
     #[tokio::test]

@@ -206,8 +206,10 @@ pub fn conversation_event_to_session_event(
     }
 }
 
-/// Dual-write a `session_state` blob against a known session id.
-pub async fn dual_write_session_state(
+/// Persist a `session_state` blob against a known session id. Errors are logged
+/// and swallowed so a transient store failure does not tear down the WebSocket
+/// relay; the worker will retry the upload on its next Suspending event.
+pub async fn store_session_state(
     state: &AppState,
     session_id: &SessionId,
     data: Vec<u8>,
@@ -223,7 +225,7 @@ pub async fn dual_write_session_state(
             info!(
                 %session_id,
                 bytes,
-                "dual-write session_state stored",
+                "session_state stored",
             );
             Ok(())
         }
@@ -232,7 +234,7 @@ pub async fn dual_write_session_state(
                 %session_id,
                 bytes,
                 error = %err,
-                "dual-write session_state failed",
+                "store session_state failed",
             );
             Ok(())
         }

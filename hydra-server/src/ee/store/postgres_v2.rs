@@ -115,7 +115,6 @@ const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
 const TABLE_CONVERSATION_EVENTS_V2: &str = "metis.conversation_events_v2";
-const TABLE_CONVERSATION_SESSION_STATE: &str = "metis.conversation_session_state";
 const TABLE_SESSION_EVENTS_V2: &str = "metis.session_events_v2";
 const TABLE_SESSION_STATE_V2: &str = "metis.session_state_v2";
 
@@ -4129,25 +4128,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(result)
     }
 
-    async fn get_conversation_session_state(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        // Ensure conversation exists (exclude deleted)
-        self.get_conversation(id, false).await?;
-
-        let query = format!(
-            "SELECT data FROM {TABLE_CONVERSATION_SESSION_STATE} WHERE conversation_id = $1"
-        );
-        let row = sqlx::query_scalar::<_, Vec<u8>>(&query)
-            .bind(id.as_ref())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        Ok(row)
-    }
-
     async fn get_session_events(
         &self,
         id: &SessionId,
@@ -5465,32 +5445,6 @@ impl Store for PostgresStoreV2 {
             "INSERT INTO {TABLE_SESSION_STATE_V2} (session_id, data) \
              VALUES ($1, $2) \
              ON CONFLICT (session_id) DO UPDATE SET data = $2, updated_at = NOW()"
-        );
-        sqlx::query(&query)
-            .bind(id.as_ref())
-            .bind(&data)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        Ok(())
-    }
-
-    async fn store_conversation_session_state(
-        &self,
-        id: &ConversationId,
-        data: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        // Ensure conversation exists
-        let _ = self
-            .fetch_latest_version_number(TABLE_CONVERSATIONS_V2, id.as_ref())
-            .await?
-            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
-
-        let query = format!(
-            "INSERT INTO {TABLE_CONVERSATION_SESSION_STATE} (conversation_id, data) \
-             VALUES ($1, $2) \
-             ON CONFLICT (conversation_id) DO UPDATE SET data = $2, updated_at = NOW()"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -9252,30 +9206,6 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].item, event1);
         assert_eq!(events[1].item, event2);
-
-        // -- Session state round-trip --
-        let state_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        store
-            .store_conversation_session_state(&conv_id, state_data.clone())
-            .await
-            .unwrap();
-        let fetched_state = store
-            .get_conversation_session_state(&conv_id)
-            .await
-            .unwrap();
-        assert_eq!(fetched_state, Some(state_data));
-
-        // Overwrite session state
-        let state_data2 = vec![0xCA, 0xFE];
-        store
-            .store_conversation_session_state(&conv_id, state_data2.clone())
-            .await
-            .unwrap();
-        let fetched_state2 = store
-            .get_conversation_session_state(&conv_id)
-            .await
-            .unwrap();
-        assert_eq!(fetched_state2, Some(state_data2));
 
         // -- Deletion filtering --
         let deleted_conv = Conversation {

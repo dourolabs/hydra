@@ -4326,25 +4326,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(result)
     }
 
-    async fn get_conversation_session_state(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        // Verify conversation exists
-        let _conv = self.get_conversation(id, false).await?;
-
-        let row = sqlx::query_scalar::<_, Vec<u8>>(&format!(
-            "SELECT session_state FROM {TABLE_CONVERSATIONS}
-             WHERE id = ?1 AND is_latest = 1 AND session_state IS NOT NULL"
-        ))
-        .bind(id.as_ref())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        Ok(row)
-    }
-
     async fn get_session_events(
         &self,
         id: &SessionId,
@@ -5481,27 +5462,6 @@ impl Store for SqliteStore {
             conversation_id: id.clone(),
             event_index,
         })
-    }
-
-    async fn store_conversation_session_state(
-        &self,
-        id: &ConversationId,
-        data: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        // Verify conversation exists
-        let _conv = self.get_conversation(id, false).await?;
-
-        // Update the session_state on the latest version row
-        sqlx::query(&format!(
-            "UPDATE {TABLE_CONVERSATIONS} SET session_state = ?1 WHERE id = ?2 AND is_latest = 1"
-        ))
-        .bind(&data)
-        .bind(id.as_ref())
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        Ok(())
     }
 
     async fn append_session_event(
@@ -10263,30 +10223,6 @@ mod tests {
         let id = ConversationId::new();
         let err = store.get_conversation_versions(&id).await.unwrap_err();
         assert!(matches!(err, StoreError::ConversationNotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn conversation_session_state_round_trip() {
-        let store = create_test_store().await;
-        let conversation = sample_conversation();
-        let (id, _) = store
-            .add_conversation(conversation, &ActorRef::test())
-            .await
-            .unwrap();
-
-        // Initially no session state
-        let state = store.get_conversation_session_state(&id).await.unwrap();
-        assert!(state.is_none());
-
-        // Store some state
-        let blob = vec![1, 2, 3, 4, 5];
-        store
-            .store_conversation_session_state(&id, blob.clone())
-            .await
-            .unwrap();
-
-        let state = store.get_conversation_session_state(&id).await.unwrap();
-        assert_eq!(state, Some(blob));
     }
 
     #[tokio::test]

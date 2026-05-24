@@ -2,16 +2,14 @@
 //! (`/designs/sessions-orthogonality-redesign.md` §3.5). Backs the
 //! `hydra-migrate-sessions` binary.
 //!
-//! See `state.rs` for the `migrate-state` pass which copies
-//! `conversation_session_state` (postgres `metis.conversation_session_state`,
-//! sqlite `conversations.session_state` column) into `session_state` keyed on
-//! the producing session id. See `events.rs` for the `migrate-events` pass
-//! which partitions `conversation_events_v2` user/assistant message rows
-//! by the active session at write time and writes them to `session_events*`
-//! (design §3.5 step 3).
+//! See `events.rs` for the `migrate-events` pass which partitions
+//! `conversation_events_v2` user/assistant message rows by the active session
+//! at write time and writes them to `session_events*` (design §3.5 step 3).
+//!
+//! The original `migrate-state` pass (`state.rs`) was removed once Phase E
+//! step 19 dropped its source table / column.
 
 pub mod events;
-pub mod state;
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
@@ -59,27 +57,4 @@ impl Backend {
 
         anyhow::bail!("unrecognized DSN '{dsn}': expected a 'sqlite:' or 'postgres(ql)://' scheme",);
     }
-}
-
-/// Status of a single conversation-state row in the migration plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PlanAction {
-    /// Dry-run: a write that *would* happen if we re-ran without `--dry-run`.
-    WouldWrite,
-    /// Dry-run: a row already present in `session_state`; would be skipped.
-    WouldSkip,
-    /// Live run: row was inserted into `session_state`.
-    Wrote,
-    /// Live run: row already existed in `session_state` and was left alone.
-    Skipped,
-}
-
-/// One row of the migrate-state plan. Serialized as JSON Lines on stdout.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PlanEntry {
-    pub conversation_id: String,
-    pub producing_session_id: String,
-    pub byte_len: usize,
-    pub action: PlanAction,
 }
