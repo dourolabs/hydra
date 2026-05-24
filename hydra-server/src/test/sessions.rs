@@ -280,6 +280,7 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     let bundle_item = worker_context
+        .session
         .mount_spec
         .mounts
         .first()
@@ -379,6 +380,7 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     let bundle_item = worker_context
+        .session
         .mount_spec
         .mounts
         .first()
@@ -1226,6 +1228,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     let bundle_item = body
+        .session
         .mount_spec
         .mounts
         .first()
@@ -1240,7 +1243,10 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    assert_eq!(body.prompt, "0");
+    let v1::sessions::SessionMode::Headless { prompt } = &body.session.mode else {
+        panic!("expected Headless mode, got {:?}", body.session.mode);
+    };
+    assert_eq!(prompt, "0");
     Ok(())
 }
 
@@ -1298,7 +1304,10 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    assert_eq!(body.model.as_deref(), Some("claude-3-5-sonnet"));
+    assert_eq!(
+        body.session.agent_config.model.as_deref(),
+        Some("claude-3-5-sonnet")
+    );
     Ok(())
 }
 
@@ -1352,11 +1361,11 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(
-        body.variables.get("SECRET_VALUE").map(String::as_str),
+        body.resolved_env.get("SECRET_VALUE").map(String::as_str),
         Some("keep-me-safe")
     );
     assert_eq!(
-        body.variables.get("HYDRA_ID").map(String::as_str),
+        body.resolved_env.get("HYDRA_ID").map(String::as_str),
         Some(job_id.as_ref())
     );
     Ok(())
@@ -1384,7 +1393,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 memory_limit: None,
                 secrets: None,
                 // Interactive sessions surface the server-configured
-                // idle-timeout through `WorkerContext.interactive`.
+                // idle-timeout through `session.mode.Interactive`.
                 mode: SessionMode::Interactive {
                     conversation_id: hydra_common::ConversationId::new(),
                     idle_timeout_secs: None,
@@ -1416,10 +1425,13 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    let interactive = body
-        .interactive
-        .expect("worker context must include interactive options");
-    assert_eq!(interactive.idle_timeout_secs, Some(expected_idle_timeout));
+    let v1::sessions::SessionMode::Interactive {
+        idle_timeout_secs, ..
+    } = &body.session.mode
+    else {
+        panic!("expected Interactive mode, got {:?}", body.session.mode);
+    };
+    assert_eq!(*idle_timeout_secs, Some(expected_idle_timeout));
     Ok(())
 }
 
@@ -1547,7 +1559,7 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     let server = spawn_test_server_with_state(state, store).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
     assert_eq!(spec.mounts.len(), 3);
     match &spec.mounts[0] {
@@ -1619,7 +1631,7 @@ async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyh
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1679,7 +1691,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
 
     // The spec has no BuildCache item because there's no service repo name,
     // even though the server itself has build_cache configured.
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1704,7 +1716,7 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     match &spec.mounts[0] {
         MountItem::Bundle {
@@ -1743,7 +1755,7 @@ async fn get_session_context_propagates_issue_branch_id_into_bundle_item() -> an
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     match &spec.mounts[0] {
         MountItem::Bundle {
             issue_branch_id, ..
@@ -1774,7 +1786,7 @@ async fn get_session_context_bundle_issue_branch_id_absent_when_env_var_missing(
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.mount_spec;
+    let spec = &context.session.mount_spec;
     match &spec.mounts[0] {
         MountItem::Bundle {
             issue_branch_id, ..

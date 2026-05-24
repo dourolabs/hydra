@@ -31,7 +31,6 @@ import type {
 // impl).
 type LegacySession = Session & {
   prompt?: string;
-  model?: string | null;
   interactive?: { conversation_id?: string } | null;
 };
 
@@ -48,11 +47,6 @@ function conversationIdOf(session: Session): string | null {
   const legacy = session as LegacySession;
   if (session.mode?.type === "interactive") return session.mode.conversation_id;
   return legacy.interactive?.conversation_id ?? null;
-}
-
-function modelOf(session: Session): string | null | undefined {
-  const legacy = session as LegacySession;
-  return session.agent_config?.model ?? legacy.model;
 }
 
 function modeFromCreateRequest(body: CreateSessionRequest): SessionMode {
@@ -319,25 +313,25 @@ export function createSessionRoutes(store: Store): Hono {
       task.context?.type === "git_repository"
         ? { type: "git_repository" as const, url: task.context.url, rev: task.context.rev }
         : { type: "none" as const };
+    const mount_spec = {
+      working_dir: "repo",
+      mounts: [
+        {
+          type: "bundle" as const,
+          target: "repo",
+          bundle,
+          session_id: id,
+          issue_branch_id: null,
+        },
+        { type: "documents" as const, target: "documents" },
+      ],
+    };
+    const sessionWithMount: Session = { ...task, mount_spec, env_vars: task.env_vars ?? {} };
     const resp: WorkerContext = {
-      prompt: promptOf(task),
-      model: modelOf(task),
-      variables: task.env_vars ?? {},
-      mcp_config: task.agent_config?.mcp_config,
-      mount_spec: {
-        working_dir: "repo",
-        mounts: [
-          {
-            type: "bundle",
-            target: "repo",
-            bundle,
-            session_id: id,
-            issue_branch_id: null,
-          },
-          { type: "documents", target: "documents" },
-        ],
-      },
-      session: task,
+      session: sessionWithMount,
+      resolved_env: task.env_vars ?? {},
+      github_token: null,
+      resumed_state: null,
     };
     return c.json(resp);
   });

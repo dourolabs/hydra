@@ -1042,7 +1042,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
 
     // User's CLAUDE_CODE_OAUTH_TOKEN should override (config has None for this key)
     assert_eq!(
-        body.variables
+        body.resolved_env
             .get("CLAUDE_CODE_OAUTH_TOKEN")
             .map(String::as_str),
         Some("user-oauth-token-value"),
@@ -1051,19 +1051,21 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
 
     // Config fallback keys should also be present
     assert_eq!(
-        body.variables.get("OPENAI_API_KEY").map(String::as_str),
+        body.resolved_env.get("OPENAI_API_KEY").map(String::as_str),
         Some("global-openai-key"),
         "config fallback should be used when no user secret exists"
     );
     assert_eq!(
-        body.variables.get("ANTHROPIC_API_KEY").map(String::as_str),
+        body.resolved_env
+            .get("ANTHROPIC_API_KEY")
+            .map(String::as_str),
         Some("global-anthropic-key"),
         "config fallback should be used when no user secret exists"
     );
 
     // HYDRA_ID should also be set
     assert_eq!(
-        body.variables.get("HYDRA_ID").map(String::as_str),
+        body.resolved_env.get("HYDRA_ID").map(String::as_str),
         Some(job_id.as_ref())
     );
 

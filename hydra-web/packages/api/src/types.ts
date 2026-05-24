@@ -157,6 +157,7 @@ export type { Username } from "./generated/Username";
 export type { VersionResponse } from "./generated/VersionResponse";
 export type { Versioned } from "./generated/Versioned";
 export type { WhoAmIResponse } from "./generated/WhoAmIResponse";
+export type { SessionStateBlob } from "./generated/SessionStateBlob";
 export type { WorkerContext } from "./generated/WorkerContext";
 
 // Conversations

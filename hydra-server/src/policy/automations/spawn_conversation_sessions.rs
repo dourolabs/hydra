@@ -224,10 +224,9 @@ async fn spawn_session(
                 // mode variant and set the new session-level lineage edge in
                 // the same update. Resume only makes sense for interactive
                 // sessions; the helper rejects callers that try to stamp on
-                // a Headless mode. The worker currently reads
-                // `conversation_resume_from` from
-                // `WorkerContext.interactive`; PR-4 will swap that for
-                // `SessionStateBlob`.
+                // a Headless mode. The worker reads `conversation_resume_from`
+                // off `session.mode.Interactive`; a follow-up will swap that
+                // for `WorkerContext.resumed_state`.
                 if !session.mode.set_conversation_resume_from(Some(resume_from)) {
                     tracing::warn!(
                         automation = AUTOMATION_NAME,

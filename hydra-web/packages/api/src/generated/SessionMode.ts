@@ -27,7 +27,8 @@ export type SessionMode =
        * `Interactive` variant because resumption is only meaningful for
        * interactive sessions; making it part of the mode means a
        * `Headless` session can never carry a meaningless value.
-       * Transitional until PR-4 introduces `SessionStateBlob`.
+       * Transitional until [`SessionStateBlob`] is wired with a real
+       * payload (follow-up to Phase D step 15).
        */
       conversation_resume_from?: number | null;
     };
