@@ -519,7 +519,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "forward doc".to_string(),
         "# Runbook".to_string(),
         Some("docs/runbook.md".to_string()),
-        Some(job_id.clone()),
         false,
     )
     .unwrap();
@@ -545,7 +544,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             Some("runbook".to_string()),
             Some("docs/".to_string()),
             None,
-            Some(job_id.clone()),
             None,
         ))
         .await?;

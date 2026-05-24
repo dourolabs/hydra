@@ -334,7 +334,6 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
@@ -363,7 +362,6 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;

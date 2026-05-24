@@ -710,7 +710,6 @@ mod tests {
             title: "test".to_string(),
             body_markdown: "hello".to_string(),
             path: None,
-            created_by: None,
             deleted: false,
         };
 

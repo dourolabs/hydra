@@ -1612,7 +1612,6 @@ async fn register_agent_with_prompt_body(
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
         ),
-        created_by: None,
         deleted: false,
     };
     store.add_document(doc, &ActorRef::test()).await?;

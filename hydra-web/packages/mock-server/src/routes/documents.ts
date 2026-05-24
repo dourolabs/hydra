@@ -43,7 +43,6 @@ function toSummaryRecord(
   const summary: DocumentSummary = {
     title: document.title,
     path: document.path,
-    created_by: document.created_by,
     deleted: document.deleted,
   };
   return {
@@ -196,7 +195,6 @@ export function createDocumentRoutes(store: Store): Hono {
     const pathPrefix = c.req.query("path_prefix");
     const pathIsExact = c.req.query("path_is_exact") === "true";
     const q = c.req.query("q");
-    const createdBy = c.req.query("created_by");
     const limitParam = c.req.query("limit");
     const cursorParam = c.req.query("cursor");
     const countParam = c.req.query("count");
@@ -222,9 +220,6 @@ export function createDocumentRoutes(store: Store): Hono {
         const pathMatch = entry.data.path?.toLowerCase().includes(lower) ?? false;
         return titleMatch || pathMatch;
       });
-    }
-    if (createdBy) {
-      filtered = filtered.filter(({ entry }) => entry.data.created_by === createdBy);
     }
 
     // Sort by last-update time descending (most recently updated first) for stable pagination

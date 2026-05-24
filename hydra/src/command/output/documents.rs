@@ -39,13 +39,6 @@ impl Render for DocumentRecordsView<'_> {
             writeln!(writer, "Title: {}", record.document.title)?;
             let path = record.document.path.as_deref().unwrap_or("-");
             writeln!(writer, "Path: {path}")?;
-            let created_by = record
-                .document
-                .created_by
-                .as_ref()
-                .map(|id| id.as_ref())
-                .unwrap_or("-");
-            writeln!(writer, "Created by: {created_by}")?;
             writeln!(writer, "Body:")?;
 
             let lines: Vec<String> = record
@@ -102,13 +95,6 @@ impl Render for DocumentSummaryRecords<'_> {
             writeln!(writer, "Title: {}", record.document.title)?;
             let path = record.document.path.as_deref().unwrap_or("-");
             writeln!(writer, "Path: {path}")?;
-            let created_by = record
-                .document
-                .created_by
-                .as_ref()
-                .map(|id| id.as_ref())
-                .unwrap_or("-");
-            writeln!(writer, "Created by: {created_by}")?;
 
             if index + 1 < self.0.len() {
                 writeln!(writer)?;
@@ -126,7 +112,7 @@ mod tests {
     use chrono::Utc;
     use hydra_common::{
         documents::{Document, DocumentVersionRecord},
-        DocumentId, SessionId,
+        DocumentId,
     };
 
     #[test]
@@ -139,7 +125,6 @@ mod tests {
             "Doc".to_string(),
             body_lines.join("\n"),
             Some("docs/runbook.md".to_string()),
-            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -179,7 +164,6 @@ mod tests {
             "Doc".to_string(),
             body_lines.join("\n"),
             Some("docs/runbook.md".to_string()),
-            Some(SessionId::new()),
             false,
         )
         .unwrap();

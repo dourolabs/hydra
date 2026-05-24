@@ -51,7 +51,6 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
         "Design doc".to_string(),
         "initial body".to_string(),
         Some("docs/design.md".to_string()),
-        None,
         false,
     )
     .unwrap();
@@ -103,14 +102,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
         .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc v1".to_string(),
-                "body v1".to_string(),
-                None,
-                None,
-                false,
-            )
-            .unwrap(),
+            Document::new("Doc v1".to_string(), "body v1".to_string(), None, false).unwrap(),
         ))
         .send()
         .await?
@@ -120,14 +112,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
     let _updated: UpsertDocumentResponse = client
         .put(format!("{base}/v1/documents/{}", created.document_id))
         .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc v2".to_string(),
-                "body v2".to_string(),
-                None,
-                None,
-                false,
-            )
-            .unwrap(),
+            Document::new("Doc v2".to_string(), "body v2".to_string(), None, false).unwrap(),
         ))
         .send()
         .await?
@@ -177,7 +162,7 @@ fn client_with_token(token: &str) -> Client {
 }
 
 fn empty_doc() -> Document {
-    Document::new("Doc".to_string(), "body".to_string(), None, None, false).unwrap()
+    Document::new("Doc".to_string(), "body".to_string(), None, false).unwrap()
 }
 
 #[tokio::test]
@@ -272,7 +257,6 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             "Runbook".to_string(),
             "operations".to_string(),
             Some("docs/runbook.md".to_string()),
-            None,
             false,
         )
         .unwrap(),
@@ -280,7 +264,6 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             "API Guide".to_string(),
             "api details".to_string(),
             Some("docs/guide.md".to_string()),
-            None,
             false,
         )
         .unwrap(),
@@ -288,7 +271,6 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             "Notes".to_string(),
             "private".to_string(),
             Some("notes/internal.md".to_string()),
-            Some(running_task.clone()),
             false,
         )
         .unwrap(),
@@ -303,7 +285,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
         assert!(response.status().is_success());
     }
 
-    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None, None, None);
+    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None, None);
     let matching = client
         .get(format!("{base}/v1/documents"))
         .query(&query)
@@ -321,29 +303,12 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             Some("/docs/".to_string()),
             None,
             None,
-            None,
         ))
         .send()
         .await?
         .json::<ListDocumentsResponse>()
         .await?;
     assert_eq!(by_path.documents.len(), 2);
-
-    let by_creator = client
-        .get(format!("{base}/v1/documents"))
-        .query(&SearchDocumentsQuery::new(
-            None,
-            None,
-            None,
-            Some(running_task.clone()),
-            None,
-        ))
-        .send()
-        .await?
-        .json::<ListDocumentsResponse>()
-        .await?;
-    assert_eq!(by_creator.documents.len(), 1);
-    assert_eq!(by_creator.documents[0].document.title, "Notes");
 
     Ok(())
 }
@@ -359,7 +324,6 @@ async fn documents_filter_by_has_path() -> anyhow::Result<()> {
         "With Path".to_string(),
         "has a path".to_string(),
         Some("docs/file.md".to_string()),
-        None,
         false,
     )
     .unwrap();
@@ -368,7 +332,6 @@ async fn documents_filter_by_has_path() -> anyhow::Result<()> {
     let without_path = Document::new(
         "Without Path".to_string(),
         "no path".to_string(),
-        None,
         None,
         false,
     )
@@ -471,7 +434,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             "Exact Doc".to_string(),
             "exact match".to_string(),
             Some("docs/guide.md".to_string()),
-            None,
             false,
         )
         .unwrap(),
@@ -479,7 +441,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             "Prefix Doc".to_string(),
             "prefix match".to_string(),
             Some("docs/guide.md.bak".to_string()),
-            None,
             false,
         )
         .unwrap(),
@@ -487,7 +448,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             "Nested Doc".to_string(),
             "nested match".to_string(),
             Some("docs/guide.md/extra".to_string()),
-            None,
             false,
         )
         .unwrap(),
@@ -510,7 +470,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             Some("/docs/guide.md".to_string()),
             None,
             None,
-            None,
         ))
         .send()
         .await?
@@ -525,7 +484,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             None,
             Some("/docs/guide.md".to_string()),
             Some(true),
-            None,
             None,
         ))
         .send()
@@ -542,7 +500,6 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             None,
             Some("/docs/guide.md".to_string()),
             Some(false),
-            None,
             None,
         ))
         .send()
@@ -566,7 +523,6 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
     let document = Document::new(
         "Doc to delete".to_string(),
         "document body".to_string(),
-        None,
         None,
         false,
     )
@@ -620,7 +576,6 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
         "Deleted doc".to_string(),
         "document body".to_string(),
         None,
-        None,
         false,
     )
     .unwrap();
@@ -657,13 +612,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
     // List with include_deleted=true - verify present with deleted=true
     let list_with: ListDocumentsResponse = client
         .get(format!("{base}/v1/documents"))
-        .query(&SearchDocumentsQuery::new(
-            None,
-            None,
-            None,
-            None,
-            Some(true),
-        ))
+        .query(&SearchDocumentsQuery::new(None, None, None, Some(true)))
         .send()
         .await?
         .json()
@@ -690,7 +639,6 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
     let document = Document::new(
         "Get deleted doc".to_string(),
         "document body".to_string(),
-        None,
         None,
         false,
     )
@@ -731,7 +679,6 @@ async fn delete_document_idempotency() -> anyhow::Result<()> {
     let document = Document::new(
         "Idempotency doc".to_string(),
         "document body".to_string(),
-        None,
         None,
         false,
     )
@@ -794,14 +741,7 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
         .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc v1".to_string(),
-                "body v1".to_string(),
-                None,
-                None,
-                false,
-            )
-            .unwrap(),
+            Document::new("Doc v1".to_string(), "body v1".to_string(), None, false).unwrap(),
         ))
         .send()
         .await?
@@ -812,14 +752,7 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
     client
         .put(format!("{base}/v1/documents/{}", created.document_id))
         .json(&UpsertDocumentRequest::new(
-            Document::new(
-                "Doc v2".to_string(),
-                "body v2".to_string(),
-                None,
-                None,
-                false,
-            )
-            .unwrap(),
+            Document::new("Doc v2".to_string(), "body v2".to_string(), None, false).unwrap(),
         ))
         .send()
         .await?
@@ -873,7 +806,6 @@ async fn create_doc_at(
         title.to_string(),
         "body".to_string(),
         Some(path.to_string()),
-        None,
         false,
     )
     .unwrap();

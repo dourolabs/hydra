@@ -407,11 +407,6 @@ impl MemoryStore {
             documents.retain(|(_, versioned)| !versioned.item.deleted);
         }
 
-        if let Some(created_by) = query.created_by.as_ref() {
-            documents
-                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
-        }
-
         if let Some(has_path) = query.has_path {
             documents.retain(|(_, versioned)| versioned.item.path.is_some() == has_path);
         }
@@ -2777,12 +2772,11 @@ mod tests {
         )
     }
 
-    fn sample_document(path: Option<&str>, created_by: Option<SessionId>) -> Document {
+    fn sample_document(path: Option<&str>) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: path.map(|p| p.parse().unwrap()),
-            created_by,
             deleted: false,
         }
     }
@@ -3502,7 +3496,7 @@ mod tests {
         let store = MemoryStore::new();
         let (doc_id, _) = store
             .add_document(
-                sample_document(Some("docs/guides/intro.md"), None),
+                sample_document(Some("docs/guides/intro.md")),
                 &ActorRef::test(),
             )
             .await
@@ -3538,21 +3532,13 @@ mod tests {
     #[tokio::test]
     async fn document_filters_apply_query() {
         let store = MemoryStore::new();
-        let task_id = SessionId::new();
-        let other_task = SessionId::new();
 
         let (first, _) = store
-            .add_document(
-                sample_document(Some("docs/howto.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/howto.md")), &ActorRef::test())
             .await
             .unwrap();
         store
-            .add_document(
-                sample_document(Some("notes/todo.md"), Some(other_task.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/todo.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3560,51 +3546,28 @@ mod tests {
             Some("how".to_string()),
             Some("/docs/".to_string()),
             None,
-            Some(task_id.clone()),
             None,
         );
 
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, first);
-
-        let created_by_filtered = store
-            .list_documents(&SearchDocumentsQuery::new(
-                None,
-                None,
-                None,
-                Some(other_task),
-                None,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(created_by_filtered.len(), 1);
     }
 
     #[tokio::test]
     async fn list_documents_filters_by_ids() {
         let store = MemoryStore::new();
-        let task_id = SessionId::new();
 
         let (a, _) = store
-            .add_document(
-                sample_document(Some("docs/a.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/a.md")), &ActorRef::test())
             .await
             .unwrap();
         let (b, _) = store
-            .add_document(
-                sample_document(Some("docs/b.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/b.md")), &ActorRef::test())
             .await
             .unwrap();
         let (_c, _) = store
-            .add_document(
-                sample_document(Some("notes/c.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/c.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3619,16 +3582,14 @@ mod tests {
         assert_eq!(found_ids, expected);
 
         // (b) ids intersect with other filters (path_prefix).
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, a);
 
         // ids that don't intersect with the path filter return no rows.
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert!(filtered.is_empty());
@@ -3645,10 +3606,7 @@ mod tests {
     async fn document_path_index_updates_on_change() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/old.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/old.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -4640,22 +4598,19 @@ mod tests {
         let store = MemoryStore::new();
 
         let (exact_doc, _) = store
+            .add_document(sample_document(Some("docs/guide.md")), &ActorRef::test())
+            .await
+            .unwrap();
+        store
             .add_document(
-                sample_document(Some("docs/guide.md"), None),
+                sample_document(Some("docs/guide.md.bak")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_document(
-                sample_document(Some("docs/guide.md.bak"), None),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        store
-            .add_document(
-                sample_document(Some("docs/guide.md/extra"), None),
+                sample_document(Some("docs/guide.md/extra")),
                 &ActorRef::test(),
             )
             .await
@@ -4666,7 +4621,6 @@ mod tests {
             .list_documents(&SearchDocumentsQuery::new(
                 None,
                 Some("/docs/guide.md".to_string()),
-                None,
                 None,
                 None,
             ))
@@ -4681,7 +4635,6 @@ mod tests {
                 Some("/docs/guide.md".to_string()),
                 Some(true),
                 None,
-                None,
             ))
             .await
             .unwrap();
@@ -4694,7 +4647,6 @@ mod tests {
                 None,
                 Some("/docs/guide.md".to_string()),
                 Some(false),
-                None,
                 None,
             ))
             .await
@@ -5113,7 +5065,7 @@ mod tests {
     async fn delete_document_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(sample_document(Some("test.md"), None), &ActorRef::test())
+            .add_document(sample_document(Some("test.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -5140,13 +5092,7 @@ mod tests {
 
         // Deleted document should appear with include_deleted=true
         let docs = store
-            .list_documents(&SearchDocumentsQuery::new(
-                None,
-                None,
-                None,
-                None,
-                Some(true),
-            ))
+            .list_documents(&SearchDocumentsQuery::new(None, None, None, Some(true)))
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);
@@ -7009,7 +6955,7 @@ mod tests {
 
         for i in 0..5 {
             store
-                .add_document(sample_document(Some(&format!("doc_{i}.md")), None), &actor)
+                .add_document(sample_document(Some(&format!("doc_{i}.md"))), &actor)
                 .await
                 .unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -7567,28 +7513,26 @@ mod tests {
         let actor = ActorRef::test();
 
         store
-            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .add_document(sample_document(Some("docs/a.md")), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .add_document(sample_document(Some("docs/b.md")), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .add_document(sample_document(Some("other/c.md")), &actor)
             .await
             .unwrap();
 
         // Count all
-        let query = hydra_common::api::v1::documents::SearchDocumentsQuery::new(
-            None, None, None, None, None,
-        );
+        let query =
+            hydra_common::api::v1::documents::SearchDocumentsQuery::new(None, None, None, None);
         assert_eq!(store.count_documents(&query).await.unwrap(), 3);
 
         // Count with path prefix filter
         let query = hydra_common::api::v1::documents::SearchDocumentsQuery::new(
             Some("docs/".to_string()),
-            None,
             None,
             None,
             None,
@@ -7744,7 +7688,7 @@ mod tests {
             .await
             .unwrap();
         let (doc_id, _) = store
-            .add_document(sample_document(None, None), &actor_ref)
+            .add_document(sample_document(None), &actor_ref)
             .await
             .unwrap();
 
@@ -7919,10 +7863,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_existing() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/unique.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/unique.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7937,10 +7878,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/deleted.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/deleted.md")), &ActorRef::test())
             .await
             .unwrap();
         store
@@ -7969,18 +7907,12 @@ mod tests {
     async fn add_document_duplicate_path_fails() {
         let store = MemoryStore::new();
         store
-            .add_document(
-                sample_document(Some("docs/conflict.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/conflict.md")), &ActorRef::test())
             .await
             .unwrap();
 
         let result = store
-            .add_document(
-                sample_document(Some("docs/conflict.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/conflict.md")), &ActorRef::test())
             .await;
         assert!(
             matches!(result, Err(StoreError::DocumentPathConflict)),
@@ -7992,10 +7924,7 @@ mod tests {
     async fn add_document_path_reusable_after_deletion() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/reuse.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/reuse.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -8006,10 +7935,7 @@ mod tests {
 
         // Should succeed since the original document is deleted
         let result = store
-            .add_document(
-                sample_document(Some("docs/reuse.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/reuse.md")), &ActorRef::test())
             .await;
         assert!(
             result.is_ok(),
@@ -8021,13 +7947,13 @@ mod tests {
     async fn add_document_null_paths_not_constrained() {
         let store = MemoryStore::new();
         store
-            .add_document(sample_document(None, None), &ActorRef::test())
+            .add_document(sample_document(None), &ActorRef::test())
             .await
             .unwrap();
 
         // Adding another document with no path should succeed
         let result = store
-            .add_document(sample_document(None, None), &ActorRef::test())
+            .add_document(sample_document(None), &ActorRef::test())
             .await;
         assert!(
             result.is_ok(),
@@ -8039,23 +7965,17 @@ mod tests {
     async fn update_document_path_conflict_fails() {
         let store = MemoryStore::new();
         let (doc1_id, _) = store
-            .add_document(
-                sample_document(Some("docs/first.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/first.md")), &ActorRef::test())
             .await
             .unwrap();
 
         let (_doc2_id, _) = store
-            .add_document(
-                sample_document(Some("docs/second.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/second.md")), &ActorRef::test())
             .await
             .unwrap();
 
         // Try to update doc1's path to conflict with doc2
-        let mut updated = sample_document(Some("docs/second.md"), None);
+        let mut updated = sample_document(Some("docs/second.md"));
         updated.title = "Updated".to_string();
         let result = store
             .update_document(&doc1_id, updated, &ActorRef::test())

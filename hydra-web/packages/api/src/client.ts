@@ -418,7 +418,6 @@ export class HydraApiClient {
       q: null,
       path_prefix: path,
       path_is_exact: true,
-      created_by: null,
       include_deleted: includeDeleted ?? null,
     };
     const response = await this.listDocuments(query);

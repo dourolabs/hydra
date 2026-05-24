@@ -458,7 +458,6 @@ fn upload_default_documents(auth_token: &str) -> Result<()> {
             title.to_string(),
             body.to_string(),
             Some(path.to_string()),
-            None,
             false,
         )
         .with_context(|| format!("invalid document path {path}"))?;

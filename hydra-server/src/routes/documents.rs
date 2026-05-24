@@ -142,7 +142,7 @@ pub async fn list_documents(
     State(state): State<AppState>,
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
-    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, include_deleted = ?query.include_deleted, "list_documents invoked");
+    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, include_deleted = ?query.include_deleted, "list_documents invoked");
     let documents = state
         .list_documents(&query)
         .await
@@ -390,8 +390,8 @@ fn map_document_error(err: StoreError, document_id: Option<&DocumentId>) -> ApiE
 fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
     match err {
         UpsertDocumentError::JobNotFound { job_id, source } => {
-            error!(job_id = %job_id, error = %source, "created_by job not found");
-            ApiError::bad_request("created_by must reference a running job")
+            error!(job_id = %job_id, error = %source, "actor job not found");
+            ApiError::bad_request("actor must reference a running job")
         }
         UpsertDocumentError::JobStatusLookup { job_id, source } => {
             error!(job_id = %job_id, error = %source, "failed to validate job status");
@@ -400,8 +400,8 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
             ))
         }
         UpsertDocumentError::JobNotRunning { job_id, status } => {
-            error!(job_id = %job_id, status = ?status, "created_by job not running");
-            ApiError::bad_request("created_by must reference a running job")
+            error!(job_id = %job_id, status = ?status, "actor job not running");
+            ApiError::bad_request("actor must reference a running job")
         }
         UpsertDocumentError::DocumentNotFound {
             document_id,

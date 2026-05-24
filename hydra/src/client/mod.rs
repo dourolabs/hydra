@@ -1249,7 +1249,6 @@ impl HydraClient {
             None,
             Some(path.to_string()),
             Some(true),
-            None,
             include_deleted_opt,
         );
         let response = self.list_documents(&query).await?;

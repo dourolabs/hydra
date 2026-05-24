@@ -113,7 +113,7 @@ impl AppState {
         }
 
         let query =
-            SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None, None);
+            SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None);
 
         let documents = self
             .list_documents(&query)
@@ -147,13 +147,8 @@ impl AppState {
     /// Fetch raw MCP config content for a single agent from the document store.
     pub async fn resolve_mcp_config_content(&self, agent: &Agent) -> Option<String> {
         let mcp_config_path = agent.mcp_config_path.as_deref()?;
-        let query = SearchDocumentsQuery::new(
-            None,
-            Some(mcp_config_path.to_string()),
-            Some(true),
-            None,
-            None,
-        );
+        let query =
+            SearchDocumentsQuery::new(None, Some(mcp_config_path.to_string()), Some(true), None);
         let documents = self.list_documents(&query).await.ok()?;
         let (_, versioned) = documents.into_iter().next()?;
         Some(versioned.item.body_markdown.trim_end().to_string())
@@ -168,7 +163,7 @@ impl AppState {
         agents: &[Agent],
         path_extractor: impl Fn(&Agent) -> Option<&str>,
     ) -> HashMap<String, String> {
-        let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None, None);
+        let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None);
 
         let documents = match self.list_documents(&query).await {
             Ok(docs) => docs,
@@ -201,13 +196,8 @@ impl AppState {
         &self,
         mcp_config_path: &str,
     ) -> anyhow::Result<Option<McpConfig>> {
-        let query = SearchDocumentsQuery::new(
-            None,
-            Some(mcp_config_path.to_string()),
-            Some(true),
-            None,
-            None,
-        );
+        let query =
+            SearchDocumentsQuery::new(None, Some(mcp_config_path.to_string()), Some(true), None);
 
         let documents = self
             .list_documents(&query)

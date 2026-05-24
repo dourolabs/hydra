@@ -11,12 +11,11 @@ All subcommands honor global `hydra` flags such as `--server-url`, `--token`, an
 ### List
 
 ```bash
-hydra documents list [--query <QUERY>] [--path-prefix <PREFIX>] [--created-by <TASK_ID>]
+hydra documents list [--query <QUERY>] [--path-prefix <PREFIX>]
 ```
 
 * `--query` does a fuzzy match on titles and body text.
 * `--path-prefix` filters hierarchical paths such as `docs/runbooks/`.
-* `--created-by` accepts any Hydra task id (defaults to `HYDRA_ID` when set).
 
 ### Get
 
@@ -32,8 +31,7 @@ Fetches a single record (including the latest body) by id.
 hydra documents create \
   --title "Runbook" \
   --path docs/runbooks/db.md \
-  --body-file ./db.md \
-  [--created-by <TASK_ID>]
+  --body-file ./db.md
 ```
 
 Body sources (pick exactly one):
@@ -42,7 +40,7 @@ Body sources (pick exactly one):
 2. `--body-file path/to/file.md`
 3. `--body-stdin` (or pipe data via stdin, e.g. `cat doc.md | hydra documents create ...`).
 
-`--created-by` defaults to `$HYDRA_ID` when present so jobs can attribute authored documents. Paths must be non-empty strings when provided.
+Paths must be non-empty strings when provided.
 
 ### Update
 
@@ -53,7 +51,7 @@ hydra documents update <DOCUMENT_ID> \
   [--path NEW_PATH | --clear-path]
 ```
 
-At least one field must change. `--clear-path` removes the stored path. Updates preserve `created_by` from the existing record.
+At least one field must change. `--clear-path` removes the stored path.
 
 ## Examples
 
@@ -61,8 +59,8 @@ At least one field must change. `--clear-path` removes the stored path. Updates 
 # Pipe edited markdown from stdin
 sed 's/TODO/Done/' runbook.md | hydra documents update d-xyz --body-stdin
 
-# List docs created by the current job with pretty output
-env HYDRA_ID=t-abcd hydra documents list --created-by $HYDRA_ID --path-prefix docs/
+# List docs under a path prefix with pretty output
+hydra documents list --path-prefix docs/
 
 # Fetch JSONL for automation
 hydra --output-format jsonl documents get d-xyz

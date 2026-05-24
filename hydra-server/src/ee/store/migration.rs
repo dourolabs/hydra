@@ -1040,7 +1040,6 @@ async fn migrate_documents_internal(pool: &PgStorePool) -> Result<u64> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let path = row.payload.get("path").and_then(|v| v.as_str());
-            let created_by = row.payload.get("created_by").and_then(|v| v.as_str());
             let deleted = row
                 .payload
                 .get("deleted")
@@ -1049,8 +1048,8 @@ async fn migrate_documents_internal(pool: &PgStorePool) -> Result<u64> {
 
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_DOCUMENTS}
-                 (id, version_number, title, body_markdown, path, created_by, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 (id, version_number, title, body_markdown, path, deleted, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -1058,7 +1057,6 @@ async fn migrate_documents_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(title)
             .bind(body_markdown)
             .bind(path)
-            .bind(created_by)
             .bind(deleted)
             .bind(row.created_at)
             .execute(pool)

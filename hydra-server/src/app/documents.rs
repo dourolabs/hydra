@@ -104,16 +104,6 @@ impl AppState {
 
         match document_id {
             Some(id) => {
-                let mut document = document;
-                // old_document is Some in update path
-                document.created_by = old_document
-                    .ok_or_else(|| UpsertDocumentError::Store {
-                        source: StoreError::Internal(
-                            "old_document missing in update path".to_string(),
-                        ),
-                    })?
-                    .created_by;
-
                 let version = self
                     .store
                     .update_document_with_actor(&id, document, actor)
@@ -131,7 +121,6 @@ impl AppState {
                 Ok((id, version))
             }
             None => {
-                let created_by = document.created_by.clone();
                 let (document_id, version) = self
                     .store
                     .add_document_with_actor(document, actor)
@@ -143,7 +132,6 @@ impl AppState {
 
                 info!(
                     document_id = %document_id,
-                    created_by = ?created_by,
                     "document created"
                 );
                 Ok((document_id, version))
@@ -228,7 +216,6 @@ mod tests {
             title: "Test".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/notes.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
 
@@ -245,7 +232,6 @@ mod tests {
             title: "Test".to_string(),
             body_markdown: "body".to_string(),
             path: None,
-            created_by: None,
             deleted: false,
         };
 
@@ -262,7 +248,6 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/unique.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         state
@@ -274,7 +259,6 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: Some("docs/unique.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
@@ -291,7 +275,6 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/reuse.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         let (first_id, _) = state
@@ -308,7 +291,6 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: Some("docs/reuse.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
@@ -322,7 +304,6 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: None,
-            created_by: None,
             deleted: false,
         };
         state
@@ -334,7 +315,6 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: None,
-            created_by: None,
             deleted: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;

@@ -68,7 +68,6 @@ fn dummy_document_payload() -> Arc<MutationPayload> {
             title: "test".to_string(),
             body_markdown: String::new(),
             path: None,
-            created_by: None,
             deleted: false,
         },
         actor: ActorRef::test(),
@@ -593,7 +592,6 @@ fn make_dummy_document() -> crate::domain::documents::Document {
         title: "test".to_string(),
         body_markdown: String::new(),
         path: None,
-        created_by: None,
         deleted: false,
     }
 }

@@ -913,8 +913,8 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -922,7 +922,6 @@ impl PostgresStoreV2 {
             .bind(&document.title)
             .bind(&document.body_markdown)
             .bind(document.path.as_ref().map(|p| p.as_str()))
-            .bind(document.created_by.as_ref().map(|t| t.as_ref()))
             .bind(document.deleted)
             .bind(actor)
             .execute(&self.pool)
@@ -933,15 +932,6 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_document(&self, row: &DocumentRow) -> Result<Document, StoreError> {
-        let created_by = row
-            .created_by
-            .as_ref()
-            .map(|s| {
-                SessionId::from_str(s)
-                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
-            })
-            .transpose()?;
-
         let path = row
             .path
             .as_ref()
@@ -955,7 +945,6 @@ impl PostgresStoreV2 {
             title: row.title.clone(),
             body_markdown: row.body_markdown.clone(),
             path,
-            created_by,
             deleted: row.deleted,
         })
     }
@@ -1523,7 +1512,6 @@ struct DocumentRow {
     title: String,
     body_markdown: String,
     path: Option<String>,
-    created_by: Option<String>,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -1939,11 +1927,6 @@ fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, 
             predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
             bindings.push(format!("{path}%"));
         }
-    }
-
-    if let Some(created_by) = query.created_by.as_ref() {
-        predicates.push(format!("created_by = ${}", bindings.len() + 1));
-        bindings.push(created_by.as_ref().to_string());
     }
 
     if let Some(term) = query
@@ -2652,7 +2635,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
@@ -2691,7 +2674,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2737,7 +2720,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let mut sql = format!(
-            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at, \
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.deleted, d.actor, d.created_at, d.updated_at, \
              (SELECT MIN(d2.created_at) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id) AS creation_time \
              FROM {TABLE_DOCUMENTS_V2} d"
         );
@@ -2839,7 +2822,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
         self.list_documents(&SearchDocumentsQuery::new(
             None,
             Some(path_prefix.to_string()),
-            None,
             None,
             None,
         ))
@@ -5592,12 +5574,11 @@ mod tests {
         )
     }
 
-    fn sample_document(path: &str, created_by: Option<SessionId>) -> Document {
+    fn sample_document(path: &str) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: Some(path.parse().unwrap()),
-            created_by,
             deleted: false,
         }
     }
@@ -6355,7 +6336,7 @@ mod tests {
     async fn documents_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let (doc_id, _) = store
-            .add_document(sample_document("docs/guide.md", None), &ActorRef::test())
+            .add_document(sample_document("docs/guide.md"), &ActorRef::test())
             .await
             .unwrap();
 
@@ -6390,27 +6371,17 @@ mod tests {
     #[ignore]
     async fn list_documents_filters_by_ids_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let task_id = SessionId::new();
 
         let (a, _) = store
-            .add_document(
-                sample_document("docs/a.md", Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document("docs/a.md"), &ActorRef::test())
             .await
             .unwrap();
         let (b, _) = store
-            .add_document(
-                sample_document("docs/b.md", Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document("docs/b.md"), &ActorRef::test())
             .await
             .unwrap();
         let (_c, _) = store
-            .add_document(
-                sample_document("notes/c.md", Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document("notes/c.md"), &ActorRef::test())
             .await
             .unwrap();
 
@@ -6425,16 +6396,14 @@ mod tests {
         assert_eq!(found_ids, expected);
 
         // (b) ids intersected with path_prefix.
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, a);
 
         // ids that don't intersect with the path filter return no rows.
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert!(filtered.is_empty());
@@ -6657,11 +6626,7 @@ mod tests {
     #[ignore]
     async fn document_serialization_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let (task_id, _) = store
-            .add_session(sample_session_all_fields(), Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-        let doc = sample_document("docs/roundtrip.md", Some(task_id));
+        let doc = sample_document("docs/roundtrip.md");
 
         let (doc_id, _) = store
             .add_document(doc.clone(), &ActorRef::test())
@@ -6671,7 +6636,7 @@ mod tests {
         let fetched = store.get_document(&doc_id, false).await.unwrap();
         assert_eq!(
             fetched.item, doc,
-            "Document must round-trip all fields (path, created_by)"
+            "Document must round-trip all fields (path)"
         );
     }
 
@@ -6727,7 +6692,6 @@ mod tests {
             title: "original_title".to_string(),
             body_markdown: "Body content".to_string(),
             path: Some("docs/test.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         let (doc_id, _) = store.add_document(doc, &ActorRef::test()).await.unwrap();
@@ -6737,7 +6701,6 @@ mod tests {
             title: "changed_title".to_string(),
             body_markdown: "Body content".to_string(),
             path: Some("docs/test.md".parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         store
@@ -6747,7 +6710,7 @@ mod tests {
 
         // Search for the old title - should return NO results
         let old_query =
-            SearchDocumentsQuery::new(Some("original_title".to_string()), None, None, None, None);
+            SearchDocumentsQuery::new(Some("original_title".to_string()), None, None, None);
         let old_results = store.list_documents(&old_query).await.unwrap();
         assert!(
             old_results.is_empty(),
@@ -6757,7 +6720,7 @@ mod tests {
 
         // Search for the new title - should return the document
         let new_query =
-            SearchDocumentsQuery::new(Some("changed_title".to_string()), None, None, None, None);
+            SearchDocumentsQuery::new(Some("changed_title".to_string()), None, None, None);
         let new_results = store.list_documents(&new_query).await.unwrap();
         assert_eq!(new_results.len(), 1);
         assert_eq!(new_results[0].0, doc_id);
@@ -8517,24 +8480,24 @@ mod tests {
         let actor = ActorRef::test();
 
         store
-            .add_document(sample_document("docs/a.md", None), &actor)
+            .add_document(sample_document("docs/a.md"), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document("docs/b.md", None), &actor)
+            .add_document(sample_document("docs/b.md"), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document("other/c.md", None), &actor)
+            .add_document(sample_document("other/c.md"), &actor)
             .await
             .unwrap();
 
         // Count all
-        let query = SearchDocumentsQuery::new(None, None, None, None, None);
+        let query = SearchDocumentsQuery::new(None, None, None, None);
         assert_eq!(store.count_documents(&query).await.unwrap(), 3);
 
         // Count with path prefix filter
-        let query = SearchDocumentsQuery::new(Some("docs/".to_string()), None, None, None, None);
+        let query = SearchDocumentsQuery::new(Some("docs/".to_string()), None, None, None);
         assert_eq!(store.count_documents(&query).await.unwrap(), 2);
     }
 
@@ -8682,7 +8645,7 @@ mod tests {
 
         let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
         let (doc_id, _) = store
-            .add_document(sample_document("test/doc.md", None), &actor)
+            .add_document(sample_document("test/doc.md"), &actor)
             .await
             .unwrap();
 
@@ -8748,7 +8711,7 @@ mod tests {
 
         let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
         let (doc_id, _) = store
-            .add_document(sample_document("test/doc.md", None), &actor)
+            .add_document(sample_document("test/doc.md"), &actor)
             .await
             .unwrap();
 

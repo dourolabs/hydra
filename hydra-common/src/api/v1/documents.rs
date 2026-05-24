@@ -1,6 +1,6 @@
 use super::labels::LabelSummary;
 use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
-use crate::{DocumentId, DocumentPath, SessionId, VersionNumber, actor_ref::ActorRef};
+use crate::{DocumentId, DocumentPath, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,8 +15,6 @@ pub struct Document {
     pub body_markdown: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<SessionId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
 }
@@ -26,7 +24,6 @@ impl Document {
         title: String,
         body_markdown: String,
         path: Option<String>,
-        created_by: Option<SessionId>,
         deleted: bool,
     ) -> Result<Self, crate::DocumentPathError> {
         let path = path.map(|p| p.parse()).transpose()?;
@@ -34,7 +31,6 @@ impl Document {
             title,
             body_markdown,
             path,
-            created_by,
             deleted,
         })
     }
@@ -46,8 +42,7 @@ impl crate::graph::GraphView for Document {
     // Documents have no `status` field, so L1 deviates from the
     // `{title, status}` shape used by Issue / Patch / Conversation and emits
     // `{title, path}` instead — `path` is the closest identity-ish summary a
-    // document carries. L2 adds `created_by` (the design calls this
-    // `creator`, but the struct only exposes the originating session id).
+    // document carries.
     fn view_l1(&self) -> Value {
         serde_json::json!({
             "title": self.title,
@@ -59,7 +54,6 @@ impl crate::graph::GraphView for Document {
         serde_json::json!({
             "title": self.title,
             "path": self.path,
-            "created_by": self.created_by,
         })
     }
 
@@ -128,8 +122,6 @@ pub struct SearchDocumentsQuery {
     #[serde(default)]
     pub path_is_exact: Option<bool>,
     #[serde(default)]
-    pub created_by: Option<SessionId>,
-    #[serde(default)]
     pub include_deleted: Option<bool>,
     /// Maximum number of results to return. When omitted, all results are returned.
     #[serde(default)]
@@ -150,7 +142,6 @@ impl SearchDocumentsQuery {
         q: Option<String>,
         path_prefix: Option<String>,
         path_is_exact: Option<bool>,
-        created_by: Option<SessionId>,
         include_deleted: Option<bool>,
     ) -> Self {
         Self {
@@ -158,7 +149,6 @@ impl SearchDocumentsQuery {
             q,
             path_prefix,
             path_is_exact,
-            created_by,
             include_deleted,
             limit: None,
             cursor: None,
@@ -225,8 +215,6 @@ pub struct DocumentSummary {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<SessionId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -238,7 +226,6 @@ impl From<&Document> for DocumentSummary {
         DocumentSummary {
             title: doc.title.clone(),
             path: doc.path.clone(),
-            created_by: doc.created_by.clone(),
             deleted: doc.deleted,
             labels: Vec::new(),
         }
@@ -423,17 +410,14 @@ mod tests {
 
     #[test]
     fn document_new_accepts_all_fields() {
-        let created_by = SessionId::new();
         let document = Document::new(
             "Title".to_string(),
             "Body".to_string(),
             Some("docs/path.md".to_string()),
-            Some(created_by.clone()),
             false,
         )
         .unwrap();
         assert_eq!(document.path.as_deref(), Some("/docs/path.md"));
-        assert_eq!(document.created_by, Some(created_by));
     }
 
     #[test]
@@ -443,7 +427,6 @@ mod tests {
             q: Some("api".to_string()),
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
-            created_by: Some(SessionId::new()),
             include_deleted: None,
             limit: None,
             cursor: None,
@@ -456,7 +439,6 @@ mod tests {
             .collect::<HashMap<_, _>>();
         assert_eq!(params.get("q").map(String::as_str), Some("api"));
         assert_eq!(params.get("path_prefix").map(String::as_str), Some("docs/"));
-        assert!(params.contains_key("created_by"));
     }
 
     #[test]
@@ -467,13 +449,8 @@ mod tests {
 
     #[test]
     fn search_documents_query_serializes_path_is_exact() {
-        let query = SearchDocumentsQuery::new(
-            None,
-            Some("docs/file.md".to_string()),
-            Some(true),
-            None,
-            None,
-        );
+        let query =
+            SearchDocumentsQuery::new(None, Some("docs/file.md".to_string()), Some(true), None);
 
         let params = serialize_query_params(&query)
             .into_iter()
@@ -547,7 +524,6 @@ mod tests {
             "My Doc".to_string(),
             "# Heading\n\nLong markdown body...".to_string(),
             Some("docs/test.md".to_string()),
-            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -558,19 +534,16 @@ mod tests {
 
     #[test]
     fn document_summary_maps_all_fields() {
-        let created_by = SessionId::new();
         let doc = Document::new(
             "Title".to_string(),
             "body".to_string(),
             Some("docs/path.md".to_string()),
-            Some(created_by.clone()),
             false,
         )
         .unwrap();
         let summary = DocumentSummary::from(&doc);
         assert_eq!(summary.title, "Title");
         assert_eq!(summary.path.as_deref(), Some("/docs/path.md"));
-        assert_eq!(summary.created_by, Some(created_by));
         assert!(!summary.deleted);
     }
 
@@ -657,8 +630,7 @@ mod tests {
 
     #[test]
     fn document_summary_record_from_version_record() {
-        let doc =
-            Document::new("Title".to_string(), "body".to_string(), None, None, false).unwrap();
+        let doc = Document::new("Title".to_string(), "body".to_string(), None, false).unwrap();
         let doc_id = DocumentId::new();
         let ts = chrono::Utc::now();
         let record = DocumentVersionRecord::new(doc_id.clone(), 2, ts, doc, None, ts, Vec::new());
@@ -674,17 +646,14 @@ mod tests {
         use crate::graph::{GraphView, ObjectKind};
         use serde_json::json;
 
-        fn sample_document() -> (Document, SessionId) {
-            let created_by = SessionId::new();
-            let document = Document::new(
+        fn sample_document() -> Document {
+            Document::new(
                 "Design notes".to_string(),
                 "Body markdown content".to_string(),
                 Some("designs/notes.md".to_string()),
-                Some(created_by.clone()),
                 false,
             )
-            .unwrap();
-            (document, created_by)
+            .unwrap()
         }
 
         #[test]
@@ -694,7 +663,7 @@ mod tests {
 
         #[test]
         fn view_l1_matches_expected() {
-            let (document, _) = sample_document();
+            let document = sample_document();
             assert_eq!(
                 document.view_l1(),
                 json!({
@@ -706,20 +675,19 @@ mod tests {
 
         #[test]
         fn view_l2_matches_expected() {
-            let (document, created_by) = sample_document();
+            let document = sample_document();
             assert_eq!(
                 document.view_l2(),
                 json!({
                     "title": "Design notes",
                     "path": "/designs/notes.md",
-                    "created_by": created_by,
                 })
             );
         }
 
         #[test]
         fn view_l3_round_trips_to_original() {
-            let (document, _) = sample_document();
+            let document = sample_document();
             let value = document.view_l3();
             let roundtripped: Document = serde_json::from_value(value).unwrap();
             assert_eq!(roundtripped, document);
@@ -727,7 +695,7 @@ mod tests {
 
         #[test]
         fn view_l2_contains_view_l1_keys_with_same_values() {
-            let (document, _) = sample_document();
+            let document = sample_document();
             let l1 = document.view_l1();
             let l2 = document.view_l2();
             for (key, expected) in l1.as_object().unwrap() {
