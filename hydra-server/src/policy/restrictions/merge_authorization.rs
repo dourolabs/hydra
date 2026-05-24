@@ -86,7 +86,6 @@ impl Restriction for MergeAuthorizationRestriction {
         // 3. Build the resolution context for principal resolution.
         let resolution_ctx = ResolutionContext {
             patch: new,
-            patch_id,
             store: ctx.store,
         };
 

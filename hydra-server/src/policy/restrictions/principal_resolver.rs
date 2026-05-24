@@ -13,7 +13,6 @@ use crate::store::ReadOnlyStore;
 /// Inputs available to [`resolve_principal`] / [`resolve_any_of`].
 pub struct ResolutionContext<'a> {
     pub patch: &'a Patch,
-    pub patch_id: &'a hydra_common::PatchId,
     pub store: &'a dyn ReadOnlyStore,
 }
 
@@ -85,24 +84,15 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(
-        patch: &'a Patch,
-        patch_id: &'a hydra_common::PatchId,
-        store: &'a dyn ReadOnlyStore,
-    ) -> ResolutionContext<'a> {
-        ResolutionContext {
-            patch,
-            patch_id,
-            store,
-        }
+    fn ctx<'a>(patch: &'a Patch, store: &'a dyn ReadOnlyStore) -> ResolutionContext<'a> {
+        ResolutionContext { patch, store }
     }
 
     #[tokio::test]
     async fn resolves_user_principal_to_its_username() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
-        let patch_id = hydra_common::PatchId::new();
-        let c = ctx(&patch, &patch_id, &store);
+        let c = ctx(&patch, &store);
 
         let p = Principal::User(hydra_common::api::v1::users::Username::from("alice"));
         assert_eq!(resolve_principal(&p, &c), Some("alice".to_string()));
@@ -112,8 +102,7 @@ mod tests {
     async fn patch_author_dynamic_ref_resolves_to_patch_creator() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
-        let patch_id = hydra_common::PatchId::new();
-        let c = ctx(&patch, &patch_id, &store);
+        let c = ctx(&patch, &store);
 
         let p = Principal::Dynamic(DynamicRef::PatchAuthor);
         assert_eq!(resolve_principal(&p, &c), Some("author".to_string()));
@@ -123,8 +112,7 @@ mod tests {
     async fn resolve_any_of_preserves_order_and_source() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
-        let patch_id = hydra_common::PatchId::new();
-        let c = ctx(&patch, &patch_id, &store);
+        let c = ctx(&patch, &store);
 
         let principals = vec![
             Principal::User(hydra_common::api::v1::users::Username::from("alice")),
