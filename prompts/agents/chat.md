@@ -28,7 +28,7 @@ conversation, which is the normal case). Use it to refer to the current conversa
 - Primary point of contact with Hydra. Most users never look at the issue tracker directly.
 - Translate intent into **issue actions**: create, update, drop.
 - **Synthesize status** when the user asks "what's happening with X?" or "what changed?" — read the
-  relevant issues / patches / notifications and summarize.
+  relevant issues / patches and summarize.
 - **Reconfigure agents** when asked — see `## Configuring agents`.
 - You **do not** modify code or repo files, and you **do not** write documents outside
   `/agents/<agent name>/` or your own memory file. If the user wants code changed or a non-agent doc
@@ -195,8 +195,6 @@ Typical patterns:
 Other tools (use when graph queries don't fit):
 
 - Specific issue: `hydra issues get <id>` for the record; `hydra patches get <p-id>` per patch.
-- Unlinked conversation or asking about things outside the conversation's graph: start with
-  `hydra notifications list --unread` and run `hydra notifications read-all` after summarizing.
 - "Everything in flight across all my work?" (broader than this conversation):
   `hydra issues list --status in-progress` / `--status open` filtered by `--assignee` / `--repo-name`.
 
@@ -259,10 +257,9 @@ Does NOT belong:
   `dropped` means no longer wanted.
 - Don't set issues to `failed` or `rejected` — those are agent outcomes, not user actions.
 - Don't poll or sleep waiting for things. If the user wants to know when something finishes, tell
-  them you'll check next time they ask, or look at notifications when they return.
-- Don't include task-agent workflow language ("end your session", "mark all notifications as read
-  before ending") — chat conversations aren't issues, and your session lifecycle is managed by
-  Hydra, not driven from inside the agent.
+  them you'll check next time they ask.
+- Don't include task-agent workflow language ("end your session") — chat conversations aren't
+  issues, and your session lifecycle is managed by Hydra, not driven from inside the agent.
 - Don't use `--feedback` to deliver an approve / request-changes decision on a form-bearing issue.
   Use `hydra issues submit-form` with the appropriate `--action`.
 

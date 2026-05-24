@@ -20,9 +20,6 @@ use hydra_common::{
         DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
     },
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
-    api::v1::notifications::{
-        ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
-    },
     api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
     api::v1::secrets::{ListSecretsResponse, SetSecretRequest},
     documents::{
@@ -54,8 +51,8 @@ use hydra_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, NotificationId, PatchId,
-    RelativeVersionNumber, RepoName, SessionId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
+    RepoName, SessionId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
@@ -337,20 +334,6 @@ pub trait HydraClientInterface: Send + Sync {
         query: &EventsQuery,
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream>;
-
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<ListNotificationsResponse>;
-    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse>;
-    async fn mark_notification_read(
-        &self,
-        notification_id: &NotificationId,
-    ) -> Result<MarkReadResponse>;
-    async fn mark_all_notifications_read(
-        &self,
-        before: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<MarkReadResponse>;
 
     async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse>;
 
@@ -1821,100 +1804,6 @@ impl HydraClient {
         )))
     }
 
-    /// Call `GET /v1/notifications` to list notifications.
-    pub async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<ListNotificationsResponse> {
-        let url = self.endpoint("/v1/notifications")?;
-        let response = self
-            .authed(self.http.get(url))
-            .query(query)
-            .send()
-            .await
-            .context("failed to fetch notifications")?
-            .error_for_status_with_body(
-                "hydra-server returned an error while listing notifications",
-            )
-            .await?;
-
-        response
-            .json::<ListNotificationsResponse>()
-            .await
-            .context("failed to decode list notifications response")
-    }
-
-    /// Call `GET /v1/notifications/unread-count` to get the unread notification count.
-    pub async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
-        let url = self.endpoint("/v1/notifications/unread-count")?;
-        let response = self
-            .authed(self.http.get(url))
-            .send()
-            .await
-            .context("failed to fetch unread notification count")?
-            .error_for_status_with_body(
-                "hydra-server returned an error while fetching unread count",
-            )
-            .await?;
-
-        response
-            .json::<UnreadCountResponse>()
-            .await
-            .context("failed to decode unread count response")
-    }
-
-    /// Call `POST /v1/notifications/{id}/read` to mark a notification as read.
-    pub async fn mark_notification_read(
-        &self,
-        notification_id: &NotificationId,
-    ) -> Result<MarkReadResponse> {
-        let path = format!("/v1/notifications/{notification_id}/read");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.post(url))
-            .send()
-            .await
-            .context("failed to mark notification as read")?
-            .error_for_status_with_body(
-                "hydra-server returned an error while marking notification read",
-            )
-            .await?;
-
-        response
-            .json::<MarkReadResponse>()
-            .await
-            .context("failed to decode mark read response")
-    }
-
-    /// Call `POST /v1/notifications/read-all` to mark all notifications as read.
-    pub async fn mark_all_notifications_read(
-        &self,
-        before: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<MarkReadResponse> {
-        let url = self.endpoint("/v1/notifications/read-all")?;
-        let mut request = self.authed(self.http.post(url));
-        if let Some(before) = before {
-            #[derive(serde::Serialize)]
-            struct MarkAllReadQuery {
-                before: chrono::DateTime<chrono::Utc>,
-            }
-            request = request.query(&MarkAllReadQuery { before });
-        }
-        let response = request
-            .send()
-            .await
-            .context("failed to mark all notifications as read")?
-            .error_for_status_with_body(
-                "hydra-server returned an error while marking all notifications read",
-            )
-            .await?;
-
-        response
-            .json::<MarkReadResponse>()
-            .await
-            .context("failed to decode mark all read response")
-    }
-
     /// Call `GET /v1/labels` to list labels with optional filters.
     pub async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse> {
         let url = self.endpoint("/v1/labels")?;
@@ -2606,31 +2495,6 @@ impl HydraClientInterface for HydraClient {
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream> {
         HydraClient::subscribe_events(self, query, last_event_id).await
-    }
-
-    async fn list_notifications(
-        &self,
-        query: &ListNotificationsQuery,
-    ) -> Result<ListNotificationsResponse> {
-        HydraClient::list_notifications(self, query).await
-    }
-
-    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
-        HydraClient::get_unread_notification_count(self).await
-    }
-
-    async fn mark_notification_read(
-        &self,
-        notification_id: &NotificationId,
-    ) -> Result<MarkReadResponse> {
-        HydraClient::mark_notification_read(self, notification_id).await
-    }
-
-    async fn mark_all_notifications_read(
-        &self,
-        before: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<MarkReadResponse> {
-        HydraClient::mark_all_notifications_read(self, before).await
     }
 
     async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse> {

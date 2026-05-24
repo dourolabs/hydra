@@ -83,7 +83,7 @@ Chat is your point of contact. Three other agents do the actual work:
 What chat does:
 
 - Translates your intent into **issue actions** — create, update, drop.
-- **Synthesizes status** from issues, patches, and notifications when you ask ("what changed since yesterday?").
+- **Synthesizes status** from issues and patches when you ask ("what changed since yesterday?").
 - Can **reconfigure existing agents** — prompts, MCP servers, secrets, retry / concurrency knobs.
 
 ## Advanced / power users
