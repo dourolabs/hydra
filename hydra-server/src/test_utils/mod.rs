@@ -310,7 +310,6 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
         ),
-        created_by: None,
         deleted: false,
     };
     store

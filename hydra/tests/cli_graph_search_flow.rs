@@ -160,7 +160,6 @@ async fn graph_search_scope_covers_descendants_patches_documents() -> Result<()>
         "doc-a".to_string(),
         "body".to_string(),
         Some("docs/a.md".to_string()),
-        None,
         false,
     )
     .unwrap();

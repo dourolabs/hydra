@@ -531,7 +531,6 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         state
@@ -567,7 +566,6 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         state
@@ -580,7 +578,6 @@ mod tests {
             title: format!("{name} mcp config"),
             body_markdown: mcp_body.to_string(),
             path: Some(mcp_path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         state

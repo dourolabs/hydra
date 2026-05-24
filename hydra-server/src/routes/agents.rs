@@ -265,7 +265,7 @@ async fn write_document_content(
     content: &str,
     actor: &Actor,
 ) -> Result<(), ApiError> {
-    let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
+    let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None);
 
     let existing = state
         .list_documents(&query)
@@ -279,7 +279,6 @@ async fn write_document_content(
             path.parse()
                 .map_err(|e| ApiError::bad_request(format!("invalid path '{path}': {e}")))?,
         ),
-        created_by: None,
         deleted: false,
     };
 

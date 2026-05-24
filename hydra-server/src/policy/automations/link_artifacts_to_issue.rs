@@ -201,7 +201,6 @@ mod tests {
             title: "Test doc".to_string(),
             body_markdown: "body".to_string(),
             path: Some(path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         }
     }

@@ -13,13 +13,13 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::{
     activity_log_for_document_versions,
-    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ID},
+    constants::ENV_HYDRA_DOCUMENTS_DIR,
     documents::{
         Document as DocumentPayload, DocumentSummaryRecord, DocumentVersionRecord,
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, RelativeVersionNumber, SessionId, Versioned,
+    DocumentId, RelativeVersionNumber, Versioned,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,10 +89,6 @@ pub struct DocumentsListArgs {
     #[arg(long = "path-prefix", value_name = "PREFIX")]
     pub path_prefix: Option<String>,
 
-    /// Filter by job id that created the document.
-    #[arg(long = "created-by", value_name = "TASK_ID")]
-    pub created_by: Option<SessionId>,
-
     /// Include deleted documents in the listing.
     #[arg(long = "include-deleted")]
     pub include_deleted: bool,
@@ -107,10 +103,6 @@ pub struct CreateDocumentArgs {
     /// Optional path (e.g. docs/designs/agent.md).
     #[arg(long = "path", value_name = "PATH")]
     pub path: Option<String>,
-
-    /// Job id responsible for creating the document (defaults to $HYDRA_ID).
-    #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_HYDRA_ID)]
-    pub created_by: Option<SessionId>,
 
     #[command(flatten)]
     pub body: DocumentBodyInput,
@@ -394,13 +386,7 @@ async fn list_documents(
     } else {
         None
     };
-    let mut query = SearchDocumentsQuery::new(
-        args.query,
-        args.path_prefix,
-        None,
-        args.created_by,
-        include_deleted,
-    );
+    let mut query = SearchDocumentsQuery::new(args.query, args.path_prefix, None, include_deleted);
     query.ids = args.ids;
     let response = client
         .list_documents(&query)
@@ -434,7 +420,6 @@ async fn create_document(
         args.title.clone(),
         body,
         parsed_path.map(|p| p.to_string()),
-        args.created_by.clone(),
         false,
     )?;
 
@@ -569,7 +554,7 @@ pub async fn sync_documents(client: &dyn HydraClientInterface, args: SyncArgs) -
     let existing_manifest = load_manifest(directory)?;
 
     // List document summaries from server
-    let query = SearchDocumentsQuery::new(None, args.path_prefix.clone(), None, None, None);
+    let query = SearchDocumentsQuery::new(None, args.path_prefix.clone(), None, None);
     let response = client
         .list_documents(&query)
         .await
@@ -784,8 +769,7 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
 
     // Fetch the full document list from server once upfront to get current versions.
     // This avoids individual GET requests for unchanged files when checking server versions.
-    let server_query =
-        SearchDocumentsQuery::new(None, manifest.path_prefix.clone(), None, None, None);
+    let server_query = SearchDocumentsQuery::new(None, manifest.path_prefix.clone(), None, None);
     let server_response = client
         .list_documents(&server_query)
         .await
@@ -911,7 +895,6 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                     title.clone(),
                     content.clone(),
                     Some(doc_path.clone()),
-                    None,
                     false,
                 )?;
                 let request = UpsertDocumentRequest::new(document);
@@ -934,7 +917,6 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                             None,
                             Some(doc_path.clone()),
                             Some(true),
-                            None,
                             None,
                         );
                         let existing_docs =
@@ -1101,7 +1083,6 @@ mod tests {
             "Runbook".to_string(),
             "# Steps".to_string(),
             Some("docs/runbook.md".to_string()),
-            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -1130,20 +1111,17 @@ mod tests {
             when.method(GET)
                 .path("/v1/documents")
                 .query_param("q", "runbook")
-                .query_param("path_prefix", "docs/")
-                .query_param_exists("created_by");
+                .query_param("path_prefix", "docs/");
             then.status(200).json_body_obj(&response);
         });
         let client = mock_client(&server);
 
-        let created_by = SessionId::new();
         let records = list_documents(
             &client,
             DocumentsListArgs {
                 ids: Vec::new(),
                 query: Some("runbook".to_string()),
                 path_prefix: Some("docs/".to_string()),
-                created_by: Some(created_by),
                 include_deleted: false,
             },
         )
@@ -1179,7 +1157,6 @@ mod tests {
                 ids: vec![document_id_a.clone(), document_id_b.clone()],
                 query: None,
                 path_prefix: None,
-                created_by: None,
                 include_deleted: false,
             },
         )
@@ -1195,8 +1172,6 @@ mod tests {
     #[tokio::test]
     async fn create_document_reads_body_from_file() {
         let document_id = DocumentId::new();
-        let created_by = SessionId::new();
-        let created_by_for_mock = created_by.clone();
         let document_id_for_mock = document_id.clone();
         let file = NamedTempFile::new().expect("temp file");
         fs::write(file.path(), "contents").expect("write body");
@@ -1206,8 +1181,7 @@ mod tests {
                 "document": {
                     "title": "Release notes",
                     "body_markdown": "contents",
-                    "path": "/docs/release.md",
-                    "created_by": created_by_for_mock
+                    "path": "/docs/release.md"
                 }
             }));
             then.status(200).json_body_obj(&UpsertDocumentResponse::new(
@@ -1228,7 +1202,6 @@ mod tests {
             CreateDocumentArgs {
                 title: "Release notes".to_string(),
                 path: Some("docs/release.md".to_string()),
-                created_by: Some(created_by),
                 body: DocumentBodyInput {
                     body: None,
                     body_file: Some(file.path().to_path_buf()),
@@ -1285,7 +1258,6 @@ mod tests {
 
         assert!(record.document.path.is_none());
         assert_eq!(record.document.title, "Updated");
-        assert_eq!(record.document.created_by, existing.document.created_by);
         get_existing.assert();
         update_mock.assert();
     }
@@ -1544,7 +1516,6 @@ mod tests {
             "Deploy Guide".to_string(),
             "# Deploy\nStep 1: Run deploy".to_string(),
             Some("guides/deploy.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -1610,7 +1581,6 @@ mod tests {
                 "Pathed".to_string(),
                 "body".to_string(),
                 Some("docs/pathed.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -1622,14 +1592,7 @@ mod tests {
             unpathed_id,
             0,
             Utc::now(),
-            DocumentPayload::new(
-                "Unpathed".to_string(),
-                "body".to_string(),
-                None,
-                None,
-                false,
-            )
-            .unwrap(),
+            DocumentPayload::new("Unpathed".to_string(), "body".to_string(), None, false).unwrap(),
             None,
             Utc::now(),
             Vec::new(),
@@ -1675,7 +1638,6 @@ mod tests {
             "Guide".to_string(),
             body.to_string(),
             Some("guides/steps.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -1742,7 +1704,6 @@ mod tests {
             "Keep".to_string(),
             "keep body".to_string(),
             Some("docs/keep.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -1761,7 +1722,6 @@ mod tests {
             "Remove".to_string(),
             "remove body".to_string(),
             Some("docs/remove.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -1842,7 +1802,6 @@ mod tests {
             "Guide".to_string(),
             "body".to_string(),
             Some("playbooks/guide.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -1896,7 +1855,6 @@ mod tests {
             "Guide".to_string(),
             "body".to_string(),
             Some("/playbooks/guide.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -2012,7 +1970,6 @@ mod tests {
                 "Guide".to_string(),
                 original_body.to_string(),
                 Some("/docs/guide.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -2100,7 +2057,6 @@ mod tests {
                 "Stable".to_string(),
                 body.to_string(),
                 Some("/docs/stable.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -2233,7 +2189,6 @@ mod tests {
                 "Guide".to_string(),
                 original_body.to_string(),
                 Some("/docs/guide.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -2313,7 +2268,6 @@ mod tests {
                 "Guide".to_string(),
                 server_body.to_string(),
                 Some("/docs/guide.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -2400,7 +2354,6 @@ mod tests {
                 "Guide".to_string(),
                 "# Server updated content".to_string(),
                 Some("/docs/guide.md".to_string()),
-                None,
                 false,
             )
             .unwrap(),
@@ -2467,7 +2420,6 @@ mod tests {
             "Guide".to_string(),
             "# Content".to_string(),
             Some("docs/guide.md".to_string()),
-            None,
             false,
         )
         .unwrap();
@@ -2653,8 +2605,7 @@ mod tests {
                 doc_id_for_delete.clone(),
                 1,
                 Utc::now(),
-                DocumentPayload::new("Old".to_string(), body.to_string(), None, None, true)
-                    .unwrap(),
+                DocumentPayload::new("Old".to_string(), body.to_string(), None, true).unwrap(),
                 None,
                 Utc::now(),
                 Vec::new(),
@@ -2782,14 +2733,8 @@ mod tests {
                 playbook_id_for_delete.clone(),
                 1,
                 Utc::now(),
-                DocumentPayload::new(
-                    "Old".to_string(),
-                    "# Old playbook".to_string(),
-                    None,
-                    None,
-                    true,
-                )
-                .unwrap(),
+                DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), None, true)
+                    .unwrap(),
                 None,
                 Utc::now(),
                 Vec::new(),

@@ -407,60 +407,6 @@ describe("Document list filtering", () => {
     expect(data.documents).toHaveLength(2);
   });
 
-  it("filters by created_by", async () => {
-    store.create("documents", "d-1", makeDocument({ created_by: "t-xyz" }), "document");
-    store.create("documents", "d-2", makeDocument({ created_by: "t-abc" }), "document");
-    store.create("documents", "d-3", makeDocument({ created_by: "t-xyz" }), "document");
-    const data = await listDocuments({ created_by: "t-xyz" });
-    expect(data.documents).toHaveLength(2);
-  });
-
-  it("combines q and created_by with AND logic", async () => {
-    store.create(
-      "documents",
-      "d-1",
-      makeDocument({ title: "README", created_by: "t-xyz" }),
-      "document",
-    );
-    store.create(
-      "documents",
-      "d-2",
-      makeDocument({ title: "README", created_by: "t-abc" }),
-      "document",
-    );
-    store.create(
-      "documents",
-      "d-3",
-      makeDocument({ title: "Guide", created_by: "t-xyz" }),
-      "document",
-    );
-    const data = await listDocuments({ q: "readme", created_by: "t-xyz" });
-    expect(data.documents).toHaveLength(1);
-  });
-
-  it("combines with existing path_prefix filter", async () => {
-    store.create(
-      "documents",
-      "d-1",
-      makeDocument({ title: "Doc A", path: "docs/readme.md", created_by: "t-xyz" }),
-      "document",
-    );
-    store.create(
-      "documents",
-      "d-2",
-      makeDocument({ title: "Doc B", path: "docs/guide.md", created_by: "t-xyz" }),
-      "document",
-    );
-    store.create(
-      "documents",
-      "d-3",
-      makeDocument({ title: "Doc C", path: "src/readme.md", created_by: "t-xyz" }),
-      "document",
-    );
-    const data = await listDocuments({ path_prefix: "docs/", created_by: "t-xyz" });
-    expect(data.documents).toHaveLength(2);
-  });
-
   it("filters by ids (comma-separated)", async () => {
     store.create("documents", "d-1", makeDocument({ title: "First" }), "document");
     store.create("documents", "d-2", makeDocument({ title: "Second" }), "document");

@@ -466,7 +466,6 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         state

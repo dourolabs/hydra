@@ -297,7 +297,6 @@ async fn document_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 "Label test doc".to_string(),
                 "label test body".to_string(),
                 None,
-                None,
                 false,
             )
             .unwrap(),

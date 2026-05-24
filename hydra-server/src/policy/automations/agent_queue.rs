@@ -502,7 +502,6 @@ mod tests {
             title: format!("{agent_name} prompt"),
             body_markdown: prompt.to_string(),
             path: Some(path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
@@ -2527,7 +2526,6 @@ mod tests {
             title: "MCP config".to_string(),
             body_markdown: config_json.to_string(),
             path: Some(path.parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;

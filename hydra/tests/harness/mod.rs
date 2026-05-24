@@ -485,7 +485,6 @@ impl TestHarnessBuilder {
                 title: format!("{name} prompt"),
                 body_markdown: prompt.clone(),
                 path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-                created_by: None,
                 deleted: false,
             };
             store

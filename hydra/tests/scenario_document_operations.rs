@@ -47,7 +47,6 @@ async fn document_operations_through_worker() -> Result<()> {
         None,
         None,
         None,
-        None,
     );
     let docs = client.list_documents(&query).await?;
 

@@ -152,7 +152,6 @@ mod tests {
             title: String::new(),
             body_markdown: String::new(),
             path: None,
-            created_by: None,
             deleted: false,
         }
     }

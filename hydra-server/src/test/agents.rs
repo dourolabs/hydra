@@ -42,7 +42,6 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            created_by: None,
             deleted: false,
         };
         store.add_document(doc, &ActorRef::test()).await.unwrap();

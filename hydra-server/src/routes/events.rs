@@ -1574,7 +1574,6 @@ mod tests {
             title: "Test doc".to_string(),
             body_markdown: "content".to_string(),
             path: None,
-            created_by: None,
             deleted: false,
         };
         let (doc_id, _) = store

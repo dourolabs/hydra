@@ -296,7 +296,6 @@ struct DocumentRow {
     title: String,
     body_markdown: String,
     path: Option<String>,
-    created_by: Option<String>,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -1222,8 +1221,8 @@ impl SqliteStore {
         // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor, is_latest)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
+                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, deleted, actor, is_latest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
             )
         )
         .bind(id.as_ref())
@@ -1231,7 +1230,6 @@ impl SqliteStore {
         .bind(&document.title)
         .bind(&document.body_markdown)
         .bind(document.path.as_ref().map(|p| p.as_str()))
-        .bind(document.created_by.as_ref().map(|t| t.as_ref()))
         .bind(document.deleted)
         .bind(actor)
         .execute(&mut *tx)
@@ -1244,14 +1242,6 @@ impl SqliteStore {
     }
 
     fn row_to_document(&self, row: &DocumentRow) -> Result<Document, StoreError> {
-        let created_by = row
-            .created_by
-            .as_ref()
-            .map(|s| {
-                SessionId::from_str(s)
-                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
-            })
-            .transpose()?;
         let path = row
             .path
             .as_ref()
@@ -1265,7 +1255,6 @@ impl SqliteStore {
             title: row.title.clone(),
             body_markdown: row.body_markdown.clone(),
             path,
-            created_by,
             deleted: row.deleted,
         })
     }
@@ -2142,11 +2131,6 @@ fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<Strin
         }
     }
 
-    if let Some(created_by) = query.created_by.as_ref() {
-        bindings.push(created_by.as_ref().to_string());
-        predicates.push(format!("created_by = ?{}", bindings.len()));
-    }
-
     if let Some(term) = query
         .q
         .as_ref()
@@ -2860,7 +2844,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let row = sqlx::query_as::<_, DocumentRow>(&format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = ?1 AND is_latest = 1"
@@ -2902,7 +2886,7 @@ impl ReadOnlyStore for SqliteStore {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let rows = sqlx::query_as::<_, DocumentRow>(&format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -2948,7 +2932,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let subquery = format!(
-            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at,
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.deleted, d.actor, d.created_at, d.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
              FROM {TABLE_DOCUMENTS_V2} d
              WHERE d.is_latest = 1"
@@ -3010,7 +2994,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
         let subquery = format!(
-            "SELECT id, title, body_markdown, path, created_by, deleted
+            "SELECT id, title, body_markdown, path, deleted
              FROM {TABLE_DOCUMENTS_V2}
              WHERE is_latest = 1"
         );
@@ -3062,7 +3046,6 @@ impl ReadOnlyStore for SqliteStore {
         self.list_documents(&SearchDocumentsQuery::new(
             None,
             Some(path_prefix.to_string()),
-            None,
             None,
             None,
         ))
@@ -6644,12 +6627,11 @@ mod tests {
         )
     }
 
-    fn sample_document(path: Option<&str>, created_by: Option<SessionId>) -> Document {
+    fn sample_document(path: Option<&str>) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: path.map(|p| p.parse().unwrap()),
-            created_by,
             deleted: false,
         }
     }
@@ -7049,7 +7031,7 @@ mod tests {
         let store = create_test_store().await;
         let (doc_id, _) = store
             .add_document(
-                sample_document(Some("docs/guides/intro.md"), None),
+                sample_document(Some("docs/guides/intro.md")),
                 &ActorRef::test(),
             )
             .await
@@ -7084,17 +7066,11 @@ mod tests {
     async fn document_path_prefix_query() {
         let store = create_test_store().await;
         let (doc1, _) = store
-            .add_document(
-                sample_document(Some("docs/howto.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/howto.md")), &ActorRef::test())
             .await
             .unwrap();
         store
-            .add_document(
-                sample_document(Some("notes/todo.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/todo.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7110,30 +7086,27 @@ mod tests {
         // Create documents under various paths
         store
             .add_document(
-                sample_document(Some("agents/swe/memory.md"), None),
+                sample_document(Some("agents/swe/memory.md")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_document(
-                sample_document(Some("agents/swe/plan.md"), None),
+                sample_document(Some("agents/swe/plan.md")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_document(
-                sample_document(Some("agents/pm/notes.md"), None),
+                sample_document(Some("agents/pm/notes.md")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         store
-            .add_document(
-                sample_document(Some("docs/readme.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/readme.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7181,14 +7154,14 @@ mod tests {
 
         let (doc_id, _) = store
             .add_document(
-                sample_document(Some("agents/swe/memory.md"), None),
+                sample_document(Some("agents/swe/memory.md")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_document(
-                sample_document(Some("agents/pm/notes.md"), None),
+                sample_document(Some("agents/pm/notes.md")),
                 &ActorRef::test(),
             )
             .await
@@ -7214,14 +7187,14 @@ mod tests {
         // Create a leaf document at /agents/pm/notes.md
         store
             .add_document(
-                sample_document(Some("agents/pm/notes.md"), None),
+                sample_document(Some("agents/pm/notes.md")),
                 &ActorRef::test(),
             )
             .await
             .unwrap();
         // Create a document whose path is also a prefix for other docs
         store
-            .add_document(sample_document(Some("agents/pm"), None), &ActorRef::test())
+            .add_document(sample_document(Some("agents/pm")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7251,21 +7224,13 @@ mod tests {
     #[tokio::test]
     async fn document_filters_apply_query() {
         let store = create_test_store().await;
-        let task_id = SessionId::new();
-        let other_task = SessionId::new();
 
         let (first, _) = store
-            .add_document(
-                sample_document(Some("docs/howto.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/howto.md")), &ActorRef::test())
             .await
             .unwrap();
         store
-            .add_document(
-                sample_document(Some("notes/todo.md"), Some(other_task.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/todo.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7273,51 +7238,28 @@ mod tests {
             Some("how".to_string()),
             Some("/docs/".to_string()),
             None,
-            Some(task_id.clone()),
             None,
         );
 
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, first);
-
-        let created_by_filtered = store
-            .list_documents(&SearchDocumentsQuery::new(
-                None,
-                None,
-                None,
-                Some(other_task),
-                None,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(created_by_filtered.len(), 1);
     }
 
     #[tokio::test]
     async fn list_documents_filters_by_ids() {
         let store = create_test_store().await;
-        let task_id = SessionId::new();
 
         let (a, _) = store
-            .add_document(
-                sample_document(Some("docs/a.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/a.md")), &ActorRef::test())
             .await
             .unwrap();
         let (b, _) = store
-            .add_document(
-                sample_document(Some("docs/b.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/b.md")), &ActorRef::test())
             .await
             .unwrap();
         let (_c, _) = store
-            .add_document(
-                sample_document(Some("notes/c.md"), Some(task_id.clone())),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/c.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7332,16 +7274,14 @@ mod tests {
         assert_eq!(found_ids, expected);
 
         // (b) ids intersected with path_prefix.
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/docs/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, a);
 
         // ids that don't intersect with the path filter return no rows.
-        let mut query =
-            SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None, None);
+        let mut query = SearchDocumentsQuery::new(None, Some("/notes/".to_string()), None, None);
         query.ids = vec![a.clone()];
         let filtered = store.list_documents(&query).await.unwrap();
         assert!(filtered.is_empty());
@@ -7358,7 +7298,7 @@ mod tests {
     async fn delete_document_sets_deleted_flag_and_filters_from_list() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(sample_document(None, None), &ActorRef::test())
+            .add_document(sample_document(None), &ActorRef::test())
             .await
             .unwrap();
 
@@ -7380,13 +7320,7 @@ mod tests {
         assert!(documents.is_empty());
 
         let documents = store
-            .list_documents(&SearchDocumentsQuery::new(
-                None,
-                None,
-                None,
-                None,
-                Some(true),
-            ))
+            .list_documents(&SearchDocumentsQuery::new(None, None, None, Some(true)))
             .await
             .unwrap();
         assert_eq!(documents.len(), 1);
@@ -7402,8 +7336,7 @@ mod tests {
     #[tokio::test]
     async fn document_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task_id = SessionId::new();
-        let doc = sample_document(Some("docs/roundtrip.md"), Some(task_id));
+        let doc = sample_document(Some("docs/roundtrip.md"));
 
         let (doc_id, _) = store
             .add_document(doc.clone(), &ActorRef::test())
@@ -7413,7 +7346,7 @@ mod tests {
         let fetched = store.get_document(&doc_id, false).await.unwrap();
         assert_eq!(
             fetched.item, doc,
-            "Document must round-trip all fields (path, created_by)"
+            "Document must round-trip all fields (path)"
         );
     }
 
@@ -9416,28 +9349,26 @@ mod tests {
         let actor = ActorRef::test();
 
         store
-            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .add_document(sample_document(Some("docs/a.md")), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .add_document(sample_document(Some("docs/b.md")), &actor)
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .add_document(sample_document(Some("other/c.md")), &actor)
             .await
             .unwrap();
 
         // Count all
-        let query = hydra_common::api::v1::documents::SearchDocumentsQuery::new(
-            None, None, None, None, None,
-        );
+        let query =
+            hydra_common::api::v1::documents::SearchDocumentsQuery::new(None, None, None, None);
         assert_eq!(store.count_documents(&query).await.unwrap(), 3);
 
         // Count with path prefix filter
         let query = hydra_common::api::v1::documents::SearchDocumentsQuery::new(
             Some("docs/".to_string()),
-            None,
             None,
             None,
             None,
@@ -9515,7 +9446,7 @@ mod tests {
 
         let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
         let (doc_id, _) = store
-            .add_document(sample_document(None, None), &actor)
+            .add_document(sample_document(None), &actor)
             .await
             .unwrap();
 
@@ -9576,7 +9507,7 @@ mod tests {
 
         let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
         let (doc_id, _) = store
-            .add_document(sample_document(None, None), &actor)
+            .add_document(sample_document(None), &actor)
             .await
             .unwrap();
 
@@ -9772,10 +9703,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_existing() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/unique.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/unique.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -9790,10 +9718,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/deleted.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/deleted.md")), &ActorRef::test())
             .await
             .unwrap();
         store
@@ -9833,10 +9758,7 @@ mod tests {
     async fn is_latest_set_on_new_document() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/test.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/test.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -9848,14 +9770,11 @@ mod tests {
     async fn is_latest_updated_on_document_update() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/test.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/test.md")), &ActorRef::test())
             .await
             .unwrap();
 
-        let mut updated = sample_document(Some("docs/test.md"), None);
+        let mut updated = sample_document(Some("docs/test.md"));
         updated.body_markdown = "Updated body".to_string();
         store
             .update_document(&doc_id, updated.clone(), &ActorRef::test())
@@ -9881,10 +9800,7 @@ mod tests {
     async fn is_latest_maintained_on_delete() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(
-                sample_document(Some("docs/test.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/test.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -9902,22 +9818,16 @@ mod tests {
     async fn is_latest_independent_across_documents() {
         let store = create_test_store().await;
         let (doc1, _) = store
-            .add_document(
-                sample_document(Some("docs/one.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/one.md")), &ActorRef::test())
             .await
             .unwrap();
         let (doc2, _) = store
-            .add_document(
-                sample_document(Some("docs/two.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("docs/two.md")), &ActorRef::test())
             .await
             .unwrap();
 
         // Update doc1 only
-        let mut updated = sample_document(Some("docs/one.md"), None);
+        let mut updated = sample_document(Some("docs/one.md"));
         updated.body_markdown = "Updated".to_string();
         store
             .update_document(&doc1, updated, &ActorRef::test())
@@ -10391,20 +10301,17 @@ mod tests {
     async fn get_documents_by_paths_returns_titles_for_live_docs() {
         let store = create_test_store().await;
 
-        let mut doc_a = sample_document(Some("agents/swe/prompt.md"), None);
+        let mut doc_a = sample_document(Some("agents/swe/prompt.md"));
         doc_a.title = "SWE Prompt".to_string();
         let (id_a, _) = store.add_document(doc_a, &ActorRef::test()).await.unwrap();
 
-        let mut doc_b = sample_document(Some("agents/pm/prompt.md"), None);
+        let mut doc_b = sample_document(Some("agents/pm/prompt.md"));
         doc_b.title = "PM Prompt".to_string();
         let (id_b, _) = store.add_document(doc_b, &ActorRef::test()).await.unwrap();
 
         // A document the caller will not ask about — ensures filtering works.
         store
-            .add_document(
-                sample_document(Some("notes/unused.md"), None),
-                &ActorRef::test(),
-            )
+            .add_document(sample_document(Some("notes/unused.md")), &ActorRef::test())
             .await
             .unwrap();
 
@@ -10433,7 +10340,7 @@ mod tests {
         let store = create_test_store().await;
         let (id, _) = store
             .add_document(
-                sample_document(Some("docs/transient.md"), None),
+                sample_document(Some("docs/transient.md")),
                 &ActorRef::test(),
             )
             .await
