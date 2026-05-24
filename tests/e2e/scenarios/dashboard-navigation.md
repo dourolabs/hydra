@@ -14,13 +14,13 @@ Verify that all key dashboard pages load correctly without errors. This scenario
 
 1. Navigate to `http://localhost:8080`
 2. Verify the main landing page loads with the sidebar visible
-   - Sidebar should show the "All chats" entry and a "Workspace" section containing Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
+   - Sidebar should show the "My chats" entry and a "Workspace" section containing Issues, Patches, Sessions, Documents, Agents, Repositories, and Secrets
 3. Verify the landing page (root `/`) displays the issues list (table or list view)
    - Take an accessibility snapshot to confirm key UI elements
 4. If any issues exist, click on one to open the **Issue Detail** page (`/issues/:issueId`)
    - Verify the issue detail page loads with title, description, status, and activity log
    - Navigate back to the issues list
-5. Navigate to the **All chats** entry (`/chat`) via the sidebar
+5. Navigate to the **My chats** entry (`/chat`) via the sidebar
    - Verify the page loads and displays the conversations list (or empty state)
    - Take an accessibility snapshot to confirm key UI elements (New Chat button, etc.)
 6. Navigate to the **Documents** page (`/documents`) via the sidebar
