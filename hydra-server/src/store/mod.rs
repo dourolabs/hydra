@@ -180,16 +180,28 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 /// construction in `routes/sessions/mount_spec.rs::mount_spec_from_create_request`
 /// (called from `routes/sessions/context.rs::get_session_context`) adds it
 /// when applicable.
+///
+/// Phase E step 16: the legacy `tasks_v2.context` column is gone. We stuff
+/// the transitional `session.context` value into the persisted
+/// `mount_spec.mounts[0].bundle` JSON field (matching the 20260523020000
+/// migration backfill shape). For non-ServiceRepository bundles this is a
+/// no-op (BundleSpec and Bundle agree on the JSON shape); for
+/// ServiceRepository rows it preserves the `{name, rev}` payload across
+/// round-trips so `session_context_from_mount_spec_json` can recover the
+/// original `BundleSpec` on read. The persisted JSON is never served
+/// directly to the worker (the route layer rebuilds it from the resolved
+/// bundle), so the typed `MountItem::Unknown` fallback only matters here
+/// for the read side, which uses the raw JSON.
 pub(crate) fn dual_write_mount_spec_json(
     id: &SessionId,
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
+    use hydra_common::api::v1::sessions::MountItem;
     // Rewrite any placeholder session_id references inside the mount spec
     // to match the row's actual id. Sessions constructed in-memory before
     // they hit the store carry placeholder ids (see
     // `app/sessions::mount_spec_for_session`); the persisted JSON must
     // resolve to the row.
-    use hydra_common::api::v1::sessions::MountItem;
     let mut spec = session.mount_spec.clone();
     for item in spec.mounts.iter_mut() {
         match item {
@@ -202,11 +214,32 @@ pub(crate) fn dual_write_mount_spec_json(
             _ => {}
         }
     }
-    serde_json::to_value(&spec).map_err(|e| {
+    let mut value = serde_json::to_value(&spec).map_err(|e| {
         StoreError::Internal(format!(
             "failed to serialize mount_spec for dual-write: {e}"
         ))
-    })
+    })?;
+
+    // Overlay `session.context` (BundleSpec) into the first Bundle item's
+    // `bundle` field so ServiceRepository identity survives the drop of
+    // `tasks_v2.context`. Only applied when there is a Bundle item — fresh
+    // mount specs assembled in tests / automations may not have one.
+    let context_json = serde_json::to_value(&session.context).map_err(|e| {
+        StoreError::Internal(format!(
+            "failed to serialize session context for dual-write: {e}"
+        ))
+    })?;
+    if let Some(mounts) = value.get_mut("mounts").and_then(|m| m.as_array_mut()) {
+        for item in mounts.iter_mut() {
+            if item.get("type").and_then(|t| t.as_str()) == Some("bundle") {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("bundle".to_string(), context_json);
+                }
+                break;
+            }
+        }
+    }
+    Ok(value)
 }
 
 /// Build the JSON value persisted to `tasks_v2.agent_config` for a session on
@@ -228,112 +261,39 @@ pub(crate) fn dual_write_mode_json(session: &Session) -> Result<serde_json::Valu
         .map_err(|e| StoreError::Internal(format!("failed to serialize mode for dual-write: {e}")))
 }
 
-/// Fallback constructor for `mount_spec` when the row's new column is NULL.
-/// Should not happen post PR-1 (the migration backfills every row); kept
-/// defensively for hand-crafted rows / future writers that bypass the
-/// dual-write path.
-pub(crate) fn mount_spec_from_legacy_columns(
-    session_id_str: &str,
-    context_json: &str,
-) -> Result<hydra_common::api::v1::sessions::MountSpec, StoreError> {
-    use hydra_common::SessionId;
-    use hydra_common::api::v1::sessions::{BundleSpec, MountItem, MountSpec, RelativePath};
-    use std::str::FromStr;
-
-    let bundle_spec: BundleSpec = serde_json::from_str(context_json).map_err(|e| {
+/// Recover the transitional `Session.context` from a stored `mount_spec`
+/// JSON blob. Pairs with [`dual_write_mount_spec_json`], which stamps the
+/// `BundleSpec` into the first Bundle item's `bundle` field; the same shape
+/// is produced by the 20260523020000 migration backfill, so historical and
+/// post-Phase-E rows decode identically. Returns `BundleSpec::None` when
+/// the blob has no Bundle item (e.g. a hand-crafted mount spec) or the
+/// embedded `bundle` field is missing — both already mean "no bundle"
+/// downstream.
+pub(crate) fn session_context_from_mount_spec_json(
+    mount_spec_json: &str,
+) -> Result<crate::domain::sessions::BundleSpec, StoreError> {
+    let value: serde_json::Value = serde_json::from_str(mount_spec_json).map_err(|e| {
         StoreError::Internal(format!(
-            "failed to deserialize legacy `context` while falling back for mount_spec: {e}"
+            "failed to parse mount_spec while deriving session context: {e}"
         ))
     })?;
-    let bundle = match bundle_spec {
-        BundleSpec::None => hydra_common::api::v1::sessions::Bundle::None,
-        BundleSpec::GitRepository { url, rev } => {
-            hydra_common::api::v1::sessions::Bundle::GitRepository { url, rev }
-        }
-        // ServiceRepository can't be expressed as `Bundle` directly; the
-        // resolver would normally lower it to a `GitRepository`. For the
-        // legacy fallback we substitute `None` so the worker doesn't get a
-        // garbled bundle — this only matters for rows that escaped PR-1's
-        // backfill, which should not happen in practice.
-        _ => hydra_common::api::v1::sessions::Bundle::None,
+    let mounts = match value.get("mounts").and_then(|m| m.as_array()) {
+        Some(mounts) => mounts,
+        None => return Ok(crate::domain::sessions::BundleSpec::None),
     };
-    let session_id = SessionId::from_str(session_id_str).map_err(|e| {
-        StoreError::Internal(format!(
-            "invalid session id while building fallback mount_spec: {e}"
-        ))
-    })?;
-    let repo_target = RelativePath::new("repo")
-        .map_err(|e| StoreError::Internal(format!("invalid static `repo` target: {e}")))?;
-    let docs_target = RelativePath::new("documents")
-        .map_err(|e| StoreError::Internal(format!("invalid static `documents` target: {e}")))?;
-    Ok(MountSpec::new(
-        repo_target.clone(),
-        vec![
-            MountItem::Bundle {
-                target: repo_target,
-                bundle,
-                session_id,
-                issue_branch_id: None,
-            },
-            MountItem::Documents {
-                target: docs_target,
-            },
-        ],
-    ))
-}
-
-/// Fallback constructor for `agent_config` when the row's new column is NULL.
-pub(crate) fn agent_config_from_legacy_columns(
-    model: Option<&str>,
-    mcp_config_json: Option<&str>,
-) -> Result<crate::domain::sessions::AgentConfig, StoreError> {
-    let mcp_config = mcp_config_json
-        .map(|s| {
-            serde_json::from_str::<serde_json::Value>(s).map_err(|e| {
-                StoreError::Internal(format!(
-                    "failed to deserialize legacy mcp_config while falling back: {e}"
-                ))
-            })
-        })
-        .transpose()?;
-    Ok(crate::domain::sessions::AgentConfig {
-        agent_name: None,
-        model: model.map(String::from),
-        system_prompt: None,
-        mcp_config,
-    })
-}
-
-/// Fallback constructor for `mode` when the row's new column is NULL.
-/// `conversation_resume_from` is the legacy `tasks_v2.conversation_resume_from`
-/// column value — folded into `SessionMode::Interactive` so the field's
-/// invariant (only meaningful for interactive sessions) holds at the row level.
-pub(crate) fn mode_from_legacy_columns(
-    prompt: &str,
-    conversation_id: Option<&str>,
-    conversation_resume_from: Option<usize>,
-) -> Result<crate::domain::sessions::SessionMode, StoreError> {
-    use crate::domain::sessions::SessionMode;
-    use hydra_common::ConversationId;
-    match conversation_id {
-        Some(c) => {
-            let conv_id = c.parse::<ConversationId>().map_err(|e| {
-                StoreError::Internal(format!(
-                    "invalid conversation_id while building fallback mode: {e}"
-                ))
-            })?;
-            Ok(SessionMode::Interactive {
-                conversation_id: conv_id,
-                // Legacy rows don't persist a per-session timeout override;
-                // the route layer falls back to the server-configured default.
-                idle_timeout_secs: None,
-                conversation_resume_from,
-            })
+    for item in mounts.iter() {
+        if item.get("type").and_then(|t| t.as_str()) == Some("bundle") {
+            return match item.get("bundle") {
+                Some(bundle_value) => serde_json::from_value(bundle_value.clone()).map_err(|e| {
+                    StoreError::Internal(format!(
+                        "failed to deserialize bundle while deriving session context: {e}"
+                    ))
+                }),
+                None => Ok(crate::domain::sessions::BundleSpec::None),
+            };
         }
-        None => Ok(SessionMode::Headless {
-            prompt: prompt.to_string(),
-        }),
     }
+    Ok(crate::domain::sessions::BundleSpec::None)
 }
 
 pub(crate) fn session_status_log_from_versions(
