@@ -2,15 +2,23 @@ import { createBrowserRouter } from "react-router-dom";
 import { ErrorBoundary } from "@hydra/ui";
 import { AppLayout } from "./layout/AppLayout";
 
+// Silences React Router's "No HydrateFallback element provided" warning. The
+// app is an SPA and routes are lazy-loaded, so this only renders during the
+// brief moment before the initial chunk resolves — an empty placeholder is
+// enough and avoids any visible flash on fast loads.
+const hydrateFallbackElement = <div />;
+
 export const router = createBrowserRouter([
   {
     path: "/login",
+    hydrateFallbackElement,
     lazy: () =>
       import("./pages/LoginPage").then((m) => ({ Component: m.LoginPage })),
   },
   {
     path: "/",
     element: <AppLayout />,
+    hydrateFallbackElement,
     children: [
       {
         index: true,
