@@ -21,9 +21,11 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use futures::{Sink, SinkExt, StreamExt};
 use hydra_common::{
-    api::v1::conversations::{
-        ConversationEvent, ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect,
-        WorkerMessage,
+    api::v1::{
+        conversations::{
+            ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect, WorkerMessage,
+        },
+        sessions::SessionEvent,
     },
     SessionId,
 };
@@ -211,11 +213,11 @@ async fn run_pump(
                 match event {
                     Some(WorkerEvent::AssistantText { text }) => {
                         if !text.is_empty() {
-                            let conv_event = ConversationEvent::AssistantMessage {
+                            let session_event = SessionEvent::AssistantMessage {
                                 content: text,
                                 timestamp: Utc::now(),
                             };
-                            let msg = WorkerMessage::Event { event: conv_event };
+                            let msg = WorkerMessage::Event { event: session_event };
                             let json = serde_json::to_string(&msg)
                                 .context("failed to serialize worker message")?;
                             if ws_sender
@@ -254,7 +256,7 @@ async fn run_pump(
                     Some(Ok(tungstenite::Message::Text(text))) => {
                         match serde_json::from_str::<ServerMessage>(&text) {
                             Ok(ServerMessage::Event { event }) => {
-                                if let ConversationEvent::UserMessage { content, .. } = event {
+                                if let SessionEvent::UserMessage { content, .. } = event {
                                     idle_deadline
                                         .as_mut()
                                         .reset(tokio::time::Instant::now() + idle_timeout);
@@ -428,7 +430,7 @@ fn try_primary_resume(
 ///   relay-loop user message instead.
 async fn feed_catch_up_to_channel(
     input_tx: &mpsc::Sender<WorkerInputMessage>,
-    events: &[ConversationEvent],
+    events: &[SessionEvent],
     using_resumed_transcript: bool,
     prompt: &str,
     prompt_prepend: &mut PromptPrepend,
@@ -500,10 +502,10 @@ struct PromptPrepend {
 }
 
 impl PromptPrepend {
-    fn new(prompt: &str, catch_up_events: &[ConversationEvent]) -> Self {
+    fn new(prompt: &str, catch_up_events: &[SessionEvent]) -> Self {
         let has_assistant = catch_up_events
             .iter()
-            .any(|e| matches!(e, ConversationEvent::AssistantMessage { .. }));
+            .any(|e| matches!(e, SessionEvent::AssistantMessage { .. }));
         let agent_prompt_pending = !prompt.is_empty() && !has_assistant;
         Self {
             prompt: prompt.to_string(),
@@ -537,15 +539,15 @@ impl PromptPrepend {
 /// including the last assistant message) and pending user messages
 /// (everything after the last assistant message, or — if no assistant message
 /// is present — every `UserMessage` in the log).
-fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, Vec<&str>) {
+fn partition_events(events: &[SessionEvent]) -> (Vec<&SessionEvent>, Vec<&str>) {
     let last_assistant_idx = events
         .iter()
         .enumerate()
         .rev()
-        .find(|(_, e)| matches!(e, ConversationEvent::AssistantMessage { .. }))
+        .find(|(_, e)| matches!(e, SessionEvent::AssistantMessage { .. }))
         .map(|(i, _)| i);
 
-    let mut past_context: Vec<&ConversationEvent> = Vec::new();
+    let mut past_context: Vec<&SessionEvent> = Vec::new();
     let mut pending: Vec<&str> = Vec::new();
 
     match last_assistant_idx {
@@ -553,21 +555,20 @@ fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, V
             for event in &events[..=idx] {
                 if matches!(
                     event,
-                    ConversationEvent::UserMessage { .. }
-                        | ConversationEvent::AssistantMessage { .. }
+                    SessionEvent::UserMessage { .. } | SessionEvent::AssistantMessage { .. }
                 ) {
                     past_context.push(event);
                 }
             }
             for event in &events[idx + 1..] {
-                if let ConversationEvent::UserMessage { content, .. } = event {
+                if let SessionEvent::UserMessage { content, .. } = event {
                     pending.push(content.as_str());
                 }
             }
         }
         None => {
             for event in events {
-                if let ConversationEvent::UserMessage { content, .. } = event {
+                if let SessionEvent::UserMessage { content, .. } = event {
                     pending.push(content.as_str());
                 }
             }
@@ -579,16 +580,16 @@ fn partition_events(events: &[ConversationEvent]) -> (Vec<&ConversationEvent>, V
 
 /// Build a single primer message that wraps the prior transcript so the model
 /// can use it as historical context.
-fn build_context_primer(prompt: &str, past_context: &[&ConversationEvent]) -> String {
+fn build_context_primer(prompt: &str, past_context: &[&SessionEvent]) -> String {
     let mut transcript = String::new();
     for event in past_context {
         match event {
-            ConversationEvent::UserMessage { content, .. } => {
+            SessionEvent::UserMessage { content, .. } => {
                 transcript.push_str("User: ");
                 transcript.push_str(&escape_wrapper_close(content));
                 transcript.push('\n');
             }
-            ConversationEvent::AssistantMessage { content, .. } => {
+            SessionEvent::AssistantMessage { content, .. } => {
                 transcript.push_str("Assistant: ");
                 transcript.push_str(&escape_wrapper_close(content));
                 transcript.push('\n');
@@ -639,7 +640,7 @@ async fn emit_suspend<Si>(
         has_model_session_id = model_session_id.is_some(),
         "emit_suspend entry"
     );
-    let suspending_event = ConversationEvent::Suspending {
+    let suspending_event = SessionEvent::Suspending {
         reason: reason.to_string(),
         timestamp: Utc::now(),
     };
@@ -750,15 +751,15 @@ async fn await_sigterm() {
 mod tests {
     use super::*;
 
-    fn user_msg(content: &str) -> ConversationEvent {
-        ConversationEvent::UserMessage {
+    fn user_msg(content: &str) -> SessionEvent {
+        SessionEvent::UserMessage {
             content: content.to_string(),
             timestamp: Utc::now(),
         }
     }
 
-    fn assistant_msg(content: &str) -> ConversationEvent {
-        ConversationEvent::AssistantMessage {
+    fn assistant_msg(content: &str) -> SessionEvent {
+        SessionEvent::AssistantMessage {
             content: content.to_string(),
             timestamp: Utc::now(),
         }

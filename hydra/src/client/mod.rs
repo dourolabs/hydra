@@ -371,7 +371,7 @@ pub trait HydraClientInterface: Send + Sync {
         &self,
         conversation_id: &ConversationId,
         request: &SendMessageRequest,
-    ) -> Result<ApiConversationEvent>;
+    ) -> Result<hydra_common::api::v1::sessions::SessionEvent>;
     async fn get_conversation_events(
         &self,
         conversation_id: &ConversationId,
@@ -2051,7 +2051,7 @@ impl HydraClient {
         &self,
         conversation_id: &ConversationId,
         request: &SendMessageRequest,
-    ) -> Result<ApiConversationEvent> {
+    ) -> Result<hydra_common::api::v1::sessions::SessionEvent> {
         let path = format!("/v1/conversations/{conversation_id}/messages");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2064,7 +2064,7 @@ impl HydraClient {
             .await?;
 
         response
-            .json::<ApiConversationEvent>()
+            .json::<hydra_common::api::v1::sessions::SessionEvent>()
             .await
             .context("failed to decode send message response")
     }
@@ -2678,7 +2678,7 @@ impl HydraClientInterface for HydraClient {
         &self,
         conversation_id: &ConversationId,
         request: &SendMessageRequest,
-    ) -> Result<ApiConversationEvent> {
+    ) -> Result<hydra_common::api::v1::sessions::SessionEvent> {
         HydraClient::send_message(self, conversation_id, request).await
     }
 

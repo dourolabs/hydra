@@ -5378,8 +5378,6 @@ impl Store for SqliteStore {
             StoreError::Internal(format!("failed to serialize conversation event: {e}"))
         })?;
         let event_type = match &event {
-            ConversationEvent::UserMessage { .. } => "user_message",
-            ConversationEvent::AssistantMessage { .. } => "assistant_message",
             ConversationEvent::Suspending { .. } => "suspending",
             ConversationEvent::Resumed { .. } => "resumed",
             ConversationEvent::Closed { .. } => "closed",
@@ -10079,8 +10077,8 @@ mod tests {
             .await
             .unwrap();
 
-        let event1 = ConversationEvent::UserMessage {
-            content: "Hello".to_string(),
+        let event1 = ConversationEvent::Suspending {
+            reason: "idle".to_string(),
             timestamp: Utc::now(),
         };
         let eid1 = store
@@ -10090,8 +10088,7 @@ mod tests {
         assert_eq!(eid1.conversation_id, id);
         assert_eq!(eid1.event_index, 0);
 
-        let event2 = ConversationEvent::AssistantMessage {
-            content: "Hi there!".to_string(),
+        let event2 = ConversationEvent::Closed {
             timestamp: Utc::now(),
         };
         let eid2 = store
@@ -10125,8 +10122,8 @@ mod tests {
         store
             .append_conversation_event(
                 &id,
-                ConversationEvent::UserMessage {
-                    content: "hi".to_string(),
+                ConversationEvent::Suspending {
+                    reason: "idle".to_string(),
                     timestamp: ts1,
                 },
                 &ActorRef::test(),
@@ -10159,7 +10156,7 @@ mod tests {
         );
         assert_eq!(
             versions[0].item.status,
-            crate::domain::conversations::ConversationStatus::Active
+            crate::domain::conversations::ConversationStatus::Idle
         );
     }
 
@@ -10259,8 +10256,7 @@ mod tests {
     async fn conversation_events_on_nonexistent_conversation() {
         let store = create_test_store().await;
         let fake_id = ConversationId::new();
-        let event = ConversationEvent::UserMessage {
-            content: "test".to_string(),
+        let event = ConversationEvent::Closed {
             timestamp: Utc::now(),
         };
         let result = store

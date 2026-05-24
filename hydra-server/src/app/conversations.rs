@@ -3,11 +3,12 @@ use crate::{
     domain::{
         actors::ActorRef,
         conversations::{Conversation, ConversationEvent, ConversationStatus},
+        sessions::SessionEvent,
         users::Username,
     },
     store::StoreError,
 };
-use hydra_common::{ConversationId, Versioned, api::v1::conversations as api_conversations};
+use hydra_common::{ConversationId, Versioned, api::v1::sessions as api_sessions};
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -156,7 +157,7 @@ impl AppState {
         content: String,
         actor_ref: ActorRef,
         principal: Username,
-    ) -> Result<api_conversations::ConversationEvent, SendMessageError> {
+    ) -> Result<api_sessions::SessionEvent, SendMessageError> {
         let versioned = self
             .store()
             .get_conversation(conversation_id, false)
@@ -175,8 +176,13 @@ impl AppState {
         // new message. The companion session — and the corresponding Resumed
         // event — are produced asynchronously by
         // `SpawnConversationSessionsAutomation` when the ConversationUpdated
-        // event lands on the bus.
-        if versioned.item.status != ConversationStatus::Active {
+        // event lands on the bus. Capture the resumed-from-prior flag so we
+        // know whether to wait for the spawn-automation to create the new
+        // session before writing the user message to it.
+        let resumed_from_non_active = versioned.item.status != ConversationStatus::Active;
+        let prior_session_id =
+            chat_relay::resolve_session_for_conversation(self, conversation_id).await;
+        if resumed_from_non_active {
             let mut updated = versioned.item;
             updated.status = ConversationStatus::Active;
             self.store
@@ -185,34 +191,41 @@ impl AppState {
                 .map_err(|source| SendMessageError::Store { source })?;
         }
 
-        // Append UserMessage event
-        let event = ConversationEvent::UserMessage {
+        // Append the UserMessage to the conversation's active session as a
+        // `SessionEvent`. Chat content lives on the session log (Phase E
+        // step 18 of the sessions-orthogonality redesign).
+        //
+        // On a brand-new or just-reactivated conversation, the session may
+        // be in the process of being spawned by
+        // `SpawnConversationSessionsAutomation`; wait briefly so the message
+        // lands on the new session rather than the prior (closed) one.
+        let event = SessionEvent::UserMessage {
             content,
             timestamp: chrono::Utc::now(),
         };
-        self.store
-            .append_conversation_event_with_actor(conversation_id, event.clone(), actor_ref.clone())
-            .await
-            .map_err(|source| SendMessageError::Store { source })?;
-
-        // Dual-write the equivalent SessionEvent onto the conversation's
-        // active session (Phase C step 7 of the sessions-orthogonality
-        // redesign). When the conversation was just flipped from
-        // `Closed`/`Idle` to `Active`, the new session may not exist yet —
-        // the helper logs a warn and skips in that case, and Step 8's
-        // historical backfill will repair the gap.
-        if let Some(session_event) = chat_relay::conversation_event_to_session_event(&event) {
-            let _ = chat_relay::dual_write_session_event_for_conversation(
+        let resolved = if resumed_from_non_active {
+            chat_relay::wait_for_new_session_for_conversation(
                 self,
                 conversation_id,
-                session_event,
-                actor_ref,
+                prior_session_id.as_ref(),
             )
-            .await;
+            .await
+        } else {
+            chat_relay::resolve_session_for_conversation_with_retry(self, conversation_id).await
+        };
+        if let Some(session_id) = resolved {
+            let _ =
+                chat_relay::dual_write_session_event(self, &session_id, event.clone(), actor_ref)
+                    .await;
+        } else {
+            warn!(
+                %conversation_id,
+                "send_message: no session linked to conversation after retry — user message will be lost"
+            );
         }
 
         // Forward to worker via ChatRelayMap if connected
-        let api_event: api_conversations::ConversationEvent = event.into();
+        let api_event: api_sessions::SessionEvent = event.into();
         match chat_relay::send_to_worker(&self.chat_relay_map, conversation_id, api_event.clone())
             .await
         {
@@ -587,6 +600,30 @@ mod tests {
         wait_for_session(state, conversation_id).await
     }
 
+    /// Look up the most-recent session_id for a conversation, polling
+    /// briefly to give the spawn-conversation-sessions automation time to
+    /// create it. Useful for fetching session-event logs in tests that
+    /// previously asserted on the conversation-events log.
+    async fn session_id_for_conversation(
+        state: &AppState,
+        conversation_id: &ConversationId,
+    ) -> hydra_common::SessionId {
+        poll_until(POLL_TIMEOUT, || async {
+            let sessions = state
+                .store()
+                .list_sessions(&SearchSessionsQuery::default())
+                .await
+                .unwrap();
+            sessions
+                .into_iter()
+                .filter(|(_, s)| s.item.conversation_id() == Some(conversation_id))
+                .max_by_key(|(_, s)| s.creation_time)
+                .map(|(id, _)| id)
+        })
+        .await
+        .expect("expected a session_id for the conversation to appear")
+    }
+
     #[tokio::test]
     async fn create_conversation_applies_session_settings_model() {
         let state = state_with_default_model("default-model");
@@ -948,6 +985,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_message_from_active_appends_only_user_message() {
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let state = state_with_default_model("default-model");
         let _runner = start_test_automation_runner(&state);
         register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
@@ -965,13 +1003,10 @@ mod tests {
             .unwrap();
         // Wait for the initial spawn to settle before counting events.
         let _initial = session_for_conversation(&state, &conversation_id).await;
+        let session_id = session_id_for_conversation(&state, &conversation_id).await;
 
-        let events_before = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        let count_before = events_before.len();
+        let session_events_before = state.store().get_session_events(&session_id).await.unwrap();
+        let count_before = session_events_before.len();
 
         state
             .send_message(
@@ -983,35 +1018,30 @@ mod tests {
             .await
             .unwrap();
 
-        // Give any racing automation a moment to mis-fire, then assert that
-        // the event log only grew by the single UserMessage send_message
-        // appended (no Resumed event on an already-Active conversation).
         let events_after = poll_until(POLL_TIMEOUT, || async {
-            let events = state
-                .store()
-                .get_conversation_events(&conversation_id)
-                .await
-                .unwrap();
+            let events = state.store().get_session_events(&session_id).await.unwrap();
             (events.len() > count_before).then_some(events)
         })
         .await
-        .expect("expected the new UserMessage to be appended");
-        assert_eq!(
-            events_after.len(),
-            count_before + 1,
-            "send_message on an Active conversation should append exactly one event"
-        );
+        .expect("expected the new UserMessage to be appended to the session log");
         let last = events_after.last().expect("expected at least one event");
         assert!(
             matches!(
-                last.item,
-                ConversationEvent::UserMessage { ref content, .. } if content == "second"
+                &last.item,
+                DomainSessionEvent::UserMessage { content, .. } if content == "second"
             ),
             "expected the trailing event to be the new UserMessage, got {:?}",
             last.item
         );
+        // No Resumed event on an already-Active conversation in the
+        // conversation events log either.
+        let conv_events = state
+            .store()
+            .get_conversation_events(&conversation_id)
+            .await
+            .unwrap();
         assert!(
-            !events_after
+            !conv_events
                 .iter()
                 .any(|e| matches!(e.item, ConversationEvent::Resumed { .. })),
             "no Resumed event should be appended when conversation is already Active"
@@ -1060,29 +1090,32 @@ mod tests {
             .unwrap();
 
         // Wait for the resume-on-send to settle: the automation appends a
-        // Resumed event and spawns a second session. NOTE: because the
-        // automation is asynchronous, the *order* of Resumed vs the new
-        // UserMessage in the event log is no longer guaranteed (it depends on
-        // whether the automation processes the status flip before or after
-        // send_message appends the UserMessage). The test only verifies that
-        // both events end up in the log.
-        let _resumed_session_id = wait_for_resumed_event(&state, &conversation_id).await;
+        // Resumed event on the conversation log and spawns a second session.
+        // The new UserMessage lands on the new session's SessionEvent log.
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+        let resumed_session_id = wait_for_resumed_event(&state, &conversation_id).await;
         wait_for_session_count(&state, &conversation_id, 2).await;
 
-        let events = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        let has_new_user_msg = events.iter().any(|e| {
-            matches!(
-                &e.item,
-                ConversationEvent::UserMessage { content, .. } if content == "hello-again"
-            )
-        });
+        let session_events = poll_until(POLL_TIMEOUT, || async {
+            let events = state
+                .store()
+                .get_session_events(&resumed_session_id)
+                .await
+                .unwrap();
+            events
+                .iter()
+                .any(|e| {
+                    matches!(
+                        &e.item,
+                        DomainSessionEvent::UserMessage { content, .. } if content == "hello-again"
+                    )
+                })
+                .then_some(events)
+        })
+        .await;
         assert!(
-            has_new_user_msg,
-            "expected the new UserMessage to be appended after resume-on-send"
+            session_events.is_some(),
+            "expected the new UserMessage to be appended to the new session's SessionEvent log"
         );
 
         let versioned = state
@@ -1464,13 +1497,11 @@ mod tests {
             .await
             .unwrap();
         let _initial = session_for_conversation(&state, &conversation_id).await;
+        let session_id = session_id_for_conversation(&state, &conversation_id).await;
 
-        let events_before = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        let count_before = events_before.len();
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+        let session_events_before = state.store().get_session_events(&session_id).await.unwrap();
+        let count_before = session_events_before.len();
 
         state
             .send_message(
@@ -1483,20 +1514,16 @@ mod tests {
             .expect("creator should be allowed to send a message");
 
         let events_after = poll_until(POLL_TIMEOUT, || async {
-            let events = state
-                .store()
-                .get_conversation_events(&conversation_id)
-                .await
-                .unwrap();
+            let events = state.store().get_session_events(&session_id).await.unwrap();
             (events.len() > count_before).then_some(events)
         })
         .await
-        .expect("expected the new UserMessage to be appended");
+        .expect("expected the new UserMessage to be appended to the session log");
         let last = events_after.last().expect("expected at least one event");
         assert!(
             matches!(
-                last.item,
-                ConversationEvent::UserMessage { ref content, .. } if content == "from-creator"
+                &last.item,
+                DomainSessionEvent::UserMessage { content, .. } if content == "from-creator"
             ),
             "expected the trailing event to be the new UserMessage, got {:?}",
             last.item
@@ -1567,12 +1594,16 @@ mod tests {
             events_before.len(),
             "forbidden send_message must not append events",
         );
+        // The forbidden caller's content must not appear on either log.
+        let session_id = session_id_for_conversation(&state, &conversation_id).await;
+        let session_events_after = state.store().get_session_events(&session_id).await.unwrap();
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         assert!(
-            !events_after.iter().any(|e| matches!(
+            !session_events_after.iter().any(|e| matches!(
                 &e.item,
-                ConversationEvent::UserMessage { content, .. } if content == "intruder"
+                DomainSessionEvent::UserMessage { content, .. } if content == "intruder"
             )),
-            "intruder message must not be present in the event log",
+            "intruder message must not be present in the session event log",
         );
 
         let versioned_after = state

@@ -1,4 +1,5 @@
 use super::issues::SessionSettings;
+use super::sessions::SessionEvent;
 use crate::{ConversationId, SessionId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -46,19 +47,14 @@ pub enum ConversationStatus {
     Closed,
 }
 
+/// Lifecycle-only conversation events. Chat content (user/assistant messages)
+/// has moved to [`SessionEvent`] — see
+/// `designs/sessions-orthogonality-redesign.md` §3.2 and Phase E step 18.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConversationEvent {
-    UserMessage {
-        content: String,
-        timestamp: DateTime<Utc>,
-    },
-    AssistantMessage {
-        content: String,
-        timestamp: DateTime<Utc>,
-    },
     Suspending {
         reason: String,
         timestamp: DateTime<Utc>,
@@ -76,8 +72,6 @@ impl ConversationEvent {
     /// The event's own wall-clock timestamp.
     pub fn timestamp(&self) -> DateTime<Utc> {
         match self {
-            ConversationEvent::UserMessage { timestamp, .. } => *timestamp,
-            ConversationEvent::AssistantMessage { timestamp, .. } => *timestamp,
             ConversationEvent::Suspending { timestamp, .. } => *timestamp,
             ConversationEvent::Resumed { timestamp, .. } => *timestamp,
             ConversationEvent::Closed { timestamp } => *timestamp,
@@ -238,7 +232,10 @@ pub enum WorkerConnect {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct WorkerCatchUp {
-    pub events: Vec<ConversationEvent>,
+    /// Prior chat events across the conversation's resumption chain (concatenated
+    /// in session creation-time order). The worker uses this to seed its
+    /// primer / context on a fresh start.
+    pub events: Vec<SessionEvent>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -268,15 +265,15 @@ mod optional_bytes {
 
 /// Messages sent from the worker to the server over the relay WebSocket.
 ///
-/// This enum distinguishes between conversation events (which get stored and
+/// This enum distinguishes between session events (which get stored and
 /// broadcast) and session state uploads (binary blobs for resumption).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerMessage {
-    /// A conversation event (user message, assistant message, suspending, etc.).
-    Event { event: ConversationEvent },
+    /// A session event (assistant message, suspending, etc.).
+    Event { event: SessionEvent },
     /// A session state upload for resumption support.
     SessionStateUpload {
         #[cfg_attr(feature = "ts", ts(type = "number[]"))]
@@ -322,38 +319,14 @@ pub enum SessionStatePayload {
 pub enum ServerMessage {
     /// Catch-up payload sent immediately after the worker connects.
     CatchUp(WorkerCatchUp),
-    /// A conversation event forwarded to the worker (e.g., a user message).
-    Event { event: ConversationEvent },
+    /// A session event forwarded to the worker (e.g., a user message).
+    Event { event: SessionEvent },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str::FromStr;
-
-    #[test]
-    fn conversation_event_user_message_round_trip() {
-        let event = ConversationEvent::UserMessage {
-            content: "Hello, agent!".to_string(),
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: ConversationEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
-        assert!(json.contains(r#""type":"user_message""#));
-    }
-
-    #[test]
-    fn conversation_event_assistant_message_round_trip() {
-        let event = ConversationEvent::AssistantMessage {
-            content: "Hi there!".to_string(),
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: ConversationEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
-        assert!(json.contains(r#""type":"assistant_message""#));
-    }
 
     #[test]
     fn conversation_event_suspending_round_trip() {
@@ -426,7 +399,7 @@ mod tests {
     #[test]
     fn worker_catch_up_round_trip() {
         let catch_up = WorkerCatchUp {
-            events: vec![ConversationEvent::UserMessage {
+            events: vec![SessionEvent::UserMessage {
                 content: "test".to_string(),
                 timestamp: Utc::now(),
             }],
@@ -512,7 +485,7 @@ mod tests {
     #[test]
     fn worker_message_event_round_trip() {
         let msg = WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "Hello!".to_string(),
                 timestamp: Utc::now(),
             },
@@ -537,7 +510,7 @@ mod tests {
     #[test]
     fn server_message_catch_up_round_trip() {
         let msg = ServerMessage::CatchUp(WorkerCatchUp {
-            events: vec![ConversationEvent::UserMessage {
+            events: vec![SessionEvent::UserMessage {
                 content: "hi".to_string(),
                 timestamp: Utc::now(),
             }],
@@ -551,7 +524,7 @@ mod tests {
     #[test]
     fn server_message_event_round_trip() {
         let msg = ServerMessage::Event {
-            event: ConversationEvent::UserMessage {
+            event: SessionEvent::UserMessage {
                 content: "hello".to_string(),
                 timestamp: Utc::now(),
             },

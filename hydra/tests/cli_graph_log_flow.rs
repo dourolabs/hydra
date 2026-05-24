@@ -220,12 +220,13 @@ async fn log_conversation_uses_event_fold() -> Result<()> {
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
-    // The conversation should produce at least 2 events (the events endpoint
-    // yields several events from send_message + close_conversation), all
-    // attributed to this conversation id.
+    // The conversation events log carries only lifecycle events
+    // post-Phase-E step 18 (chat content moved to `SessionEvent`), so this
+    // scenario produces a single `Closed` event plus the initial `created`
+    // version.
     assert!(
-        records.len() >= 2,
-        "expected fold to produce >=2 events: {records:?}",
+        !records.is_empty(),
+        "expected fold to produce >=1 event: {records:?}",
     );
     for record in &records {
         assert_eq!(record["kind"].as_str(), Some("conversation"));

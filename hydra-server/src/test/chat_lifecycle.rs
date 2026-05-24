@@ -30,7 +30,7 @@ use hydra_common::{
             SendMessageRequest, ServerMessage, SessionStatePayload, WorkerCatchUp, WorkerConnect,
             WorkerMessage,
         },
-        sessions::{ListSessionsResponse, WorkerContext},
+        sessions::{ListSessionsResponse, SessionEvent, WorkerContext},
     },
 };
 use reqwest::StatusCode;
@@ -395,7 +395,7 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::Suspending {
+            event: SessionEvent::Suspending {
                 reason: "idle_timeout".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -498,7 +498,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "first agent reply".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -508,7 +508,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::Suspending {
+            event: SessionEvent::Suspending {
                 reason: "idle_timeout".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -555,8 +555,10 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     );
 
     // Inspect the resumed session's resume hint: conversation_resume_from
-    // should equal the event count captured before /resume appended Resumed.
-    // At suspend we had: UserMessage, AssistantMessage, Suspending = 3 events.
+    // should equal the conversation-event-log index just after the most
+    // recent Suspending. Post-Phase-E step 18 the conversation events log
+    // holds only lifecycle events, so at suspend the only event is the
+    // Suspending itself → index just after = 1.
     let resumed_session = store.get_session(&resumed_session_id, false).await?.item;
     assert!(
         resumed_session.is_interactive(),
@@ -564,7 +566,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     );
     assert_eq!(
         resumed_session.mode.conversation_resume_from(),
-        Some(3),
+        Some(1),
         "conversation_resume_from should equal pre-Resumed event count"
     );
 
@@ -595,7 +597,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     assert!(
         matches!(
             &catch_up.events[0],
-            ConversationEvent::UserMessage { content, .. } if content == "first user message"
+            SessionEvent::UserMessage { content, .. } if content == "first user message"
         ),
         "event[0] should be the initial user message, got {:?}",
         catch_up.events[0]
@@ -603,18 +605,18 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     assert!(
         matches!(
             &catch_up.events[1],
-            ConversationEvent::AssistantMessage { content, .. } if content == "first agent reply"
+            SessionEvent::AssistantMessage { content, .. } if content == "first agent reply"
         ),
         "event[1] should be the prior assistant reply, got {:?}",
         catch_up.events[1]
     );
     assert!(
-        matches!(catch_up.events[2], ConversationEvent::Suspending { .. }),
+        matches!(catch_up.events[2], SessionEvent::Suspending { .. }),
         "event[2] should be Suspending, got {:?}",
         catch_up.events[2]
     );
     assert!(
-        matches!(catch_up.events[3], ConversationEvent::Resumed { .. }),
+        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
         "event[3] should be Resumed, got {:?}",
         catch_up.events[3]
     );
@@ -638,7 +640,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         matches!(
             m,
             ServerMessage::Event {
-                event: ConversationEvent::UserMessage { content, .. }
+                event: SessionEvent::UserMessage { content, .. }
             } if content == "second user message"
         )
     });
@@ -762,13 +764,12 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         .await?
         .json()
         .await?;
-    // Expected: hi, follow up, Closed, Resumed, after resume
-    assert_eq!(events.len(), 5, "unexpected event sequence: {events:?}");
-    assert!(matches!(events[0], ConversationEvent::UserMessage { .. }));
-    assert!(matches!(events[1], ConversationEvent::UserMessage { .. }));
-    assert!(matches!(events[2], ConversationEvent::Closed { .. }));
-    assert!(matches!(events[3], ConversationEvent::Resumed { .. }));
-    assert!(matches!(events[4], ConversationEvent::UserMessage { .. }));
+    // The conversation events log holds only lifecycle events post-Phase-E
+    // step 18 (chat content lives on `SessionEvent`). Expected: Closed,
+    // Resumed.
+    assert_eq!(events.len(), 2, "unexpected event sequence: {events:?}");
+    assert!(matches!(events[0], ConversationEvent::Closed { .. }));
+    assert!(matches!(events[1], ConversationEvent::Resumed { .. }));
 
     Ok(())
 }
@@ -825,7 +826,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         matches!(
             &catch_up.events[0],
-            ConversationEvent::UserMessage { content, .. } if content == msg1
+            SessionEvent::UserMessage { content, .. } if content == msg1
         ),
         "first catch-up event should be msg1, got {:?}",
         catch_up.events[0]
@@ -834,7 +835,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     send_worker_message(
         &mut ws1,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "reply 1".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -858,7 +859,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         forwarded.iter().any(|m| matches!(
             m,
-            ServerMessage::Event { event: ConversationEvent::UserMessage { content, .. } }
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
                 if content == msg2
         )),
         "worker #1 should receive msg2 via the relay, got {forwarded:?}"
@@ -866,7 +867,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     send_worker_message(
         &mut ws1,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "reply 2".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -890,7 +891,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         forwarded.iter().any(|m| matches!(
             m,
-            ServerMessage::Event { event: ConversationEvent::UserMessage { content, .. } }
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
                 if content == msg3
         )),
         "worker #1 should receive msg3 via the relay, got {forwarded:?}"
@@ -898,7 +899,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     send_worker_message(
         &mut ws1,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "reply 3".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -911,7 +912,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     send_worker_message(
         &mut ws1,
         WorkerMessage::Event {
-            event: ConversationEvent::Suspending {
+            event: SessionEvent::Suspending {
                 reason: "idle_timeout".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1016,41 +1017,41 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         catch_up2.events
     );
     match &catch_up2.events[0] {
-        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg1),
+        SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg1),
         other => panic!("event[0] should be msg1 UserMessage, got {other:?}"),
     }
     match &catch_up2.events[1] {
-        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 1"),
+        SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 1"),
         other => panic!("event[1] should be reply 1 AssistantMessage, got {other:?}"),
     }
     match &catch_up2.events[2] {
-        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg2),
+        SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg2),
         other => panic!("event[2] should be msg2 UserMessage, got {other:?}"),
     }
     match &catch_up2.events[3] {
-        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 2"),
+        SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 2"),
         other => panic!("event[3] should be reply 2 AssistantMessage, got {other:?}"),
     }
     match &catch_up2.events[4] {
-        ConversationEvent::UserMessage { content, .. } => assert_eq!(content, msg3),
+        SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg3),
         other => panic!("event[4] should be msg3 UserMessage, got {other:?}"),
     }
     match &catch_up2.events[5] {
-        ConversationEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 3"),
+        SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 3"),
         other => panic!("event[5] should be reply 3 AssistantMessage, got {other:?}"),
     }
     assert!(
-        matches!(catch_up2.events[6], ConversationEvent::Suspending { .. }),
+        matches!(catch_up2.events[6], SessionEvent::Suspending { .. }),
         "event[6] should be Suspending, got {:?}",
         catch_up2.events[6]
     );
     assert!(
-        matches!(catch_up2.events[7], ConversationEvent::Closed { .. }),
+        matches!(catch_up2.events[7], SessionEvent::Closed { .. }),
         "event[7] should be Closed, got {:?}",
         catch_up2.events[7]
     );
     assert!(
-        matches!(catch_up2.events[8], ConversationEvent::Resumed { .. }),
+        matches!(catch_up2.events[8], SessionEvent::Resumed { .. }),
         "event[8] should be Resumed, got {:?}",
         catch_up2.events[8]
     );
@@ -1070,7 +1071,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         .error_for_status()?;
 
     let received_after_resume = drain_server_messages(&mut ws2, Duration::from_millis(500)).await?;
-    let event_forwards: Vec<&ConversationEvent> = received_after_resume
+    let event_forwards: Vec<&SessionEvent> = received_after_resume
         .iter()
         .filter_map(|m| match m {
             ServerMessage::Event { event } => Some(event),
@@ -1084,15 +1085,60 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
          a re-broadcast of msg1/2/3 would show up here. Got {event_forwards:?}"
     );
     match event_forwards[0] {
-        ConversationEvent::UserMessage { content, .. } => assert_eq!(
+        SessionEvent::UserMessage { content, .. } => assert_eq!(
             content, msg4,
             "the only forwarded event must be msg4, not a replay"
         ),
         other => panic!("forwarded event must be msg4 UserMessage, got {other:?}"),
     }
 
-    // Final cross-check via GET /events: exactly 4 user messages, 3 assistant
-    // messages, and one each of Suspending/Closed/Resumed — no duplicates.
+    // Final cross-check: chat content lives on the per-session `SessionEvent`
+    // log post-Phase-E-step-18. Walk every session linked to the conversation
+    // (in creation-time order) and concatenate their session-event logs.
+    let mut sessions = store
+        .list_sessions(&{
+            let mut q = hydra_common::api::v1::sessions::SearchSessionsQuery::default();
+            q.conversation_id = Some(conversation_id.clone());
+            q
+        })
+        .await?;
+    sessions.sort_by_key(|(_, v)| v.creation_time);
+
+    use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+    let mut all_session_events: Vec<DomainSessionEvent> = Vec::new();
+    for (sid, _) in &sessions {
+        let evs = store.get_session_events(sid).await?;
+        for v in evs {
+            all_session_events.push(v.item);
+        }
+    }
+
+    let user_messages: Vec<&str> = all_session_events
+        .iter()
+        .filter_map(|e| match e {
+            DomainSessionEvent::UserMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        user_messages,
+        vec![msg1, msg2, msg3, msg4],
+        "exactly 4 user messages in insertion order, no duplicates"
+    );
+    let assistant_messages: Vec<&str> = all_session_events
+        .iter()
+        .filter_map(|e| match e {
+            DomainSessionEvent::AssistantMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        assistant_messages,
+        vec!["reply 1", "reply 2", "reply 3"],
+        "exactly 3 assistant messages in insertion order, no duplicates"
+    );
+
+    // Lifecycle events still live on the conversation log.
     let final_events: Vec<ConversationEvent> = client
         .get(format!(
             "{}/v1/conversations/{conversation_id}/events",
@@ -1102,31 +1148,6 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         .await?
         .json()
         .await?;
-
-    let user_messages: Vec<&str> = final_events
-        .iter()
-        .filter_map(|e| match e {
-            ConversationEvent::UserMessage { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        user_messages,
-        vec![msg1, msg2, msg3, msg4],
-        "exactly 4 user messages in insertion order, no duplicates"
-    );
-    let assistant_messages: Vec<&str> = final_events
-        .iter()
-        .filter_map(|e| match e {
-            ConversationEvent::AssistantMessage { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        assistant_messages,
-        vec!["reply 1", "reply 2", "reply 3"],
-        "exactly 3 assistant messages in insertion order, no duplicates"
-    );
     let suspending_count = final_events
         .iter()
         .filter(|e| matches!(e, ConversationEvent::Suspending { .. }))
@@ -1187,7 +1208,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "first agent reply".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1273,7 +1294,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     assert!(
         matches!(
             &catch_up.events[0],
-            ConversationEvent::UserMessage { content, .. } if content == "first user message"
+            SessionEvent::UserMessage { content, .. } if content == "first user message"
         ),
         "event[0] should be the initial user message, got {:?}",
         catch_up.events[0]
@@ -1281,19 +1302,19 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     assert!(
         matches!(
             &catch_up.events[1],
-            ConversationEvent::AssistantMessage { content, .. } if content == "first agent reply"
+            SessionEvent::AssistantMessage { content, .. } if content == "first agent reply"
         ),
         "event[1] should be the prior assistant reply (the key context the \
          worker would otherwise have lost), got {:?}",
         catch_up.events[1]
     );
     assert!(
-        matches!(catch_up.events[2], ConversationEvent::Closed { .. }),
+        matches!(catch_up.events[2], SessionEvent::Closed { .. }),
         "event[2] should be Closed, got {:?}",
         catch_up.events[2]
     );
     assert!(
-        matches!(catch_up.events[3], ConversationEvent::Resumed { .. }),
+        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
         "event[3] should be Resumed, got {:?}",
         catch_up.events[3]
     );
@@ -1341,7 +1362,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "reply".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1359,7 +1380,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::Suspending {
+            event: SessionEvent::Suspending {
                 reason: "idle_timeout".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1669,7 +1690,7 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     let saw_in_catch_up = catch_up.events.iter().any(|e| {
         matches!(
             e,
-            ConversationEvent::UserMessage { content, .. } if content == "hello"
+            SessionEvent::UserMessage { content, .. } if content == "hello"
         )
     });
 
@@ -1681,7 +1702,7 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
             matches!(
                 m,
                 ServerMessage::Event {
-                    event: ConversationEvent::UserMessage { content, .. },
+                    event: SessionEvent::UserMessage { content, .. },
                 } if content == "hello"
             )
         })
@@ -1737,7 +1758,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::AssistantMessage {
+            event: SessionEvent::AssistantMessage {
                 content: "reply 1".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1761,7 +1782,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
-            event: ConversationEvent::Suspending {
+            event: SessionEvent::Suspending {
                 reason: "idle_timeout".to_string(),
                 timestamp: chrono::Utc::now(),
             },
@@ -1811,26 +1832,8 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
 
     // ---- Assertions ----
 
-    // ConversationEvent log (the existing source of truth).
+    // ConversationEvent log (lifecycle only post-Phase-E step 18).
     let convo_events = store.get_conversation_events(&conversation_id).await?;
-    let convo_user: usize = convo_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e.item,
-                crate::domain::conversations::ConversationEvent::UserMessage { .. }
-            )
-        })
-        .count();
-    let convo_assistant: usize = convo_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e.item,
-                crate::domain::conversations::ConversationEvent::AssistantMessage { .. }
-            )
-        })
-        .count();
     let convo_suspending: usize = convo_events
         .iter()
         .filter(|e| {
@@ -1858,8 +1861,6 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
             )
         })
         .count();
-    assert_eq!(convo_user, 2, "convo UserMessage count");
-    assert_eq!(convo_assistant, 1, "convo AssistantMessage count");
     assert_eq!(convo_suspending, 1, "convo Suspending count");
     assert_eq!(convo_resumed, 1, "convo Resumed count");
     assert_eq!(convo_closed, 1, "convo Closed count");
@@ -1907,13 +1908,13 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
         .chain(s2_events.iter())
         .filter(|e| matches!(e, DomainSessionEvent::Closed { .. }))
         .count();
-    // The initial UserMessage from POST /v1/conversations is appended
-    // *before* `SpawnConversationSessionsAutomation` creates s1, so the
-    // dual-write at that instant has no session to attach to and is
-    // skipped (logged at warn-level by the helper). That gap is filled by
-    // step 8's historical backfill, which is out of scope for this PR.
-    // The follow-up UserMessage is the one we expect to see here.
-    assert_eq!(total_user, 1, "dual-write UserMessage count (s1+s2)");
+    // Both UserMessages land on a session: send_message now waits briefly
+    // for the spawn-conversation-sessions automation to produce the
+    // companion session before writing, so the initial create_conversation
+    // message no longer races and is captured on s1, and the follow-up
+    // lands on either s1 (if the relay-map still pointed there) or s2
+    // depending on timing.
+    assert_eq!(total_user, 2, "session-event UserMessage count (s1+s2)");
     assert_eq!(
         total_assistant, 1,
         "dual-write AssistantMessage count (s1+s2)"
@@ -2006,10 +2007,13 @@ async fn get_session_events_route_returns_events() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let events: Vec<serde_json::Value> = response.json().await?;
+    // Post-Phase-E step 18 the seed "seed" UserMessage from
+    // create_conversation also lands on the session event log, so filter by
+    // content rather than picking the first user_message.
     let user = events
         .iter()
-        .find(|e| e["type"] == "user_message")
-        .expect("session events must contain a user_message");
+        .find(|e| e["type"] == "user_message" && e["content"] == "hello agent")
+        .expect("session events must contain the appended user_message");
     assert_eq!(user["content"], "hello agent");
     let assistant = events
         .iter()

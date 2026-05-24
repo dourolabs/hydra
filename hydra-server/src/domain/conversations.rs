@@ -29,14 +29,6 @@ pub struct Conversation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConversationEvent {
-    UserMessage {
-        content: String,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
-    AssistantMessage {
-        content: String,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
     Suspending {
         reason: String,
         timestamp: chrono::DateTime<chrono::Utc>,
@@ -53,21 +45,7 @@ pub enum ConversationEvent {
 impl ConversationEvent {
     /// Returns a short preview string for this event, suitable for summaries.
     pub fn preview(&self) -> String {
-        const MAX_LEN: usize = 100;
-
-        fn truncate(content: &str, prefix: &str) -> String {
-            let remaining = MAX_LEN.saturating_sub(prefix.len());
-            if content.len() <= remaining {
-                format!("{prefix}{content}")
-            } else {
-                let truncated: String = content.chars().take(remaining).collect();
-                format!("{prefix}{truncated}…")
-            }
-        }
-
         match self {
-            ConversationEvent::UserMessage { content, .. } => truncate(content, "User: "),
-            ConversationEvent::AssistantMessage { content, .. } => truncate(content, "Assistant: "),
             ConversationEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
             ConversationEvent::Resumed { .. } => "Resumed".to_string(),
             ConversationEvent::Closed { .. } => "Closed".to_string(),
@@ -100,12 +78,6 @@ impl From<ConversationStatus> for api::conversations::ConversationStatus {
 impl From<api::conversations::ConversationEvent> for ConversationEvent {
     fn from(value: api::conversations::ConversationEvent) -> Self {
         match value {
-            api::conversations::ConversationEvent::UserMessage { content, timestamp } => {
-                ConversationEvent::UserMessage { content, timestamp }
-            }
-            api::conversations::ConversationEvent::AssistantMessage { content, timestamp } => {
-                ConversationEvent::AssistantMessage { content, timestamp }
-            }
             api::conversations::ConversationEvent::Suspending { reason, timestamp } => {
                 ConversationEvent::Suspending { reason, timestamp }
             }
@@ -126,12 +98,6 @@ impl From<api::conversations::ConversationEvent> for ConversationEvent {
 impl From<ConversationEvent> for api::conversations::ConversationEvent {
     fn from(value: ConversationEvent) -> Self {
         match value {
-            ConversationEvent::UserMessage { content, timestamp } => {
-                api::conversations::ConversationEvent::UserMessage { content, timestamp }
-            }
-            ConversationEvent::AssistantMessage { content, timestamp } => {
-                api::conversations::ConversationEvent::AssistantMessage { content, timestamp }
-            }
             ConversationEvent::Suspending { reason, timestamp } => {
                 api::conversations::ConversationEvent::Suspending { reason, timestamp }
             }

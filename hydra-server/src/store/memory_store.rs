@@ -8128,8 +8128,8 @@ mod tests {
         let events = store.get_conversation_events(&id).await.unwrap();
         assert!(events.is_empty());
 
-        let event = ConversationEvent::UserMessage {
-            content: "Hello!".to_string(),
+        let event = ConversationEvent::Suspending {
+            reason: "idle".to_string(),
             timestamp: Utc::now(),
         };
         let v1 = store
@@ -8139,8 +8139,7 @@ mod tests {
         assert_eq!(v1.conversation_id, id);
         assert_eq!(v1.event_index, 0);
 
-        let event2 = ConversationEvent::AssistantMessage {
-            content: "Hi there!".to_string(),
+        let event2 = ConversationEvent::Closed {
             timestamp: Utc::now(),
         };
         let v2 = store
@@ -8175,8 +8174,8 @@ mod tests {
         store
             .append_conversation_event(
                 &id,
-                ConversationEvent::UserMessage {
-                    content: "hi".to_string(),
+                ConversationEvent::Suspending {
+                    reason: "idle".to_string(),
                     timestamp: ts1,
                 },
                 &test_actor(),
@@ -8210,8 +8209,8 @@ mod tests {
             versions.last().unwrap().item.status,
             ConversationStatus::Closed
         );
-        // Mid-stream snapshot for the user message is Active.
-        assert_eq!(versions[0].item.status, ConversationStatus::Active);
+        // Mid-stream snapshot for the Suspending event is Idle.
+        assert_eq!(versions[0].item.status, ConversationStatus::Idle);
     }
 
     #[tokio::test]
@@ -8386,8 +8385,8 @@ mod tests {
         store
             .append_conversation_event(
                 &id1,
-                ConversationEvent::UserMessage {
-                    content: "Hello".to_string(),
+                ConversationEvent::Suspending {
+                    reason: "idle".to_string(),
                     timestamp: chrono::Utc::now(),
                 },
                 &test_actor(),
@@ -8397,8 +8396,7 @@ mod tests {
         store
             .append_conversation_event(
                 &id1,
-                ConversationEvent::AssistantMessage {
-                    content: "Hi there".to_string(),
+                ConversationEvent::Closed {
                     timestamp: chrono::Utc::now(),
                 },
                 &test_actor(),
@@ -8410,8 +8408,8 @@ mod tests {
         store
             .append_conversation_event(
                 &id2,
-                ConversationEvent::UserMessage {
-                    content: "Goodbye".to_string(),
+                ConversationEvent::Suspending {
+                    reason: "sigterm".to_string(),
                     timestamp: chrono::Utc::now(),
                 },
                 &test_actor(),
@@ -8426,18 +8424,18 @@ mod tests {
             .await
             .unwrap();
 
-        // Conversation 1: 2 events, last is assistant message
+        // Conversation 1: 2 events, last is Closed
         let s1 = summaries.get(&id1).expect("should have summary for id1");
         assert_eq!(s1.event_count, 2);
-        assert_eq!(
-            s1.last_event_preview.as_deref(),
-            Some("Assistant: Hi there")
-        );
+        assert_eq!(s1.last_event_preview.as_deref(), Some("Closed"));
 
         // Conversation 2: 1 event
         let s2 = summaries.get(&id2).expect("should have summary for id2");
         assert_eq!(s2.event_count, 1);
-        assert_eq!(s2.last_event_preview.as_deref(), Some("User: Goodbye"));
+        assert_eq!(
+            s2.last_event_preview.as_deref(),
+            Some("Suspending: sigterm")
+        );
 
         // Conversation 3: no events, omitted
         assert!(!summaries.contains_key(&id3));

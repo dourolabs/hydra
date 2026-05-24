@@ -13,8 +13,9 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use hydra_common::SessionId;
 use hydra_common::api::v1::conversations::{
-    ConversationEvent, ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
+    ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
 };
+use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent};
 use tracing::{error, info, warn};
 
 use super::{ApiError, SessionIdPath};
@@ -257,10 +258,23 @@ async fn build_catch_up(
     session_id: &SessionId,
     worker_connect: &WorkerConnect,
 ) -> Result<WorkerCatchUp, StoreError> {
-    let all_events = state
-        .store()
-        .get_conversation_events(conversation_id)
-        .await?;
+    // Source prior chat history from `SessionEvent` across every session
+    // linked to the conversation, in session creation-time order. This
+    // mirrors the frontend read path (`useChatTranscript`) per design §3.4.1
+    // and replaces the legacy `ConversationEvent`-driven catch-up that
+    // Phase E step 18 removed.
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    let mut sessions = state.store().list_sessions(&query).await?;
+    sessions.sort_by_key(|(_, v)| v.creation_time);
+
+    let mut all_events: Vec<SessionEvent> = Vec::new();
+    for (sid, _) in &sessions {
+        let session_events = state.store().get_session_events(sid).await?;
+        for v in session_events {
+            all_events.push(v.item.into());
+        }
+    }
 
     let (skip_count, include_session_state) = match worker_connect {
         WorkerConnect::Fresh { .. } => (0, true),
@@ -269,11 +283,7 @@ async fn build_catch_up(
         } => (last_received_event_index + 1, false),
     };
 
-    let events: Vec<ConversationEvent> = all_events
-        .into_iter()
-        .skip(skip_count)
-        .map(|v| v.item.into())
-        .collect();
+    let events: Vec<SessionEvent> = all_events.into_iter().skip(skip_count).collect();
 
     // Per Phase E of the sessions-orthogonality redesign, session_state is keyed
     // on the session that produced it. For a fresh resume the producing session
@@ -308,39 +318,67 @@ async fn build_catch_up(
     })
 }
 
-/// Handle a conversation event sent by the worker.
+/// Handle a session event sent by the worker.
 ///
-/// The `Suspending` event is recorded in the conversation log (worker's
-/// record of why it suspended) but does NOT mutate the conversation's status
-/// here. The worker exiting after a Suspending event lets the job engine drive
-/// the session to `Complete` / `Failed`; `SpawnConversationSessionsAutomation`
+/// The `Suspending` event is recorded on the session log (worker's record of
+/// why it suspended) but does NOT mutate the conversation's status here. The
+/// worker exiting after a Suspending event lets the job engine drive the
+/// session to `Complete` / `Failed`; `SpawnConversationSessionsAutomation`
 /// then flips the conversation `Active → Idle` from that terminal transition.
+///
+/// `Suspending` and `Closed` ARE additionally mirrored onto the conversation
+/// events log (lifecycle history); chat content (`UserMessage` /
+/// `AssistantMessage`) lives only on the session log per Phase E step 18.
 async fn handle_worker_event(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
     session_id: &SessionId,
     actor_ref: &ActorRef,
-    event: ConversationEvent,
+    event: SessionEvent,
 ) -> Result<(), StoreError> {
-    let domain_event: crate::domain::conversations::ConversationEvent = event.into();
+    let domain_event: crate::domain::sessions::SessionEvent = match event.try_into() {
+        Ok(e) => e,
+        Err(_) => {
+            warn!(%session_id, "worker emitted an unknown SessionEvent variant; ignoring");
+            return Ok(());
+        }
+    };
     state
         .store
-        .append_conversation_event_with_actor(
-            conversation_id,
-            domain_event.clone(),
-            actor_ref.clone(),
-        )
+        .append_session_event_with_actor(session_id, domain_event.clone(), actor_ref.clone())
         .await?;
-    // Dual-write the equivalent SessionEvent onto the worker's session (Phase
-    // C step 7 of the sessions-orthogonality redesign).
-    if let Some(session_event) = chat_relay::conversation_event_to_session_event(&domain_event) {
-        let _ = chat_relay::dual_write_session_event(
-            state,
-            session_id,
-            session_event,
-            actor_ref.clone(),
-        )
-        .await;
+
+    // Mirror lifecycle events (Suspending / Closed) onto the conversation
+    // events log so the conversation's lifecycle history stays observable
+    // through the legacy `ConversationEvent` SSE / read paths.
+    if let Some(conv_event) = session_event_to_lifecycle_conversation_event(&domain_event) {
+        let _ = state
+            .store
+            .append_conversation_event_with_actor(conversation_id, conv_event, actor_ref.clone())
+            .await;
     }
     Ok(())
+}
+
+/// Map a worker-emitted [`SessionEvent`] onto the corresponding lifecycle
+/// [`crate::domain::conversations::ConversationEvent`], if any. Used by the
+/// relay handler to mirror Suspending / Closed onto the conversation events
+/// log. Returns `None` for chat-content variants (UserMessage /
+/// AssistantMessage), which intentionally do not appear in the conversation
+/// events log post-Phase-E-step-18.
+fn session_event_to_lifecycle_conversation_event(
+    event: &crate::domain::sessions::SessionEvent,
+) -> Option<crate::domain::conversations::ConversationEvent> {
+    use crate::domain::conversations::ConversationEvent as ConvEvent;
+    use crate::domain::sessions::SessionEvent as SEvent;
+    match event {
+        SEvent::Suspending { reason, timestamp } => Some(ConvEvent::Suspending {
+            reason: reason.clone(),
+            timestamp: *timestamp,
+        }),
+        SEvent::Closed { timestamp } => Some(ConvEvent::Closed {
+            timestamp: *timestamp,
+        }),
+        _ => None,
+    }
 }

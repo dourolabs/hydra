@@ -5269,8 +5269,6 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("failed to serialize conversation event: {e}"))
         })?;
         let event_type = match &event {
-            ConversationEvent::UserMessage { .. } => "user_message",
-            ConversationEvent::AssistantMessage { .. } => "assistant_message",
             ConversationEvent::Suspending { .. } => "suspending",
             ConversationEvent::Resumed { .. } => "resumed",
             ConversationEvent::Closed { .. } => "closed",
@@ -9133,8 +9131,8 @@ mod tests {
         assert_eq!(fetched2.item.status, ConversationStatus::Idle);
 
         // -- Append events --
-        let event1 = ConversationEvent::UserMessage {
-            content: "Hello".to_string(),
+        let event1 = ConversationEvent::Suspending {
+            reason: "idle".to_string(),
             timestamp: Utc::now(),
         };
         let ev1_id = store
@@ -9144,8 +9142,7 @@ mod tests {
         assert_eq!(ev1_id.conversation_id, conv_id);
         assert_eq!(ev1_id.event_index, 0);
 
-        let event2 = ConversationEvent::AssistantMessage {
-            content: "Hi there!".to_string(),
+        let event2 = ConversationEvent::Closed {
             timestamp: Utc::now(),
         };
         let ev2_id = store

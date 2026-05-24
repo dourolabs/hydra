@@ -365,11 +365,10 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
     assert!(!summaries.is_empty());
 
     let summary = &summaries[0];
-    assert!(
-        summary.event_count > 0,
-        "expected event_count > 0, got {}",
-        summary.event_count
-    );
+    // `event_count` is computed from the conversation events log; chat
+    // content lives on the per-session SessionEvent log post-Phase-E step 18,
+    // so a freshly-created conversation has no entries here yet.
+    assert_eq!(summary.event_count, 0);
 
     Ok(())
 }
@@ -403,10 +402,14 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
+    // The conversation events log holds only lifecycle events post-Phase-E
+    // step 18 (chat content moved to `SessionEvent`); a freshly-created
+    // conversation has no lifecycle entries yet.
     let events: Vec<serde_json::Value> = response.json().await?;
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["type"], "user_message");
-    assert_eq!(events[0]["content"], "What is Rust?");
+    assert!(
+        events.is_empty(),
+        "expected no lifecycle events, got {events:?}"
+    );
 
     Ok(())
 }
@@ -445,15 +448,17 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let event: ConversationEvent = response.json().await?;
+    let event: hydra_common::api::v1::sessions::SessionEvent = response.json().await?;
     match event {
-        ConversationEvent::UserMessage { content, .. } => {
+        hydra_common::api::v1::sessions::SessionEvent::UserMessage { content, .. } => {
             assert_eq!(content, "Follow-up message");
         }
         other => panic!("expected UserMessage, got {other:?}"),
     }
 
-    // Verify events list now has 2 events
+    // Chat content lives on the per-session SessionEvent log post-Phase-E
+    // step 18; the conversation events log is for lifecycle only and is
+    // empty for a freshly-created, never-suspended conversation.
     let events: Vec<serde_json::Value> = client
         .get(format!(
             "{}/v1/conversations/{}/events",
@@ -464,7 +469,7 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
         .await?
         .json()
         .await?;
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 0);
 
     Ok(())
 }
@@ -535,7 +540,11 @@ async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()
     // spawn is async, the *order* of `Resumed` vs the new `UserMessage` is
     // no longer guaranteed in the event log — the test only verifies both
     // are present.
-    let events = poll_until(POLL_TIMEOUT, || async {
+    // Wait for the Resumed event on the conversation lifecycle log; the new
+    // UserMessage (`back from the dead`) lives on the per-session
+    // SessionEvent log post-Phase-E step 18 and the test only asserts on
+    // the conversation lifecycle here.
+    let _ = poll_until(POLL_TIMEOUT, || async {
         let events: Vec<ConversationEvent> = client
             .get(format!(
                 "{}/v1/conversations/{}/events",
@@ -555,13 +564,6 @@ async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()
     })
     .await
     .expect("expected a Resumed event after resume-on-send");
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            ConversationEvent::UserMessage { content, .. } if content == "back from the dead"
-        )),
-        "expected the new UserMessage to be appended in the event log, got {events:?}"
-    );
 
     Ok(())
 }
@@ -842,12 +844,11 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify all events are recorded. The resume produces a `Resumed` event
-    // asynchronously via the automation, so poll until it appears. The
-    // relative order of `Resumed` and the post-resume `UserMessage` is no
-    // longer guaranteed (it depends on whether the automation processes the
-    // status flip before or after the new UserMessage is appended), so this
-    // test only verifies the multi-set of event types is correct.
+    // Verify all lifecycle events are recorded. Chat-content events
+    // (user_message) live on the per-session SessionEvent log post-Phase-E
+    // step 18 — only lifecycle events (closed, resumed) appear here. The
+    // resume produces a `Resumed` event asynchronously via the automation,
+    // so poll until it appears.
     let events = poll_until(POLL_TIMEOUT, || async {
         let events: Vec<serde_json::Value> = client
             .get(format!(
@@ -868,24 +869,10 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
     })
     .await
     .expect("expected a Resumed event in the event log after resume");
-    // Expected event multiset: 3× user_message, 1× closed, 1× resumed.
-    assert_eq!(events.len(), 5, "got events: {events:?}");
-    let user_message_count = events
-        .iter()
-        .filter(|e| e["type"] == "user_message")
-        .count();
     let closed_count = events.iter().filter(|e| e["type"] == "closed").count();
     let resumed_count = events.iter().filter(|e| e["type"] == "resumed").count();
-    assert_eq!(user_message_count, 3, "got events: {events:?}");
     assert_eq!(closed_count, 1, "got events: {events:?}");
     assert_eq!(resumed_count, 1, "got events: {events:?}");
-    // The first two events were written synchronously by create_conversation
-    // + send_message and must appear in chronological order; the close event
-    // came next. Everything after the close (Resumed and the post-resume
-    // UserMessage) is order-flexible per the async automation.
-    assert_eq!(events[0]["type"], "user_message");
-    assert_eq!(events[1]["type"], "user_message");
-    assert_eq!(events[2]["type"], "closed");
 
     Ok(())
 }

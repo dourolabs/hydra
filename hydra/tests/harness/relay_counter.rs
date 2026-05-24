@@ -461,7 +461,7 @@ impl HydraClientInterface for RelayCallCountingClient {
         &self,
         conversation_id: &ConversationId,
         request: &SendMessageRequest,
-    ) -> Result<ApiConversationEvent> {
+    ) -> Result<hydra_common::api::v1::sessions::SessionEvent> {
         self.inner.send_message(conversation_id, request).await
     }
 

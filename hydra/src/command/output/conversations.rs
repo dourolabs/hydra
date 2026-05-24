@@ -57,12 +57,6 @@ impl Render for ConversationView<'_> {
             writeln!(writer, "Transcript:")?;
             for event in self.events {
                 match event {
-                    ApiConversationEvent::UserMessage { content, timestamp } => {
-                        writeln!(writer, "  [{timestamp}] user: {content}")?;
-                    }
-                    ApiConversationEvent::AssistantMessage { content, timestamp } => {
-                        writeln!(writer, "  [{timestamp}] assistant: {content}")?;
-                    }
                     ApiConversationEvent::Suspending { reason, timestamp } => {
                         writeln!(writer, "  [{timestamp}] suspending: {reason}")?;
                     }
