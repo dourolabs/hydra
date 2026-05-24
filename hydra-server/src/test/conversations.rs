@@ -365,10 +365,10 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
     assert!(!summaries.is_empty());
 
     let summary = &summaries[0];
-    // `event_count` is computed from the conversation events log; chat
-    // content lives on the per-session SessionEvent log post-Phase-E step 18,
-    // so a freshly-created conversation has no entries here yet.
-    assert_eq!(summary.event_count, 0);
+    // `event_count` aggregates chat-text SessionEvents across every session
+    // linked to the conversation. Creating with `message: "Hello!"` spawns an
+    // interactive session and writes one `UserMessage` to it.
+    assert_eq!(summary.event_count, 1);
 
     Ok(())
 }

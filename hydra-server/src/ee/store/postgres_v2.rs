@@ -4046,12 +4046,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
 
-        // Query 1: ConversationEvent count per conversation_id.
+        // Query 1: Chat-text SessionEvent count per conversation_id —
+        // summed across every live session linked to the conversation.
+        // ConversationEvents are lifecycle-only post Phase E step 18 and
+        // do not contribute to the count.
         let count_query = format!(
-            "SELECT conversation_id, COUNT(*) AS event_count \
-             FROM {TABLE_CONVERSATION_EVENTS_V2} \
-             WHERE conversation_id = ANY($1) \
-             GROUP BY conversation_id"
+            "SELECT t.conversation_id AS conversation_id, COUNT(*) AS event_count \
+             FROM {TABLE_SESSION_EVENTS_V2} e \
+             JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
+                 AND t.is_latest = TRUE \
+                 AND t.deleted = FALSE \
+             WHERE t.conversation_id = ANY($1) \
+               AND e.event_type IN ('user_message', 'assistant_message') \
+             GROUP BY t.conversation_id"
         );
         let count_rows = sqlx::query_as::<_, ConversationEventCountRow>(&count_query)
             .bind(&id_strings)
@@ -9826,22 +9833,26 @@ mod tests {
             .await
             .unwrap();
 
-        let s = summaries.get(&conv_only_lifecycle).expect("lifecycle conv");
-        assert_eq!(s.event_count, 2);
-        assert_eq!(s.last_event_preview, None);
+        // Lifecycle-only ConversationEvents don't contribute to event_count,
+        // and the conversation has no sessions → omitted entirely.
+        assert!(!summaries.contains_key(&conv_only_lifecycle));
 
         let s = summaries.get(&conv_user_only).expect("user-only conv");
-        assert_eq!(s.event_count, 0);
+        assert_eq!(s.event_count, 1);
         assert_eq!(s.last_event_preview.as_deref(), Some("User: hello"));
 
         let s = summaries
             .get(&conv_user_then_assistant)
             .expect("user+assistant conv");
-        assert_eq!(s.event_count, 1);
+        // 2 chat-text events across the single linked session; the lifecycle
+        // ConversationEvent is excluded.
+        assert_eq!(s.event_count, 2);
         assert_eq!(s.last_event_preview.as_deref(), Some("Assistant: hey"));
 
         let s = summaries.get(&conv_cross_session).expect("cross-session");
-        assert_eq!(s.event_count, 0);
+        // Only the older session has a chat-text event; the newer session's
+        // ToolUse / Closed lifecycle events don't count.
+        assert_eq!(s.event_count, 1);
         assert_eq!(s.last_event_preview.as_deref(), Some("User: from old"));
 
         assert!(!summaries.contains_key(&conv_empty));
@@ -9906,10 +9917,111 @@ mod tests {
             .await
             .unwrap();
         let s = summaries.get(&conv).expect("summary present");
+        // Both sessions contribute one chat-text event each.
+        assert_eq!(s.event_count, 2);
         assert_eq!(
             s.last_event_preview.as_deref(),
             Some("Assistant: from newer")
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn conversation_event_summaries_sums_chat_text_across_sessions_v2(pool: PgStorePool) {
+        // Regression test for the chat-list "Messages" column: when a
+        // conversation has multiple sessions (close → resume), the count
+        // must sum chat-text events across every session, not just the
+        // latest. ToolUse / lifecycle events are excluded.
+        let store = PostgresStoreV2::new(pool);
+        let (conv, _) = store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let t_old = Utc::now() - chrono::Duration::seconds(60);
+        let (sid_old, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                t_old,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        for content in ["one", "two"] {
+            store
+                .append_session_event(
+                    &sid_old,
+                    SessionEvent::UserMessage {
+                        content: content.to_string(),
+                        timestamp: Utc::now(),
+                    },
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .append_session_event(
+                &sid_old,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let (sid_new, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::UserMessage {
+                    content: "three".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::ToolUse {
+                    tool_name: "bash".to_string(),
+                    payload: serde_json::json!({}),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &sid_new,
+                SessionEvent::AssistantMessage {
+                    content: "four".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        // 2 chat-text events on the old session + 2 on the new session = 4.
+        assert_eq!(s.event_count, 4);
+        assert_eq!(s.last_event_preview.as_deref(), Some("Assistant: four"));
     }
 
     #[sqlx::test(migrations = "./migrations")]

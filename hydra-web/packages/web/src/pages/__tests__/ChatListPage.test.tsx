@@ -343,6 +343,47 @@ describe("ChatListPage New Chat button", () => {
     cleanup();
   });
 
+  it("renders the Messages count as the sum across sessions (multi-session conversation)", () => {
+    // Regression test for the chat-list "Messages" column previously reading
+    // only the latest session's events. The summary is computed server-side
+    // by aggregating chat-text SessionEvents across every session linked to
+    // the conversation; here we verify the table renders that aggregate
+    // verbatim — i.e. a conversation whose two prior sessions had 4 and 7
+    // messages respectively surfaces as `11`, not `7`.
+    mockConversations = [
+      {
+        conversation_id: "c-multi",
+        title: "Two-session chat",
+        agent_name: null,
+        status: "active",
+        event_count: 11,
+        last_event_preview: "Assistant: …",
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-19T00:00:00Z",
+      },
+      {
+        conversation_id: "c-single",
+        title: "Single-session chat",
+        agent_name: null,
+        status: "active",
+        event_count: 3,
+        last_event_preview: "User: hi",
+        creator: "alice",
+        created_at: "2026-05-19T00:00:00Z",
+        updated_at: "2026-05-18T23:00:00Z",
+      },
+    ];
+    render(<ChatListPage />);
+
+    const multiRow = screen.getByTestId("chats-list-row-c-multi");
+    expect(multiRow.textContent).toContain("11");
+    const singleRow = screen.getByTestId("chats-list-row-c-single");
+    expect(singleRow.textContent).toContain("3");
+
+    cleanup();
+  });
+
   it("renders literal Active / Idle / Closed status labels on chat rows", () => {
     mockConversations = [
       {

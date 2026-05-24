@@ -1718,33 +1718,41 @@ impl ReadOnlyStore for MemoryStore {
     ) -> Result<HashMap<ConversationId, ConversationEventSummary>, StoreError> {
         let mut result = HashMap::new();
         for id in ids {
-            let event_count = self
-                .conversation_events
-                .get(id)
-                .map(|entry| entry.value().len())
-                .unwrap_or(0);
-
-            // Walk linked sessions latest-first; within each session walk events
-            // in reverse append order looking for the first chat-text event
-            // (UserMessage / AssistantMessage). ToolUse, Suspending, Resumed,
-            // and Closed are skipped — only chat text is surfaced.
+            // Walk every session linked to this conversation and sum the
+            // chat-text events (UserMessage / AssistantMessage). ToolUse,
+            // Suspending, Resumed, and Closed are excluded — they are
+            // bookkeeping rather than messages the user sees in the column.
+            // ConversationEvents are lifecycle-only post Phase E step 18 and
+            // do not contribute to the count.
+            //
+            // While we're walking sessions, also pick the most recent
+            // chat-text event for `last_event_preview`. Sessions are ordered
+            // newest-last by `list_session_ids_by_conversation_id`; walking
+            // them in reverse lets us short-circuit the preview lookup as
+            // soon as we find one.
             let session_ids = self.list_session_ids_by_conversation_id(id).await?;
+            let mut event_count: usize = 0;
             let mut last_event_preview = None;
-            for sid in session_ids.into_iter().rev() {
-                if let Some(events_entry) = self.session_events.get(&sid) {
-                    let preview =
-                        events_entry
-                            .value()
-                            .iter()
-                            .rev()
-                            .find_map(|(_seq, v)| match v.item {
+            for sid in session_ids.iter().rev() {
+                if let Some(events_entry) = self.session_events.get(sid) {
+                    let events = events_entry.value();
+                    event_count += events
+                        .iter()
+                        .filter(|(_seq, v)| {
+                            matches!(
+                                v.item,
+                                SessionEvent::UserMessage { .. }
+                                    | SessionEvent::AssistantMessage { .. }
+                            )
+                        })
+                        .count();
+                    if last_event_preview.is_none() {
+                        last_event_preview =
+                            events.iter().rev().find_map(|(_seq, v)| match v.item {
                                 SessionEvent::UserMessage { .. }
                                 | SessionEvent::AssistantMessage { .. } => Some(v.item.preview()),
                                 _ => None,
                             });
-                    if preview.is_some() {
-                        last_event_preview = preview;
-                        break;
                     }
                 }
             }
@@ -8394,7 +8402,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_conversation_event_summaries_counts_lifecycle_events_only() {
+    async fn get_conversation_event_summaries_ignores_lifecycle_conversation_events() {
         let store = MemoryStore::new();
         let (id1, _) = store
             .add_conversation(sample_conversation(), &test_actor())
@@ -8410,8 +8418,9 @@ mod tests {
             .unwrap();
 
         // Conversation 1: 2 lifecycle ConversationEvents and no sessions.
-        // event_count == 2, but preview is None because lifecycle strings must
-        // never bleed into `last_event_preview`.
+        // event_count counts chat-text SessionEvents only, so lifecycle
+        // ConversationEvents (Suspending / Closed) do not contribute. With no
+        // sessions, the result is omitted from the map.
         store
             .append_conversation_event(
                 &id1,
@@ -8454,15 +8463,10 @@ mod tests {
             .await
             .unwrap();
 
-        let s1 = summaries.get(&id1).expect("should have summary for id1");
-        assert_eq!(s1.event_count, 2);
-        assert_eq!(s1.last_event_preview, None);
-
-        let s2 = summaries.get(&id2).expect("should have summary for id2");
-        assert_eq!(s2.event_count, 1);
-        assert_eq!(s2.last_event_preview, None);
-
-        // Conversation 3: no events at all, omitted.
+        // None of the three conversations have any chat-text SessionEvents,
+        // so none of them appear in the summary map.
+        assert!(!summaries.contains_key(&id1));
+        assert!(!summaries.contains_key(&id2));
         assert!(!summaries.contains_key(&id3));
     }
 
@@ -8498,8 +8502,8 @@ mod tests {
             .await
             .unwrap();
         let s = summaries.get(&conv).expect("summary present");
-        // No ConversationEvents — count is 0.
-        assert_eq!(s.event_count, 0);
+        // One chat-text SessionEvent on the linked session.
+        assert_eq!(s.event_count, 1);
         assert_eq!(s.last_event_preview.as_deref(), Some("User: hello world"));
     }
 
@@ -8546,6 +8550,8 @@ mod tests {
             .await
             .unwrap();
         let s = summaries.get(&conv).expect("summary present");
+        // Two chat-text events appended to the same session.
+        assert_eq!(s.event_count, 2);
         assert_eq!(
             s.last_event_preview.as_deref(),
             Some("Assistant: hey there")
@@ -8627,6 +8633,9 @@ mod tests {
             .await
             .unwrap();
         let s = summaries.get(&conv).expect("summary present");
+        // Only the older session has a chat-text event; the newer session's
+        // ToolUse / Suspending / Closed lifecycle events don't count.
+        assert_eq!(s.event_count, 1);
         assert_eq!(
             s.last_event_preview.as_deref(),
             Some("User: early greeting")
@@ -8733,10 +8742,125 @@ mod tests {
             .await
             .unwrap();
         let s = summaries.get(&conv).expect("summary present");
+        // Both sessions contribute one chat-text event each.
+        assert_eq!(s.event_count, 2);
         assert_eq!(
             s.last_event_preview.as_deref(),
             Some("Assistant: from newer session")
         );
+    }
+
+    #[tokio::test]
+    async fn get_conversation_event_summaries_sums_chat_text_across_sessions() {
+        // Regression test for the chat-list "Messages" column: when a
+        // conversation has multiple sessions (close → resume), the count must
+        // sum chat-text events across every session, not just the most recent.
+        let store = MemoryStore::new();
+        let (conv, _) = store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        // First (closed) session — two messages.
+        let (s_old, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now() - chrono::Duration::seconds(30),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        for content in ["one", "two"] {
+            store
+                .append_session_event(
+                    &s_old,
+                    SessionEvent::UserMessage {
+                        content: content.to_string(),
+                        timestamp: Utc::now(),
+                    },
+                    &test_actor(),
+                )
+                .await
+                .unwrap();
+        }
+        // Lifecycle event on the old session — must not contribute.
+        store
+            .append_session_event(
+                &s_old,
+                SessionEvent::Closed {
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        // Second (current) session — three messages plus a ToolUse.
+        let (s_new, _) = store
+            .add_session(
+                interactive_session(Some(conv.clone())),
+                Utc::now(),
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s_new,
+                SessionEvent::UserMessage {
+                    content: "three".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s_new,
+                SessionEvent::ToolUse {
+                    tool_name: "bash".to_string(),
+                    payload: serde_json::json!({}),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s_new,
+                SessionEvent::AssistantMessage {
+                    content: "four".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_event(
+                &s_new,
+                SessionEvent::UserMessage {
+                    content: "five".to_string(),
+                    timestamp: Utc::now(),
+                },
+                &test_actor(),
+            )
+            .await
+            .unwrap();
+
+        let summaries = store
+            .get_conversation_event_summaries(&[conv.clone()])
+            .await
+            .unwrap();
+        let s = summaries.get(&conv).expect("summary present");
+        // 2 chat-text events on the old session + 3 on the new session = 5.
+        // ToolUse and Closed are excluded.
+        assert_eq!(s.event_count, 5);
+        // Preview comes from the most recent chat-text event in the newest
+        // session.
+        assert_eq!(s.last_event_preview.as_deref(), Some("User: five"));
     }
 
     #[tokio::test]

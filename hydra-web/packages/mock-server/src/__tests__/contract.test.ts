@@ -363,21 +363,56 @@ describe("Conversations", () => {
     expect(sessionEvents[0].type).toBe("user_message");
   });
 
-  it("list returns summaries with event_count and lifecycle-only preview", async () => {
+  it("list returns summaries with chat-text event_count aggregated across linked sessions", async () => {
     const list = await client.listConversations();
-    // c-seed00002 is closed in the seed and therefore has a `closed`
-    // lifecycle event whose preview shows up in the summary.
-    const closed = list.find((c) => c.conversation_id === "c-seed00002");
-    expect(closed).toBeDefined();
-    expect(closed!.event_count).toBeGreaterThan(0);
-    expect(closed!.last_event_preview).toBe("Closed");
 
-    // An active seed conversation has no lifecycle events yet; chat is on
-    // the linked session, not on the conversation log.
+    // c-seed00001 (active) is backed by session t-seed00016 which carries 2
+    // user_message + 2 assistant_message events. Lifecycle conversation events
+    // are not counted.
     const active = list.find((c) => c.conversation_id === "c-seed00001");
     expect(active).toBeDefined();
-    expect(active!.event_count).toBe(0);
-    expect(active!.last_event_preview).toBeNull();
+    expect(active!.event_count).toBe(4);
+    expect(active!.last_event_preview).toMatch(/^Assistant: /);
+
+    // c-seed00002 (closed) is backed by session t-seed00017 with 1
+    // user_message + 1 assistant_message. The seed's `closed`
+    // ConversationEvent does not bump the count.
+    const closed = list.find((c) => c.conversation_id === "c-seed00002");
+    expect(closed).toBeDefined();
+    expect(closed!.event_count).toBe(2);
+    expect(closed!.last_event_preview).toMatch(/^Assistant: /);
+  });
+
+  it("event_count sums across multiple sessions linked to a conversation", async () => {
+    // Regression test for the chat-list "Messages" column counting only the
+    // latest session. Drive the resume-on-send path so the conversation ends
+    // up with two distinct sessions, each carrying chat-text events.
+    const created = await client.createConversation({ message: "first" });
+    const cid = created.conversation_id;
+
+    // The initial create + message yields one session with one user_message.
+    const initialList = await client.listConversations();
+    const initialSummary = initialList.find((c) => c.conversation_id === cid);
+    expect(initialSummary?.event_count).toBe(1);
+
+    // Close, then send again — the mock-server's send path spawns a fresh
+    // session when none is live for the conversation. (For determinism we
+    // assert the multi-session shape via listSessions below.)
+    await client.closeConversation(cid);
+    await client.resumeConversation(cid);
+    await client.sendMessage(cid, { content: "second" });
+    await client.sendMessage(cid, { content: "third" });
+
+    const linked = await client.listSessions({ conversation_id: cid });
+    expect(linked.sessions.length).toBeGreaterThanOrEqual(1);
+
+    // After the writes, the count must reflect every chat-text event across
+    // every linked session — three user_messages total in this scenario.
+    const list = await client.listConversations();
+    const summary = list.find((c) => c.conversation_id === cid);
+    expect(summary).toBeDefined();
+    expect(summary!.event_count).toBe(3);
+    expect(summary!.last_event_preview).toBe("User: third");
   });
 
   it("round-trip: create → get → list → send → events → close → resume", async () => {

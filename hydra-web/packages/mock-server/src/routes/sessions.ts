@@ -90,8 +90,36 @@ export function appendSessionEvent(
   }
 }
 
-function getSessionEvents(sessionId: string): SessionEvent[] {
+export function getSessionEventsFor(sessionId: string): SessionEvent[] {
   return sessionEvents.get(sessionId) ?? [];
+}
+
+function getSessionEvents(sessionId: string): SessionEvent[] {
+  return getSessionEventsFor(sessionId);
+}
+
+/**
+ * List session ids linked to a conversation, ordered oldest-first by
+ * creation_time. Mirrors the backend's
+ * `list_session_ids_by_conversation_id` shape; used by the
+ * `ConversationSummary` derivation to aggregate chat-text counts and
+ * previews across every session in the resumption chain.
+ */
+export function listSessionIdsByConversationId(
+  store: Store,
+  conversationId: string,
+): string[] {
+  const items = store.list<Session>(COLLECTION, false);
+  const matches: { id: string; creation_time: string }[] = [];
+  for (const { id, entry } of items) {
+    if (conversationIdOf(entry.data) !== conversationId) continue;
+    matches.push({ id, creation_time: entry.data.creation_time ?? "" });
+  }
+  matches.sort((a, b) => {
+    if (a.creation_time === b.creation_time) return a.id < b.id ? -1 : 1;
+    return a.creation_time < b.creation_time ? -1 : 1;
+  });
+  return matches.map((m) => m.id);
 }
 
 /**
