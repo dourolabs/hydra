@@ -28,8 +28,4 @@ export type EventsQuery = {
    * Comma-separated document IDs to filter.
    */
   document_ids: string | null;
-  /**
-   * Comma-separated notification IDs to filter.
-   */
-  notification_ids: string | null;
 };

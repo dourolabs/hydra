@@ -1,10 +1,10 @@
 /**
  * HydraId prefix discrimination helpers.
  *
- * Mirrors the Rust enum in `hydra-common/src/ids.rs` (lines 8-14). When a new
- * HydraId kind is added on the Rust side, update `HYDRA_ID_PREFIXES` here too
- * so every prefix lives in one location instead of scattered call-site
- * `startsWith` checks.
+ * Mirrors the Rust enum in `hydra-common/src/ids.rs`. When a new HydraId kind
+ * is added on the Rust side, update `HYDRA_ID_PREFIXES` here too so every
+ * prefix lives in one location instead of scattered call-site `startsWith`
+ * checks.
  *
  * Contract: these helpers only classify by *prefix*. They do NOT validate the
  * suffix character set or length — the Rust side (`HydraId::validate_str`) is
@@ -12,14 +12,7 @@
  * as `issue` and the consumer must tolerate ids the backend would reject.
  */
 
-export type HydraIdKind =
-  | "issue"
-  | "patch"
-  | "document"
-  | "session"
-  | "label"
-  | "conversation"
-  | "notification";
+export type HydraIdKind = "issue" | "patch" | "document" | "session" | "label" | "conversation";
 
 export const HYDRA_ID_PREFIXES: Record<HydraIdKind, string> = {
   issue: "i-",
@@ -28,12 +21,8 @@ export const HYDRA_ID_PREFIXES: Record<HydraIdKind, string> = {
   session: "s-",
   label: "l-",
   conversation: "c-",
-  notification: "nf-",
 };
 
-// Longer prefixes first to mirror the Rust validator's disambiguation
-// (`hydra-common/src/ids.rs` lines 124-142). Without this, `nf-abcde` could
-// be misclassified if a single-char `n-` prefix is ever added.
 const HYDRA_ID_PREFIX_ORDER: ReadonlyArray<readonly [HydraIdKind, string]> = (
   Object.entries(HYDRA_ID_PREFIXES) as Array<[HydraIdKind, string]>
 ).sort((a, b) => b[1].length - a[1].length);
@@ -67,8 +56,4 @@ export function isLabelId(id: string): boolean {
 
 export function isConversationId(id: string): boolean {
   return hydraIdKind(id) === "conversation";
-}
-
-export function isNotificationId(id: string): boolean {
-  return hydraIdKind(id) === "notification";
 }

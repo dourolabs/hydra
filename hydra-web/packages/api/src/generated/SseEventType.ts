@@ -18,7 +18,6 @@ export type SseEventType =
   | "label_created"
   | "label_updated"
   | "label_deleted"
-  | "notification_created"
   | "conversation_created"
   | "conversation_updated"
   | "conversation_event_created"

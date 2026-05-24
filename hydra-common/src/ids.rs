@@ -12,7 +12,6 @@ const SESSION_PREFIX: &str = "s-";
 const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const CONVERSATION_PREFIX: &str = "c-";
-const NOTIFICATION_PREFIX: &str = "nf-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydraIdError {
@@ -78,12 +77,6 @@ pub struct SessionId(String);
 #[serde(transparent)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
-pub struct NotificationId(String);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-#[serde(transparent)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct LabelId(String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -109,10 +102,6 @@ impl HydraId {
         SessionId::try_from(self.clone()).ok()
     }
 
-    pub fn as_notification_id(&self) -> Option<NotificationId> {
-        NotificationId::try_from(self.clone()).ok()
-    }
-
     pub fn as_label_id(&self) -> Option<LabelId> {
         LabelId::try_from(self.clone()).ok()
     }
@@ -122,10 +111,7 @@ impl HydraId {
     }
 
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
-        // Check longer prefixes first to avoid ambiguity (e.g., "nf-" before single-char prefixes)
-        if value.starts_with(NOTIFICATION_PREFIX) {
-            NotificationId::validate_str(value)
-        } else if value.starts_with(ISSUE_PREFIX) {
+        if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
         } else if value.starts_with(LABEL_PREFIX) {
             LabelId::validate_str(value)
@@ -289,40 +275,6 @@ impl<'de> Deserialize<'de> for SessionId {
     }
 }
 
-impl NotificationId {
-    pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
-        generate_with_prefix(NOTIFICATION_PREFIX, random_len).map(Self)
-    }
-
-    pub fn new() -> Self {
-        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
-    }
-
-    pub const fn prefix() -> &'static str {
-        NOTIFICATION_PREFIX
-    }
-
-    fn validate_str(value: &str) -> Result<(), HydraIdError> {
-        validate_with_prefix(value, NOTIFICATION_PREFIX)
-    }
-}
-
-impl Default for NotificationId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'de> Deserialize<'de> for NotificationId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        NotificationId::try_from(value).map_err(de::Error::custom)
-    }
-}
-
 impl LabelId {
     pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
         generate_with_prefix(LABEL_PREFIX, random_len).map(Self)
@@ -436,15 +388,6 @@ impl TryFrom<String> for SessionId {
     }
 }
 
-impl TryFrom<String> for NotificationId {
-    type Error = HydraIdError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        NotificationId::validate_str(&value)?;
-        Ok(Self(value))
-    }
-}
-
 impl TryFrom<String> for LabelId {
     type Error = HydraIdError;
 
@@ -495,14 +438,6 @@ impl TryFrom<HydraId> for SessionId {
     }
 }
 
-impl TryFrom<HydraId> for NotificationId {
-    type Error = HydraIdError;
-
-    fn try_from(value: HydraId) -> Result<Self, Self::Error> {
-        Self::try_from(value.0)
-    }
-}
-
 impl TryFrom<HydraId> for LabelId {
     type Error = HydraIdError;
 
@@ -543,12 +478,6 @@ impl From<SessionId> for HydraId {
     }
 }
 
-impl From<NotificationId> for HydraId {
-    fn from(value: NotificationId) -> Self {
-        Self(value.0)
-    }
-}
-
 impl From<LabelId> for HydraId {
     fn from(value: LabelId) -> Self {
         Self(value.0)
@@ -581,12 +510,6 @@ impl From<DocumentId> for String {
 
 impl From<SessionId> for String {
     fn from(value: SessionId) -> Self {
-        value.0
-    }
-}
-
-impl From<NotificationId> for String {
-    fn from(value: NotificationId) -> Self {
         value.0
     }
 }
@@ -639,12 +562,6 @@ impl fmt::Display for SessionId {
     }
 }
 
-impl fmt::Display for NotificationId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 impl fmt::Display for LabelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -682,12 +599,6 @@ impl AsRef<str> for DocumentId {
 }
 
 impl AsRef<str> for SessionId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for NotificationId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -738,14 +649,6 @@ impl FromStr for DocumentId {
 }
 
 impl FromStr for SessionId {
-    type Err = HydraIdError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.to_string().try_into()
-    }
-}
-
-impl FromStr for NotificationId {
     type Err = HydraIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
