@@ -1,6 +1,11 @@
 use crate::{
     app::{AppState, ServiceState},
-    domain::{actors::ActorRef, secrets::SecretManager, sessions::BundleSpec, users::Username},
+    domain::{
+        actors::{Actor, ActorRef},
+        secrets::SecretManager,
+        sessions::BundleSpec,
+        users::Username,
+    },
     store::{MemoryStore, Session, Status},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
@@ -8,8 +13,11 @@ use crate::{
     },
 };
 use chrono::Utc;
-use hydra_common::api::v1::{self, secrets::ListSecretsResponse};
-use reqwest::StatusCode;
+use hydra_common::{
+    SessionId,
+    api::v1::{self, secrets::ListSecretsResponse},
+};
+use reqwest::{Client, StatusCode, header};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -293,9 +301,28 @@ async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
 #[tokio::test]
 async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
+    // Build a session actor whose creator matches TEST_USERNAME but whose
+    // actor_id is a SessionId — the route should still reject it because user
+    // secrets are gated on Username-typed actors only.
+    let (session_actor, auth_token) =
+        Actor::new_for_session(SessionId::new(), Username::from(TEST_USERNAME));
+    handles
+        .store
+        .as_ref()
+        .add_actor(session_actor, &ActorRef::test())
+        .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    // test_client() uses a session actor whose creator is "test-creator"
-    let client = test_client();
+
+    let mut headers = header::HeaderMap::new();
+    let auth_value = format!("Bearer {auth_token}");
+    headers.insert(
+        header::AUTHORIZATION,
+        header::HeaderValue::from_str(&auth_value).expect("valid auth header"),
+    );
+    let client = Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build session-actor client");
 
     let response = client
         .get(format!(
