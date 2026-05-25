@@ -289,7 +289,7 @@ describe("useSSE chatRelated cache invalidation", () => {
     // The broad ["chatRelated"] invalidation must cover every sub-key the
     // current useChatReferencedArtifacts hook reads from. wasInvalidated does
     // prefix-matching, so these all match the broad invalidation.
-    expect(wasInvalidated(invalidateSpy, ["chatRelated", "refers_to"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated", "refers-to"])).toBe(true);
     expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedIssues"])).toBe(true);
     expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedPatches"])).toBe(true);
     expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedDocuments"])).toBe(true);

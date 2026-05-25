@@ -71,11 +71,11 @@ function bucketByPrefix(ids: string[]): {
  */
 export function useChatReferencedArtifacts(conversationId: string): ReferencedArtifactsResult {
   const relationsQuery = useQuery({
-    queryKey: ["chatRelated", "refers_to", conversationId],
+    queryKey: ["chatRelated", "refers-to", conversationId],
     queryFn: () =>
       apiClient.listRelations({
         source_id: conversationId,
-        rel_type: "refers_to",
+        rel_type: "refers-to",
       }),
     enabled: !!conversationId,
     staleTime: 30_000,

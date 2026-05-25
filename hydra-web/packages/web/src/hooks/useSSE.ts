@@ -238,7 +238,7 @@ export function useSSE(): SSEConnectionState {
         // live-updates when issues are created, updated, or deleted.
         queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
         queryClient.invalidateQueries({ queryKey: ["issueCount"] });
-        // Chat Related tab: prefix-match invalidates refers_to, referencedIssues,
+        // Chat Related tab: prefix-match invalidates refers-to, referencedIssues,
         // referencedPatches, referencedDocuments (new issues may add relations
         // via link_conversation_to_artifacts; updates flow status/title through).
         queryClient.invalidateQueries({ queryKey: ["chatRelated"] });

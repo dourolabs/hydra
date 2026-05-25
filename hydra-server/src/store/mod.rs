@@ -106,7 +106,7 @@ impl RelationshipType {
             RelationshipType::BlockedOn => "blocked-on",
             RelationshipType::HasPatch => "has-patch",
             RelationshipType::HasDocument => "has-document",
-            RelationshipType::RefersTo => "refers_to",
+            RelationshipType::RefersTo => "refers-to",
         }
     }
 }
@@ -1281,8 +1281,8 @@ mod tests {
     #[test]
     fn refers_to_relationship_type_round_trips() {
         let rt = RelationshipType::RefersTo;
-        assert_eq!(rt.as_str(), "refers_to");
-        assert_eq!(rt.to_string(), "refers_to");
+        assert_eq!(rt.as_str(), "refers-to");
+        assert_eq!(rt.to_string(), "refers-to");
         assert_eq!(
             RelationshipType::from_str("refers_to").unwrap(),
             RelationshipType::RefersTo
