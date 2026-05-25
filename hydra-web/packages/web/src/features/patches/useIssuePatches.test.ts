@@ -145,4 +145,46 @@ describe("useIssuePatches", () => {
     expect((result.current.error as Error).message).toBe("rel fail");
     expect(mockListPatches).not.toHaveBeenCalled();
   });
+
+  it("does not leak the previous issue's patches when issueId changes to one with no patches", async () => {
+    // Issue i-1 has a linked patch; issue i-2 has none. Re-rendering the hook
+    // with i-2 must immediately show an empty array — no stale placeholder
+    // from i-1's cache.
+    mockListRelations.mockImplementation(({ source_id }: { source_id: string }) => {
+      if (source_id === "i-1") {
+        return Promise.resolve({
+          relations: [
+            { source_id: "i-1", target_id: "p-a", rel_type: "has-patch" },
+          ],
+        });
+      }
+      return Promise.resolve({ relations: [] });
+    });
+    mockListPatches.mockResolvedValue({ patches: [makePatch("p-a")] });
+
+    // Share one QueryClient across renders so cached i-1 data is available
+    // when we switch to i-2 — this is what makes the placeholder fire in prod.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useIssuePatches(id),
+      { wrapper, initialProps: { id: "i-1" } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.data.map((p) => p.patch_id)).toEqual(["p-a"]);
+    });
+
+    rerender({ id: "i-2" });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.data).toEqual([]);
+  });
 });

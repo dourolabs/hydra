@@ -648,6 +648,59 @@ describe("useChatReferencedArtifacts", () => {
     });
   });
 
+  it("does not leak the previous conversation's referenced artifacts when conversationId changes to one with no references", async () => {
+    // Chat c-a has linked issue/patch/document; chat c-b has none.
+    // Re-rendering the hook with c-b must immediately show empty arrays — no
+    // stale placeholder data from c-a's cache.
+    mockListRelations.mockImplementation(
+      ({ source_id }: { source_id: string }) => {
+        if (source_id === "c-a") {
+          return Promise.resolve({
+            relations: [
+              makeRelation("i-1", "c-a"),
+              makeRelation("p-1", "c-a"),
+              makeRelation("d-1", "c-a"),
+            ],
+          });
+        }
+        return Promise.resolve({ relations: [] });
+      },
+    );
+    mockListIssues.mockResolvedValue(issuesPage([makeIssue("i-1")]));
+    mockListPatches.mockResolvedValue(patchesPage([makePatch("p-1")]));
+    mockListDocuments.mockResolvedValue(documentsPage([makeDocument("d-1")]));
+
+    // Share one QueryClient across renders so c-a's cached data is available
+    // when we switch to c-b — this is what makes the placeholder fire in prod.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useChatReferencedArtifacts(id),
+      { wrapper, initialProps: { id: "c-a" } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.issues.map((i) => i.issue_id)).toEqual(["i-1"]);
+      expect(result.current.patches.map((p) => p.patch_id)).toEqual(["p-1"]);
+      expect(result.current.documents.map((d) => d.document_id)).toEqual(["d-1"]);
+    });
+
+    rerender({ id: "c-b" });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.issues).toEqual([]);
+    expect(result.current.patches).toEqual([]);
+    expect(result.current.documents).toEqual([]);
+    expect(result.current.sessionsByIssue.size).toBe(0);
+  });
+
   it("re-fires listSessions for newly-loaded issue ids after fetchNextPage.issues", async () => {
     mockListRelations.mockResolvedValue({
       relations: [makeRelation("i-1"), makeRelation("i-2")],

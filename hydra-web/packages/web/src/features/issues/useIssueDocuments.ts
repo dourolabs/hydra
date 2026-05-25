@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { DocumentSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -11,6 +11,9 @@ import { apiClient } from "../../api/client";
  * invalidation in useSSE refreshes it.
  */
 export function useIssueDocuments(issueId: string) {
+  // Relations query is keyed directly by `issueId`; any key change is a
+  // navigation, so don't `keepPreviousData` here (would leak the previous
+  // issue's relations into the new issue view).
   const relationsQuery = useQuery({
     queryKey: ["relations", "has-document", issueId],
     queryFn: () =>
@@ -20,7 +23,6 @@ export function useIssueDocuments(issueId: string) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -30,14 +32,18 @@ export function useIssueDocuments(issueId: string) {
   );
 
   const idsParam = documentIds.join(",");
+  // Include `issueId` in the queryKey and gate `placeholderData` on it so we
+  // only keep stale data for refetches within the same issue. The
+  // ["documents", "batch"] prefix is preserved for SSE invalidation.
   const documentsQuery = useQuery({
-    queryKey: ["documents", "batch", idsParam],
+    queryKey: ["documents", "batch", idsParam, issueId],
     queryFn: () =>
       apiClient.listDocuments({ ids: idsParam, limit: documentIds.length }),
     select: (resp): DocumentSummaryRecord[] => resp.documents,
     enabled: documentIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[3] === issueId ? previousData : undefined,
   });
 
   const orderedDocuments = useMemo(() => {

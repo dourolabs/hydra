@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { PatchSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -11,6 +11,8 @@ import { apiClient } from "../../api/client";
  * invalidation in useSSE refreshes it.
  */
 export function useIssuePatches(issueId: string) {
+  // Relations query is keyed directly by `issueId`; any key change is a
+  // navigation, so don't `keepPreviousData` here.
   const relationsQuery = useQuery({
     queryKey: ["relations", "has-patch", issueId],
     queryFn: () =>
@@ -20,7 +22,6 @@ export function useIssuePatches(issueId: string) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -30,13 +31,17 @@ export function useIssuePatches(issueId: string) {
   );
 
   const idsParam = patchIds.join(",");
+  // Include `issueId` in the queryKey and gate `placeholderData` on it so we
+  // only keep stale data for refetches within the same issue. The
+  // ["patches"] prefix is preserved for SSE invalidation.
   const patchesQuery = useQuery({
-    queryKey: ["patches", idsParam],
+    queryKey: ["patches", idsParam, issueId],
     queryFn: () => apiClient.listPatches({ ids: idsParam, limit: patchIds.length }),
     select: (resp): PatchSummaryRecord[] => resp.patches,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[2] === issueId ? previousData : undefined,
   });
 
   const orderedPatches = useMemo(() => {

@@ -133,4 +133,46 @@ describe("useIssueDocuments", () => {
     expect((result.current.error as Error).message).toBe("rel fail");
     expect(mockListDocuments).not.toHaveBeenCalled();
   });
+
+  it("does not leak the previous issue's documents when issueId changes to one with no documents", async () => {
+    // Issue i-1 has a linked doc; issue i-2 has none. Re-rendering the hook
+    // with i-2 must immediately show an empty array — no stale placeholder
+    // from i-1's cache.
+    mockListRelations.mockImplementation(({ source_id }: { source_id: string }) => {
+      if (source_id === "i-1") {
+        return Promise.resolve({
+          relations: [
+            { source_id: "i-1", target_id: "d-a", rel_type: "has-document" },
+          ],
+        });
+      }
+      return Promise.resolve({ relations: [] });
+    });
+    mockListDocuments.mockResolvedValue({ documents: [makeDoc("d-a")] });
+
+    // Share one QueryClient across renders so cached i-1 data is available
+    // when we switch to i-2 — this is what makes the placeholder fire in prod.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useIssueDocuments(id),
+      { wrapper, initialProps: { id: "i-1" } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.data.map((d) => d.document_id)).toEqual(["d-a"]);
+    });
+
+    rerender({ id: "i-2" });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.data).toEqual([]);
+  });
 });

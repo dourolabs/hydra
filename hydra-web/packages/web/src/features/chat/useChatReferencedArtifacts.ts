@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
@@ -62,6 +62,29 @@ function bucketByPrefix(ids: string[]): {
   return { issueIds, patchIds, documentIds };
 }
 
+// Scope `placeholderData: keepPreviousData` to refetches *within* the same
+// resource. The downstream batch queries are keyed by a comma-joined idsParam
+// derived from the relations response; that idsParam changes both on SSE-driven
+// background refreshes (same conversation, relations mutated) and on navigation
+// (different conversation entirely). For background refreshes we want to keep
+// the prior render in place to avoid a skeleton flash, but on navigation we
+// must drop it so the previous conversation's items don't leak into the new
+// (potentially empty) Related tab.
+function sameResourcePlaceholder<TData>(
+  resourceId: string,
+  resourceKeyIndex: number,
+) {
+  return (
+    previousData: TData | undefined,
+    previousQuery: { queryKey: readonly unknown[] } | undefined,
+  ): TData | undefined => {
+    if (!previousQuery) return undefined;
+    return previousQuery.queryKey[resourceKeyIndex] === resourceId
+      ? previousData
+      : undefined;
+  };
+}
+
 /**
  * Fetch artifacts the given conversation `RefersTo` via a single backend
  * pre-filter on the relations table. Buckets relation rows by target_id prefix
@@ -70,6 +93,8 @@ function bucketByPrefix(ids: string[]): {
  * each list lazily.
  */
 export function useChatReferencedArtifacts(conversationId: string): ReferencedArtifactsResult {
+  // Relations query is keyed directly by `conversationId`, so any key change
+  // is a navigation; intentionally no `keepPreviousData` here.
   const relationsQuery = useQuery({
     queryKey: ["chatRelated", "refers-to", conversationId],
     queryFn: () =>
@@ -79,7 +104,6 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
       }),
     enabled: !!conversationId,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -92,7 +116,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
 
   const issueIdsParam = issueIds.join(",");
   const issuesQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: ["chatRelated", "referencedIssues", issueIdsParam],
+    queryKey: ["chatRelated", "referencedIssues", conversationId, issueIdsParam],
     queryFn: ({ pageParam }) =>
       apiClient.listIssues({
         ids: issueIdsParam,
@@ -103,7 +127,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: issueIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: sameResourcePlaceholder(conversationId, 2),
   });
 
   const issues = useMemo(
@@ -112,22 +136,23 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
   );
 
   // Sessions stay in lockstep with the issues fetched so far. Keep the
-  // ["sessions", "batch", ids] queryKey shape so useSSE's broad invalidation
-  // on session_* events refreshes it.
+  // ["sessions", "batch", ...] queryKey prefix so useSSE's broad invalidation
+  // on session_* events refreshes it (prefix-match still works with the
+  // appended conversationId scoping element).
   const fetchedIssueIds = useMemo(() => issues.map((i) => i.issue_id), [issues]);
   const sessionsIdsParam = fetchedIssueIds.join(",");
   const sessionsQuery = useQuery({
-    queryKey: ["sessions", "batch", sessionsIdsParam],
+    queryKey: ["sessions", "batch", sessionsIdsParam, conversationId],
     queryFn: () => apiClient.listSessions({ spawned_from_ids: sessionsIdsParam }),
     enabled: fetchedIssueIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: sameResourcePlaceholder(conversationId, 3),
     select: (data) => data.sessions,
   });
 
   const patchIdsParam = patchIds.join(",");
   const patchesQuery = useInfiniteQuery<ListPatchesResponse, Error>({
-    queryKey: ["chatRelated", "referencedPatches", patchIdsParam],
+    queryKey: ["chatRelated", "referencedPatches", conversationId, patchIdsParam],
     queryFn: ({ pageParam }) =>
       apiClient.listPatches({
         ids: patchIdsParam,
@@ -138,7 +163,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: patchIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: sameResourcePlaceholder(conversationId, 2),
   });
 
   const patches = useMemo(
@@ -148,7 +173,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
 
   const documentIdsParam = documentIds.join(",");
   const documentsQuery = useInfiniteQuery<ListDocumentsResponse, Error>({
-    queryKey: ["chatRelated", "referencedDocuments", documentIdsParam],
+    queryKey: ["chatRelated", "referencedDocuments", conversationId, documentIdsParam],
     queryFn: ({ pageParam }) =>
       apiClient.listDocuments({
         ids: documentIdsParam,
@@ -159,7 +184,7 @@ export function useChatReferencedArtifacts(conversationId: string): ReferencedAr
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: documentIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: sameResourcePlaceholder(conversationId, 2),
   });
 
   const documents = useMemo(

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
 import type { SessionSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -31,6 +31,9 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     [currentIssue],
   );
 
+  // Child-relations query is keyed directly by `issueId`; any key change is a
+  // navigation, so intentionally no `keepPreviousData` (would leak the
+  // previous issue's children into the new issue view).
   const childRelationsQuery = useQuery({
     queryKey: ["relations", "child-of", issueId],
     queryFn: () =>
@@ -40,7 +43,6 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
       }),
     enabled: !!issueId,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
     select: (data) => data.relations,
   });
 
@@ -55,23 +57,27 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
   }, [parentIds, childIds]);
 
   const idsParam = allRelatedIds.join(",");
+  // Include `issueId` in the queryKey and gate `placeholderData` on it so we
+  // only keep stale data for refetches within the same issue. The
+  // ["issues", "batch"] / ["sessions", "batch"] prefixes are preserved for
+  // SSE invalidation.
   const relatedIssuesQuery = useQuery({
-    queryKey: ["issues", "batch", idsParam],
+    queryKey: ["issues", "batch", idsParam, issueId],
     queryFn: () => apiClient.listIssues({ ids: idsParam }),
     enabled: allRelatedIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[3] === issueId ? previousData : undefined,
     select: (data) => data.issues,
   });
 
-  // Mirror IssueRelatedIssues queryKey shape so useSSE invalidation on
-  // session_* events refreshes the running-session indicator live.
   const sessionsQuery = useQuery({
-    queryKey: ["sessions", "batch", idsParam],
+    queryKey: ["sessions", "batch", idsParam, issueId],
     queryFn: () => apiClient.listSessions({ spawned_from_ids: idsParam }),
     enabled: allRelatedIds.length > 0,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[3] === issueId ? previousData : undefined,
     select: (data) => data.sessions,
   });
 
