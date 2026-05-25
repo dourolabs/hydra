@@ -6,4 +6,4 @@ import type { ReviewerGroup } from "./ReviewerGroup";
  * Per-repository merge policy. ALL reviewer groups must be satisfied; the
  * acting actor must additionally match `mergers` if present.
  */
-export type MergePolicy = { reviewers: Array<ReviewerGroup>; mergers?: MergerRule | null };
+export type MergePolicy = { reviewers: Array<ReviewerGroup>, mergers?: MergerRule | null, };

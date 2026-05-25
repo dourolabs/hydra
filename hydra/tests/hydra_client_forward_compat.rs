@@ -461,7 +461,9 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         Username::from("creator"),
         "progress".to_string(),
         IssueStatus::Open,
-        Some("assignee".to_string()),
+        Some(hydra_common::principal::Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
+        }),
         None,
         vec![],
         vec![],
@@ -684,7 +686,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "creator": "alice",
             "progress": "blocked",
             "status": "on-hold",
-            "assignee": "robot",
+            "assignee": {"kind": "agent", "name": "robot"},
             "todo_list": [
                 { "description": "investigate", "is_done": true, "priority": 1 }
             ],

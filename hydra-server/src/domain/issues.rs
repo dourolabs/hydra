@@ -196,13 +196,7 @@ pub struct Issue {
     #[serde(default)]
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub assignee: Option<String>,
-    /// Typed companion of [`Self::assignee`]. Server-derived in
-    /// Phase 4a (dual-write); wire format remains the legacy
-    /// `assignee` string field. Phase 4b switches the wire to
-    /// this typed field; Phase 7 drops the string column.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee_principal: Option<Principal>,
+    pub assignee: Option<Principal>,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -221,30 +215,6 @@ pub struct Issue {
     pub feedback: Option<String>,
 }
 
-/// Apply the Phase 4a backfill heuristic to a raw `assignee` string.
-///
-/// Order, per the design (see `actor-system-overhaul.md` §8.2):
-///
-/// 1. If `value` parses as a canonical [`Principal`] path
-///    (`users/<x>` / `agents/<x>` / `external/<system>/<x>`), return that.
-/// 2. Else if `value` is a syntactically-valid [`Username`], return
-///    `Principal::User { name: <value> }`.
-/// 3. Else return `None`.
-///
-/// Rule (2) is deliberately syntactic-only: we do not consult the
-/// agents table here. Phase 4b's `principal_exists` check is the place
-/// that catches an over-eager `Principal::User` backfill of what should
-/// really be a `Principal::Agent` reference.
-pub fn parse_assignee_as_principal(value: &str) -> Option<Principal> {
-    if let Ok(p) = Principal::from_str(value) {
-        return Some(p);
-    }
-    if let Ok(name) = api::users::Username::try_new(value) {
-        return Some(Principal::User { name });
-    }
-    None
-}
-
 impl Issue {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -254,8 +224,7 @@ impl Issue {
         creator: Username,
         progress: String,
         status: IssueStatus,
-        assignee: Option<String>,
-        assignee_principal: Option<Principal>,
+        assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
@@ -272,7 +241,6 @@ impl Issue {
             progress,
             status,
             assignee,
-            assignee_principal,
             session_settings: session_settings.unwrap_or_default(),
             todo_list,
             dependencies,
@@ -491,11 +459,6 @@ impl From<api::issues::Issue> for Issue {
             progress: value.progress,
             status: value.status.into(),
             assignee: value.assignee,
-            // Phase 4a: API does not carry the typed field yet
-            // (no wire change). It is derived at the app layer
-            // and persisted server-side. Phase 4b lifts it to
-            // the API surface.
-            assignee_principal: None,
             session_settings: value.session_settings.into(),
             todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
@@ -553,6 +516,9 @@ mod tests {
             memory_limit: Some("768Mi".to_string()),
             secrets: None,
         };
+        let bob = Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
+        };
         let issue = Issue {
             issue_type: IssueType::Task,
             title: String::new(),
@@ -560,8 +526,7 @@ mod tests {
             creator: Username::from("alice"),
             progress: "in-progress".to_string(),
             status: IssueStatus::Open,
-            assignee: Some("bob".to_string()),
-            assignee_principal: None,
+            assignee: Some(bob.clone()),
             session_settings: session_settings.clone(),
             todo_list: vec![TodoItem {
                 description: "todo".to_string(),
@@ -587,7 +552,7 @@ mod tests {
         );
         assert_eq!(decoded.patches[0], patch_id);
         assert_eq!(decoded.creator, issue.creator);
-        assert_eq!(decoded.assignee, Some("bob".to_string()));
+        assert_eq!(decoded.assignee, Some(bob));
         assert_eq!(decoded.status, issue.status);
         assert_eq!(decoded.progress, issue.progress);
         assert_eq!(decoded.issue_type, issue.issue_type);

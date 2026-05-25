@@ -4,4 +4,4 @@ import type { HydraId } from "./HydraId";
 /**
  * Request body for `POST /v1/relations/`.
  */
-export type CreateRelationRequest = { source_id: HydraId; target_id: HydraId; rel_type: string };
+export type CreateRelationRequest = { source_id: HydraId, target_id: HydraId, rel_type: string, };

@@ -3,4 +3,4 @@
 /**
  * Request body for POST /v1/issues/{issue_id}/feedback.
  */
-export type SubmitFeedbackRequest = { feedback: string };
+export type SubmitFeedbackRequest = { feedback: string, };

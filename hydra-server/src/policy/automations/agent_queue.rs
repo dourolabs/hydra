@@ -285,14 +285,19 @@ impl AgentQueue {
     ) -> anyhow::Result<SpawnResult> {
         let has_feedback = issue.feedback.is_some();
 
-        // Assignment check.
+        // Phase 4b assignment check: compare against the typed
+        // `Principal::Agent { name }` — bare-string matching is gone.
+        // Issues assigned to a `Principal::User { name == agent.name }`
+        // (the typo direction) are deliberately NOT picked up.
+        let is_assignment_match = matches!(
+            issue.assignee.as_ref(),
+            Some(hydra_common::principal::Principal::Agent { name })
+                if name.as_str() == self.agent.name
+        );
         let is_assigned = if self.agent.is_assignment_agent {
-            issue
-                .assignee
-                .as_ref()
-                .is_none_or(|name| name == &self.agent.name)
+            issue.assignee.is_none() || is_assignment_match
         } else {
-            issue.assignee.as_deref() == Some(self.agent.name.as_str())
+            is_assignment_match
         };
         if !is_assigned {
             return Ok(SpawnResult::Skipped);
@@ -607,6 +612,17 @@ mod tests {
         Ok(())
     }
 
+    /// Construct a `Principal::Agent` from a `&str` for test fixtures.
+    /// Phase 4b's assignment check is typed-equality, so test issues need
+    /// a `Principal::Agent { name: "..." }` value (not a bare string) to
+    /// be picked up by the matching agent's queue.
+    fn test_agent_principal(name: &str) -> hydra_common::principal::Principal {
+        hydra_common::principal::Principal::Agent {
+            name: hydra_common::api::v1::agents::AgentName::try_new(name)
+                .expect("test agent name should validate"),
+        }
+    }
+
     fn issue_with_type(
         issue_type: IssueType,
         description: &str,
@@ -622,8 +638,7 @@ mod tests {
             default_user(),
             String::new(),
             status,
-            assignee.map(str::to_string),
-            None,
+            assignee.map(test_agent_principal),
             Some(session_settings(repo_name)),
             Vec::new(),
             dependencies,
@@ -659,8 +674,7 @@ mod tests {
             creator: default_user(),
             progress: String::new(),
             status,
-            assignee: assignee.map(str::to_string),
-            assignee_principal: None,
+            assignee: assignee.map(test_agent_principal),
             session_settings: SessionSettings::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
@@ -887,8 +901,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1224,8 +1237,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: None,
                         remote_url: None,
@@ -1259,8 +1271,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
@@ -1376,8 +1387,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name),
                         remote_url: None,
@@ -1451,8 +1461,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1522,8 +1531,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1546,8 +1554,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -2195,8 +2202,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
@@ -2281,8 +2287,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
@@ -2345,8 +2350,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
@@ -2857,8 +2861,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Closed,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![
@@ -2955,8 +2958,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Dropped,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -3007,8 +3009,7 @@ mod tests {
                     creator: default_user(),
                     progress: String::new(),
                     status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    assignee_principal: None,
+                    assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings::default(),
                     todo_list: Vec::new(),
                     dependencies: vec![],

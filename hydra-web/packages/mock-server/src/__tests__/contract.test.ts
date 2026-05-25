@@ -73,7 +73,7 @@ describe("Issues", () => {
       creator: "dev-user",
       progress: "",
       status: "open",
-      assignee: "alice",
+      assignee: { kind: "user", name: "alice" },
       dependencies: [],
       patches: [],
       todo_list: [],
@@ -94,7 +94,7 @@ describe("Issues", () => {
     expect(fetched.issue_id).toBe(issueId);
     expect(fetched.issue.description).toBe("Contract test issue");
     expect(fetched.issue.status).toBe("open");
-    expect(fetched.issue.assignee).toBe("alice");
+    expect(fetched.issue.assignee).toEqual({ kind: "user", name: "alice" });
     expect(fetched.creation_time).toBeTruthy();
 
     // List — should contain our issue

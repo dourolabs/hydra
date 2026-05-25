@@ -12,13 +12,4 @@ import type { RepoName } from "./RepoName";
  * supplies the session-id and issue-branch-id at instantiation time from
  * its own `WorkerContext`.
  */
-export type MountItem =
-  | { type: "bundle"; target: RelativePath; bundle: Bundle }
-  | {
-      type: "build_cache";
-      repo_target: RelativePath;
-      service_repo_name: RepoName;
-      context: BuildCacheContext;
-    }
-  | { type: "documents"; target: RelativePath }
-  | { type: "unknown" };
+export type MountItem = { "type": "bundle", target: RelativePath, bundle: Bundle, } | { "type": "build_cache", repo_target: RelativePath, service_repo_name: RepoName, context: BuildCacheContext, } | { "type": "documents", target: RelativePath, } | { "type": "unknown" };

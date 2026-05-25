@@ -9,24 +9,19 @@ import type { ConversationId } from "./ConversationId";
  * Resumption is **not** a mode — it's the lineage edge
  * `Session::resumed_from`.
  */
-export type SessionMode =
-  | { type: "headless"; prompt: string }
-  | {
-      type: "interactive";
-      conversation_id: ConversationId;
-      /**
-       * Worker-side idle timeout override. `None` means the server
-       * applies its configured default (`job.interactive_idle_timeout_secs`)
-       * at handshake time — used when the caller didn't supply a value
-       * and for legacy rows that don't carry one.
-       */
-      idle_timeout_secs?: bigint | null;
-      /**
-       * Event-index resumption marker. See
-       * `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
-       * state-blob direction. Belongs inside the `Interactive` variant because
-       * resumption is only meaningful for interactive sessions; making it part of
-       * the mode means a `Headless` session can never carry a meaningless value.
-       */
-      conversation_resume_from?: number | null;
-    };
+export type SessionMode = { "type": "headless", prompt: string, } | { "type": "interactive", conversation_id: ConversationId, 
+/**
+ * Worker-side idle timeout override. `None` means the server
+ * applies its configured default (`job.interactive_idle_timeout_secs`)
+ * at handshake time — used when the caller didn't supply a value
+ * and for legacy rows that don't carry one.
+ */
+idle_timeout_secs?: bigint | null, 
+/**
+ * Event-index resumption marker. See
+ * `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
+ * state-blob direction. Belongs inside the `Interactive` variant because
+ * resumption is only meaningful for interactive sessions; making it part of
+ * the mode means a `Headless` session can never carry a meaningless value.
+ */
+conversation_resume_from?: number | null, };

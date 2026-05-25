@@ -342,7 +342,16 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status,
-            assignee.map(|s| s.to_string()),
+            assignee.map(|s| {
+                // Phase 4b: assignee is typed. Tests that want their
+                // issue picked up by the agent_queue must seed the agent
+                // via `TestHarness::builder().with_agent(...)` so the
+                // server-side `principal_exists` validation succeeds.
+                hydra_common::principal::Principal::Agent {
+                    name: hydra_common::api::v1::agents::AgentName::try_new(s)
+                        .expect("test agent name should validate"),
+                }
+            }),
             job_settings,
             Vec::new(),
             Vec::new(),
@@ -384,7 +393,16 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status,
-            assignee.map(|s| s.to_string()),
+            assignee.map(|s| {
+                // Phase 4b: assignee is typed. Tests that want their
+                // issue picked up by the agent_queue must seed the agent
+                // via `TestHarness::builder().with_agent(...)` so the
+                // server-side `principal_exists` validation succeeds.
+                hydra_common::principal::Principal::Agent {
+                    name: hydra_common::api::v1::agents::AgentName::try_new(s)
+                        .expect("test agent name should validate"),
+                }
+            }),
             job_settings,
             Vec::new(),
             dependencies,

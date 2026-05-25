@@ -10,4 +10,4 @@ import type { RelativePath } from "./RelativePath";
  * agent runs and tear down / persist after it finishes. One [`MountItem`] in
  * this vec corresponds to one mount on the worker side.
  */
-export type MountSpec = { working_dir: RelativePath; mounts: Array<MountItem> };
+export type MountSpec = { working_dir: RelativePath, mounts: Array<MountItem>, };

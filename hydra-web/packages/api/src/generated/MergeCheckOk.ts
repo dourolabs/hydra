@@ -5,4 +5,4 @@
  * always `true` — its purpose is to give the variant a unique JSON shape
  * so the untagged [`MergeCheckResponse`] can be parsed without ambiguity.
  */
-export type MergeCheckOk = { ok: boolean };
+export type MergeCheckOk = { ok: boolean, };

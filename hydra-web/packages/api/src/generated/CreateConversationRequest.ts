@@ -2,8 +2,4 @@
 import type { AgentName } from "./AgentName";
 import type { SessionSettings } from "./SessionSettings";
 
-export type CreateConversationRequest = {
-  message?: string | null;
-  agent_name?: AgentName | null;
-  session_settings?: SessionSettings | null;
-};
+export type CreateConversationRequest = { message?: string | null, agent_name?: AgentName | null, session_settings?: SessionSettings | null, };

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Icons, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
+import { formatPrincipalPath } from "../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
@@ -62,7 +63,7 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
         {issue.assignee ? (
           <span className={styles.blockValue}>
             <Icons.IconAgent size={12} />
-            {issue.assignee}
+            {formatPrincipalPath(issue.assignee)}
           </span>
         ) : (
           <span className={`${styles.blockValue} ${styles.blockEmpty}`}>Unassigned</span>

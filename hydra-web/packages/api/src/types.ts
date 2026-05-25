@@ -4,6 +4,7 @@ export type { ActivityLogEntry } from "./generated/ActivityLogEntry";
 export type { ActivityObjectKind } from "./generated/ActivityObjectKind";
 export type { ActorId } from "./generated/ActorId";
 export type { ActorIdentity } from "./generated/ActorIdentity";
+export type { ActorPrincipal } from "./generated/ActorPrincipal";
 export type { ActorRef } from "./generated/ActorRef";
 export type { Action } from "./generated/Action";
 export type { ActionStyle } from "./generated/ActionStyle";

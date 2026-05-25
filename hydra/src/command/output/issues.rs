@@ -42,7 +42,15 @@ impl Render for IssueRecords<'_> {
                 writeln!(writer, "Title: {title}")?;
             }
             writeln!(writer, "Creator: {}", creator.as_ref())?;
-            writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
+            writeln!(
+                writer,
+                "Assignee: {}",
+                assignee
+                    .as_ref()
+                    .map(|p| p.to_path())
+                    .as_deref()
+                    .unwrap_or("-")
+            )?;
             writeln!(writer, "Description:")?;
             if description.trim().is_empty() {
                 writeln!(writer, "  -")?;
@@ -115,7 +123,15 @@ impl Render for IssueSummaryRecords<'_> {
                 writeln!(writer, "Title: {title}")?;
             }
             writeln!(writer, "Creator: {}", creator.as_ref())?;
-            writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
+            writeln!(
+                writer,
+                "Assignee: {}",
+                assignee
+                    .as_ref()
+                    .map(|p| p.to_path())
+                    .as_deref()
+                    .unwrap_or("-")
+            )?;
             writeln!(writer, "Description:")?;
             if description.trim().is_empty() {
                 writeln!(writer, "  -")?;

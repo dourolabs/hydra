@@ -6,23 +6,22 @@ import type { Principal } from "./Principal";
  * disjunctive; `count` distinct approving principals must be present (after
  * optional author exclusion) for the group to be satisfied.
  */
-export type ReviewerGroup = {
-  /**
-   * Optional label surfaced in errors and in spawned review-request issues.
-   */
-  label?: string | null;
-  /**
-   * Principals — any combination of static usernames and dynamic refs.
-   */
-  any_of: Array<Principal>;
-  /**
-   * Minimum number of distinct approving principals from `any_of` required
-   * for this group to be satisfied. Defaults to 1.
-   */
-  count?: number;
-  /**
-   * If true, the patch author is removed from the eligible set before
-   * counting. Defaults to true (matches GitHub behaviour).
-   */
-  exclude_author?: boolean;
-};
+export type ReviewerGroup = { 
+/**
+ * Optional label surfaced in errors and in spawned review-request issues.
+ */
+label?: string | null, 
+/**
+ * Principals — any combination of static usernames and dynamic refs.
+ */
+any_of: Array<Principal>, 
+/**
+ * Minimum number of distinct approving principals from `any_of` required
+ * for this group to be satisfied. Defaults to 1.
+ */
+count?: number, 
+/**
+ * If true, the patch author is removed from the eligible set before
+ * counting. Defaults to true (matches GitHub behaviour).
+ */
+exclude_author?: boolean, };

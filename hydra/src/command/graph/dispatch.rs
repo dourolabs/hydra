@@ -26,9 +26,14 @@ use crate::client::HydraClientInterface;
 /// One variant per `ObjectKind`. PRs 4 and 5 may add `VersionedObject<T>`
 /// variants alongside these; we keep the naming simple here (one variant per
 /// kind) so the dispatch path stays a one-line match.
+// Phase 4b: `Issue.assignee` widened from `Option<String>` to
+// `Option<Principal>`, pushing `IssueVersionRecord` over the
+// `large_enum_variant` threshold. We box it; the remaining variants are
+// kept inline for the simpler match arms.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum HydratedNode {
-    Issue(IssueVersionRecord),
+    Issue(Box<IssueVersionRecord>),
     Patch(PatchVersionRecord),
     Document(DocumentVersionRecord),
     Conversation(ApiConversation),
@@ -81,7 +86,7 @@ pub async fn hydrate_by_id(
 ) -> Result<HydratedNode> {
     if let Some(issue_id) = id.as_issue_id() {
         let record = client.get_issue(&issue_id, false).await?;
-        return Ok(HydratedNode::Issue(record));
+        return Ok(HydratedNode::Issue(Box::new(record)));
     }
     if let Some(patch_id) = id.as_patch_id() {
         let record = client.get_patch(&patch_id).await?;

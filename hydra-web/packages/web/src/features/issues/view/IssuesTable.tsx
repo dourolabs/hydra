@@ -1,6 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, TypeChip } from "@hydra/ui";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
+import {
+  principalAvatarKind,
+  principalDisplayName,
+} from "../../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
@@ -118,8 +122,14 @@ export function IssuesTable({
                 <td className={styles.colAssignee}>
                   {issue.assignee ? (
                     <span className={styles.assignee}>
-                      <Avatar name={issue.assignee} kind="human" size="md" />
-                      <span className={styles.assigneeName}>{issue.assignee}</span>
+                      <Avatar
+                        name={principalDisplayName(issue.assignee)}
+                        kind={principalAvatarKind(issue.assignee)}
+                        size="md"
+                      />
+                      <span className={styles.assigneeName}>
+                        {principalDisplayName(issue.assignee)}
+                      </span>
                     </span>
                   ) : (
                     <span className={styles.dash}>—</span>

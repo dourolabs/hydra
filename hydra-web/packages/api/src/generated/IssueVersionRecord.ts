@@ -4,12 +4,4 @@ import type { Issue } from "./Issue";
 import type { IssueId } from "./IssueId";
 import type { LabelSummary } from "./LabelSummary";
 
-export type IssueVersionRecord = {
-  issue_id: IssueId;
-  version: bigint;
-  timestamp: string;
-  issue: Issue;
-  actor?: ActorRef | null;
-  creation_time: string;
-  labels?: Array<LabelSummary>;
-};
+export type IssueVersionRecord = { issue_id: IssueId, version: bigint, timestamp: string, issue: Issue, actor?: ActorRef | null, creation_time: string, labels?: Array<LabelSummary>, };

@@ -493,6 +493,19 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
             ApiError::bad_request("job_id may only be provided when creating an issue")
         }
         UpsertIssueError::MissingCreator => ApiError::bad_request("issue creator must be set"),
+        UpsertIssueError::UnknownAssignee { principal } => {
+            ApiError::bad_request(format!("unknown actor '{principal}'"))
+        }
+        UpsertIssueError::AssigneeLookup { source, principal } => {
+            error!(
+                principal = %principal,
+                error = %source,
+                "failed to validate assignee existence"
+            );
+            ApiError::internal(anyhow!(
+                "failed to validate assignee existence for '{principal}': {source}"
+            ))
+        }
         UpsertIssueError::MissingDependency { dependency_id, .. } => {
             ApiError::bad_request(format!("issue dependency '{dependency_id}' not found"))
         }

@@ -2,11 +2,39 @@ use super::form::{Form, FormResponse};
 use super::labels::LabelSummary;
 use super::users::Username;
 pub use crate::IssueId;
+use crate::principal::Principal;
 use crate::{LabelId, PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::{collections::HashMap, fmt, str::FromStr};
+
+/// Serialize an `Option<Principal>` as its canonical path form
+/// (`users/<x>` / `agents/<x>` / `external/<sys>/<x>`) so it survives URL
+/// query-string encoding. Used by [`SearchIssuesQuery::assignee`].
+fn serialize_option_principal_path<S: Serializer>(
+    value: &Option<Principal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(p) => serializer.serialize_str(&p.to_path()),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Deserialize an `Option<Principal>` from its canonical path form. Empty
+/// strings are treated as `None` (the equivalent of an omitted query param).
+fn deserialize_option_principal_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Principal>, D::Error> {
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    match raw {
+        Some(s) if !s.is_empty() => Principal::from_str(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Ok(None),
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -288,7 +316,7 @@ pub struct Issue {
     #[serde(default)]
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub assignee: Option<String>,
+    pub assignee: Option<Principal>,
     #[serde(
         default,
         alias = "job_settings",
@@ -320,7 +348,7 @@ impl Issue {
         creator: Username,
         progress: String,
         status: IssueStatus,
-        assignee: Option<String>,
+        assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
@@ -556,8 +584,13 @@ pub struct SearchIssuesQuery {
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub status: Vec<IssueStatus>,
-    #[serde(default)]
-    pub assignee: Option<String>,
+    #[serde(
+        default,
+        serialize_with = "serialize_option_principal_path",
+        deserialize_with = "deserialize_option_principal_path"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    pub assignee: Option<Principal>,
     /// Filter issues by creator username.
     #[serde(default)]
     pub creator: Option<String>,
@@ -589,7 +622,7 @@ impl SearchIssuesQuery {
     pub fn new(
         issue_type: Option<IssueType>,
         status: Vec<IssueStatus>,
-        assignee: Option<String>,
+        assignee: Option<Principal>,
         q: Option<String>,
         include_deleted: Option<bool>,
     ) -> Self {
@@ -628,7 +661,7 @@ pub struct IssueSummary {
     #[serde(default)]
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub assignee: Option<String>,
+    pub assignee: Option<Principal>,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -855,7 +888,9 @@ mod tests {
             ids: vec![],
             issue_type: Some(IssueType::Bug),
             status: vec![IssueStatus::Open],
-            assignee: Some("alice".to_string()),
+            assignee: Some(Principal::User {
+                name: Username::from("alice"),
+            }),
             creator: None,
             q: Some("test query".to_string()),
             include_deleted: None,
@@ -870,7 +905,10 @@ mod tests {
             .collect::<HashMap<_, _>>();
         assert_eq!(params.get("issue_type").map(String::as_str), Some("bug"));
         assert_eq!(params.get("status").map(String::as_str), Some("open"));
-        assert_eq!(params.get("assignee").map(String::as_str), Some("alice"));
+        assert_eq!(
+            params.get("assignee").map(String::as_str),
+            Some("users/alice")
+        );
         assert_eq!(params.get("q").map(String::as_str), Some("test query"));
     }
 
@@ -1101,7 +1139,9 @@ mod tests {
             creator: Username::from("alice"),
             progress: "some progress text".to_string(),
             status: IssueStatus::InProgress,
-            assignee: Some("bob".to_string()),
+            assignee: Some(Principal::User {
+                name: Username::from("bob"),
+            }),
             session_settings: SessionSettings {
                 repo_name: Some(RepoName::from_str("org/repo").unwrap()),
                 ..Default::default()
@@ -1170,7 +1210,12 @@ mod tests {
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.progress, "some progress text");
         assert_eq!(summary.status, IssueStatus::InProgress);
-        assert_eq!(summary.assignee.as_deref(), Some("bob"));
+        assert_eq!(
+            summary.assignee,
+            Some(Principal::User {
+                name: Username::from("bob")
+            })
+        );
         assert_eq!(summary.dependencies.len(), 1);
         assert_eq!(summary.patches.len(), 1);
         assert_eq!(summary.todo_list.len(), 1);
@@ -1209,7 +1254,9 @@ mod tests {
                 creator: Username::from("alice"),
                 progress: "started".to_string(),
                 status: IssueStatus::InProgress,
-                assignee: Some("bob".to_string()),
+                assignee: Some(Principal::User {
+                    name: Username::from("bob"),
+                }),
                 session_settings: SessionSettings {
                     repo_name: Some(RepoName::from_str("org/repo").unwrap()),
                     ..Default::default()
@@ -1255,7 +1302,7 @@ mod tests {
                 json!({
                     "title": "Track flakiness",
                     "status": "in-progress",
-                    "assignee": "bob",
+                    "assignee": {"kind": "user", "name": "bob"},
                     "progress": "started",
                     "dependencies": [{
                         "type": "child-of",

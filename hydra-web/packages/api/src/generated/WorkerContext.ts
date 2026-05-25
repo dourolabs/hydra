@@ -8,9 +8,4 @@ import type { SessionStateBlob } from "./SessionStateBlob";
  * mode; per-fetch resolutions (`resolved_env`, `github_token`,
  * `resumed_state`) live alongside it but are never persisted.
  */
-export type WorkerContext = {
-  session: Session;
-  resolved_env: { [key in string]: string };
-  github_token?: string | null;
-  resumed_state?: SessionStateBlob | null;
-};
+export type WorkerContext = { session: Session, resolved_env: { [key in string]: string }, github_token?: string | null, resumed_state?: SessionStateBlob | null, };

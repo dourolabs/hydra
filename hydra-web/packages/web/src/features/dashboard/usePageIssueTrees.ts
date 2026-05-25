@@ -142,8 +142,14 @@ function buildIssueTrees(set: CollectedSet): {
         id: childId,
         status: child.issue.status,
         hasActiveTask: isActive(childId),
+        // Phase 4b: assignee is now a typed `ActorPrincipal`. The
+        // "assigned to user" check compares against the
+        // `Principal::User { name }` shape.
         assignedToUser: !!(
-          set.username && child.issue.assignee === set.username
+          set.username &&
+          child.issue.assignee &&
+          child.issue.assignee.kind === "user" &&
+          child.issue.assignee.name === set.username
         ),
       });
     }

@@ -2,6 +2,10 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, TypeChip } from "@hydra/ui";
 import type { IssueStatus } from "@hydra/api";
+import {
+  principalAvatarKind,
+  principalDisplayName,
+} from "../../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
@@ -93,7 +97,13 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
                     )}
                     <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
                     <div className={styles.cardFoot}>
-                      {issue.assignee && <Avatar name={issue.assignee} kind="human" size="md" />}
+                      {issue.assignee && (
+                        <Avatar
+                          name={principalDisplayName(issue.assignee)}
+                          kind={principalAvatarKind(issue.assignee)}
+                          size="md"
+                        />
+                      )}
                       <AgoTime iso={rec.timestamp} />
                       <span className={styles.cardFootSpacer} />
                       {children && children.length > 0 && (

@@ -6,10 +6,4 @@ import type { SessionSummary } from "./SessionSummary";
 /**
  * Summary-level version record for session list responses.
  */
-export type SessionSummaryRecord = {
-  session_id: SessionId;
-  version: bigint;
-  timestamp: string;
-  session: SessionSummary;
-  actor?: ActorRef | null;
-};
+export type SessionSummaryRecord = { session_id: SessionId, version: bigint, timestamp: string, session: SessionSummary, actor?: ActorRef | null, };

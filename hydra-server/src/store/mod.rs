@@ -18,6 +18,7 @@ use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+use hydra_common::principal::Principal;
 use hydra_common::{
     ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
     SessionId, VersionNumber, Versioned,
@@ -567,6 +568,39 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+
+    /// Returns whether the given [`Principal`] exists in the store.
+    ///
+    /// Phase 4b of `/designs/actor-system-overhaul.md` (§4.5):
+    /// - `Principal::User { name }` → checks the users table
+    ///   (`include_deleted = false`).
+    /// - `Principal::Agent { name }` → checks the agents table.
+    /// - `Principal::External { .. }` → always returns `true`. External
+    ///   principals are format-checked only — they live in an external
+    ///   identity provider by definition, so no DB lookup is meaningful.
+    ///
+    /// Used by `upsert_issue` to reject `assignee: Some(unknown)` with
+    /// `UnknownAssignee` before persisting the row.
+    async fn principal_exists(&self, principal: &Principal) -> Result<bool, StoreError> {
+        match principal {
+            Principal::User { name } => {
+                // `name` is an API `Username`; cross over to the domain
+                // type for the store lookup.
+                let domain_name: Username = name.clone().into();
+                match self.get_user(&domain_name, false).await {
+                    Ok(_) => Ok(true),
+                    Err(StoreError::UserNotFound(_)) => Ok(false),
+                    Err(e) => Err(e),
+                }
+            }
+            Principal::Agent { name } => match self.get_agent(name.as_str()).await {
+                Ok(_) => Ok(true),
+                Err(StoreError::AgentNotFound(_)) => Ok(false),
+                Err(e) => Err(e),
+            },
+            Principal::External { .. } => Ok(true),
+        }
+    }
 
     // ---- Agent (read-only) ----
 

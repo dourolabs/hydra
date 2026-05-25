@@ -65,12 +65,16 @@ describe("IssueDetailsTab", () => {
   it("renders status chip, assignee, type, created, updated, and labels editor", () => {
     render(
       <IssueDetailsTab
-        record={makeRecord({ assignee: "bob", type: "feature" })}
+        record={makeRecord({
+          assignee: { kind: "user", name: "bob" },
+          type: "feature",
+        })}
         onOpenStatusModal={() => {}}
       />,
     );
     expect(screen.getByTestId("status-chip")).toBeDefined();
-    expect(screen.getByText("bob")).toBeDefined();
+    // Phase 4b: assignee renders as canonical path form.
+    expect(screen.getByText("users/bob")).toBeDefined();
     expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Updated")).toBeDefined();
     expect(screen.getByTestId("label-editor")).toBeDefined();

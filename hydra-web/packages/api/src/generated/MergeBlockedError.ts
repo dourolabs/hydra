@@ -19,9 +19,4 @@ import type { PatchId } from "./PatchId";
  * highest-priority unsatisfied layer named by `blocked_at_layer`. See §4.5
  * for the priority ordering and the rationale.
  */
-export type MergeBlockedError = {
-  code: MergeBlockedCode;
-  patch_id: PatchId;
-  blocked_at_layer: BlockedAtLayer;
-  reasons: Array<MergeBlockedReason>;
-};
+export type MergeBlockedError = { code: MergeBlockedCode, patch_id: PatchId, blocked_at_layer: BlockedAtLayer, reasons: Array<MergeBlockedReason>, };

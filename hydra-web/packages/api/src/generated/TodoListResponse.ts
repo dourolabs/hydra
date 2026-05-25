@@ -2,4 +2,4 @@
 import type { IssueId } from "./IssueId";
 import type { TodoItem } from "./TodoItem";
 
-export type TodoListResponse = { issue_id: IssueId; todo_list: Array<TodoItem> };
+export type TodoListResponse = { issue_id: IssueId, todo_list: Array<TodoItem>, };

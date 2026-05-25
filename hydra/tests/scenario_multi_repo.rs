@@ -49,13 +49,13 @@ async fn multi_repo_workflow() -> Result<()> {
     // We extract child 1's issue ID from the JSONL output so child 2 can reference it.
     let create_child1_cmd = format!(
         "hydra --output-format jsonl issues create 'Add agent queue to service.sh' \
-         --assignee swe --deps child-of:{parent_id} --repo-name org/app \
+         --assignee agents/swe --deps child-of:{parent_id} --repo-name org/app \
          | python3 -c \"import json,sys; print(json.load(sys.stdin)['issue_id'])\" \
          > child1_id.txt"
     );
     let create_child2_cmd = format!(
         "hydra issues create 'Add agent queue to configmap' \
-         --assignee swe --deps child-of:{parent_id} \
+         --assignee agents/swe --deps child-of:{parent_id} \
          --deps blocked-on:$(cat child1_id.txt) --repo-name org/cluster"
     );
     let set_status_cmd = format!("hydra issues update {parent_id} --status in-progress");
