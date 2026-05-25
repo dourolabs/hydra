@@ -239,6 +239,8 @@ struct IssueRow {
     progress: String,
     status: String,
     assignee: Option<String>,
+    #[sqlx(default)]
+    assignee_principal: Option<String>,
     #[sqlx(rename = "job_settings")]
     session_settings: String,
     todo_list: String,
@@ -929,9 +931,17 @@ impl SqliteStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
+        let assignee_principal_json = issue
+            .assignee_principal
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
+            })?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, form, form_response, feedback, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -942,6 +952,7 @@ impl SqliteStore {
         .bind(&issue.progress)
         .bind(issue.status.as_str())
         .bind(issue.assignee.as_deref())
+        .bind(assignee_principal_json.as_deref())
         .bind(&session_settings_json)
         .bind(&todo_list_json)
         .bind(issue.deleted)
@@ -1533,6 +1544,14 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
+        let assignee_principal = row
+            .assignee_principal
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize assignee_principal: {e}"))
+            })?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -1541,6 +1560,7 @@ impl SqliteStore {
             progress: row.progress.clone(),
             status,
             assignee: row.assignee.clone(),
+            assignee_principal,
             session_settings,
             todo_list,
             dependencies: vec![],
@@ -2261,7 +2281,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -2307,7 +2327,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, form, form_response, feedback, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -2353,7 +2373,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              WHERE i.is_latest = 1"
@@ -6070,6 +6090,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             dependencies,
             Vec::new(),
@@ -6088,6 +6109,7 @@ mod tests {
             "50%".to_string(),
             IssueStatus::Open,
             Some("assignee".to_string()),
+            None,
             Some(SessionSettings {
                 repo_name: Some(RepoName::from_str("org/proj").unwrap()),
                 remote_url: Some("https://git.example.com/org/proj.git".to_string()),
@@ -6139,6 +6161,98 @@ mod tests {
             fetched.item, issue,
             "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, feedback)"
         );
+    }
+
+    /// Verifies the inline-SQL backfill clause in
+    /// `20260530000000_add_assignee_principal_to_issues.sql`. We persist a
+    /// row whose typed column is NULL (simulating a row that pre-dates the
+    /// new column), then run the exact UPDATE clause from the migration
+    /// against the pool, and assert the typed column gets populated.
+    #[tokio::test]
+    async fn migration_backfill_populates_assignee_principal_for_users_path() {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let store = create_test_store().await;
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("users/alice".to_string());
+        issue.assignee_principal = None; // simulate a pre-migration row
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        // Re-run just the UPDATE clause from the migration. ALTER TABLE
+        // already ran at create_test_store time, so we only need to
+        // exercise the row-level backfill expression.
+        let update_sql = r#"
+            UPDATE issues_v2
+            SET assignee_principal = CASE
+                    WHEN substr(assignee, 1, 6) = 'users/'
+                         AND length(assignee) > 6
+                         AND substr(assignee, 7) NOT LIKE '%/%'
+                         AND substr(assignee, 7) NOT LIKE '% %'
+                         AND substr(assignee, 7) NOT LIKE '%' || char(9) || '%'
+                         AND substr(assignee, 7) NOT LIKE '%' || char(10) || '%'
+                         AND substr(assignee, 7) NOT LIKE '%' || char(13) || '%'
+                        THEN json_object('kind', 'user', 'name', substr(assignee, 7))
+                    WHEN substr(assignee, 1, 7) = 'agents/'
+                         AND length(assignee) > 7
+                         AND substr(assignee, 8) NOT LIKE '%/%'
+                         AND substr(assignee, 8) NOT LIKE '% %'
+                         AND substr(assignee, 8) NOT LIKE '%' || char(9) || '%'
+                         AND substr(assignee, 8) NOT LIKE '%' || char(10) || '%'
+                         AND substr(assignee, 8) NOT LIKE '%' || char(13) || '%'
+                        THEN json_object('kind', 'agent', 'name', substr(assignee, 8))
+                    WHEN assignee != ''
+                         AND assignee NOT LIKE '%/%'
+                         AND assignee NOT LIKE '% %'
+                         AND assignee NOT LIKE '%' || char(9) || '%'
+                         AND assignee NOT LIKE '%' || char(10) || '%'
+                         AND assignee NOT LIKE '%' || char(13) || '%'
+                        THEN json_object('kind', 'user', 'name', assignee)
+                    ELSE NULL
+                END
+            WHERE assignee IS NOT NULL AND assignee_principal IS NULL
+        "#;
+        sqlx::query(update_sql).execute(&store.pool).await.unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
+        assert_eq!(
+            fetched.item.assignee_principal,
+            Some(ActorPrincipal::User {
+                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn issue_round_trips_assignee_principal_user() {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let store = create_test_store().await;
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("users/alice".to_string());
+        issue.assignee_principal = Some(ActorPrincipal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        });
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
+        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+    }
+
+    #[tokio::test]
+    async fn issue_round_trips_assignee_principal_none_persisted() {
+        let store = create_test_store().await;
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("not a valid username!!".to_string());
+        issue.assignee_principal = None;
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.assignee,
+            Some("not a valid username!!".to_string())
+        );
+        assert_eq!(fetched.item.assignee_principal, None);
     }
 
     #[tokio::test]
@@ -9036,6 +9150,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -9052,6 +9167,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
+            None,
             None,
             None,
             Vec::new(),

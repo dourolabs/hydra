@@ -2711,6 +2711,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             dependencies,
             Vec::new(),
@@ -3170,6 +3171,39 @@ mod tests {
         assert_eq!(version_numbers(&versions), vec![1, 2, 3]);
         assert_eq!(versions[0].item.description, "v1");
         assert_eq!(versions[2].item.description, "v3");
+    }
+
+    #[tokio::test]
+    async fn issue_round_trips_assignee_principal_user() {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let store = MemoryStore::new();
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("users/alice".to_string());
+        issue.assignee_principal = Some(ActorPrincipal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        });
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
+        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+    }
+
+    #[tokio::test]
+    async fn issue_round_trips_assignee_principal_none() {
+        let store = MemoryStore::new();
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("not a valid username!!".to_string());
+        issue.assignee_principal = None;
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.assignee,
+            Some("not a valid username!!".to_string())
+        );
+        assert_eq!(fetched.item.assignee_principal, None);
     }
 
     #[tokio::test]
@@ -7296,6 +7330,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -7312,6 +7347,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
+            None,
             None,
             None,
             Vec::new(),

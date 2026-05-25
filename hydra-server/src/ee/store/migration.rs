@@ -332,6 +332,21 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("open");
             let assignee = row.payload.get("assignee").and_then(|v| v.as_str());
+            // Phase 4a: derive the typed `assignee_principal` for v2 by
+            // running the Phase-4a heuristic on the v1 assignee string.
+            // This populates the new column for migrated rows in lockstep
+            // with new writes from the app layer.
+            let assignee_principal_json: Option<Value> = assignee
+                .and_then(crate::domain::issues::parse_assignee_as_principal)
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .with_context(|| {
+                    format!(
+                        "failed to serialize assignee_principal for issue {} v{}",
+                        row.id, row.version_number
+                    )
+                })?;
             let job_settings = row
                 .payload
                 .get("job_settings")
@@ -364,8 +379,8 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_ISSUES}
                  (id, version_number, issue_type, description, creator, progress, status, assignee,
-                  job_settings, todo_list, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                  assignee_principal, job_settings, todo_list, deleted, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -376,6 +391,7 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(progress)
             .bind(status)
             .bind(assignee)
+            .bind(&assignee_principal_json)
             .bind(&job_settings)
             .bind(&todo_list)
             .bind(deleted)
@@ -1128,6 +1144,7 @@ mod tests {
             progress: "".to_string(),
             status: IssueStatus::Open,
             assignee: None,
+            assignee_principal: None,
             session_settings: Default::default(),
             todo_list: vec![],
             dependencies: vec![],
