@@ -165,73 +165,58 @@ fn empty_doc() -> Document {
     Document::new("Doc".to_string(), "body".to_string(), None, false).unwrap()
 }
 
+/// Phase 3b (`/designs/actor-system-overhaul.md` §7.4, §9) replaced the
+/// `RunningJobValidationRestriction` policy gate with per-token revocation:
+/// once a session is killed, every auth token minted by that session is
+/// flagged `is_revoked = TRUE` and `require_auth` rejects them with 401.
+///
+/// This regression test pins that contract end-to-end. We seed an actor
+/// + an `auth_tokens` row keyed to a session id, then call the store-side
+/// `revoke_auth_tokens_for_session` (the same call `routes/sessions/kill.rs`
+/// makes after the job engine acknowledges the kill). The subsequent
+/// request from the revoked token must fail at the auth layer (401), not
+/// at any downstream application policy (403/400).
 #[tokio::test]
-async fn documents_require_running_session_actor() -> anyhow::Result<()> {
-    // (a) session actor whose session is missing from the store → 400
+async fn killed_session_token_is_rejected_at_auth() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let creator = Username::from("test-creator");
-    let missing_session_id = SessionId::new();
-    let (actor, auth_token) = Actor::new_for_session(missing_session_id.clone(), creator.clone());
-    handles
-        .store
-        .as_ref()
-        .add_actor(actor, &ActorRef::test())
-        .await?;
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = client_with_token(&auth_token);
-    let response = client
-        .post(format!("{}/v1/documents", server.base_url()))
-        .json(&UpsertDocumentRequest::new(empty_doc()))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let session_id = SessionId::new();
+    let (actor, auth_token) = Actor::new_for_session(session_id.clone(), creator);
+    // Issue an auth-token row bound to the session — same shape that
+    // `create_actor_for_job` writes in production.
+    crate::test_utils::register_actor_and_token(
+        handles.store.as_ref(),
+        &actor,
+        &auth_token,
+        Some(&session_id),
+    )
+    .await?;
 
-    // (b) session actor whose session is non-running → 400
-    let handles = test_state_handles();
-    let (non_running_id, _) = handles
-        .store
-        .add_session(sample_task(Status::Created), Utc::now(), &ActorRef::test())
-        .await?;
-    let (actor, auth_token) = Actor::new_for_session(non_running_id.clone(), creator.clone());
-    handles
-        .store
-        .as_ref()
-        .add_actor(actor, &ActorRef::test())
-        .await?;
+    let store = handles.store.clone();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(&auth_token);
-    let response = client
-        .post(format!("{}/v1/documents", server.base_url()))
-        .json(&UpsertDocumentRequest::new(empty_doc()))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    // (c) session actor whose session is Running → 200
-    let handles = test_state_handles();
-    let running_task = sample_task(Status::Running);
-    let (running_id, _) = handles
-        .store
-        .add_session(running_task.clone(), Utc::now(), &ActorRef::test())
-        .await?;
-    handles
-        .store
-        .update_session(&running_id, running_task, &ActorRef::test())
-        .await?;
-    let (actor, auth_token) = Actor::new_for_session(running_id.clone(), creator);
-    handles
-        .store
-        .as_ref()
-        .add_actor(actor, &ActorRef::test())
-        .await?;
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = client_with_token(&auth_token);
+    // Sanity check: before revocation the token authenticates.
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(empty_doc()))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
+
+    // Simulate `sessions/kill` revoking the token.
+    store.revoke_auth_tokens_for_session(&session_id).await?;
+
+    let response = client
+        .post(format!("{}/v1/documents", server.base_url()))
+        .json(&UpsertDocumentRequest::new(empty_doc()))
+        .send()
+        .await?;
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "revoked token must be rejected at the auth layer, not by a downstream policy"
+    );
 
     Ok(())
 }

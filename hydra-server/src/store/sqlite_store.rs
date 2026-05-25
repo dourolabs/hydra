@@ -116,8 +116,6 @@ struct RepositoryRow {
 struct ActorRow {
     id: String,
     version_number: i64,
-    auth_token_hash: String,
-    auth_token_salt: String,
     actor_id: String,
     creator: Option<String>,
     actor: Option<String>,
@@ -685,15 +683,20 @@ impl SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
 
-        // Insert the new version with is_latest = 1
+        // Insert the new version with is_latest = 1.
+        //
+        // The `auth_token_hash` / `auth_token_salt` columns are vestigial:
+        // Phase 3b of the actor-system overhaul (§9, §8.4) removed the
+        // matching `Actor` fields and the `verify_auth_token` consumer.
+        // We write empty strings to keep the NOT-NULL DB schema satisfied
+        // until a follow-up migration drops the columns after a release
+        // of soak.
         sqlx::query(
             "INSERT INTO actors_v2 (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
+             VALUES (?1, ?2, '', '', ?3, ?4, ?5, 1)"
         )
         .bind(id)
         .bind(version_number)
-        .bind(&actor.auth_token_hash)
-        .bind(&actor.auth_token_salt)
         .bind(&actor_id_json)
         .bind(&creator_str)
         .bind(acting_as)
@@ -711,8 +714,6 @@ impl SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to deserialize actor_id: {e}")))?;
 
         Ok(Actor {
-            auth_token_hash: row.auth_token_hash.clone(),
-            auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
             session_id: None,
@@ -3192,11 +3193,11 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let row = sqlx::query_as::<_, ActorRow>(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
+            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
              FROM actors_v2
              WHERE id = ?1
              ORDER BY version_number DESC
-             LIMIT 1"
+             LIMIT 1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -3223,7 +3224,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let rows = sqlx::query_as::<_, ActorRow>(
-            "SELECT a.id, a.version_number, a.auth_token_hash, a.auth_token_salt, a.actor_id, a.creator, a.actor, a.created_at, a.updated_at
+            "SELECT a.id, a.version_number, a.actor_id, a.creator, a.actor, a.created_at, a.updated_at
              FROM actors_v2 a
              WHERE a.is_latest = 1
              ORDER BY a.id"
@@ -3775,14 +3776,15 @@ impl ReadOnlyStore for SqliteStore {
         token_hash: &str,
     ) -> Result<Option<AuthTokenRow>, StoreError> {
         let sql = format!(
-            "SELECT actor_name, session_id FROM {TABLE_AUTH_TOKENS} WHERE token_hash = ?1 LIMIT 1"
+            "SELECT actor_name, session_id, is_revoked FROM {TABLE_AUTH_TOKENS} \
+             WHERE token_hash = ?1 LIMIT 1"
         );
-        let row = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+        let row = sqlx::query_as::<_, (String, Option<String>, i64)>(&sql)
             .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        let Some((actor_name, session_id)) = row else {
+        let Some((actor_name, session_id, is_revoked)) = row else {
             return Ok(None);
         };
         let session_id = match session_id {
@@ -3794,6 +3796,7 @@ impl ReadOnlyStore for SqliteStore {
         Ok(Some(AuthTokenRow {
             actor_name,
             session_id,
+            is_revoked: is_revoked != 0,
         }))
     }
 
@@ -5022,6 +5025,22 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    async fn revoke_auth_tokens_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), StoreError> {
+        let sql = format!(
+            "UPDATE {TABLE_AUTH_TOKENS} SET is_revoked = 1 \
+             WHERE session_id = ?1 AND is_revoked = 0"
+        );
+        sqlx::query(&sql)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
     // ---- User secret mutations ----
 
     async fn set_user_secret(
@@ -5685,8 +5704,6 @@ mod tests {
     async fn add_and_get_actor_by_name() {
         let store = create_test_store().await;
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
@@ -5707,8 +5724,6 @@ mod tests {
     async fn add_actor_rejects_duplicate_name() {
         let store = create_test_store().await;
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(SessionId::new()),
             creator: Username::from("creator"),
             session_id: None,
@@ -5732,14 +5747,12 @@ mod tests {
         let store = create_test_store().await;
         let task_id = SessionId::new();
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(task_id),
             creator: Username::from("creator"),
             session_id: None,
         };
         let mut updated = actor.clone();
-        updated.auth_token_hash = "new-hash".to_string();
+        updated.creator = Username::from("rotated-creator");
 
         store
             .add_actor(actor.clone(), &ActorRef::test())
@@ -5759,8 +5772,6 @@ mod tests {
     async fn update_actor_missing_returns_not_found() {
         let store = create_test_store().await;
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
@@ -5807,15 +5818,11 @@ mod tests {
     async fn list_actors_returns_all() {
         let store = create_test_store().await;
         let actor1 = Actor {
-            auth_token_hash: "hash1".to_string(),
-            auth_token_salt: "salt1".to_string(),
             actor_id: ActorId::Username(Username::from("alice").into()),
             creator: Username::from("alice"),
             session_id: None,
         };
         let actor2 = Actor {
-            auth_token_hash: "hash2".to_string(),
-            auth_token_salt: "salt2".to_string(),
             actor_id: ActorId::Username(Username::from("bob").into()),
             creator: Username::from("bob"),
             session_id: None,
@@ -8509,6 +8516,96 @@ mod tests {
         let store = create_test_store().await;
         let row = store.get_auth_token_by_hash("nope").await.unwrap();
         assert!(row.is_none());
+    }
+
+    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): fresh rows
+    /// must come back with `is_revoked = false`, and
+    /// `revoke_auth_tokens_for_session` must flip exactly the rows
+    /// matching the given session id without touching siblings.
+    #[tokio::test]
+    async fn revoke_auth_tokens_flips_only_target_session() {
+        let store = create_test_store().await;
+        let sid = SessionId::new();
+        let other_sid = SessionId::new();
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("agents/swe", "hash-other", Some(&other_sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("session-scoped token should exist before revocation");
+        assert!(
+            !row.is_revoked,
+            "fresh row must default to is_revoked=false"
+        );
+
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("session-scoped token row should still exist after revoke");
+        assert!(row.is_revoked, "revoked row must be marked is_revoked=true");
+
+        let other = store
+            .get_auth_token_by_hash("hash-other")
+            .await
+            .unwrap()
+            .expect("sibling session token should still exist");
+        assert!(!other.is_revoked, "sibling session must not be revoked");
+
+        let user = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("user token should still exist");
+        assert!(
+            !user.is_revoked,
+            "session-less user token must not be revoked"
+        );
+    }
+
+    /// `revoke_auth_tokens_for_session` must be idempotent — calling it
+    /// twice for the same session is harmless, and revoking a session
+    /// with no minted tokens is a no-op.
+    #[tokio::test]
+    async fn revoke_auth_tokens_is_idempotent_and_handles_no_match() {
+        let store = create_test_store().await;
+        let sid = SessionId::new();
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+
+        // Revoking a session with no rows is a no-op (doesn't error).
+        let no_match = SessionId::new();
+        store
+            .revoke_auth_tokens_for_session(&no_match)
+            .await
+            .unwrap();
+
+        // Two consecutive revocations of the same session leave the row
+        // in the same state.
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("row should still exist after double revocation");
+        assert!(row.is_revoked);
     }
 
     // ---- User secret tests ----

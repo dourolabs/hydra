@@ -34,11 +34,16 @@ mod tests {
         let store = handles.store.clone();
 
         let actor = hydra_server::test_utils::test_actor();
-        let system_ref = hydra_server::domain::actors::ActorRef::test();
-        let _ = store.add_actor(actor, &system_ref).await;
+        let token = hydra_server::test_utils::test_auth_token();
+        // Phase 3b (`/designs/actor-system-overhaul.md` §9): the legacy
+        // `Actor::verify_auth_token` fallback is gone, so the bearer
+        // token has to be present in the `auth_tokens` table or the
+        // proxied request will be rejected with 401.
+        hydra_server::test_utils::register_actor_and_token(store.as_ref(), &actor, &token, None)
+            .await
+            .expect("failed to seed test actor and token");
 
         let inner_app = hydra_server::build_router(&handles.state).with_state(handles.state);
-        let token = hydra_server::test_utils::test_auth_token();
         let app = build_bff_router(inner_app, token.clone());
         (app, token)
     }

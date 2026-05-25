@@ -36,6 +36,22 @@ pub async fn kill_session(
             }
         })?;
 
+    // Phase 3b (`/designs/actor-system-overhaul.md` §7.4): revoke every
+    // auth token minted by this session before we acknowledge the kill,
+    // so any request still in flight from the dying container fails at
+    // `require_auth` (401) instead of slipping through and being caught
+    // by application-layer policy. The store update is idempotent —
+    // safe to retry — and intentionally happens after `kill_job` so we
+    // don't revoke tokens for a session the engine refused to kill.
+    state
+        .store
+        .revoke_auth_tokens_for_session(&session_id)
+        .await
+        .map_err(|err| {
+            error!(session_id = %session_id, error = %err, "failed to revoke session tokens after kill");
+            ApiError::internal(err)
+        })?;
+
     info!(session_id = %session_id, "kill_session completed successfully");
 
     Ok(Json(v1::sessions::KillSessionResponse::new(

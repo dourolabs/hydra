@@ -158,10 +158,15 @@ pub struct ObjectRelationship {
 /// the `get_auth_token_hashes(actor_name).contains(hash)` linear scan
 /// with a hash-keyed lookup that also returns the session id (if any)
 /// that minted the token.
+///
+/// Phase 3b (§7.4) adds `is_revoked`: `sessions/kill` flips it on for
+/// every token from the killed session, and `require_auth` rejects any
+/// matched row whose `is_revoked` is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTokenRow {
     pub actor_name: String,
     pub session_id: Option<SessionId>,
+    pub is_revoked: bool,
 }
 
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
@@ -1136,6 +1141,19 @@ pub trait Store: ReadOnlyStore {
 
     /// Deletes all auth tokens for the given actor.
     async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError>;
+
+    /// Marks every auth token minted by `session_id` as revoked.
+    ///
+    /// Phase 3b of `/designs/actor-system-overhaul.md` (§7.4): called from
+    /// `sessions/kill` so the killed session's container fails at the
+    /// auth layer (401) instead of slipping past until the application
+    /// hits the now-deleted `RunningJobValidationRestriction`. The update
+    /// is idempotent — a second call against the same session is a no-op
+    /// because every matching row is already `is_revoked = true`.
+    async fn revoke_auth_tokens_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), StoreError>;
 
     // ---- User secret mutations ----
 

@@ -374,7 +374,8 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(auth_token);
@@ -458,7 +459,8 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(auth_token);
@@ -568,7 +570,8 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(auth_token);
@@ -650,7 +653,8 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(auth_token);

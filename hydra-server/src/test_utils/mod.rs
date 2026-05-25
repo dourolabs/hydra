@@ -264,12 +264,50 @@ pub async fn spawn_test_server_with_state(
 }
 
 async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
-    let (actor, _) = test_auth();
-    match store.add_actor(actor, &ActorRef::test()).await {
-        Ok(_) => Ok(()),
-        Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
-        Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),
+    let (actor, auth_token) = test_auth();
+    register_actor_and_token(store, &actor, &auth_token, None)
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to seed test actor: {err}"))
+}
+
+/// Persist `actor` and register `auth_token`'s hashed raw token in the
+/// `auth_tokens` table.
+///
+/// Phase 3b of `/designs/actor-system-overhaul.md` (§9) made the
+/// `auth_tokens` table the only source of truth the auth middleware
+/// consults, removing the legacy `Actor::verify_auth_token` fallback.
+/// Tests that `add_actor` without inserting the matching `auth_tokens`
+/// row now get `401 authorization invalid` on every authenticated call,
+/// so this helper bundles the two writes that always have to happen
+/// together.
+///
+/// `session_id` records which session minted the token; pass `None` for
+/// non-session-scoped tokens (logins, test-suite-wide credentials).
+/// Pre-existing actors / tokens are tolerated — `add_actor` returns
+/// `ActorAlreadyExists` (which is treated as success) and the
+/// `add_auth_token` implementations already de-duplicate by
+/// `token_hash`.
+pub async fn register_actor_and_token(
+    store: &dyn Store,
+    actor: &crate::domain::actors::Actor,
+    auth_token: &str,
+    session_id: Option<&hydra_common::SessionId>,
+) -> Result<(), StoreError> {
+    match store.add_actor(actor.clone(), &ActorRef::test()).await {
+        Ok(_) | Err(StoreError::ActorAlreadyExists(_)) => {}
+        Err(err) => return Err(err),
     }
+    let prefix = format!("{}:", actor.name());
+    let raw_token = auth_token.strip_prefix(&prefix).unwrap_or_else(|| {
+        panic!(
+            "auth token for actor '{}' missing '{prefix}' prefix",
+            actor.name()
+        )
+    });
+    let token_hash = crate::domain::actors::Actor::hash_auth_token(raw_token);
+    store
+        .add_auth_token(&actor.name(), &token_hash, session_id)
+        .await
 }
 
 /// Register a default conversation agent so that integration tests creating
