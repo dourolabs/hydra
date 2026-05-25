@@ -62,6 +62,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),

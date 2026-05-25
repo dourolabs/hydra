@@ -324,9 +324,17 @@ impl PostgresStoreV2 {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
+        let assignee_principal_json = issue
+            .assignee_principal
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
+            })?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, form, form_response, feedback)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, form, form_response, feedback)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -338,6 +346,7 @@ impl PostgresStoreV2 {
             .bind(&issue.progress)
             .bind(issue.status.as_str())
             .bind(issue.assignee.as_deref())
+            .bind(&assignee_principal_json)
             .bind(&job_settings_json)
             .bind(&todo_list_json)
             .bind(issue.deleted)
@@ -434,6 +443,14 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
+        let assignee_principal = row
+            .assignee_principal
+            .as_ref()
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize assignee_principal: {e}"))
+            })?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -442,6 +459,7 @@ impl PostgresStoreV2 {
             progress: row.progress.clone(),
             status,
             assignee: row.assignee.clone(),
+            assignee_principal,
             session_settings,
             todo_list,
             dependencies: vec![],
@@ -1308,6 +1326,8 @@ struct IssueRow {
     progress: String,
     status: String,
     assignee: Option<String>,
+    #[sqlx(default)]
+    assignee_principal: Option<Value>,
     job_settings: Value,
     todo_list: Value,
     deleted: bool,
@@ -2081,7 +2101,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
              form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
@@ -2122,7 +2142,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, \
              form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -2186,7 +2206,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // subqueries or DISTINCT ON.
         let subquery = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-             i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
+             i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.todo_list, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
              i.form, i.form_response, i.feedback \
@@ -5315,6 +5335,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
@@ -5501,6 +5522,7 @@ mod tests {
             "50%".to_string(),
             IssueStatus::Open,
             Some("assignee".to_string()),
+            None,
             Some(SessionSettings {
                 repo_name: Some(RepoName::from_str("org/proj").unwrap()),
                 remote_url: Some("https://git.example.com/org/proj.git".to_string()),
@@ -5863,6 +5885,41 @@ mod tests {
             store.get_issue_children(&new_parent).await.unwrap(),
             vec![issue]
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_round_trips_assignee_principal_user_v2(pool: PgStorePool) {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let store = PostgresStoreV2::new(pool);
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("users/alice".to_string());
+        issue.assignee_principal = Some(ActorPrincipal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        });
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
+        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_round_trips_assignee_principal_none_persisted_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let mut issue = sample_issue(vec![]);
+        issue.assignee = Some("not a valid username!!".to_string());
+        issue.assignee_principal = None;
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.assignee,
+            Some("not a valid username!!".to_string())
+        );
+        assert_eq!(fetched.item.assignee_principal, None);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -6588,6 +6645,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             vec![],
             vec![],
             vec![],
@@ -6605,6 +6663,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open,
+            None,
             None,
             None,
             vec![],
@@ -7789,6 +7848,7 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -7805,6 +7865,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
+            None,
             None,
             None,
             Vec::new(),

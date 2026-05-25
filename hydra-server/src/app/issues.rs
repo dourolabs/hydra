@@ -1,6 +1,8 @@
 use crate::{
     domain::actors::ActorRef,
-    domain::issues::{Issue, IssueDependencyType, IssueStatus, TodoItem},
+    domain::issues::{
+        Issue, IssueDependencyType, IssueStatus, TodoItem, parse_assignee_as_principal,
+    },
     store::{ReadOnlyStore, Status, StoreError},
 };
 use chrono::Utc;
@@ -15,7 +17,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::app_state::AppState;
 
@@ -189,7 +191,22 @@ impl AppState {
             label_names,
             ..
         } = request;
-        let issue: Issue = issue.into();
+        let mut issue: Issue = issue.into();
+        // Phase 4a dual-write: derive the typed `assignee_principal`
+        // server-side whenever the client provides a string `assignee`.
+        // Phase 4b will move this off the legacy path entirely and let
+        // the client supply the typed value directly.
+        if let Some(ref assignee) = issue.assignee
+            && issue.assignee_principal.is_none()
+        {
+            match parse_assignee_as_principal(assignee) {
+                Some(principal) => issue.assignee_principal = Some(principal),
+                None => warn!(
+                    %assignee,
+                    "unparseable assignee; leaving assignee_principal NULL"
+                ),
+            }
+        }
         if let Some(ref form) = issue.form {
             form.validate_field_keys()
                 .map_err(|message| UpsertIssueError::InvalidForm { message })?;
@@ -1105,6 +1122,81 @@ mod tests {
         };
 
         assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_dual_writes_assignee_principal_from_users_path() {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let state = test_state();
+        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        issue.assignee = Some("users/alice".to_string());
+
+        let (issue_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
+        assert_eq!(
+            fetched.item.assignee_principal,
+            Some(ActorPrincipal::User {
+                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_dual_writes_assignee_principal_from_bare_username() {
+        use hydra_common::principal::Principal as ActorPrincipal;
+        let state = test_state();
+        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        issue.assignee = Some("alice".to_string());
+
+        let (issue_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.assignee, Some("alice".to_string()));
+        assert_eq!(
+            fetched.item.assignee_principal,
+            Some(ActorPrincipal::User {
+                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_leaves_assignee_principal_none_when_unparseable() {
+        let state = test_state();
+        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        issue.assignee = Some("not a valid username!!".to_string());
+
+        let (issue_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.assignee,
+            Some("not a valid username!!".to_string())
+        );
+        assert_eq!(fetched.item.assignee_principal, None);
     }
 
     #[tokio::test]

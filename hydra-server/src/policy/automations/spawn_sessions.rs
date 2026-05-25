@@ -252,6 +252,7 @@ mod tests {
             String::new(),
             IssueStatus::Open,
             Some(agent_name.to_string()),
+            None,
             Some(SessionSettings {
                 repo_name: Some(repo_name.clone()),
                 image: Some("agent-image".to_string()),
@@ -279,6 +280,7 @@ mod tests {
             String::new(),
             status,
             Some(agent_name.to_string()),
+            None,
             Some(SessionSettings {
                 repo_name: Some(repo_name.clone()),
                 image: Some("agent-image".to_string()),
@@ -711,6 +713,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open,
+            None,
             None,
             None,
             Vec::new(),
