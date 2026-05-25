@@ -185,7 +185,6 @@ background:
 #     - "cascade_issue_status"         # Drop children/dependents when an issue enters a terminal state
 #     - "kill_tasks_on_issue_failure"  # Kill running tasks when their issue fails/drops
 #     - "github_pr_sync"               # Sync GitHub PR state with patch status
-#     - "inbox_label"                  # Apply inbox label to new issues for inbox functionality
 #     - "spawn_sessions"               # Spawn agent sessions when issues are created/assigned
 #     - "start_created_sessions"       # Start sessions that have been created
 #

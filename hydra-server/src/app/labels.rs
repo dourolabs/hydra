@@ -9,6 +9,8 @@ use thiserror::Error;
 
 use super::AppState;
 
+const INBOX_LABEL_NAME: &str = "inbox";
+
 /// Default color palette for labels that don't specify a color.
 const DEFAULT_COLORS: &[&str] = &[
     "#e74c3c", // red
@@ -66,8 +68,6 @@ impl AppState {
     /// Ensure the 'inbox' label exists with recurse=false and hidden=true.
     /// Creates it if missing; idempotent on subsequent calls.
     pub async fn ensure_inbox_label(&self) {
-        use crate::policy::automations::inbox_label::INBOX_LABEL_NAME;
-
         match self.store.get_label_by_name(INBOX_LABEL_NAME).await {
             Ok(Some(_)) => {
                 tracing::debug!("inbox label already exists");
