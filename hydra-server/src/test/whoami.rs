@@ -71,11 +71,13 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task_id = SessionId::new();
     let (actor, auth_token) = Actor::new_for_session(task_id.clone(), Username::from("creator"));
-    handles
-        .store
-        .as_ref()
-        .add_actor(actor.clone(), &ActorRef::test())
-        .await?;
+    crate::test_utils::register_actor_and_token(
+        handles.store.as_ref(),
+        &actor,
+        &auth_token,
+        Some(&task_id),
+    )
+    .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(&auth_token);

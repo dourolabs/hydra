@@ -226,16 +226,20 @@ mod tests {
     /// Build a single-player BFF (with auto_login_token) backed by an in-process
     /// hydra-server, with the test actor seeded in the store.
     async fn test_bff_singleplayer() -> Router {
-        use hydra_common::ActorRef;
-
         let handles = hydra_server::test_utils::test_state_handles();
         let token = hydra_server::test_utils::test_auth_token();
         let actor = hydra_server::test_utils::test_actor();
-        handles
-            .store
-            .add_actor(actor, &ActorRef::test())
-            .await
-            .expect("failed to seed test actor");
+        // Phase 3b (`/designs/actor-system-overhaul.md` §9): the
+        // bearer token has to be in `auth_tokens` — there's no
+        // legacy `verify_auth_token` fallback any more.
+        hydra_server::test_utils::register_actor_and_token(
+            handles.store.as_ref(),
+            &actor,
+            &token,
+            None,
+        )
+        .await
+        .expect("failed to seed test actor and token");
         let inner_app = hydra_server::build_router(&handles.state).with_state(handles.state);
         let upstream = InProcessUpstream::new(inner_app);
         let config = BffConfig {

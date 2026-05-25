@@ -620,6 +620,13 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn revoke_auth_tokens_for_session(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
     async fn set_user_secret(
         &self,
         _username: &Username,

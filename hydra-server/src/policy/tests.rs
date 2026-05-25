@@ -771,7 +771,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 5 restrictions and 13 automations are active.
+/// behavior exactly — all default restrictions and automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -779,7 +779,7 @@ fn default_config_enables_all_builtin_policies() {
     // Build engine with no PolicyConfig (simulates absent [policies] section)
     let engine = crate::app::AppState::build_policy_engine(None);
 
-    assert_eq!(engine.restriction_count(), 6);
+    assert_eq!(engine.restriction_count(), 5);
     assert_eq!(engine.automation_count(), 8);
 
     // Also verify that an explicit config listing all policies gives the same counts
@@ -789,7 +789,6 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
-                PolicyEntry::Name("running_job_validation".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
                 PolicyEntry::Name("merge_authorization".to_string()),
             ],
@@ -806,7 +805,7 @@ fn default_config_enables_all_builtin_policies() {
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
-    assert_eq!(explicit_engine.restriction_count(), 6);
+    assert_eq!(explicit_engine.restriction_count(), 5);
     assert_eq!(explicit_engine.automation_count(), 8);
 }
 
@@ -857,7 +856,6 @@ async fn disabling_restriction_allows_blocked_operation() {
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 // require_creator is intentionally omitted
-                PolicyEntry::Name("running_job_validation".to_string()),
             ],
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
@@ -868,7 +866,7 @@ async fn disabling_restriction_allows_blocked_operation() {
     };
 
     let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
-    assert_eq!(partial_engine.restriction_count(), 4);
+    assert_eq!(partial_engine.restriction_count(), 3);
 
     // Partial engine should allow this
     let result = partial_engine

@@ -45,8 +45,11 @@ pub async fn require_auth(
         }
     };
 
-    // Phase 3a (`/designs/actor-system-overhaul.md` §5.3): look up the
-    // token row directly by its hash. The returned `session_id` is
+    // Phase 3a (`/designs/actor-system-overhaul.md` §5.3) routes auth
+    // through a hash-keyed `auth_tokens` lookup; Phase 3b (§7.4, §9)
+    // makes that table the single source of truth: no fallback to the
+    // (now-removed) `Actor::verify_auth_token` and a `is_revoked = true`
+    // row rejects the request immediately. The matched `session_id` is
     // hydrated onto `Actor.session_id` so `ActorRef::from(&actor)`
     // carries it into every downstream mutation.
     let token_hash = Actor::hash_auth_token(auth_token.raw_token());
@@ -58,21 +61,32 @@ pub async fn require_auth(
         .flatten()
         .filter(|row| row.actor_name == auth_token.actor_name());
 
-    // Fall back to the legacy single-token hash on the Actor struct for
-    // backward compatibility with tokens created before the auth_tokens
-    // table existed. Phase 3b will delete this fallback.
-    let token_valid = matched_row.is_some() || actor.verify_auth_token(&auth_token);
-    if token_valid {
-        actor.session_id = matched_row.and_then(|row| row.session_id);
-        info!(actor = %actor.name(), "authorization accepted");
-        request.extensions_mut().insert(actor);
-        Ok(next.run(request).await)
-    } else {
+    let Some(matched_row) = matched_row else {
         let error = StoreError::InvalidAuthToken;
         let message = auth_failure_message(&error);
         info!(error = %error, "authorization rejected");
-        Err(ApiError::unauthorized(message))
+        return Err(ApiError::unauthorized(message));
+    };
+
+    if matched_row.is_revoked {
+        // Token belonged to a session that has since been killed
+        // (`sessions/kill` → `revoke_auth_tokens_for_session`). Reject
+        // with the same `authorization invalid` message we use for any
+        // unknown token so callers see a uniform 401.
+        let error = StoreError::InvalidAuthToken;
+        let message = auth_failure_message(&error);
+        info!(
+            actor = %auth_token.actor_name(),
+            session_id = ?matched_row.session_id,
+            "authorization rejected: token revoked"
+        );
+        return Err(ApiError::unauthorized(message));
     }
+
+    actor.session_id = matched_row.session_id;
+    info!(actor = %actor.name(), "authorization accepted");
+    request.extensions_mut().insert(actor);
+    Ok(next.run(request).await)
 }
 
 fn extract_bearer_token(headers: &header::HeaderMap) -> Result<&str, &'static str> {

@@ -1013,6 +1013,13 @@ impl StoreWithEvents {
             .await
     }
 
+    pub async fn revoke_auth_tokens_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), StoreError> {
+        self.inner.revoke_auth_tokens_for_session(session_id).await
+    }
+
     // ---- User mutations (inherent, with actor) ----
 
     pub async fn add_user(&self, user: User, actor: ActorRef) -> Result<(), StoreError> {

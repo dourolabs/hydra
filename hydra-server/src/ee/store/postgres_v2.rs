@@ -1128,15 +1128,19 @@ impl PostgresStoreV2 {
 
         let creator_str = actor.creator.to_string();
 
+        // The `auth_token_hash` / `auth_token_salt` columns are vestigial:
+        // Phase 3b of the actor-system overhaul (§9, §8.4) removed the
+        // matching `Actor` fields and the `verify_auth_token` consumer.
+        // We write empty strings to keep the NOT-NULL DB schema satisfied
+        // until a follow-up migration drops the columns after a release
+        // of soak.
         let query = format!(
             "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+             VALUES ($1, $2, '', '', $3, $4, $5)"
         );
         sqlx::query(&query)
             .bind(id)
             .bind(version_number)
-            .bind(&actor.auth_token_hash)
-            .bind(&actor.auth_token_salt)
             .bind(&actor_id_json)
             .bind(&creator_str)
             .bind(acting_as)
@@ -1152,8 +1156,6 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to deserialize actor_id: {e}")))?;
 
         Ok(Actor {
-            auth_token_hash: row.auth_token_hash.clone(),
-            auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
             session_id: None,
@@ -1503,8 +1505,6 @@ struct UserRow {
 struct ActorRow {
     id: String,
     version_number: i64,
-    auth_token_hash: String,
-    auth_token_salt: String,
     actor_id: Value,
     creator: Option<String>,
     actor: Option<Value>,
@@ -3039,7 +3039,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         crate::store::validate_actor_name(name)?;
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
+            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -3070,7 +3070,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
+            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE is_latest = true
              ORDER BY id"
@@ -3565,14 +3565,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
         token_hash: &str,
     ) -> Result<Option<AuthTokenRow>, StoreError> {
         let sql = format!(
-            "SELECT actor_name, session_id FROM {TABLE_AUTH_TOKENS} WHERE token_hash = $1 LIMIT 1"
+            "SELECT actor_name, session_id, is_revoked FROM {TABLE_AUTH_TOKENS} \
+             WHERE token_hash = $1 LIMIT 1"
         );
-        let row = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+        let row = sqlx::query_as::<_, (String, Option<String>, bool)>(&sql)
             .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        let Some((actor_name, session_id)) = row else {
+        let Some((actor_name, session_id, is_revoked)) = row else {
             return Ok(None);
         };
         let session_id = match session_id {
@@ -3584,6 +3585,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(Some(AuthTokenRow {
             actor_name,
             session_id,
+            is_revoked,
         }))
     }
 
@@ -4887,6 +4889,22 @@ impl Store for PostgresStoreV2 {
         let sql = format!("DELETE FROM {TABLE_AUTH_TOKENS} WHERE actor_name = $1");
         sqlx::query(&sql)
             .bind(actor_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn revoke_auth_tokens_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), StoreError> {
+        let sql = format!(
+            "UPDATE {TABLE_AUTH_TOKENS} SET is_revoked = TRUE \
+             WHERE session_id = $1 AND is_revoked = FALSE"
+        );
+        sqlx::query(&sql)
+            .bind(session_id.to_string())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -7327,6 +7345,76 @@ mod tests {
 
         let missing = store.get_auth_token_by_hash("nope").await.unwrap();
         assert!(missing.is_none());
+    }
+
+    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): the postgres
+    /// implementation must default new rows to `is_revoked = false`,
+    /// flip exactly the rows for the given session id on
+    /// `revoke_auth_tokens_for_session`, and be idempotent on
+    /// repeated calls / no-match calls.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn revoke_auth_tokens_for_session_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let sid = SessionId::new();
+        let other_sid = SessionId::new();
+
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("agents/swe", "hash-other", Some(&other_sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("token row should exist before revoke");
+        assert!(!row.is_revoked);
+
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("row should survive revoke");
+        assert!(row.is_revoked);
+
+        let other = store
+            .get_auth_token_by_hash("hash-other")
+            .await
+            .unwrap()
+            .expect("sibling session token should still exist");
+        assert!(!other.is_revoked);
+
+        let user = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("user-login token should still exist");
+        assert!(!user.is_revoked);
+
+        // Idempotent: a second revoke / revoke of a session with no
+        // rows must be harmless and leave existing state untouched.
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+        store
+            .revoke_auth_tokens_for_session(&SessionId::new())
+            .await
+            .unwrap();
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("row should survive double revoke");
+        assert!(row.is_revoked);
     }
 
     #[sqlx::test(migrations = "./migrations")]

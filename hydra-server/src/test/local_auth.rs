@@ -1,7 +1,7 @@
 use crate::{
     config::AuthConfig,
     domain::{
-        actors::AuthToken,
+        actors::{Actor, AuthToken},
         secrets::{SECRET_CLAUDE_CODE_OAUTH_TOKEN, SECRET_GITHUB_TOKEN, SecretManager},
         users::Username,
     },
@@ -10,6 +10,27 @@ use crate::{
     test_utils::test_app_config,
 };
 use std::sync::Arc;
+
+/// Resolve `auth_token` against the post-Phase-3b auth path: look up the
+/// `auth_tokens` row by hash and confirm it points at the expected actor.
+async fn token_is_registered_for(
+    store: &dyn ReadOnlyStore,
+    actor_name: &str,
+    auth_token: &str,
+) -> bool {
+    let parsed = match AuthToken::parse(auth_token) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    if parsed.actor_name() != actor_name {
+        return false;
+    }
+    let hash = Actor::hash_auth_token(parsed.raw_token());
+    match store.get_auth_token_by_hash(&hash).await {
+        Ok(Some(row)) => row.actor_name == actor_name && !row.is_revoked,
+        _ => false,
+    }
+}
 
 fn test_secret_manager() -> SecretManager {
     SecretManager::new([42u8; 32])
@@ -132,10 +153,8 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
     let token_contents = std::fs::read_to_string(&token_path)?;
     assert!(!token_contents.is_empty());
 
-    // The file contents should be a valid auth token that matches the stored actor.
-    let actor = store.as_ref().get_actor("u-local").await?;
-    let parsed_token = AuthToken::parse(&token_contents)?;
-    assert!(actor.item.verify_auth_token(&parsed_token));
+    // The file contents should be a valid auth token registered in the store.
+    assert!(token_is_registered_for(store.as_ref(), "u-local", &token_contents).await);
 
     // On Unix, verify the file permissions are 0o600.
     #[cfg(unix)]
@@ -179,12 +198,18 @@ async fn setup_local_auth_regenerates_token_on_reinit() -> anyhow::Result<()> {
         "token file should be non-empty after re-init"
     );
 
-    // The new token should verify against the updated actor hash.
-    let actor = store.as_ref().get_actor("u-local").await?;
-    let parsed_new = AuthToken::parse(&token_after_second)?;
+    // The new token should be registered for the actor in the auth_tokens table.
     assert!(
-        actor.item.verify_auth_token(&parsed_new),
+        token_is_registered_for(store.as_ref(), "u-local", &token_after_second).await,
         "actor should verify the newly generated token"
+    );
+
+    // The first token must no longer authenticate — `setup_local_auth`
+    // rotates by deleting the actor's previous `auth_tokens` rows on
+    // re-init.
+    assert!(
+        !token_is_registered_for(store.as_ref(), "u-local", &token_after_first).await,
+        "previous token should be invalidated after re-init"
     );
 
     Ok(())
@@ -218,10 +243,8 @@ async fn setup_local_auth_overwrites_stale_token_file() -> anyhow::Result<()> {
         "stale token should be replaced"
     );
 
-    let actor = store.as_ref().get_actor("u-local").await?;
-    let parsed = AuthToken::parse(&token)?;
     assert!(
-        actor.item.verify_auth_token(&parsed),
+        token_is_registered_for(store.as_ref(), "u-local", &token).await,
         "actor should verify the fresh token that replaced the stale one"
     );
 
@@ -260,10 +283,8 @@ async fn setup_local_auth_recreates_deleted_token_file() -> anyhow::Result<()> {
     let token = std::fs::read_to_string(&token_path)?;
     assert!(!token.is_empty());
 
-    let actor = store.as_ref().get_actor("u-local").await?;
-    let parsed = AuthToken::parse(&token)?;
     assert!(
-        actor.item.verify_auth_token(&parsed),
+        token_is_registered_for(store.as_ref(), "u-local", &token).await,
         "actor should verify the recreated token"
     );
 

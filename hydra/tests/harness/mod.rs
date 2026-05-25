@@ -31,8 +31,8 @@ use hydra_server::{
     policy::integrations::github_pr_poller::GithubPollerWorker,
     store::{MemoryStore, Store},
     test_utils::{
-        spawn_test_server_with_state, test_app_config, test_secret_manager, GitHubMockBuilder,
-        GitRemote, MockJobEngine, TestServer,
+        register_actor_and_token, spawn_test_server_with_state, test_app_config,
+        test_secret_manager, GitHubMockBuilder, GitRemote, MockJobEngine, TestServer,
     },
 };
 use std::{collections::HashMap, str::FromStr, sync::Arc};
@@ -554,7 +554,7 @@ impl TestHarnessBuilder {
 
         // Default user
         let (default_actor, default_token) = Actor::new_for_user(Username::from("default").into());
-        store.add_actor(default_actor, &ActorRef::test()).await?;
+        register_actor_and_token(store.as_ref(), &default_actor, &default_token, None).await?;
         let default_user = User::new(Username::from("default"), Some(1), false);
         store
             .add_user(default_user.into(), &ActorRef::test())
@@ -567,7 +567,7 @@ impl TestHarnessBuilder {
                 continue; // Already created
             }
             let (actor, token) = Actor::new_for_user(Username::from(user_name.as_str()).into());
-            store.add_actor(actor, &ActorRef::test()).await?;
+            register_actor_and_token(store.as_ref(), &actor, &token, None).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),
                 Some((i + 2) as u64), // github_id, avoid collision with default (1)

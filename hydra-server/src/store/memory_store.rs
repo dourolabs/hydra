@@ -65,8 +65,10 @@ pub struct MemoryStore {
     object_labels: DashMap<HydraId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<HydraId>>,
-    /// Maps actor_name to (token_hash, session_id) entries for that actor.
-    auth_tokens: DashMap<String, Vec<(String, Option<SessionId>)>>,
+    /// Maps actor_name to `(token_hash, session_id, is_revoked)` entries for
+    /// that actor. `is_revoked` is flipped by
+    /// [`Self::revoke_auth_tokens_for_session`] (Phase 3b, §7.4).
+    auth_tokens: DashMap<String, Vec<(String, Option<SessionId>, bool)>>,
     /// Maps (username, secret_name, internal) to encrypted_value
     user_secrets: DashMap<(Username, String, bool), Vec<u8>>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
@@ -1464,7 +1466,7 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self
             .auth_tokens
             .get(actor_name)
-            .map(|v| v.value().iter().map(|(h, _)| h.clone()).collect())
+            .map(|v| v.value().iter().map(|(h, _, _)| h.clone()).collect())
             .unwrap_or_default())
     }
 
@@ -1474,11 +1476,12 @@ impl ReadOnlyStore for MemoryStore {
     ) -> Result<Option<AuthTokenRow>, StoreError> {
         for entry in self.auth_tokens.iter() {
             let actor_name = entry.key();
-            for (hash, session_id) in entry.value() {
+            for (hash, session_id, is_revoked) in entry.value() {
                 if hash == token_hash {
                     return Ok(Some(AuthTokenRow {
                         actor_name: actor_name.clone(),
                         session_id: session_id.clone(),
+                        is_revoked: *is_revoked,
                     }));
                 }
             }
@@ -2370,14 +2373,28 @@ impl Store for MemoryStore {
     ) -> Result<(), StoreError> {
         let mut entry = self.auth_tokens.entry(actor_name.to_string()).or_default();
         let hash = token_hash.to_string();
-        if !entry.iter().any(|(h, _)| h == &hash) {
-            entry.push((hash, session_id.cloned()));
+        if !entry.iter().any(|(h, _, _)| h == &hash) {
+            entry.push((hash, session_id.cloned(), false));
         }
         Ok(())
     }
 
     async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError> {
         self.auth_tokens.remove(actor_name);
+        Ok(())
+    }
+
+    async fn revoke_auth_tokens_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), StoreError> {
+        for mut entry in self.auth_tokens.iter_mut() {
+            for (_, sid, is_revoked) in entry.value_mut() {
+                if sid.as_ref() == Some(session_id) {
+                    *is_revoked = true;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -4430,8 +4447,6 @@ mod tests {
     async fn add_and_get_actor_by_name() {
         let store = MemoryStore::new();
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
@@ -4452,8 +4467,6 @@ mod tests {
     async fn add_actor_rejects_duplicate_name() {
         let store = MemoryStore::new();
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(SessionId::new()),
             creator: Username::from("creator"),
             session_id: None,
@@ -4477,14 +4490,12 @@ mod tests {
         let store = MemoryStore::new();
         let task_id = SessionId::new();
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(task_id),
             creator: Username::from("creator"),
             session_id: None,
         };
         let mut updated = actor.clone();
-        updated.auth_token_hash = "new-hash".to_string();
+        updated.creator = Username::from("rotated-creator");
 
         store
             .add_actor(actor.clone(), &ActorRef::test())
@@ -4504,8 +4515,6 @@ mod tests {
     async fn update_actor_missing_returns_not_found() {
         let store = MemoryStore::new();
         let actor = Actor {
-            auth_token_hash: "hash".to_string(),
-            auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
@@ -4644,6 +4653,76 @@ mod tests {
         let store = MemoryStore::new();
         let row = store.get_auth_token_by_hash("nope").await.unwrap();
         assert!(row.is_none());
+    }
+
+    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): same
+    /// contract as the sqlite/postgres equivalents — revoking by
+    /// session id flips exactly the rows for that session and leaves
+    /// other tokens untouched.
+    #[tokio::test]
+    async fn revoke_auth_tokens_flips_only_target_session() {
+        let store = MemoryStore::new();
+        let sid = SessionId::new();
+        let other_sid = SessionId::new();
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("agents/swe", "hash-other", Some(&other_sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("session-scoped token should exist before revocation");
+        assert!(
+            !row.is_revoked,
+            "fresh row must default to is_revoked=false"
+        );
+
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("row should still exist after revoke");
+        assert!(row.is_revoked);
+
+        let other = store
+            .get_auth_token_by_hash("hash-other")
+            .await
+            .unwrap()
+            .expect("sibling session token should still exist");
+        assert!(!other.is_revoked);
+
+        let user = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("user token should still exist");
+        assert!(!user.is_revoked);
+
+        // Idempotent: double revocation leaves state unchanged; revoking
+        // a session with no rows is a no-op.
+        store.revoke_auth_tokens_for_session(&sid).await.unwrap();
+        store
+            .revoke_auth_tokens_for_session(&SessionId::new())
+            .await
+            .unwrap();
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("row should survive double revocation");
+        assert!(row.is_revoked);
     }
 
     #[tokio::test]

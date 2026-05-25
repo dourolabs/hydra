@@ -136,7 +136,8 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -170,7 +171,8 @@ async fn github_token_requires_auth() -> anyhow::Result<()> {
 async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let (actor, auth_token) = Actor::new_for_user(Username::from("octo"));
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -266,7 +268,8 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = auth_client(&auth_token);
@@ -367,7 +370,8 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -392,7 +396,8 @@ async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()>
     let handles = test_state_handles();
     let task_id = SessionId::new();
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
-    handles.store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
+        .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -435,7 +440,7 @@ async fn github_token_returns_pat_in_local_mode_without_refresh_token() -> anyho
     store.add_user(user, &ActorRef::test()).await?;
 
     let (actor, auth_token) = Actor::new_for_user(username.clone());
-    store.add_actor(actor, &ActorRef::test()).await?;
+    crate::test_utils::register_actor_and_token(store.as_ref(), &actor, &auth_token, None).await?;
 
     // Encrypt and store only the GitHub PAT — no refresh token.
     let encrypted = sm.encrypt("ghp_local_pat")?;

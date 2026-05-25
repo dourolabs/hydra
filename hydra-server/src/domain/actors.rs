@@ -70,8 +70,6 @@ impl AuthToken {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
-    pub auth_token_hash: String,
-    pub auth_token_salt: String,
     pub actor_id: ActorId,
     pub creator: Username,
     /// Session that minted the request's authenticating token, when the
@@ -88,71 +86,25 @@ pub struct Actor {
 
 impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
-        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let creator = username.clone();
         let actor_id = ActorId::Username(username.into());
-        let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
-            actor_id,
-            creator,
-            session_id: None,
-        };
-        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
-        (actor, auth_token)
+        Self::new_with_token(actor_id, creator)
     }
 
     pub fn name(&self) -> String {
         self.actor_id.to_string()
     }
 
-    pub fn verify_auth_token(&self, token: &AuthToken) -> bool {
-        if token.actor_name() != self.name() {
-            return false;
-        }
-        self.auth_token_hash == Self::hash_auth_token(token.raw_token())
-    }
-
     pub fn new_for_session(session_id: SessionId, creator: Username) -> (Actor, String) {
-        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let actor_id = ActorId::Session(session_id);
-        let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
-            actor_id,
-            creator,
-            session_id: None,
-        };
-        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
-        (actor, auth_token)
+        Self::new_with_token(ActorId::Session(session_id), creator)
     }
 
     pub fn new_for_service(service_name: String, creator: Username) -> (Actor, String) {
-        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let actor_id = ActorId::Service(service_name);
-        let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
-            actor_id,
-            creator,
-            session_id: None,
-        };
-        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
-        (actor, auth_token)
+        Self::new_with_token(ActorId::Service(service_name), creator)
     }
 
     pub fn new_for_issue(issue_id: IssueId, creator: Username) -> (Actor, String) {
-        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let actor_id = ActorId::Issue(issue_id);
-        let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
-            actor_id,
-            creator,
-            session_id: None,
-        };
-        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
-        (actor, auth_token)
+        Self::new_with_token(ActorId::Issue(issue_id), creator)
     }
 
     /// Build a new `Actor` from an already-constructed [`ActorId`].
@@ -172,23 +124,25 @@ impl Actor {
             !matches!(actor_id, ActorId::Legacy(_)),
             "Actor::new_from_actor_id must never be called with ActorId::Legacy"
         );
-        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        Self::new_with_token(actor_id, creator)
+    }
+
+    /// Build a fresh `Actor` paired with a `"<actor_name>:<raw_token>"`
+    /// authentication string. The caller is responsible for persisting
+    /// the actor *and* inserting `Self::hash_auth_token(raw_token)` into
+    /// the `auth_tokens` table — Phase 3b (`/designs/actor-system-overhaul.md`
+    /// §9) deleted the legacy single-token hash on the actor row, so
+    /// `auth_tokens` is now the only source of truth for verifying the
+    /// returned string at the auth middleware.
+    fn new_with_token(actor_id: ActorId, creator: Username) -> (Actor, String) {
+        let raw_token = Uuid::new_v4().to_string();
         let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
             actor_id,
             creator,
             session_id: None,
         };
-        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
+        let auth_token = format!("{}:{raw_token}", actor.name());
         (actor, auth_token)
-    }
-
-    fn generate_auth_token() -> (String, String, String) {
-        let token = Uuid::new_v4().to_string();
-        let salt = Uuid::new_v4().to_string();
-        let hash = Self::hash_auth_token(&token);
-        (token, hash, salt)
     }
 
     pub fn hash_auth_token(token: &str) -> String {
@@ -200,10 +154,6 @@ impl Actor {
             write!(&mut encoded, "{byte:02x}").expect("writing to string should not fail");
         }
         encoded
-    }
-
-    fn format_auth_token(actor: &Actor, raw_token: &str) -> String {
-        format!("{}:{raw_token}", actor.name())
     }
 
     pub fn parse_name(name: &str) -> Result<ActorId, ActorError> {
@@ -461,14 +411,15 @@ mod tests {
             actor.actor_id,
             ActorId::Username(CommonUsername::from("octo"))
         );
-        assert!(!actor.auth_token_salt.is_empty());
         let prefix = format!("{}:", actor.name());
         let raw_token = auth_token
             .strip_prefix(&prefix)
             .expect("auth token should include actor name prefix");
-        assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(raw_token));
+        assert!(!raw_token.is_empty());
+        // Parsing the formatted token must round-trip through `AuthToken`.
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
-        assert!(actor.verify_auth_token(&parsed));
+        assert_eq!(parsed.actor_name(), actor.name());
+        assert_eq!(parsed.raw_token(), raw_token);
     }
 
     #[test]
@@ -490,16 +441,14 @@ mod tests {
     }
 
     #[test]
-    fn verify_auth_token_requires_matching_actor_name() {
+    fn new_for_session_returns_session_actor() {
         let session_id = SessionId::new();
-        let (actor, auth_token) = Actor::new_for_session(session_id, Username::from("creator"));
+        let (actor, auth_token) =
+            Actor::new_for_session(session_id.clone(), Username::from("creator"));
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
 
-        assert!(actor.verify_auth_token(&parsed));
-
-        let invalid = format!("u-wrong:{}", auth_token.split_once(':').unwrap().1);
-        let parsed_invalid = AuthToken::parse(&invalid).expect("auth token should parse");
-        assert!(!actor.verify_auth_token(&parsed_invalid));
+        assert_eq!(actor.actor_id, ActorId::Session(session_id));
+        assert_eq!(parsed.actor_name(), actor.name());
     }
 
     #[test]
@@ -512,7 +461,7 @@ mod tests {
         assert_eq!(actor.name(), "a-i-abcdef");
 
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
-        assert!(actor.verify_auth_token(&parsed));
+        assert_eq!(parsed.actor_name(), actor.name());
     }
 
     #[test]
@@ -539,8 +488,6 @@ mod tests {
     #[test]
     fn from_actor_ref_propagates_session_id() {
         let mut actor = Actor {
-            auth_token_hash: String::new(),
-            auth_token_salt: String::new(),
             actor_id: ActorId::Agent(
                 hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
             ),
@@ -567,6 +514,6 @@ mod tests {
         assert_eq!(actor.creator, Username::from("admin"));
 
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
-        assert!(actor.verify_auth_token(&parsed));
+        assert_eq!(parsed.actor_name(), actor.name());
     }
 }

@@ -305,11 +305,13 @@ async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<(
     // secrets are gated on Username-typed actors only.
     let (session_actor, auth_token) =
         Actor::new_for_session(SessionId::new(), Username::from(TEST_USERNAME));
-    handles
-        .store
-        .as_ref()
-        .add_actor(session_actor, &ActorRef::test())
-        .await?;
+    crate::test_utils::register_actor_and_token(
+        handles.store.as_ref(),
+        &session_actor,
+        &auth_token,
+        None,
+    )
+    .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
 
     let mut headers = header::HeaderMap::new();
