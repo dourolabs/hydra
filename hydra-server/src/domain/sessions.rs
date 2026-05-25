@@ -66,11 +66,9 @@ pub enum SessionMode {
         /// Optional worker-side idle timeout override. `None` falls back to
         /// `config.job.interactive_idle_timeout_secs`.
         idle_timeout_secs: Option<u64>,
-        /// Conversation event index that a resumed session should replay
-        /// from. Stamped by the spawn automation when a previous run on
-        /// the same conversation was closed/suspended. Transitional
-        /// alongside `Session::resumed_from`; retired in PR-4 when the
-        /// worker stops needing an event-index hint.
+        /// Event-index resumption marker. See
+        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
+        /// state-blob direction.
         conversation_resume_from: Option<usize>,
     },
 }
@@ -82,13 +80,6 @@ impl SessionMode {
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
-        }
-    }
-
-    pub fn prompt_for_legacy_wire(&self) -> &str {
-        match self {
-            SessionMode::Headless { prompt } => prompt.as_str(),
-            SessionMode::Interactive { .. } => "",
         }
     }
 

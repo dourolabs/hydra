@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary, Status,
-    Store, StoreError, TaskStatusLog,
+    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary,
+    SessionMode, Status, Store, StoreError, TaskStatusLog,
 };
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
@@ -485,12 +485,11 @@ impl MemoryStore {
 
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                let matches_prompt = latest
-                    .item
-                    .mode
-                    .prompt_for_legacy_wire()
-                    .to_lowercase()
-                    .contains(term);
+                let prompt = match &latest.item.mode {
+                    SessionMode::Headless { prompt } => prompt.as_str(),
+                    SessionMode::Interactive { .. } => "",
+                };
+                let matches_prompt = prompt.to_lowercase().contains(term);
                 let matches_status = format!("{:?}", latest.item.status)
                     .to_lowercase()
                     .contains(term);
@@ -3666,8 +3665,14 @@ mod tests {
 
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
-        assert_eq!(versions[0].item.mode.prompt_for_legacy_wire(), "v1");
-        assert_eq!(versions[1].item.mode.prompt_for_legacy_wire(), "v2");
+        let SessionMode::Headless { prompt } = &versions[0].item.mode else {
+            panic!("expected headless");
+        };
+        assert_eq!(prompt, "v1");
+        let SessionMode::Headless { prompt } = &versions[1].item.mode else {
+            panic!("expected headless");
+        };
+        assert_eq!(prompt, "v2");
     }
 
     #[tokio::test]

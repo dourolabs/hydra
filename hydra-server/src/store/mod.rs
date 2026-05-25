@@ -171,10 +171,7 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 }
 
 /// Build the JSON value persisted to `tasks_v2.mount_spec` for a session on
-/// dual-write inserts. The persisted JSON is a straight serialization of
-/// `session.mount_spec` — PR-F removed the transitional `Session.context`
-/// overlay that previously stamped a `BundleSpec` into the first Bundle
-/// item's `bundle` field.
+/// dual-write inserts. `mount_spec` is the canonical mount source post-refactor.
 pub(crate) fn dual_write_mount_spec_json(
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {

@@ -2,8 +2,6 @@
 
 /**
  * Opaque serialized session state included in a resumed session's
- * [`WorkerContext`]. Placeholder per design §2.2 / §3.2 — Phase D step 15
- * reserves the wire field; populating it with a real payload is a
- * follow-up. Until then the server always serializes `None`.
+ * [`WorkerContext`]. Reserved for the §3 resumption design.
  */
 export type SessionStateBlob = Array<number>;

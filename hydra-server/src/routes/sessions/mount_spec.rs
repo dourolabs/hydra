@@ -5,11 +5,7 @@ use hydra_common::{
 
 /// Single source of truth for `CreateSessionRequest → MountSpec` translation.
 ///
-/// The shape returned here mirrors the migration backfill in
-/// `20260523020000_add_session_shape_columns.sql` and supersedes the inline
-/// builder previously known as `build_mount_spec` (deleted in Phase A).
-///
-/// Inputs reflect what the server knows after the CreateSessionRequest has
+/// Inputs reflect what the server knows after the `CreateSessionRequest` has
 /// been resolved: the lowered `Bundle`, plus the optional service-repo /
 /// build-cache pair. The build-cache item is config-derived (not stored on
 /// the row) and is appended only when both a service repository and a

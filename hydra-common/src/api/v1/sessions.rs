@@ -124,13 +124,11 @@ pub enum SessionMode {
         /// and for legacy rows that don't carry one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idle_timeout_secs: Option<u64>,
-        /// Conversation event index that a resumed session should replay
-        /// from. Stamped by the spawn automation. Belongs inside the
-        /// `Interactive` variant because resumption is only meaningful for
-        /// interactive sessions; making it part of the mode means a
-        /// `Headless` session can never carry a meaningless value.
-        /// Transitional until [`SessionStateBlob`] is wired with a real
-        /// payload (follow-up to Phase D step 15).
+        /// Event-index resumption marker. See
+        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
+        /// state-blob direction. Belongs inside the `Interactive` variant because
+        /// resumption is only meaningful for interactive sessions; making it part of
+        /// the mode means a `Headless` session can never carry a meaningless value.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation_resume_from: Option<usize>,
     },
@@ -144,16 +142,6 @@ impl SessionMode {
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
-        }
-    }
-
-    /// Returns the headless prompt, or empty string for interactive mode.
-    /// Used to populate the legacy `prompt` wire field during the
-    /// Phase-D dual-write transition.
-    pub fn prompt_for_legacy_wire(&self) -> &str {
-        match self {
-            SessionMode::Headless { prompt } => prompt.as_str(),
-            SessionMode::Interactive { .. } => "",
         }
     }
 
@@ -569,9 +557,7 @@ impl<'de> Deserialize<'de> for MountItem {
 }
 
 /// Opaque serialized session state included in a resumed session's
-/// [`WorkerContext`]. Placeholder per design §2.2 / §3.2 — Phase D step 15
-/// reserves the wire field; populating it with a real payload is a
-/// follow-up. Until then the server always serializes `None`.
+/// [`WorkerContext`]. Reserved for the §3 resumption design.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

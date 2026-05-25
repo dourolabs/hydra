@@ -5699,10 +5699,10 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        assert_eq!(
-            fetched2.item.mode.prompt_for_legacy_wire(),
-            "updated prompt"
-        );
+        let crate::domain::sessions::SessionMode::Headless { prompt } = &fetched2.item.mode else {
+            panic!("expected headless");
+        };
+        assert_eq!(prompt, "updated prompt");
         assert_eq!(fetched2.version, 2);
     }
 
