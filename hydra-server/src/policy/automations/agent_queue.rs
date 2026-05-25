@@ -1022,7 +1022,21 @@ mod tests {
         assert!(result.is_spawned());
         let session_id = result.into_session_id().unwrap();
         let session = handles.state.get_session(&session_id).await?;
-        assert!(session.mount_spec.mounts.is_empty());
+        // Repo-less issue: the spec carries a `Bundle::None` Bundle mount
+        // (alongside the standard Documents mount) so the worker
+        // materializes `working_dir` on disk (see i-lkadrfky).
+        use hydra_common::api::v1::sessions::{Bundle, MountItem};
+        assert!(
+            matches!(
+                session.mount_spec.mounts.first(),
+                Some(MountItem::Bundle {
+                    bundle: Bundle::None,
+                    ..
+                })
+            ),
+            "expected a Bundle::None mount for a repo-less issue; got {:?}",
+            session.mount_spec.mounts
+        );
         assert_eq!(
             session
                 .env_vars
@@ -1314,10 +1328,19 @@ mod tests {
             .state
             .get_session(&result1.into_session_id().unwrap())
             .await?;
-        // Repo-less issue → empty mount_spec.mounts.
+        // Repo-less issue → the spec carries a `Bundle::None` Bundle mount
+        // (alongside the standard Documents mount) so the worker creates
+        // `working_dir` on disk and `current_dir()` doesn't ENOENT
+        // (see i-lkadrfky). Pre-fix this was `mounts: []`.
         assert!(
-            session1.mount_spec.mounts.is_empty(),
-            "expected an empty mount_spec for the repo-less issue, got {:?}",
+            matches!(
+                session1.mount_spec.mounts.first(),
+                Some(MountItem::Bundle {
+                    bundle: Bundle::None,
+                    ..
+                })
+            ),
+            "expected a Bundle::None mount for a repo-less issue; got {:?}",
             session1.mount_spec.mounts,
         );
 

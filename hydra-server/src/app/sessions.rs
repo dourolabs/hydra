@@ -262,13 +262,27 @@ impl AppState {
 
         // Compute the final mount_spec. The request wins when non-empty;
         // session_settings defaults only fill in an empty request mount_spec.
-        let mount_spec = if !req_mount_spec.is_empty() {
+        //
+        // Construction-time invariant: the spec must include a Bundle mount
+        // that materializes `working_dir` on disk. A spec that arrives here
+        // empty (no `req_mount_spec`, no repo-bearing session_settings) — as
+        // happens for chat sessions and PM/breakdown sessions on a parent
+        // issue without a repository — would otherwise hand the worker a
+        // `working_dir = "repo"` that nothing creates, and `current_dir()`
+        // would ENOENT at spawn. Fall through to a Bundle::None spec via
+        // `mount_spec_from_create_request`, which the worker's `BundleMount`
+        // materializes as an empty directory at setup time.
+        use crate::routes::sessions::mount_spec_from_create_request;
+        let mut mount_spec = if !req_mount_spec.is_empty() {
             req_mount_spec
         } else if let Some(settings) = session_settings.as_ref() {
             self.mount_spec_from_session_settings(settings).await?
         } else {
             req_mount_spec
         };
+        if mount_spec.is_empty() {
+            mount_spec = mount_spec_from_create_request(Bundle::None, None);
+        }
 
         let agent_config = AgentConfig::new(agent_name, model, system_prompt, mcp_config);
         let mode: SessionMode = req_mode.into();
@@ -1471,6 +1485,120 @@ mod tests {
             .item
             .status;
         assert_eq!(status, Status::Failed);
+    }
+
+    /// Regression: i-lkadrfky. Sessions whose request mount_spec is empty
+    /// and whose session_settings carry no repo (chat conversations,
+    /// PM/breakdown on a repo-less parent issue) must be persisted with a
+    /// `Bundle::None`-bearing MountSpec so the worker's `BundleMount`
+    /// materializes `working_dir` before `Command::current_dir(working_dir)`.
+    /// A spec with `mounts: []` would otherwise hand the worker a
+    /// non-existent `dest/repo` and the spawn would ENOENT.
+    #[tokio::test]
+    async fn create_session_coerces_empty_mount_spec_to_bundle_none() {
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, SessionMode,
+        };
+
+        let state = state_with_default_model("default-model");
+
+        // Headless session with no spawned_from — the only inputs are an
+        // empty `MountSpec::default()` and no session_settings to derive
+        // from. Pre-fix this produced an empty `mounts: []`.
+        let headless_request = CreateSessionRequest {
+            mode: SessionMode::Headless {
+                prompt: "do stuff".to_string(),
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (headless_id, _) = state
+            .create_session(
+                headless_request,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        let headless = state.get_session(&headless_id).await.unwrap();
+        assert!(
+            !headless.mount_spec.is_empty(),
+            "headless session without repo must still carry a Bundle mount to create working_dir"
+        );
+        assert!(
+            matches!(
+                headless.mount_spec.mounts.first(),
+                Some(MountItem::Bundle {
+                    bundle: Bundle::None,
+                    ..
+                })
+            ),
+            "expected first mount to be a Bundle::None; got {:?}",
+            headless.mount_spec.mounts
+        );
+
+        // Interactive (chat) session whose conversation has no
+        // session_settings repo info — the path that the e2e tester
+        // confirmed reproduces the ENOENT spawn failure.
+        let (conv_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: crate::domain::issues::SessionSettings::default(),
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let chat_request = CreateSessionRequest {
+            mode: SessionMode::Interactive {
+                conversation_id: conv_id,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (chat_id, _) = state
+            .create_session(chat_request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let chat = state.get_session(&chat_id).await.unwrap();
+        assert!(
+            !chat.mount_spec.is_empty(),
+            "chat session must still carry a Bundle mount to create working_dir"
+        );
+        assert!(
+            matches!(
+                chat.mount_spec.mounts.first(),
+                Some(MountItem::Bundle {
+                    bundle: Bundle::None,
+                    ..
+                })
+            ),
+            "expected first mount to be a Bundle::None; got {:?}",
+            chat.mount_spec.mounts
+        );
     }
 
     #[tokio::test]
