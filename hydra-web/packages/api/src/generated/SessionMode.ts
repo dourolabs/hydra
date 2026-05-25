@@ -22,13 +22,11 @@ export type SessionMode =
        */
       idle_timeout_secs?: bigint | null;
       /**
-       * Conversation event index that a resumed session should replay
-       * from. Stamped by the spawn automation. Belongs inside the
-       * `Interactive` variant because resumption is only meaningful for
-       * interactive sessions; making it part of the mode means a
-       * `Headless` session can never carry a meaningless value.
-       * Transitional until [`SessionStateBlob`] is wired with a real
-       * payload (follow-up to Phase D step 15).
+       * Event-index resumption marker. See
+       * `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
+       * state-blob direction. Belongs inside the `Interactive` variant because
+       * resumption is only meaningful for interactive sessions; making it part of
+       * the mode means a `Headless` session can never carry a meaningless value.
        */
       conversation_resume_from?: number | null;
     };

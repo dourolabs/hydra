@@ -56,7 +56,10 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
 
-    assert_eq!(task.mode.prompt_for_legacy_wire(), "0");
+    let SessionMode::Headless { prompt } = &task.mode else {
+        panic!("expected headless");
+    };
+    assert_eq!(prompt, "0");
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 

@@ -480,6 +480,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::SessionSettings;
     use crate::domain::patches::{Patch, PatchStatus, Review};
+    use crate::domain::sessions::SessionMode;
     use crate::{
         app::Repository,
         config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
@@ -769,7 +770,10 @@ mod tests {
                 ..
             } = task;
 
-            assert_eq!(mode.prompt_for_legacy_wire(), "Fix the issue");
+            let SessionMode::Headless { prompt } = &mode else {
+                panic!("expected headless");
+            };
+            assert_eq!(prompt, "Fix the issue");
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(

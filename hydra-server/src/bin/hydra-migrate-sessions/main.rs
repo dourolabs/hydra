@@ -70,8 +70,7 @@ enum Command {
 
 #[derive(Debug, clap::Args)]
 struct MigrateEventsArgs {
-    /// Database DSN. Same scheme rules as `migrate-state`: `sqlite:<path>`
-    /// or `postgres(ql)://USER:PASSWORD@HOST/DB`.
+    /// Database DSN. Supports `sqlite:<path>` or `postgres(ql)://USER:PASSWORD@HOST/DB`.
     #[arg(long, env = "DATABASE_URL")]
     dsn: String,
 

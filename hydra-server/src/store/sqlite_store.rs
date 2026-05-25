@@ -7339,10 +7339,10 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            tasks[0].1.item.mode.prompt_for_legacy_wire(),
-            "deploy to production"
-        );
+        let SessionMode::Headless { prompt } = &tasks[0].1.item.mode else {
+            panic!("expected headless");
+        };
+        assert_eq!(prompt, "deploy to production");
     }
 
     #[tokio::test]

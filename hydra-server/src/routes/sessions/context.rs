@@ -74,8 +74,8 @@ pub async fn get_session_context(
         }
     };
 
-    // `resumed_state` plumbing is a follow-up to Phase D step 15 (design §3.2);
-    // until then the field is always `None`.
+    // `resumed_state` is reserved for the §3 resumption design; populated by a
+    // future PR and read by the worker via `Session.resumed_from`.
     let context = v1::sessions::WorkerContext::new(session, env_vars, github_token, None);
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
