@@ -35,8 +35,12 @@ const ENTITY_EVENT_TYPES = [
   "conversation_event_created",
 ] as const;
 
-const MAX_BACKOFF_MS = 30_000;
+const MAX_BACKOFF_MS = 15_000;
 const BASE_BACKOFF_MS = 1_000;
+// How long a connection must stay open before we treat the prior failure
+// burst as resolved and reset the retry counter. Otherwise a single transient
+// blip permanently parks the user near MAX_BACKOFF_MS.
+const RETRIES_RESET_AFTER_OPEN_MS = 30_000;
 const SESSION_IDS_RECONNECT_DEBOUNCE_MS = 200;
 const BASE_EVENT_TYPES_QUERY =
   "types=issues,sessions,patches,documents,labels,conversations";
@@ -186,6 +190,7 @@ export function useSSE(): SSEConnectionState {
   const queryClient = useQueryClient();
   const retriesRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retriesResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -346,8 +351,18 @@ export function useSSE(): SSEConnectionState {
 
     es.onopen = () => {
       setState("connected");
-      retriesRef.current = 0;
       connectingRef.current = false;
+
+      // Reset the retry counter only after the connection has been stable for
+      // a sustained period; an immediate reset would let a flapping connection
+      // hammer the server with short-delay reconnects.
+      if (retriesResetTimerRef.current) {
+        clearTimeout(retriesResetTimerRef.current);
+      }
+      retriesResetTimerRef.current = setTimeout(() => {
+        retriesResetTimerRef.current = null;
+        retriesRef.current = 0;
+      }, RETRIES_RESET_AFTER_OPEN_MS);
 
       // If this is a reconnection (we previously received events), invalidate
       // caches to cover any events missed during the disconnect window.
@@ -406,10 +421,19 @@ export function useSSE(): SSEConnectionState {
       es.close();
       esRef.current = null;
       connectingRef.current = false;
+      // Cancel the pending stable-open reset; the connection failed before
+      // staying open long enough to count as recovered.
+      if (retriesResetTimerRef.current) {
+        clearTimeout(retriesResetTimerRef.current);
+        retriesResetTimerRef.current = null;
+      }
       setState("disconnected");
 
-      // Reconnect with exponential backoff
-      const delay = Math.min(BASE_BACKOFF_MS * 2 ** retriesRef.current, MAX_BACKOFF_MS);
+      // Half-jittered exponential backoff: each client picks a delay in
+      // [ceiling/2, ceiling] so synchronized reconnect storms (e.g., after a
+      // BFF restart) spread out instead of stampeding.
+      const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** retriesRef.current, MAX_BACKOFF_MS);
+      const delay = ceiling * (0.5 + Math.random() * 0.5);
       retriesRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
     };
@@ -426,6 +450,10 @@ export function useSSE(): SSEConnectionState {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
+      }
+      if (retriesResetTimerRef.current) {
+        clearTimeout(retriesResetTimerRef.current);
+        retriesResetTimerRef.current = null;
       }
       if (invalidateTimerRef.current) {
         clearTimeout(invalidateTimerRef.current);
@@ -476,24 +504,52 @@ export function useSSE(): SSEConnectionState {
     return unsubscribe;
   }, [connect]);
 
-  // Reconnect and refresh caches when the page becomes visible again
-  // (e.g., after mobile suspend or tab switch)
+  // Reconnect and refresh caches when the page becomes visible again or the
+  // network comes back online (e.g., after mobile suspend or tab switch).
+  //
+  // Both transitions bypass the readyState guard inside `connect()` by force-
+  // closing the existing EventSource first. After a suspend the underlying
+  // TCP socket is often half-open: `readyState` still reads `OPEN` but no
+  // data is flowing, and `onerror` won't fire until the OS hits its keepalive
+  // timeout (Linux default tcp_keepalive_time = 7200s). Without this force-
+  // close, `connect()` short-circuits and the user waits hours for recovery.
   useEffect(() => {
+    const forceReconnect = () => {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      // The pending exponential-backoff timer (if any) targets the old
+      // connection's failure; cancel it so the immediate connect() wins.
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (retriesResetTimerRef.current) {
+        clearTimeout(retriesResetTimerRef.current);
+        retriesResetTimerRef.current = null;
+      }
+      retriesRef.current = 0;
+      connectingRef.current = false;
+      debouncedInvalidate();
+      connect();
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        retriesRef.current = 0;
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
-        debouncedInvalidate();
-        connect();
+        forceReconnect();
       }
     };
 
+    const handleOnline = () => {
+      forceReconnect();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
     };
   }, [connect, debouncedInvalidate]);
 
