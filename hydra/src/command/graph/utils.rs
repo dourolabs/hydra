@@ -70,6 +70,7 @@ pub async fn resolve_node_ids(
             target_id: selection.target.clone(),
             target_ids: None,
             object_id: selection.object.clone(),
+            object_ids: None,
             rel_type: selection.rel_type.clone(),
             transitive: if selection.transitive {
                 Some(true)

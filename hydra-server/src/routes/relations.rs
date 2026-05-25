@@ -81,11 +81,30 @@ pub async fn list_relations(
         ));
     }
 
+    // object_ids cannot combine with object_id or any source/target form
+    if query.object_ids.is_some()
+        && (query.object_id.is_some()
+            || query.source_id.is_some()
+            || query.source_ids.is_some()
+            || query.target_id.is_some()
+            || query.target_ids.is_some())
+    {
+        return Err(ApiError::bad_request(
+            "object_ids cannot be combined with object_id, source_id, source_ids, target_id, or target_ids",
+        ));
+    }
+
     let transitive = query.transitive.unwrap_or(false);
 
     // transitive=true requires rel_type + exactly one direction (source or target),
-    // either singular or plural form.
+    // either singular or plural form. object_id/object_ids cannot be combined with
+    // transitive (the server can't do transitive closure without a direction).
     if transitive {
+        if query.object_ids.is_some() {
+            return Err(ApiError::bad_request(
+                "transitive=true cannot be combined with object_ids",
+            ));
+        }
         let has_source = query.source_id.is_some() || query.source_ids.is_some();
         let has_target = query.target_id.is_some() || query.target_ids.is_some();
         if query.rel_type.is_none() {
@@ -117,6 +136,34 @@ pub async fn list_relations(
         .map_err(map_store_error)?;
 
         // Merge and deduplicate
+        let mut merged = as_source;
+        for rel in as_target {
+            if !merged.iter().any(|r| {
+                r.source_id == rel.source_id
+                    && r.target_id == rel.target_id
+                    && r.rel_type == rel.rel_type
+            }) {
+                merged.push(rel);
+            }
+        }
+        relations = merged;
+    } else if let Some(ref raw) = query.object_ids {
+        // object_ids mode: parse CSV, dedupe, then run batch source/target
+        // queries in parallel and merge the two response vectors.
+        let mut ids = parse_id_list(raw)?;
+        if ids.is_empty() {
+            return Err(ApiError::bad_request("object_ids must not be empty"));
+        }
+        validate_batch_size(&ids)?;
+        ids.sort();
+        ids.dedup();
+
+        let (as_source, as_target) = tokio::try_join!(
+            store.get_relationships_batch(Some(&ids), None, rel_type),
+            store.get_relationships_batch(None, Some(&ids), rel_type),
+        )
+        .map_err(map_store_error)?;
+
         let mut merged = as_source;
         for rel in as_target {
             if !merged.iter().any(|r| {

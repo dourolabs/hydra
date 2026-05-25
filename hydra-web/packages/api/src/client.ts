@@ -91,6 +91,7 @@ export interface ListRelationsRequest {
   target_id?: HydraId;
   target_ids?: string;
   object_id?: HydraId;
+  object_ids?: string;
   rel_type?: string;
   transitive?: boolean;
 }

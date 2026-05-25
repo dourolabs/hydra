@@ -236,6 +236,250 @@ async fn list_relations_validation_rejects_mutually_exclusive_params() -> anyhow
 }
 
 #[tokio::test]
+async fn list_relations_by_object_ids_matches_object_id_singular() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+
+    // a -> b (child-of), c -> a (blocked-on)
+    for (src, tgt, rel) in [(&a, &b, "child-of"), (&c, &a, "blocked-on")] {
+        client
+            .post(format!("{base}/v1/relations"))
+            .json(&CreateRelationRequest {
+                source_id: src.clone(),
+                target_id: tgt.clone(),
+                rel_type: rel.to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    let singular: ListRelationsResponse = client
+        .get(format!("{base}/v1/relations?object_id={a}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let plural: ListRelationsResponse = client
+        .get(format!("{base}/v1/relations?object_ids={a}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let mut sorted_singular: Vec<(HydraId, HydraId, String)> = singular
+        .relations
+        .into_iter()
+        .map(|r| (r.source_id, r.target_id, r.rel_type))
+        .collect();
+    let mut sorted_plural: Vec<(HydraId, HydraId, String)> = plural
+        .relations
+        .into_iter()
+        .map(|r| (r.source_id, r.target_id, r.rel_type))
+        .collect();
+    sorted_singular.sort();
+    sorted_plural.sort();
+    assert_eq!(sorted_singular, sorted_plural);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_multi_id_union_dedupe() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+
+    // a -> b: counts for both object_ids=a (as source) and object_ids=b (as target).
+    // b -> c: counts for both object_ids=b (as source) and object_ids=c (as target).
+    for (src, tgt) in [(&a, &b), (&b, &c)] {
+        client
+            .post(format!("{base}/v1/relations"))
+            .json(&CreateRelationRequest {
+                source_id: src.clone(),
+                target_id: tgt.clone(),
+                rel_type: "child-of".to_string(),
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    let list: ListRelationsResponse = client
+        .get(format!("{base}/v1/relations?object_ids={a},{b},{c}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    // Union over {a,b,c} is exactly {a->b, b->c}; each edge appears once
+    // despite being incident on two queried vertices.
+    assert_eq!(list.relations.len(), 2, "expected deduped union of 2 edges");
+
+    let mut tuples: Vec<(HydraId, HydraId)> = list
+        .relations
+        .into_iter()
+        .map(|r| (r.source_id, r.target_id))
+        .collect();
+    tuples.sort();
+    let mut expected = vec![(a.clone(), b.clone()), (b.clone(), c.clone())];
+    expected.sort();
+    assert_eq!(tuples, expected);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_with_rel_type_filter() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+    let b = create_issue(&client, &base, "issue-b").await?;
+    let c = create_issue(&client, &base, "issue-c").await?;
+
+    // a -> b (child-of), c -> a (blocked-on)
+    client
+        .post(format!("{base}/v1/relations"))
+        .json(&CreateRelationRequest {
+            source_id: a.clone(),
+            target_id: b.clone(),
+            rel_type: "child-of".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+    client
+        .post(format!("{base}/v1/relations"))
+        .json(&CreateRelationRequest {
+            source_id: c.clone(),
+            target_id: a.clone(),
+            rel_type: "blocked-on".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let list: ListRelationsResponse = client
+        .get(format!(
+            "{base}/v1/relations?object_ids={a}&rel_type=child-of"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    assert_eq!(list.relations.len(), 1);
+    assert_eq!(list.relations[0].rel_type, "child-of");
+    assert_eq!(list.relations[0].source_id, a);
+    assert_eq!(list.relations[0].target_id, b);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_empty_csv_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let resp = client
+        .get(format!("{base}/v1/relations?object_ids="))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+
+    // Whitespace-only / comma-only CSVs also parse to empty
+    let resp = client
+        .get(format!("{base}/v1/relations?object_ids=,,"))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_too_many_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // 101 IDs without a valid hydra prefix — exercises the batch-validation
+    // path (matches the existing source_ids/target_ids batch-cap test pattern).
+    let ids: Vec<String> = (0..101).map(|i| format!("id-{i}")).collect();
+    let ids_str = ids.join(",");
+    let resp = client
+        .get(format!("{base}/v1/relations?object_ids={ids_str}"))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_rejects_transitive() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let a = create_issue(&client, &base, "issue-a").await?;
+
+    let resp = client
+        .get(format!(
+            "{base}/v1/relations?object_ids={a}&rel_type=child-of&transitive=true"
+        ))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_relations_by_object_ids_mutex_with_other_params() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    for other in [
+        "object_id=i-aaaaaa",
+        "source_id=i-aaaaaa",
+        "source_ids=i-aaaaaa",
+        "target_id=i-aaaaaa",
+        "target_ids=i-aaaaaa",
+    ] {
+        let resp = client
+            .get(format!("{base}/v1/relations?object_ids=i-bbbbbb&{other}"))
+            .send()
+            .await?;
+        assert_eq!(
+            resp.status(),
+            400,
+            "object_ids should be mutually exclusive with {other}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_relations_transitive_validation() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();

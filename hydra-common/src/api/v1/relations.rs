@@ -32,6 +32,10 @@ pub struct ListRelationsRequest {
     pub target_ids: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_id: Option<HydraId>,
+    /// Comma-separated list of object IDs (mutually exclusive with `object_id`,
+    /// `source_id`/`source_ids`, and `target_id`/`target_ids`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_ids: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rel_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
