@@ -12,15 +12,14 @@ use hydra_common::{
         BlockedAtLayer, EligiblePrincipal, MergeBlockedError, MergeBlockedReason,
         MergeCheckResponse, SuggestedAction,
     },
-    constants::{ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
+    constants::ENV_HYDRA_ISSUE_ID,
     issues::IssueId,
     patches::{
         Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, Review, SearchPatchesQuery,
         UpsertPatchRequest, UpsertPatchResponse,
     },
     repositories::SearchRepositoriesQuery,
-    sessions::BundleSpec,
-    PatchId, RelativeVersionNumber, RepoName, SessionId, Versioned,
+    PatchId, RelativeVersionNumber, RepoName, Versioned,
 };
 use serde::Serialize;
 
@@ -85,10 +84,6 @@ pub enum PatchesCommand {
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
 
-        /// Associate the patch with a Hydra job.
-        #[arg(long = "job", value_name = "HYDRA_ID", env = ENV_HYDRA_ID)]
-        job: Option<SessionId>,
-
         /// Associate the merge-request issue with an existing issue id.
         #[arg(
             long = "issue-id",
@@ -96,6 +91,14 @@ pub enum PatchesCommand {
             env = ENV_HYDRA_ISSUE_ID
         )]
         issue_id: IssueId,
+
+        /// Override the service repository for the patch (e.g., dourolabs/hydra). When omitted, the repo is discovered from the configured git remote.
+        #[arg(long = "service-repo", value_name = "ORG/REPO")]
+        service_repo: Option<RepoName>,
+
+        /// Git remote to read the remote URL from when discovering the service repository (defaults to origin).
+        #[arg(long = "remote", value_name = "NAME", default_value = "origin")]
+        remote: String,
 
         /// Allow creating a patch even when the working directory has uncommitted changes.
         #[arg(long = "allow-uncommitted")]
@@ -257,8 +260,9 @@ pub async fn run(
         PatchesCommand::Create {
             title,
             description,
-            job,
             issue_id,
+            service_repo,
+            remote,
             allow_uncommitted,
             force,
             base_ref,
@@ -268,7 +272,8 @@ pub async fn run(
                 client,
                 title,
                 description,
-                job,
+                service_repo,
+                &remote,
                 allow_uncommitted,
                 force,
                 &base_ref,
@@ -535,11 +540,13 @@ async fn resolve_base_ref(
     Ok("origin/main".to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_patch(
     client: &HydraClient,
     title: String,
     description: String,
-    job_id: Option<SessionId>,
+    service_repo_override: Option<RepoName>,
+    remote_name: &str,
     allow_uncommitted: bool,
     force: bool,
     base_ref: &str,
@@ -562,14 +569,13 @@ async fn create_patch(
         bail!("No changes found in commit range '{commit_range}'.");
     }
 
-    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
-    let service_repo_name = service_repo_name.ok_or_else(|| {
-        let job_ref = job_id
-            .as_ref()
-            .map(|id| id.as_ref().to_string())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        anyhow!("job '{job_ref}' does not reference a service repository")
-    })?;
+    let service_repo_name = resolve_patch_service_repo(
+        client,
+        service_repo_override.as_ref(),
+        &repo_root,
+        remote_name,
+    )
+    .await?;
 
     let is_automatic_backup = false;
     let response = create_patch_artifact_from_repo(
@@ -1171,23 +1177,76 @@ async fn merge_patch(
     Ok(())
 }
 
-pub async fn resolve_service_repo_name(
+/// Resolve the service repository name for a patch.
+///
+/// Priority:
+///   1. `--service-repo <org/repo>` always wins.
+///   2. Otherwise, discover the enclosing git repository at `pwd`, read its
+///      `remote_name` remote URL, and query `GET /v1/repositories?remote_url=...`
+///      to map it to a registered service repository. The server normalizes
+///      URLs (`Repository::normalize_remote_url`); the CLI sends the raw URL.
+pub async fn resolve_patch_service_repo(
     client: &HydraClient,
-    job_id: Option<&SessionId>,
-) -> Result<Option<RepoName>> {
-    let job_id = job_id.ok_or_else(|| {
-        anyhow!("service repo name must be resolved from a job; provide --job or set HYDRA_ID")
-    })?;
-    let job = client
-        .get_session(job_id)
-        .await
-        .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
-
-    if let BundleSpec::ServiceRepository { name, .. } = job.session.context {
-        return Ok(Some(name));
+    service_repo_override: Option<&RepoName>,
+    pwd: &Path,
+    remote_name: &str,
+) -> Result<RepoName> {
+    if let Some(name) = service_repo_override {
+        return Ok(name.clone());
     }
 
-    Ok(None)
+    let repo = git2::Repository::discover(pwd)
+        .map_err(|_| anyhow!("call from inside a git repo, or pass --service-repo <org/repo>"))?;
+
+    let workdir_display = repo
+        .workdir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| pwd.display().to_string());
+
+    let remote = repo.find_remote(remote_name).map_err(|_| {
+        anyhow!(
+            "git repository at '{workdir_display}' has no remote '{remote_name}'; \
+             pass --service-repo <org/repo>"
+        )
+    })?;
+
+    let url = remote.url().ok_or_else(|| {
+        anyhow!(
+            "git repository at '{workdir_display}' has no remote '{remote_name}'; \
+             pass --service-repo <org/repo>"
+        )
+    })?;
+
+    let query = SearchRepositoriesQuery::new(None, Some(url.to_string()));
+    let response = client
+        .list_repositories(&query)
+        .await
+        .with_context(|| format!("failed to list repositories for remote '{url}'"))?;
+
+    match response.repositories.len() {
+        0 => bail!(
+            "remote '{url}' is not a registered service repository; \
+             register it with 'hydra repos create' or pass --service-repo <org/repo>"
+        ),
+        1 => Ok(response
+            .repositories
+            .into_iter()
+            .next()
+            .expect("exactly one repository in the response")
+            .name),
+        _ => {
+            let names: Vec<String> = response
+                .repositories
+                .iter()
+                .map(|r| r.name.to_string())
+                .collect();
+            bail!(
+                "remote '{url}' matches multiple service repositories ({names}); \
+                 pass --service-repo <org/repo> to disambiguate",
+                names = names.join(", ")
+            )
+        }
+    }
 }
 
 pub async fn create_patch_artifact_from_repo(
@@ -1375,7 +1434,7 @@ mod tests {
         commit_changes as git_commit_changes, configure_repo as git_configure_repo,
         resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
     };
-    use crate::test_utils::ids::{issue_id, patch_id, task_id};
+    use crate::test_utils::ids::{issue_id, patch_id};
     use anyhow::{anyhow, Context};
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
@@ -1385,8 +1444,6 @@ mod tests {
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
             PatchVersionRecord, Review, UpsertPatchResponse,
         },
-        sessions::{BundleSpec, Session, SessionVersionRecord},
-        task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
         RepoName,
@@ -1404,98 +1461,33 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
-    fn sample_session(context: BundleSpec) -> Session {
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, Bundle, MountItem, MountSpec, RelativePath, SessionMode,
-        };
-        use hydra_common::SessionId;
-        let bundle = match &context {
-            BundleSpec::GitRepository { url, rev } => Bundle::GitRepository {
-                url: url.clone(),
-                rev: rev.clone(),
-            },
-            _ => Bundle::None,
-        };
-        let session_id = SessionId::new();
-        let mount_spec = MountSpec::new(
-            RelativePath::new("repo").unwrap(),
-            vec![
-                MountItem::Bundle {
-                    target: RelativePath::new("repo").unwrap(),
-                    bundle,
-                    session_id,
-                    issue_branch_id: None,
-                },
-                MountItem::Documents {
-                    target: RelativePath::new("documents").unwrap(),
-                },
-            ],
-        );
-        // ServiceRepository sessions still need to surface
-        // service_repo_name to `resolve_service_repo_name`; embed a
-        // BuildCache item so the lookup helper finds the name.
-        let mount_spec = if let BundleSpec::ServiceRepository { name, .. } = &context {
-            let cache_context = hydra_common::BuildCacheContext {
-                storage: hydra_common::BuildCacheStorageConfig::FileSystem {
-                    root_dir: "/tmp/cache".to_string(),
-                },
-                settings: hydra_common::BuildCacheSettings::default(),
-            };
-            let session_id_for_cache = SessionId::new();
-            let mut mounts = mount_spec.mounts;
-            mounts.insert(
-                1,
-                MountItem::BuildCache {
-                    repo_target: RelativePath::new("repo").unwrap(),
-                    service_repo_name: name.clone(),
-                    context: cache_context,
-                    session_id: session_id_for_cache,
-                },
-            );
-            MountSpec::new(mount_spec.working_dir, mounts)
-        } else {
-            mount_spec
-        };
-        let mut session = Session::new(
-            Username::from("test-creator"),
-            None,
-            None,
-            AgentConfig::default(),
-            mount_spec,
-            None,
-            Default::default(),
-            None,
-            None,
-            None,
-            SessionMode::Headless {
-                prompt: "0".to_string(),
-            },
-            Status::Created,
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        );
-        // Constructor defaults `context` to `BundleSpec::None`; populate
-        // the transitional field from the caller's BundleSpec so the CLI's
-        // `resolve_service_repo_name` (which reads `session.context`)
-        // continues to find the repo name.
-        session.context = context;
-        session
-    }
-
     fn hydra_client(server: &MockServer) -> HydraClient {
         HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
             .expect("failed to create hydra client")
     }
 
-    fn mock_get_session(server: &MockServer, session: SessionVersionRecord) -> Mock {
+    /// Mock `GET /v1/repositories?remote_url=<remote_url>` returning the given
+    /// list of `(RepoName, remote_url)` matches. The CLI's pwd-based resolver
+    /// uses this endpoint to map a discovered remote URL to a service repository.
+    fn mock_list_repositories_for_remote_url(
+        server: &MockServer,
+        remote_url: String,
+        matches: Vec<(RepoName, String)>,
+    ) -> Mock {
+        use hydra_common::api::v1::repositories::{
+            ListRepositoriesResponse, Repository, RepositoryRecord,
+        };
+        let response = ListRepositoriesResponse::new(
+            matches
+                .into_iter()
+                .map(|(name, url)| RepositoryRecord::new(name, Repository::new(url, None, None)))
+                .collect(),
+        );
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/sessions/{}", session.session_id.as_ref()));
-            then.status(200).json_body_obj(&session);
+                .path("/v1/repositories")
+                .query_param("remote_url", remote_url.as_str());
+            then.status(200).json_body_obj(&response);
         })
     }
 
@@ -1662,6 +1654,19 @@ mod tests {
             Utc::now(),
             Vec::new(),
         )
+    }
+
+    /// Read the URL of a repository's `origin` remote. Used by the resolver
+    /// tests so the mock can match on the same URL the CLI sends.
+    fn origin_remote_url(repo_path: &std::path::Path) -> Result<String> {
+        let repo = Repository::open(repo_path).context("failed to open repo")?;
+        let remote = repo
+            .find_remote("origin")
+            .context("failed to find origin remote")?;
+        Ok(remote
+            .url()
+            .ok_or_else(|| anyhow!("origin remote has no UTF-8 url"))?
+            .to_string())
     }
 
     fn initialize_repo_with_changes(
@@ -1838,18 +1843,8 @@ mod tests {
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let job_id = task_id("t-job-diff");
         let branch_name = current_branch(&repo_path)?;
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: sample_repo_name(),
-                rev: None,
-            }),
-            None,
-        );
+        let remote_url = origin_remote_url(&repo_path)?;
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
         let expected_diff =
@@ -1882,7 +1877,11 @@ mod tests {
         );
         let server = MockServer::start();
         let client = hydra_client(&server);
-        let session_mock = mock_get_session(&server, job_record.clone());
+        let repos_mock = mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![(sample_repo_name(), remote_url)],
+        );
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
@@ -1891,7 +1890,8 @@ mod tests {
             &client,
             patch_title.clone(),
             patch_description.clone(),
-            Some(job_id),
+            None,
+            "origin",
             false,
             false,
             "origin/main",
@@ -1899,7 +1899,7 @@ mod tests {
         )
         .await?;
 
-        session_mock.assert();
+        repos_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
 
@@ -1907,28 +1907,146 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_errors_without_job_id() -> Result<()> {
-        let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
+    async fn resolve_patch_service_repo_errors_when_not_in_git_repo() -> Result<()> {
+        // Call the resolver directly with a temp dir that is NOT a git repo to
+        // exercise the libgit2 discovery failure path independently of the
+        // rest of create_patch's preflight.
+        let tempdir = tempfile::tempdir()?;
         let server = MockServer::start();
         let client = hydra_client(&server);
-        let result = create_patch(
-            &client,
-            "missing job".to_string(),
-            "patch without job id".to_string(),
-            None,
-            false,
-            false,
-            "origin/main",
-            Some(&repo_path),
-        )
-        .await;
 
-        let error = result.unwrap_err().to_string();
+        let error = resolve_patch_service_repo(&client, None, tempdir.path(), "origin")
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.contains("provide --job or set HYDRA_ID"),
-            "error should mention missing job id: {error}"
+            error.contains("call from inside a git repo, or pass --service-repo <org/repo>"),
+            "error should mention not being in a git repo: {error}"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_patch_service_repo_errors_when_remote_missing() -> Result<()> {
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let error = resolve_patch_service_repo(&client, None, &repo_path, "upstream")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("has no remote 'upstream'"),
+            "error should mention missing remote: {error}"
+        );
+        assert!(
+            error.contains("pass --service-repo <org/repo>"),
+            "error should mention the override flag: {error}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_patch_service_repo_errors_when_no_matches() -> Result<()> {
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let remote_url = origin_remote_url(&repo_path)?;
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let repos_mock =
+            mock_list_repositories_for_remote_url(&server, remote_url.clone(), Vec::new());
+
+        let error = resolve_patch_service_repo(&client, None, &repo_path, "origin")
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("is not a registered service repository"),
+            "error should mention unregistered remote: {error}"
+        );
+        assert!(
+            error.contains("hydra repos create"),
+            "error should suggest 'hydra repos create': {error}"
+        );
+        repos_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_patch_service_repo_errors_when_multiple_matches() -> Result<()> {
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let remote_url = origin_remote_url(&repo_path)?;
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let first = RepoName::from_str("dourolabs/hydra")?;
+        let second = RepoName::from_str("dourolabs/hydra-fork")?;
+        let repos_mock = mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![
+                (first.clone(), remote_url.clone()),
+                (second.clone(), remote_url.clone()),
+            ],
+        );
+
+        let error = resolve_patch_service_repo(&client, None, &repo_path, "origin")
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("matches multiple service repositories"),
+            "error should mention multi-match: {error}"
+        );
+        assert!(
+            error.contains(&first.to_string()) && error.contains(&second.to_string()),
+            "error should list both candidates: {error}"
+        );
+        assert!(
+            error.contains("--service-repo <org/repo> to disambiguate"),
+            "error should mention --service-repo to disambiguate: {error}"
+        );
+        repos_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_patch_service_repo_returns_single_match() -> Result<()> {
+        let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
+        let remote_url = origin_remote_url(&repo_path)?;
+        let expected = sample_repo_name();
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let repos_mock = mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![(expected.clone(), remote_url)],
+        );
+
+        let resolved = resolve_patch_service_repo(&client, None, &repo_path, "origin").await?;
+        assert_eq!(resolved, expected);
+        repos_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_patch_service_repo_override_wins_without_calling_server() -> Result<()> {
+        // The override must short-circuit before any pwd / network access, so
+        // that even when pwd would discover a *different* repo, the override
+        // is what comes out. Point the test at a non-git directory and a mock
+        // server with no expectations; if we reach either path, the test
+        // explodes loudly.
+        let tempdir = tempfile::tempdir()?;
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let override_repo = RepoName::from_str("dourolabs/override-wins")?;
+
+        let resolved =
+            resolve_patch_service_repo(&client, Some(&override_repo), tempdir.path(), "origin")
+                .await?;
+
+        assert_eq!(resolved, override_repo);
         Ok(())
     }
 
@@ -1978,20 +2096,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_uses_service_repo_name_from_job() -> Result<()> {
+    async fn create_patch_service_repo_override_short_circuits_discovery() -> Result<()> {
+        // --service-repo wins even when the discovered remote would resolve
+        // to a *different* repository. We assert this by:
+        //   (1) registering a different repo in mock_list_repositories
+        //   (2) passing --service-repo with a third, override-only name
+        //   (3) confirming the patch is created with the override name AND
+        //       that the repositories endpoint is never queried.
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let branch_name = current_branch(&repo_path)?;
-        let job_id = task_id("t-job-service");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/api")?,
-                rev: None,
-            }),
-            None,
-        );
+        let remote_url = origin_remote_url(&repo_path)?;
+        let override_repo = RepoName::from_str("dourolabs/api")?;
         let expected_diff =
             git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = Patch::new(
@@ -2002,7 +2117,7 @@ mod tests {
             false,
             Username::from("test-user"),
             Vec::new(),
-            RepoName::from_str("dourolabs/api")?,
+            override_repo.clone(),
             None,
             false,
             Some(branch_name.to_string()),
@@ -2022,7 +2137,14 @@ mod tests {
         );
         let server = MockServer::start();
         let client = hydra_client(&server);
-        let session_mock = mock_get_session(&server, job_record.clone());
+        // Register a different repo at the remote URL — the override must
+        // win without ever consulting this mock.
+        let pwd_repo = RepoName::from_str("dourolabs/discovered-by-pwd")?;
+        let repos_mock = mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![(pwd_repo, remote_url)],
+        );
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
@@ -2032,7 +2154,8 @@ mod tests {
             &client,
             "backup patch".to_string(),
             "backup description".to_string(),
-            Some(job_id.clone()),
+            Some(override_repo),
+            "origin",
             false,
             false,
             "origin/main",
@@ -2040,51 +2163,14 @@ mod tests {
         )
         .await?;
 
-        session_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn resolve_service_repo_name_requires_job_id() -> Result<()> {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-
-        let error = resolve_service_repo_name(&client, None).await.unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("service repo name must be resolved from a job"),
-            "error should explain that a job id is required"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn resolve_service_repo_name_returns_none_for_non_service_job() -> Result<()> {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        let job_id = task_id("t-job-non-service");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
+        // The override path must not have queried the repositories endpoint.
+        assert_eq!(
+            repos_mock.hits(),
             0,
-            Utc::now(),
-            sample_session(BundleSpec::GitRepository {
-                url: "https://github.com/dourolabs/example".to_string(),
-                rev: "main".to_string(),
-            }),
-            None,
+            "repositories endpoint must not be called when --service-repo is provided"
         );
-        let session_mock = mock_get_session(&server, job_record.clone());
-
-        let repo_name = resolve_service_repo_name(&client, Some(&job_id)).await?;
-        assert!(
-            repo_name.is_none(),
-            "non-service jobs should not resolve to a service repository name"
-        );
-        session_mock.assert();
         Ok(())
     }
 
@@ -2756,17 +2842,7 @@ mod tests {
         // (a) Happy path — succeeds with a populated PatchVersionRecord.
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let branch_name = current_branch(&repo_path)?;
-        let job_id = task_id("t-job-success");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: sample_repo_name(),
-                rev: None,
-            }),
-            None,
-        );
+        let remote_url = origin_remote_url(&repo_path)?;
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch_payload = Patch::new(
             "happy".to_string(),
@@ -2795,7 +2871,11 @@ mod tests {
         );
         let server = MockServer::start();
         let client = hydra_client(&server);
-        mock_get_session(&server, job_record);
+        mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![(sample_repo_name(), remote_url)],
+        );
         mock_create_patch(&server, UpsertPatchRequest::new(patch_payload), response);
         mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
@@ -2805,7 +2885,8 @@ mod tests {
             &client,
             "happy".to_string(),
             "happy desc".to_string(),
-            Some(job_id),
+            None,
+            "origin",
             false,
             false,
             "origin/main",
@@ -2825,20 +2906,14 @@ mod tests {
         use crate::cli::is_broken_pipe;
 
         let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
-        let job_id = task_id("t-job-5xx");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: sample_repo_name(),
-                rev: None,
-            }),
-            None,
-        );
+        let remote_url = origin_remote_url(&repo_path)?;
         let server = MockServer::start();
         let client = hydra_client(&server);
-        mock_get_session(&server, job_record);
+        mock_list_repositories_for_remote_url(
+            &server,
+            remote_url.clone(),
+            vec![(sample_repo_name(), remote_url)],
+        );
         mock_get_github_token_failure(&server);
         mock_whoami(&server);
         let _patch_mock = server.mock(|when, then| {
@@ -2850,7 +2925,8 @@ mod tests {
             &client,
             "fivexx".to_string(),
             "fivexx desc".to_string(),
-            Some(job_id),
+            None,
+            "origin",
             false,
             false,
             "origin/main",
@@ -2886,24 +2962,22 @@ mod tests {
         // with empty stdout/stderr and no Patch row persisted, leading
         // the agent to fall back to `gh pr create`.)
         use crate::cli::is_broken_pipe;
+        use hydra_common::api::v1::repositories::{
+            ListRepositoriesResponse, Repository, RepositoryRecord,
+        };
         use std::net::SocketAddr;
         use tokio::net::TcpListener;
 
         let (_tempdir, repo_path, _base, _head) = initialize_repo_with_changes()?;
-        let job_id = task_id("t-job-drop");
-        let job_record = SessionVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            sample_session(BundleSpec::ServiceRepository {
-                name: sample_repo_name(),
-                rev: None,
-            }),
-            None,
-        );
+        let remote_url = origin_remote_url(&repo_path)?;
+        let repositories_response = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
+            sample_repo_name(),
+            Repository::new(remote_url, None, None),
+        )]);
+        let repositories_json = serde_json::to_string(&repositories_response)?;
 
-        // First, run the pre-create RPCs (get_session, github_token, whoami)
-        // against a normal mock server so they succeed; then aim
+        // First, run the pre-create RPCs (list_repositories, github_token,
+        // whoami) against a normal mock server so they succeed; then aim
         // `client.create_patch` at a separate URL that drops connections.
         //
         // We do that by completing all the pre-flight calls with the mock,
@@ -2918,8 +2992,6 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let local_addr: SocketAddr = listener.local_addr()?;
-        let job_id_clone = job_id.clone();
-        let session_json = serde_json::to_string(&job_record)?;
         tokio::spawn(async move {
             loop {
                 let (mut socket, _) = match listener.accept().await {
@@ -2956,9 +3028,9 @@ mod tests {
                     continue;
                 }
                 let (body, content_type): (String, &str) = if first_line
-                    .contains(&format!("/v1/sessions/{}", job_id_clone.as_ref()))
+                    .contains("/v1/repositories")
                 {
-                    (session_json.clone(), "application/json")
+                    (repositories_json.clone(), "application/json")
                 } else if first_line.contains("/v1/whoami") {
                     (
                         serde_json::to_string(&WhoAmIResponse::new(ActorIdentity::User {
@@ -2994,7 +3066,8 @@ mod tests {
             &client,
             "drop".to_string(),
             "drop desc".to_string(),
-            Some(job_id),
+            None,
+            "origin",
             false,
             false,
             "origin/main",
