@@ -1,6 +1,5 @@
 pub(crate) mod agent_queue;
 pub mod cascade_issue_status;
-pub mod inbox_label;
 pub mod kill_tasks_on_failure;
 pub mod link_artifacts_to_issue;
 pub mod link_conversation_to_artifacts;
@@ -9,7 +8,6 @@ pub mod spawn_sessions;
 pub mod start_created_sessions;
 
 pub use cascade_issue_status::CascadeIssueStatusAutomation;
-pub use inbox_label::InboxLabelAutomation;
 pub use kill_tasks_on_failure::KillTasksOnFailureAutomation;
 pub use link_artifacts_to_issue::LinkArtifactsToIssueAutomation;
 pub use link_conversation_to_artifacts::LinkConversationToArtifactsAutomation;

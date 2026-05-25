@@ -57,7 +57,6 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
-                PolicyEntry::Name("inbox_label".to_string()),
                 PolicyEntry::Name("link_artifacts_to_issue".to_string()),
                 PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),

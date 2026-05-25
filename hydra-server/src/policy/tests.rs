@@ -780,7 +780,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 6);
-    assert_eq!(engine.automation_count(), 9);
+    assert_eq!(engine.automation_count(), 8);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -797,7 +797,6 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
-                PolicyEntry::Name("inbox_label".to_string()),
                 PolicyEntry::Name("link_artifacts_to_issue".to_string()),
                 PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
@@ -808,7 +807,7 @@ fn default_config_enables_all_builtin_policies() {
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 6);
-    assert_eq!(explicit_engine.automation_count(), 9);
+    assert_eq!(explicit_engine.automation_count(), 8);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
@@ -1059,6 +1058,62 @@ async fn restriction_can_read_actor_from_context() {
     let violation = result.unwrap_err();
     assert_eq!(violation.policy_name, "reject_system_actor");
     assert!(violation.message.contains("test_worker"));
+}
+
+/// Regression test: the default policy engine must NOT auto-apply the `inbox`
+/// label to newly-created issues. Guards against re-introduction of the
+/// `inbox_label` automation in the default activation list.
+#[tokio::test]
+async fn default_policy_does_not_apply_inbox_label_on_issue_creation() {
+    use crate::domain::actors::ActorId;
+    use hydra_common::HydraId;
+
+    let engine = crate::app::AppState::build_policy_engine(None);
+    let handles = test_utils::test_state_handles();
+
+    // Ensure the inbox label exists, so any rogue automation could find it.
+    handles.state.ensure_inbox_label().await;
+
+    let human_actor = ActorRef::Authenticated {
+        actor_id: ActorId::Username(Username::from("alice").into()),
+    };
+    let issue = dummy_issue();
+    let (issue_id, _) = handles
+        .store
+        .add_issue(issue.clone(), &human_actor)
+        .await
+        .unwrap();
+
+    let payload = Arc::new(MutationPayload::Issue {
+        old: None,
+        new: issue,
+        actor: human_actor,
+    });
+    let event = ServerEvent::IssueCreated {
+        seq: 1,
+        issue_id: issue_id.clone(),
+        version: 1,
+        timestamp: Utc::now(),
+        payload,
+    };
+
+    let ctx = AutomationContext {
+        event: &event,
+        app_state: &handles.state,
+        store: handles.store.as_ref(),
+    };
+    engine.run_automations(&ctx).await;
+
+    let object_id: HydraId = issue_id.into();
+    let labels = handles
+        .store
+        .get_labels_for_object(&object_id)
+        .await
+        .unwrap();
+    assert!(
+        labels.is_empty(),
+        "default policy should not auto-apply any label on issue creation, found {labels:?}"
+    );
 }
 
 /// Test: Config without policies section deserializes with policies = None.
