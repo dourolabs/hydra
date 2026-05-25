@@ -21,7 +21,7 @@
 //! See the design doc for the atom-by-atom semantics, the lowering table,
 //! and the alias-collapse rules used in [`Query::lower`].
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use crate::HydraId;
 use crate::graph::ObjectKind;
@@ -109,6 +109,36 @@ impl RelType {
 impl fmt::Display for RelType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Error returned when a string does not match any [`RelType`] variant.
+///
+/// The `Display` impl spells out the accepted values so the DSL parser can
+/// surface it as a hint without duplicating the value list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseRelTypeError;
+
+impl fmt::Display for ParseRelTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("expected one of: child-of, blocked-on, has-patch, has-document, refers-to")
+    }
+}
+
+impl std::error::Error for ParseRelTypeError {}
+
+impl FromStr for RelType {
+    type Err = ParseRelTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "child-of" => Ok(RelType::ChildOf),
+            "blocked-on" => Ok(RelType::BlockedOn),
+            "has-patch" => Ok(RelType::HasPatch),
+            "has-document" => Ok(RelType::HasDocument),
+            "refers-to" => Ok(RelType::RefersTo),
+            _ => Err(ParseRelTypeError),
+        }
     }
 }
 
@@ -203,27 +233,6 @@ const TYPO_ALIASES: &[(&str, &str)] = &[
     ("neighbour", "neighbors"),
     ("neighbor", "neighbors"),
 ];
-
-fn parse_rel_type(s: &str) -> Option<RelType> {
-    match s {
-        "child-of" => Some(RelType::ChildOf),
-        "blocked-on" => Some(RelType::BlockedOn),
-        "has-patch" => Some(RelType::HasPatch),
-        "has-document" => Some(RelType::HasDocument),
-        "refers-to" => Some(RelType::RefersTo),
-        _ => None,
-    }
-}
-
-fn parse_kind(s: &str) -> Option<ObjectKind> {
-    match s {
-        "issue" => Some(ObjectKind::Issue),
-        "patch" => Some(ObjectKind::Patch),
-        "document" => Some(ObjectKind::Document),
-        "conversation" => Some(ObjectKind::Conversation),
-        _ => None,
-    }
-}
 
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -718,14 +727,11 @@ add e.g. 'rel=child-of'"
             })?;
             match ident.as_str() {
                 "rel" => {
-                    let rt = parse_rel_type(value_str).ok_or_else(|| {
+                    let rt = value_str.parse::<RelType>().map_err(|e| {
                         self.err(
                             (vs, ve),
                             format!("invalid rel type '{value_str}'"),
-                            Some(
-                                "expected one of: child-of, blocked-on, has-patch, has-document, refers-to"
-                                    .to_string(),
-                            ),
+                            Some(e.to_string()),
                         )
                     })?;
                     if args.rel.is_some() {
@@ -794,11 +800,11 @@ add e.g. 'rel=child-of'"
                     return Err(self.err((self.pos, self.pos + 1), "expected kind value", None));
                 }
             };
-            let kind = parse_kind(value).ok_or_else(|| {
+            let kind = value.parse::<ObjectKind>().map_err(|e| {
                 self.err(
                     (vs, ve),
                     format!("invalid kind '{value}'"),
-                    Some("expected one of: issue, patch, document, conversation".to_string()),
+                    Some(e.to_string()),
                 )
             })?;
             kinds.push(kind);

@@ -1,3 +1,5 @@
+use std::{fmt, str::FromStr};
+
 use serde_json::Value;
 
 use crate::HydraId;
@@ -41,6 +43,36 @@ impl ObjectKind {
             ObjectKind::Patch => "patch",
             ObjectKind::Document => "document",
             ObjectKind::Conversation => "conversation",
+        }
+    }
+}
+
+/// Error returned when a string does not match any [`ObjectKind`] variant.
+///
+/// The `Display` impl spells out the accepted values so callers (e.g.
+/// the `hydra-common::graph::query` DSL parser) can surface it as a hint
+/// without duplicating the value list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseObjectKindError;
+
+impl fmt::Display for ParseObjectKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("expected one of: issue, patch, document, conversation")
+    }
+}
+
+impl std::error::Error for ParseObjectKindError {}
+
+impl FromStr for ObjectKind {
+    type Err = ParseObjectKindError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "issue" => Ok(ObjectKind::Issue),
+            "patch" => Ok(ObjectKind::Patch),
+            "document" => Ok(ObjectKind::Document),
+            "conversation" => Ok(ObjectKind::Conversation),
+            _ => Err(ParseObjectKindError),
         }
     }
 }
