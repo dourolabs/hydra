@@ -6,6 +6,7 @@ import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
 import { useToast } from "../features/toast/useToast";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { AgoTime } from "../components/Runtime/Runtime";
 import type { BreadcrumbItem } from "../layout/Breadcrumbs";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -60,6 +61,7 @@ interface DocumentDetailProps {
 function DocumentDetail({ record }: DocumentDetailProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
@@ -103,12 +105,13 @@ function DocumentDetail({ record }: DocumentDetailProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isMobile) return;
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSave();
       }
     },
-    [handleSave],
+    [handleSave, isMobile],
   );
 
   return (
