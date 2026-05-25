@@ -53,6 +53,12 @@ pub enum CreateSessionError {
         #[source]
         source: AgentError,
     },
+    #[error("agent '{name}' has invalid name in the store")]
+    AgentNameInvalid {
+        name: String,
+        #[source]
+        source: hydra_common::api::v1::agents::AgentNameError,
+    },
     #[error("failed to resolve agent prompt at '{path}'")]
     AgentPromptResolution {
         path: String,
@@ -224,12 +230,16 @@ impl AppState {
             // `AgentName` validation when invoked with a name. Defensively
             // re-validate here so a malformed stored agent name surfaces as a
             // 500 rather than silently producing an invalid `AgentName`.
-            agent_name = agent_name.or_else(|| {
-                Some(
-                    hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone())
-                        .expect("agents store must hold validated agent names"),
-                )
-            });
+            if agent_name.is_none() {
+                agent_name = Some(
+                    hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone()).map_err(
+                        |source| CreateSessionError::AgentNameInvalid {
+                            name: agent.name.clone(),
+                            source,
+                        },
+                    )?,
+                );
+            }
 
             if system_prompt.is_none() {
                 system_prompt = Some(

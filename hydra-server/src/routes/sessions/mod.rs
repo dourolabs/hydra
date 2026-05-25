@@ -75,6 +75,14 @@ pub async fn create_session(
                 error!(error = %source, "failed to resolve agent for conversation");
                 ApiError::internal(format!("Failed to resolve agent: {source}"))
             }
+            CreateSessionError::AgentNameInvalid { name, source } => {
+                error!(
+                    error = %source,
+                    agent_name = %name,
+                    "stored agent name failed AgentName validation"
+                );
+                ApiError::internal(format!("agent '{name}' has invalid name in the store"))
+            }
             CreateSessionError::AgentPromptResolution { path, source } => {
                 error!(error = %source, path = %path, "failed to resolve agent prompt");
                 ApiError::internal(format!(
