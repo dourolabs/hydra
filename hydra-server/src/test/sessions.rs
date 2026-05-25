@@ -1696,12 +1696,7 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
     assert_eq!(spec.mounts.len(), 3);
     match &spec.mounts[0] {
-        MountItem::Bundle {
-            target,
-            bundle,
-            session_id: bundle_session_id,
-            issue_branch_id,
-        } => {
+        MountItem::Bundle { target, bundle } => {
             assert_eq!(target.as_path().to_str(), Some("repo"));
             assert_eq!(
                 bundle,
@@ -1710,8 +1705,6 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
                     rev: "develop".to_string(),
                 }
             );
-            assert_eq!(bundle_session_id, &session_id);
-            assert!(issue_branch_id.is_none());
         }
         other => panic!("expected Bundle item first, got {other:?}"),
     }
@@ -1720,11 +1713,9 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
             repo_target,
             service_repo_name,
             context: cache_context,
-            session_id: cache_session_id,
         } => {
             assert_eq!(repo_target.as_path().to_str(), Some("repo"));
             assert_eq!(service_repo_name, &repo_name);
-            assert_eq!(cache_session_id, &session_id);
             assert_eq!(
                 cache_context.storage,
                 BuildCacheStorageConfig::FileSystem {
@@ -1852,13 +1843,8 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     let spec = &context.session.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     match &spec.mounts[0] {
-        MountItem::Bundle {
-            bundle,
-            session_id: bundle_session_id,
-            ..
-        } => {
+        MountItem::Bundle { bundle, .. } => {
             assert_eq!(bundle, &v1::sessions::Bundle::None);
-            assert_eq!(bundle_session_id, &session_id);
         }
         other => panic!("expected Bundle item first, got {other:?}"),
     }
@@ -1866,10 +1852,14 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     Ok(())
 }
 
+/// PR-D moved `issue_branch_id` off `MountItem::Bundle` and onto the
+/// worker-side `InstantiateInputs`. The server now just forwards the
+/// raw `ENV_HYDRA_ISSUE_ID` env var through `resolved_env` — the worker
+/// reads it at mount instantiation time. This test pins the new
+/// behavior end-to-end.
 #[tokio::test]
-async fn get_session_context_propagates_issue_branch_id_into_bundle_item() -> anyhow::Result<()> {
-    use hydra_common::api::v1::sessions::MountItem;
-
+async fn get_session_context_forwards_issue_branch_env_var_through_resolved_env()
+-> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let env_vars = HashMap::from([(
@@ -1888,43 +1878,12 @@ async fn get_session_context_propagates_issue_branch_id_into_bundle_item() -> an
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
-    match &spec.mounts[0] {
-        MountItem::Bundle {
-            issue_branch_id, ..
-        } => {
-            assert_eq!(issue_branch_id.as_deref(), Some("i-abcdefg"));
-        }
-        other => panic!("expected Bundle item first, got {other:?}"),
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_session_context_bundle_issue_branch_id_absent_when_env_var_missing()
--> anyhow::Result<()> {
-    use hydra_common::api::v1::sessions::MountItem;
-
-    let handles = test_state_handles();
-    let state = handles.state;
-    let (session_id, _) = handles
-        .store
-        .add_session(
-            make_session_no_bundle(HashMap::new()),
-            Utc::now(),
-            &ActorRef::test(),
-        )
-        .await?;
-
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
-    let context = fetch_worker_context(&server, &session_id).await?;
-
-    let spec = &context.session.mount_spec;
-    match &spec.mounts[0] {
-        MountItem::Bundle {
-            issue_branch_id, ..
-        } => assert!(issue_branch_id.is_none()),
-        other => panic!("expected Bundle item first, got {other:?}"),
-    }
+    assert_eq!(
+        context
+            .resolved_env
+            .get(hydra_common::constants::ENV_HYDRA_ISSUE_ID)
+            .map(String::as_str),
+        Some("i-abcdefg"),
+    );
     Ok(())
 }

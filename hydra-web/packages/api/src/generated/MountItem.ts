@@ -3,29 +3,22 @@ import type { BuildCacheContext } from "./BuildCacheContext";
 import type { Bundle } from "./Bundle";
 import type { RelativePath } from "./RelativePath";
 import type { RepoName } from "./RepoName";
-import type { SessionId } from "./SessionId";
 
 /**
  * One mount's worth of server-supplied configuration.
  *
- * Each variant carries the full set of inputs the corresponding `Mount`
- * constructor needs, including session metadata (`session_id`,
- * `issue_branch_id`) the server already knows at spec construction.
+ * Each variant is a pure intent the server hands to the worker: it names
+ * what to mount and where, but carries no session identity. The worker
+ * supplies the session-id and issue-branch-id at instantiation time from
+ * its own `WorkerContext`.
  */
 export type MountItem =
-  | {
-      type: "bundle";
-      target: RelativePath;
-      bundle: Bundle;
-      session_id: SessionId;
-      issue_branch_id?: string | null;
-    }
+  | { type: "bundle"; target: RelativePath; bundle: Bundle }
   | {
       type: "build_cache";
       repo_target: RelativePath;
       service_repo_name: RepoName;
       context: BuildCacheContext;
-      session_id: SessionId;
     }
   | { type: "documents"; target: RelativePath }
   | { type: "unknown" };

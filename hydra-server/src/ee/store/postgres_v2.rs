@@ -9307,7 +9307,8 @@ mod tests {
         );
         assert_eq!(mounts[0]["type"], "bundle");
         assert_eq!(mounts[0]["target"], "repo");
-        assert_eq!(mounts[0]["session_id"], sid.as_ref());
+        // PR-D: `session_id` no longer rides on `MountItem::Bundle`.
+        assert!(mounts[0].get("session_id").is_none_or(|v| v.is_null()));
         assert_eq!(mounts[0]["bundle"]["type"], "none");
         assert_eq!(mounts[1]["type"], "documents");
         assert_eq!(mounts[1]["target"], "documents");

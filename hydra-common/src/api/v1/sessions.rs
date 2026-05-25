@@ -568,9 +568,10 @@ impl MountSpec {
 
 /// One mount's worth of server-supplied configuration.
 ///
-/// Each variant carries the full set of inputs the corresponding `Mount`
-/// constructor needs, including session metadata (`session_id`,
-/// `issue_branch_id`) the server already knows at spec construction.
+/// Each variant is a pure intent the server hands to the worker: it names
+/// what to mount and where, but carries no session identity. The worker
+/// supplies the session-id and issue-branch-id at instantiation time from
+/// its own `WorkerContext`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -583,9 +584,6 @@ pub enum MountItem {
     Bundle {
         target: RelativePath,
         bundle: Bundle,
-        session_id: SessionId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        issue_branch_id: Option<String>,
     },
 
     /// Apply / upload the nearest build cache against `repo_target`.
@@ -593,7 +591,6 @@ pub enum MountItem {
         repo_target: RelativePath,
         service_repo_name: RepoName,
         context: BuildCacheContext,
-        session_id: SessionId,
     },
 
     /// Sync / push the Hydra document store into `target`.
@@ -613,15 +610,24 @@ enum MountItemHelper {
     Bundle {
         target: RelativePath,
         bundle: Bundle,
-        session_id: SessionId,
+        // Tolerated for backward compatibility with persisted `tasks_v2.mount_spec`
+        // JSON rows written before PR-D moved session metadata off `MountItem`.
+        // Silently discarded — `InstantiateInputs` now sources these values.
         #[serde(default)]
+        #[allow(dead_code)]
+        session_id: Option<SessionId>,
+        #[serde(default)]
+        #[allow(dead_code)]
         issue_branch_id: Option<String>,
     },
     BuildCache {
         repo_target: RelativePath,
         service_repo_name: RepoName,
         context: BuildCacheContext,
-        session_id: SessionId,
+        // Same backward-compat tolerance as `Bundle::session_id` above.
+        #[serde(default)]
+        #[allow(dead_code)]
+        session_id: Option<SessionId>,
     },
     Documents {
         target: RelativePath,
@@ -635,27 +641,18 @@ impl<'de> Deserialize<'de> for MountItem {
     {
         let value = Value::deserialize(deserializer)?;
         match serde_json::from_value::<MountItemHelper>(value) {
-            Ok(MountItemHelper::Bundle {
-                target,
-                bundle,
-                session_id,
-                issue_branch_id,
-            }) => Ok(MountItem::Bundle {
-                target,
-                bundle,
-                session_id,
-                issue_branch_id,
-            }),
+            Ok(MountItemHelper::Bundle { target, bundle, .. }) => {
+                Ok(MountItem::Bundle { target, bundle })
+            }
             Ok(MountItemHelper::BuildCache {
                 repo_target,
                 service_repo_name,
                 context,
-                session_id,
+                ..
             }) => Ok(MountItem::BuildCache {
                 repo_target,
                 service_repo_name,
                 context,
-                session_id,
             }),
             Ok(MountItemHelper::Documents { target }) => Ok(MountItem::Documents { target }),
             Err(_) => Ok(MountItem::Unknown),
@@ -1675,7 +1672,6 @@ mod tests {
 
         let repo_target = RelativePath::new("repo").unwrap();
         let docs_target = RelativePath::new("documents").unwrap();
-        let session_id = SessionId::new();
         let bundle = Bundle::GitRepository {
             url: "https://example.test/repo.git".to_string(),
             rev: "main".to_string(),
@@ -1683,8 +1679,6 @@ mod tests {
         let mut mounts = vec![MountItem::Bundle {
             target: repo_target.clone(),
             bundle,
-            session_id: session_id.clone(),
-            issue_branch_id: Some("hydra/i-abcd/head".to_string()),
         }];
         if with_build_cache {
             let cache_context = BuildCacheContext {
@@ -1697,7 +1691,6 @@ mod tests {
                 repo_target: repo_target.clone(),
                 service_repo_name: RepoName::try_from("acme/widgets".to_string()).unwrap(),
                 context: cache_context,
-                session_id: session_id.clone(),
             });
         }
         mounts.push(MountItem::Documents {
@@ -1729,7 +1722,6 @@ mod tests {
 
     #[test]
     fn mount_item_unknown_tag_maps_to_unknown_variant() {
-        let session_id = SessionId::new();
         let json = serde_json::json!({
             "working_dir": "repo",
             "mounts": [
@@ -1737,7 +1729,6 @@ mod tests {
                     "type": "bundle",
                     "target": "repo",
                     "bundle": {"type": "none"},
-                    "session_id": session_id.to_string(),
                 },
                 {
                     "type": "future_secrets_mount",
@@ -1752,6 +1743,65 @@ mod tests {
         assert!(matches!(parsed.mounts[0], MountItem::Bundle { .. }));
         assert!(matches!(parsed.mounts[1], MountItem::Unknown));
         assert!(matches!(parsed.mounts[2], MountItem::Documents { .. }));
+    }
+
+    /// Regression: pre-PR-D `MountItem::Bundle` JSON rows persisted with
+    /// `session_id` and `issue_branch_id` must continue to deserialize into
+    /// the new fieldless variant. Those fields are silently discarded.
+    #[test]
+    fn mount_item_bundle_tolerates_legacy_session_metadata_fields() {
+        let session_id = SessionId::new();
+        let json = serde_json::json!({
+            "type": "bundle",
+            "target": "repo",
+            "bundle": {"type": "none"},
+            "session_id": session_id.to_string(),
+            "issue_branch_id": "hydra/i-legacy/head",
+        });
+        let parsed: MountItem = serde_json::from_value(json).unwrap();
+        match parsed {
+            MountItem::Bundle { target, bundle } => {
+                assert_eq!(target.as_path().to_string_lossy(), "repo");
+                assert_eq!(bundle, Bundle::None);
+            }
+            other => panic!("expected MountItem::Bundle, got {other:?}"),
+        }
+    }
+
+    /// Regression: pre-PR-D `MountItem::BuildCache` JSON rows persisted with
+    /// `session_id` must continue to deserialize into the new fieldless
+    /// variant. The field is silently discarded.
+    #[test]
+    fn mount_item_build_cache_tolerates_legacy_session_id_field() {
+        use crate::build_cache::{BuildCacheSettings, BuildCacheStorageConfig};
+
+        let session_id = SessionId::new();
+        let context = BuildCacheContext {
+            storage: BuildCacheStorageConfig::FileSystem {
+                root_dir: "/tmp/legacy-cache".to_string(),
+            },
+            settings: BuildCacheSettings::default(),
+        };
+        let json = serde_json::json!({
+            "type": "build_cache",
+            "repo_target": "repo",
+            "service_repo_name": "acme/widgets",
+            "context": context,
+            "session_id": session_id.to_string(),
+        });
+        let parsed: MountItem = serde_json::from_value(json).unwrap();
+        match parsed {
+            MountItem::BuildCache {
+                repo_target,
+                service_repo_name,
+                context: parsed_context,
+            } => {
+                assert_eq!(repo_target.as_path().to_string_lossy(), "repo");
+                assert_eq!(service_repo_name.to_string(), "acme/widgets");
+                assert_eq!(parsed_context, context);
+            }
+            other => panic!("expected MountItem::BuildCache, got {other:?}"),
+        }
     }
 
     #[test]

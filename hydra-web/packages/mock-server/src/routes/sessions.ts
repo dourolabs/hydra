@@ -144,8 +144,6 @@ export function createInteractiveSessionForConversation(
           type: "bundle",
           target: "repo",
           bundle: { type: "none" },
-          session_id: id,
-          issue_branch_id: null,
         },
         { type: "documents", target: "documents" },
       ],
@@ -222,8 +220,6 @@ export function createSessionRoutes(store: Store): Hono {
               body.context.type === "git_repository"
                 ? { type: "git_repository", url: body.context.url, rev: body.context.rev }
                 : { type: "none" },
-            session_id: id,
-            issue_branch_id: null,
           },
           { type: "documents", target: "documents" },
         ],
@@ -398,8 +394,6 @@ export function createSessionRoutes(store: Store): Hono {
           type: "bundle" as const,
           target: "repo",
           bundle,
-          session_id: id,
-          issue_branch_id: null,
         },
         { type: "documents" as const, target: "documents" },
       ],

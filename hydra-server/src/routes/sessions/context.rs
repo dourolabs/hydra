@@ -4,10 +4,7 @@ use crate::{
     routes::sessions::{ApiError, SessionIdPath, mount_spec_from_create_request},
 };
 use axum::{Json, extract::State};
-use hydra_common::{
-    api::v1,
-    constants::{ENV_HYDRA_ID, ENV_HYDRA_ISSUE_ID},
-};
+use hydra_common::{api::v1, constants::ENV_HYDRA_ID};
 use tracing::{error, info, warn};
 
 pub async fn get_session_context(
@@ -41,13 +38,11 @@ pub async fn get_session_context(
     // the migration backfill in `20260523020000_*` both mirror this shape).
     let bundle: v1::sessions::Bundle = resolved.context.bundle.clone().into();
     let service_repo_name = task.service_repo_name().cloned();
-    let issue_branch_id = env_vars.get(ENV_HYDRA_ISSUE_ID).cloned();
     let build_cache = match (service_repo_name, state.config.build_cache.to_context()) {
         (Some(name), Some(ctx)) => Some((name, ctx)),
         _ => None,
     };
-    let mount_spec =
-        mount_spec_from_create_request(bundle, session_id.clone(), issue_branch_id, build_cache);
+    let mount_spec = mount_spec_from_create_request(bundle, build_cache);
 
     // Build the API `Session` that the worker will see. Start from the stored
     // task, then overlay the runtime-resolved env vars and the freshly-built
