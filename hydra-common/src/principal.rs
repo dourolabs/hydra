@@ -174,6 +174,29 @@ impl Principal {
             }
         }
     }
+
+    /// Apply the Phase 4a/4b backfill heuristic to a raw legacy
+    /// `Issue.assignee` string, producing a [`Principal`]:
+    ///
+    /// 1. If the input parses via [`Principal::from_str`] (canonical path
+    ///    form `users/<x>` / `agents/<x>` / `external/<system>/<x>`), use
+    ///    that.
+    /// 2. Else if the input is a syntactically valid [`Username`], return
+    ///    `Principal::User { name }`.
+    /// 3. Else return `None`.
+    ///
+    /// This is the Rust-side mirror of the SQL `CASE` expression used by
+    /// the v1 → v2 row migration; both sites need the same rule, so it
+    /// lives here next to [`Principal::from_str`] / [`Principal::to_path`].
+    pub fn parse_legacy_assignee(value: &str) -> Option<Self> {
+        if let Ok(p) = Self::from_str(value) {
+            return Some(p);
+        }
+        if let Ok(name) = Username::try_new(value) {
+            return Some(Principal::User { name });
+        }
+        None
+    }
 }
 
 impl fmt::Display for Principal {
@@ -427,5 +450,30 @@ mod tests {
     fn principal_from_str_rejects_no_separator() {
         let err = "alice".parse::<Principal>().unwrap_err();
         assert!(matches!(err, PrincipalParseError::UnknownKind(ref k) if k == "alice"));
+    }
+
+    // --- parse_legacy_assignee (Phase 4a/4b backfill heuristic) ----------
+
+    #[test]
+    fn parse_legacy_assignee_accepts_canonical_path() {
+        assert_eq!(Principal::parse_legacy_assignee("users/alice"), Some(alice()));
+        assert_eq!(Principal::parse_legacy_assignee("agents/swe"), Some(swe()));
+        assert_eq!(
+            Principal::parse_legacy_assignee("external/github/jayantk"),
+            Some(gh_jayantk())
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_falls_back_to_bare_username_as_user() {
+        // Pre-typed v1 rows often carry just "alice" with no prefix; the
+        // heuristic wraps those as `Principal::User`.
+        assert_eq!(Principal::parse_legacy_assignee("alice"), Some(alice()));
+    }
+
+    #[test]
+    fn parse_legacy_assignee_returns_none_for_invalid_input() {
+        assert_eq!(Principal::parse_legacy_assignee(""), None);
+        assert_eq!(Principal::parse_legacy_assignee("alice bob"), None);
     }
 }

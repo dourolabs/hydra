@@ -4,4 +4,12 @@ import type { Document } from "./Document";
 import type { DocumentId } from "./DocumentId";
 import type { LabelSummary } from "./LabelSummary";
 
-export type DocumentVersionRecord = { document_id: DocumentId, version: bigint, timestamp: string, document: Document, actor?: ActorRef | null, creation_time: string, labels?: Array<LabelSummary>, };
+export type DocumentVersionRecord = {
+  document_id: DocumentId;
+  version: bigint;
+  timestamp: string;
+  document: Document;
+  actor?: ActorRef | null;
+  creation_time: string;
+  labels?: Array<LabelSummary>;
+};

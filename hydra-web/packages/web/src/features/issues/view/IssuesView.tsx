@@ -71,11 +71,17 @@ interface IssuesViewProps {
   onTypeChange: (type: IssueType | null) => void;
   selectedCreator: string;
   onCreatorChange: (creator: string) => void;
+  // Phase 4b: `selectedAssignee` and the `onAssigneeChange` argument are
+  // Principal path strings (`users/<name>` / `agents/<name>` / `external/<sys>/<name>`)
+  // — the canonical wire form. The picker maps them to display names via
+  // `userOptions[].assigneePath`.
   selectedAssignee: string;
-  onAssigneeChange: (assignee: string) => void;
-  // List of selectable names for the Creator and Assignee dropdowns. The page
-  // is responsible for ensuring the current user appears here.
-  userOptions: string[];
+  onAssigneeChange: (assigneePath: string) => void;
+  // Selectable rows for the Creator and Assignee dropdowns. Each row has a
+  // display `name` (used for Creator, which stays bare) and an `assigneePath`
+  // (used for Assignee). The page is responsible for ensuring the current
+  // user appears here.
+  userOptions: { name: string; assigneePath: string }[];
   eyebrow: string;
   title: string;
 }
@@ -244,17 +250,17 @@ export function IssuesView({
             >
               <span>Any creator</span>
             </PickerRow>
-            {userOptions.map((name) => (
+            {userOptions.map((opt) => (
               <PickerRow
-                key={name}
-                active={selectedCreator === name}
+                key={opt.name}
+                active={selectedCreator === opt.name}
                 onClick={() => {
-                  onCreatorChange(name);
+                  onCreatorChange(opt.name);
                   setOpenPicker(null);
                 }}
               >
-                <Avatar name={name} kind="agent" size="md" />
-                <span>{name}</span>
+                <Avatar name={opt.name} kind="agent" size="md" />
+                <span>{opt.name}</span>
               </PickerRow>
             ))}
           </Picker>
@@ -268,10 +274,16 @@ export function IssuesView({
             onToggle={() => toggle("assignee")}
             value={
               selectedAssignee ? (
-                <span className={styles.pillContent}>
-                  <Avatar name={selectedAssignee} kind="agent" size="md" />
-                  <span>{selectedAssignee}</span>
-                </span>
+                (() => {
+                  const match = userOptions.find((o) => o.assigneePath === selectedAssignee);
+                  const label = match?.name ?? selectedAssignee;
+                  return (
+                    <span className={styles.pillContent}>
+                      <Avatar name={label} kind="agent" size="md" />
+                      <span>{label}</span>
+                    </span>
+                  );
+                })()
               ) : (
                 <span className={styles.pillValue}>Any</span>
               )
@@ -286,17 +298,17 @@ export function IssuesView({
             >
               <span>Any assignee</span>
             </PickerRow>
-            {userOptions.map((name) => (
+            {userOptions.map((opt) => (
               <PickerRow
-                key={name}
-                active={selectedAssignee === name}
+                key={opt.assigneePath}
+                active={selectedAssignee === opt.assigneePath}
                 onClick={() => {
-                  onAssigneeChange(name);
+                  onAssigneeChange(opt.assigneePath);
                   setOpenPicker(null);
                 }}
               >
-                <Avatar name={name} kind="agent" size="md" />
-                <span>{name}</span>
+                <Avatar name={opt.name} kind="agent" size="md" />
+                <span>{opt.name}</span>
               </PickerRow>
             ))}
           </Picker>

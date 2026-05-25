@@ -22,17 +22,19 @@ fn serialize_option_principal_path<S: Serializer>(
     }
 }
 
-/// Deserialize an `Option<Principal>` from its canonical path form. Empty
-/// strings are treated as `None` (the equivalent of an omitted query param).
+/// Deserialize an `Option<Principal>` from its canonical path form. A missing
+/// query param deserializes to `None`; an explicit empty string is rejected
+/// (it would not parse as a Principal). This keeps "no filter" and "empty
+/// string" distinguishable on the wire.
 fn deserialize_option_principal_path<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Principal>, D::Error> {
     let raw: Option<String> = Option::deserialize(deserializer)?;
     match raw {
-        Some(s) if !s.is_empty() => Principal::from_str(&s)
+        Some(s) => Principal::from_str(&s)
             .map(Some)
             .map_err(serde::de::Error::custom),
-        _ => Ok(None),
+        None => Ok(None),
     }
 }
 
@@ -974,6 +976,53 @@ mod tests {
         assert_eq!(query.ids.len(), 2);
         assert_eq!(query.ids[0].as_ref(), "i-abcd");
         assert_eq!(query.ids[1].as_ref(), "i-efgh");
+    }
+
+    #[test]
+    fn search_issues_query_deserializes_assignee_path_form() {
+        let query: SearchIssuesQuery =
+            serde_urlencoded::from_str("assignee=users%2Falice").unwrap();
+        assert_eq!(
+            query.assignee,
+            Some(Principal::User {
+                name: Username::from("alice"),
+            })
+        );
+    }
+
+    #[test]
+    fn search_issues_query_assignee_missing_is_none() {
+        let query: SearchIssuesQuery = serde_urlencoded::from_str("").unwrap();
+        assert_eq!(query.assignee, None);
+    }
+
+    #[test]
+    fn search_issues_query_assignee_empty_string_is_rejected() {
+        // Empty-string and `None` are different values on the wire: an
+        // omitted `?assignee=` key parses as `None`, but an explicit
+        // `?assignee=` (empty value) should be a parse error rather than
+        // silently coerced into `None`.
+        let err =
+            serde_urlencoded::from_str::<SearchIssuesQuery>("assignee=").expect_err(
+                "empty assignee should fail to deserialize as a Principal",
+            );
+        assert!(
+            err.to_string().to_lowercase().contains("empty"),
+            "expected error to mention empty principal: {err}"
+        );
+    }
+
+    #[test]
+    fn search_issues_query_assignee_bare_username_is_rejected() {
+        // Bare usernames (without the `users/` prefix) are the legacy v1
+        // wire shape. Phase 4b requires the canonical path form on the URL,
+        // so a bare username must fail to parse as a Principal.
+        let err = serde_urlencoded::from_str::<SearchIssuesQuery>("assignee=alice")
+            .expect_err("bare username should fail to deserialize as a Principal");
+        assert!(
+            err.to_string().to_lowercase().contains("unknown"),
+            "expected error to mention unknown kind: {err}"
+        );
     }
 
     #[test]

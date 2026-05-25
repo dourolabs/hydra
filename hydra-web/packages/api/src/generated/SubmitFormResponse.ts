@@ -5,4 +5,8 @@ import type { IssueId } from "./IssueId";
 /**
  * Response body for a successful form submission.
  */
-export type SubmitFormResponse = { issue_id: IssueId, version: bigint, form_response: FormResponse, };
+export type SubmitFormResponse = {
+  issue_id: IssueId;
+  version: bigint;
+  form_response: FormResponse;
+};

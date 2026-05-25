@@ -8,7 +8,7 @@ import {
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { useAgents } from "../hooks/useAgents";
-import { actorDisplayName } from "../api/auth";
+import { actorDisplayName, actorPrincipalPath } from "../api/auth";
 import {
   IssuesView,
   type IssuesLayout,
@@ -71,6 +71,7 @@ function parseType(value: string | null): IssueType | null {
 function resolveFilters(
   searchParams: URLSearchParams,
   currentUser: string,
+  currentPrincipalPath: string | null,
 ): FilterState {
   // Explicit filter params take precedence over the legacy `selected=` shortcut.
   const hasExplicit =
@@ -96,7 +97,17 @@ function resolveFilters(
       return { status: null, type: null, creator: currentUser, assignee: "", label: "" };
     }
     if (selected === "assigned") {
-      return { status: null, type: null, creator: "", assignee: currentUser, label: "" };
+      // Phase 4b: assignee filter is on the wire as a Principal path
+      // (`users/alice` / `agents/swe`). If the logged-in actor doesn't have a
+      // Principal form (session / service / etc.), fall through to "no filter"
+      // rather than producing a malformed query that the server would 400 on.
+      return {
+        status: null,
+        type: null,
+        creator: "",
+        assignee: currentPrincipalPath ?? "",
+        label: "",
+      };
     }
     if (selected === "in_progress") {
       return { status: "in-progress", type: null, creator: "", assignee: "", label: "" };
@@ -125,6 +136,7 @@ function buildServerFilters(state: FilterState, searchQuery: string): IssueFilte
 function describeFilters(
   state: FilterState,
   currentUser: string,
+  currentPrincipalPath: string | null,
 ): { rootId: string; title: string; eyebrowPrefix: string } {
   const onlyCreatorIsMe =
     !!currentUser &&
@@ -138,8 +150,8 @@ function describeFilters(
   }
 
   const onlyAssigneeIsMe =
-    !!currentUser &&
-    state.assignee === currentUser &&
+    !!currentPrincipalPath &&
+    state.assignee === currentPrincipalPath &&
     !state.status &&
     !state.type &&
     !state.creator &&
@@ -180,13 +192,18 @@ export function IssuesListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const currentUser = user ? actorDisplayName(user.actor) : "";
+  const currentPrincipalPath = user ? actorPrincipalPath(user.actor) : null;
 
   const filterState = useMemo(
-    () => resolveFilters(searchParams, currentUser),
-    [searchParams, currentUser],
+    () => resolveFilters(searchParams, currentUser, currentPrincipalPath),
+    [searchParams, currentUser, currentPrincipalPath],
   );
 
-  const { rootId, title, eyebrowPrefix } = describeFilters(filterState, currentUser);
+  const { rootId, title, eyebrowPrefix } = describeFilters(
+    filterState,
+    currentUser,
+    currentPrincipalPath,
+  );
   useBreadcrumbs([{ label: "Workspace", to: "/" }], title);
 
   const [layout, setLayout] = useState<IssuesLayout>(readLayout);
@@ -251,12 +268,23 @@ export function IssuesListPage() {
   );
 
   const { data: agents } = useAgents();
+  // Picker rows for Creator/Assignee. `name` is the user-facing label; for
+  // the Assignee filter we also need a Principal `path` (Phase 4b) because
+  // the wire form is `users/<x>` / `agents/<x>`. Creator stays bare.
   const userOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const a of agents ?? []) names.add(a.name);
-    if (currentUser) names.add(currentUser);
-    return Array.from(names).sort();
-  }, [agents, currentUser]);
+    const seen = new Set<string>();
+    const opts: { name: string; assigneePath: string }[] = [];
+    for (const a of agents ?? []) {
+      if (seen.has(`agents/${a.name}`)) continue;
+      seen.add(`agents/${a.name}`);
+      opts.push({ name: a.name, assigneePath: `agents/${a.name}` });
+    }
+    if (currentUser && currentPrincipalPath && !seen.has(currentPrincipalPath)) {
+      seen.add(currentPrincipalPath);
+      opts.push({ name: currentUser, assigneePath: currentPrincipalPath });
+    }
+    return opts.sort((a, b) => a.name.localeCompare(b.name));
+  }, [agents, currentUser, currentPrincipalPath]);
 
   const serverFilters = useMemo(
     () => buildServerFilters(filterState, searchQuery),

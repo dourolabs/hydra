@@ -6,19 +6,20 @@ import type { ConversationId } from "./ConversationId";
  *
  * Present (`Some`) on an interactive session; absent (`None`) on a one-shot session.
  */
-export type InteractiveOptions = { 
-/**
- * Conversation this session is attached to.
- */
-conversation_id?: ConversationId | null, 
-/**
- * Idle timeout in seconds — the worker suspends the session after this
- * long without a user message.
- */
-idle_timeout_secs?: bigint | null, 
-/**
- * When resuming a conversation, the event index to resume from. The worker
- * sends this in the WorkerConnect handshake so the server only replays
- * events after this index and includes session state for resumption.
- */
-conversation_resume_from?: number | null, };
+export type InteractiveOptions = {
+  /**
+   * Conversation this session is attached to.
+   */
+  conversation_id?: ConversationId | null;
+  /**
+   * Idle timeout in seconds — the worker suspends the session after this
+   * long without a user message.
+   */
+  idle_timeout_secs?: bigint | null;
+  /**
+   * When resuming a conversation, the event index to resume from. The worker
+   * sends this in the WorkerConnect handshake so the server only replays
+   * events after this index and includes session state for resumption.
+   */
+  conversation_resume_from?: number | null;
+};

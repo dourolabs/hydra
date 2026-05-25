@@ -5,4 +5,15 @@ import type { MountSpec } from "./MountSpec";
 import type { SessionId } from "./SessionId";
 import type { SessionMode } from "./SessionMode";
 
-export type CreateSessionRequest = { mode: SessionMode, agent_config: AgentConfig, mount_spec: MountSpec, image?: string | null, env_vars?: { [key in string]: string }, cpu_limit?: string | null, memory_limit?: string | null, secrets?: Array<string> | null, spawned_from?: IssueId | null, resumed_from?: SessionId | null, };
+export type CreateSessionRequest = {
+  mode: SessionMode;
+  agent_config: AgentConfig;
+  mount_spec: MountSpec;
+  image?: string | null;
+  env_vars?: { [key in string]: string };
+  cpu_limit?: string | null;
+  memory_limit?: string | null;
+  secrets?: Array<string> | null;
+  spawned_from?: IssueId | null;
+  resumed_from?: SessionId | null;
+};

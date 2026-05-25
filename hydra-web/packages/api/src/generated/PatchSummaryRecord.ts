@@ -6,4 +6,11 @@ import type { PatchSummary } from "./PatchSummary";
 /**
  * Summary-level version record for patch list responses.
  */
-export type PatchSummaryRecord = { patch_id: PatchId, version: bigint, timestamp: string, patch: PatchSummary, actor?: ActorRef | null, creation_time: string, };
+export type PatchSummaryRecord = {
+  patch_id: PatchId;
+  version: bigint;
+  timestamp: string;
+  patch: PatchSummary;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

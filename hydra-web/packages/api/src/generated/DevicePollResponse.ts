@@ -2,4 +2,9 @@
 import type { DevicePollStatus } from "./DevicePollStatus";
 import type { UserSummary } from "./UserSummary";
 
-export type DevicePollResponse = { status: DevicePollStatus, login_token: string | null, user: UserSummary | null, error: string | null, };
+export type DevicePollResponse = {
+  status: DevicePollStatus;
+  login_token: string | null;
+  user: UserSummary | null;
+  error: string | null;
+};

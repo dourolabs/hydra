@@ -7,4 +7,6 @@ import type { SessionEvent } from "./SessionEvent";
  * This enum distinguishes between session events (which get stored and
  * broadcast) and session state uploads (binary blobs for resumption).
  */
-export type WorkerMessage = { "type": "event", event: SessionEvent, } | { "type": "session_state_upload", data: number[], };
+export type WorkerMessage =
+  | { type: "event"; event: SessionEvent }
+  | { type: "session_state_upload"; data: number[] };

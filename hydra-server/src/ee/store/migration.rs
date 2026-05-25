@@ -223,32 +223,6 @@ async fn migrate_issues(pool: &PgStorePool) -> Result<u64> {
     result
 }
 
-/// Apply the Phase 4a backfill heuristic to a raw v1 `assignee` string,
-/// producing a [`Principal`](hydra_common::principal::Principal):
-///
-/// 1. If `value` parses via `Principal::from_str` (i.e. canonical path
-///    form `users/<x>` / `agents/<x>` / `external/<system>/<x>`), use
-///    that.
-/// 2. Else if `value` is a syntactically valid `Username`, return
-///    `Principal::User { name: <value> }`.
-/// 3. Else return `None`.
-///
-/// This is the same rule that was emitted inline by the sqlite/postgres
-/// migration SQL and by the Phase-4a application layer. Phase 4b retired
-/// the in-process helper (`parse_assignee_as_principal`) once the dual
-/// write went typed end-to-end, so the heuristic is inlined here for the
-/// v1 → v2 row migration only.
-fn parse_legacy_assignee_string(value: &str) -> Option<hydra_common::principal::Principal> {
-    use std::str::FromStr;
-    if let Ok(p) = hydra_common::principal::Principal::from_str(value) {
-        return Some(p);
-    }
-    if let Ok(name) = hydra_common::api::v1::users::Username::try_new(value) {
-        return Some(hydra_common::principal::Principal::User { name });
-    }
-    None
-}
-
 /// Insert v1 deps/patches into object_relationships (idempotent via ON CONFLICT).
 async fn backfill_issue_relationships(
     pool: &PgStorePool,
@@ -359,11 +333,10 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
                 .unwrap_or("open");
             let assignee = row.payload.get("assignee").and_then(|v| v.as_str());
             // Phase 4a + 4b: derive the typed `assignee_principal` for v2
-            // by running the legacy heuristic on the v1 assignee string.
-            // Phase 4b dropped the in-process `parse_assignee_as_principal`
-            // helper, so the heuristic is inlined here for the one-off
-            // v1 → v2 migration.
-            let typed = assignee.and_then(parse_legacy_assignee_string);
+            // using the shared heuristic on `hydra_common::Principal`. Same
+            // rule as the SQL `CASE` in the migration scripts.
+            let typed =
+                assignee.and_then(hydra_common::principal::Principal::parse_legacy_assignee);
             let assignee_principal_json: Option<Value> = typed
                 .as_ref()
                 .map(serde_json::to_value)

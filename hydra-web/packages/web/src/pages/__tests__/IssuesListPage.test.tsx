@@ -117,6 +117,9 @@ vi.mock("../../hooks/useAgents", () => ({
 
 vi.mock("../../api/auth", () => ({
   actorDisplayName: () => "alice",
+  // The mocked user is `{ type: "user", username: "alice" }`, so the
+  // Phase 4b Principal path form is `users/alice`.
+  actorPrincipalPath: () => "users/alice",
 }));
 
 interface TreesState {

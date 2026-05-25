@@ -31,6 +31,10 @@ vi.mock("../features/auth/useAuth", () => ({
 
 vi.mock("../api/auth", () => ({
   actorDisplayName: () => "Alice",
+  // Phase 4b: the Assigned-to-me filter sends a Principal path on the wire.
+  // The mocked user actor is `type: "user", username: "alice"`, so map to
+  // `users/alice`.
+  actorPrincipalPath: () => "users/alice",
 }));
 
 let mockConversations: ConversationSummary[] | undefined = [];
@@ -237,7 +241,8 @@ describe("Sidebar", () => {
     issueCountMock.mockReturnValue({ data: 4, isLoading: false, error: null });
     renderSidebar();
     const link = screen.getByTestId("sidebar-issues-assigned") as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toBe("/?assignee=Alice");
+    // Phase 4b: URL carries the Principal path form, not the bare username.
+    expect(link.getAttribute("href")).toBe("/?assignee=users%2Falice");
     expect(screen.getByTestId("sidebar-issues-assigned-badge").textContent).toBe("4");
   });
 

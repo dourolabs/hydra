@@ -24,4 +24,13 @@
  *   variant; it round-trips losslessly as a raw string so unmigrated
  *   rows aren't corrupted.
  */
-export type ActorId = | { Username: string } | { Session: string } | { Issue: string } | { Service: string } | { kind: "user"; name: string } | { kind: "agent"; name: string } | { kind: "adhoc"; session_id: string } | { kind: "external"; system: string; username: string } | string;
+export type ActorId =
+  | { Username: string }
+  | { Session: string }
+  | { Issue: string }
+  | { Service: string }
+  | { kind: "user"; name: string }
+  | { kind: "agent"; name: string }
+  | { kind: "adhoc"; session_id: string }
+  | { kind: "external"; system: string; username: string }
+  | string;

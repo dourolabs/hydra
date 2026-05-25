@@ -35,4 +35,7 @@ import type { Username } from "./Username";
  * `Principal.ts`). Phase 5/6 of the design unifies the two types and
  * the rename can be removed then.
  */
-export type ActorPrincipal = { "kind": "user", name: Username, } | { "kind": "agent", name: AgentName, } | { "kind": "external", system: ExternalSystem, username: string, };
+export type ActorPrincipal =
+  | { kind: "user"; name: Username }
+  | { kind: "agent"; name: AgentName }
+  | { kind: "external"; system: ExternalSystem; username: string };

@@ -3,4 +3,4 @@
 /**
  * Data payload for heartbeat events.
  */
-export type HeartbeatEventData = { server_time: string, };
+export type HeartbeatEventData = { server_time: string };

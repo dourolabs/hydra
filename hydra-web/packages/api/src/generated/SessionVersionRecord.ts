@@ -3,4 +3,10 @@ import type { ActorRef } from "./ActorRef";
 import type { Session } from "./Session";
 import type { SessionId } from "./SessionId";
 
-export type SessionVersionRecord = { session_id: SessionId, version: bigint, timestamp: string, session: Session, actor?: ActorRef | null, };
+export type SessionVersionRecord = {
+  session_id: SessionId;
+  version: bigint;
+  timestamp: string;
+  session: Session;
+  actor?: ActorRef | null;
+};

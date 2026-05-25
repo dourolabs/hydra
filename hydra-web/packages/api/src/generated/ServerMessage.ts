@@ -5,4 +5,6 @@ import type { WorkerCatchUp } from "./WorkerCatchUp";
 /**
  * Messages sent from the server to the worker over the relay WebSocket.
  */
-export type ServerMessage = { "type": "catch_up" } & WorkerCatchUp | { "type": "event", event: SessionEvent, };
+export type ServerMessage =
+  | ({ type: "catch_up" } & WorkerCatchUp)
+  | { type: "event"; event: SessionEvent };

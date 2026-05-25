@@ -7,37 +7,16 @@
       "creator": "alice",
       "progress": "5 of 8 subtasks complete. Auth and DB migrations done. 3 agents actively working on remaining items.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "user",
-        "name": "alice"
-      },
+      "assignee": { "kind": "user", "name": "alice" },
       "dependencies": [],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Finalize OAuth2 provider selection",
-          "is_done": true
-        },
-        {
-          "description": "Complete database migration plan",
-          "is_done": true
-        },
-        {
-          "description": "Implement rate limiting middleware",
-          "is_done": false
-        },
-        {
-          "description": "Build real-time collaboration engine",
-          "is_done": false
-        },
-        {
-          "description": "Deploy GraphQL gateway",
-          "is_done": false
-        },
-        {
-          "description": "Update deployment scripts",
-          "is_done": false
-        }
+        { "description": "Finalize OAuth2 provider selection", "is_done": true },
+        { "description": "Complete database migration plan", "is_done": true },
+        { "description": "Implement rate limiting middleware", "is_done": false },
+        { "description": "Build real-time collaboration engine", "is_done": false },
+        { "description": "Deploy GraphQL gateway", "is_done": false },
+        { "description": "Update deployment scripts", "is_done": false }
       ],
       "last_updated_at": "2026-05-12T10:30:00.000Z",
       "history": [
@@ -54,42 +33,21 @@
             "dependencies": [],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Finalize OAuth2 provider selection",
-                "is_done": false
-              },
-              {
-                "description": "Complete database migration plan",
-                "is_done": false
-              },
-              {
-                "description": "Implement rate limiting middleware",
-                "is_done": false
-              },
-              {
-                "description": "Build real-time collaboration engine",
-                "is_done": false
-              },
-              {
-                "description": "Deploy GraphQL gateway",
-                "is_done": false
-              },
-              {
-                "description": "Update deployment scripts",
-                "is_done": false
-              }
+              { "description": "Finalize OAuth2 provider selection", "is_done": false },
+              { "description": "Complete database migration plan", "is_done": false },
+              { "description": "Implement rate limiting middleware", "is_done": false },
+              { "description": "Build real-time collaboration engine", "is_done": false },
+              { "description": "Deploy GraphQL gateway", "is_done": false },
+              { "description": "Update deployment scripts", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-02-20T11:15:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "user",
-              "name": "alice"
-            },
+            "assignee": { "kind": "user", "name": "alice" },
             "status": "in-progress",
-            "progress": "Kicked off \u2014 splitting work into subtasks for auth, database, rate limiting, real-time collab, and GraphQL gateway."
+            "progress": "Kicked off — splitting work into subtasks for auth, database, rate limiting, real-time collab, and GraphQL gateway."
           }
         },
         {
@@ -103,30 +61,12 @@
           "patch": {
             "progress": "Database migration shipped. Auth scope work complete. Federation gateway live with Users + Issues subgraphs.",
             "todo_list": [
-              {
-                "description": "Finalize OAuth2 provider selection",
-                "is_done": true
-              },
-              {
-                "description": "Complete database migration plan",
-                "is_done": true
-              },
-              {
-                "description": "Implement rate limiting middleware",
-                "is_done": false
-              },
-              {
-                "description": "Build real-time collaboration engine",
-                "is_done": false
-              },
-              {
-                "description": "Deploy GraphQL gateway",
-                "is_done": false
-              },
-              {
-                "description": "Update deployment scripts",
-                "is_done": false
-              }
+              { "description": "Finalize OAuth2 provider selection", "is_done": true },
+              { "description": "Complete database migration plan", "is_done": true },
+              { "description": "Implement rate limiting middleware", "is_done": false },
+              { "description": "Build real-time collaboration engine", "is_done": false },
+              { "description": "Deploy GraphQL gateway", "is_done": false },
+              { "description": "Update deployment scripts", "is_done": false }
             ]
           }
         },
@@ -145,43 +85,18 @@
       "creator": "alice",
       "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
-      "patches": [
-        "p-seed00001"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": ["p-seed00001"],
       "todo_list": [
-        {
-          "description": "Set up Keycloak instance",
-          "is_done": true
-        },
-        {
-          "description": "Implement authorization code flow",
-          "is_done": true
-        },
-        {
-          "description": "Add token refresh logic",
-          "is_done": false
-        },
-        {
-          "description": "Migrate existing sessions",
-          "is_done": false
-        },
-        {
-          "description": "Update API endpoint auth checks",
-          "is_done": false
-        }
+        { "description": "Set up Keycloak instance", "is_done": true },
+        { "description": "Implement authorization code flow", "is_done": true },
+        { "description": "Add token refresh logic", "is_done": false },
+        { "description": "Migrate existing sessions", "is_done": false },
+        { "description": "Update API endpoint auth checks", "is_done": false }
       ],
       "last_updated_at": "2026-05-11T08:45:00.000Z",
       "history": [
@@ -195,44 +110,21 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00001"
-              }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Set up Keycloak instance",
-                "is_done": false
-              },
-              {
-                "description": "Implement authorization code flow",
-                "is_done": false
-              },
-              {
-                "description": "Add token refresh logic",
-                "is_done": false
-              },
-              {
-                "description": "Migrate existing sessions",
-                "is_done": false
-              },
-              {
-                "description": "Update API endpoint auth checks",
-                "is_done": false
-              }
+              { "description": "Set up Keycloak instance", "is_done": false },
+              { "description": "Implement authorization code flow", "is_done": false },
+              { "description": "Add token refresh logic", "is_done": false },
+              { "description": "Migrate existing sessions", "is_done": false },
+              { "description": "Update API endpoint auth checks", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-03-01T09:30:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Picked up by swe agent. Evaluating Keycloak vs Auth0."
           }
@@ -242,26 +134,11 @@
           "patch": {
             "progress": "Keycloak selected. Standing up dev instance.",
             "todo_list": [
-              {
-                "description": "Set up Keycloak instance",
-                "is_done": true
-              },
-              {
-                "description": "Implement authorization code flow",
-                "is_done": false
-              },
-              {
-                "description": "Add token refresh logic",
-                "is_done": false
-              },
-              {
-                "description": "Migrate existing sessions",
-                "is_done": false
-              },
-              {
-                "description": "Update API endpoint auth checks",
-                "is_done": false
-              }
+              { "description": "Set up Keycloak instance", "is_done": true },
+              { "description": "Implement authorization code flow", "is_done": false },
+              { "description": "Add token refresh logic", "is_done": false },
+              { "description": "Migrate existing sessions", "is_done": false },
+              { "description": "Update API endpoint auth checks", "is_done": false }
             ]
           }
         },
@@ -269,30 +146,13 @@
           "timestamp": "2026-03-10T18:00:00.000Z",
           "patch": {
             "progress": "Authorization code flow implemented; PR open for review.",
-            "patches": [
-              "p-seed00001"
-            ],
+            "patches": ["p-seed00001"],
             "todo_list": [
-              {
-                "description": "Set up Keycloak instance",
-                "is_done": true
-              },
-              {
-                "description": "Implement authorization code flow",
-                "is_done": true
-              },
-              {
-                "description": "Add token refresh logic",
-                "is_done": false
-              },
-              {
-                "description": "Migrate existing sessions",
-                "is_done": false
-              },
-              {
-                "description": "Update API endpoint auth checks",
-                "is_done": false
-              }
+              { "description": "Set up Keycloak instance", "is_done": true },
+              { "description": "Implement authorization code flow", "is_done": true },
+              { "description": "Add token refresh logic", "is_done": false },
+              { "description": "Migrate existing sessions", "is_done": false },
+              { "description": "Update API endpoint auth checks", "is_done": false }
             ]
           }
         }
@@ -305,33 +165,16 @@
       "creator": "swe",
       "progress": "Agent implementing concurrent request queuing and token refresh flow.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00002"
-        }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Implement token refresh endpoint",
-          "is_done": true
-        },
-        {
-          "description": "Add request queuing during refresh",
-          "is_done": false
-        },
-        {
-          "description": "Handle concurrent refresh race condition",
-          "is_done": false
-        }
+        { "description": "Implement token refresh endpoint", "is_done": true },
+        { "description": "Add request queuing during refresh", "is_done": false },
+        { "description": "Handle concurrent refresh race condition", "is_done": false }
       ],
       "last_updated_at": "2026-05-10T19:20:00.000Z",
       "history": [
@@ -344,33 +187,14 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00002"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Implement token refresh endpoint",
-                "is_done": false
-              },
-              {
-                "description": "Add request queuing during refresh",
-                "is_done": false
-              },
-              {
-                "description": "Handle concurrent refresh race condition",
-                "is_done": false
-              }
+              { "description": "Implement token refresh endpoint", "is_done": false },
+              { "description": "Add request queuing during refresh", "is_done": false },
+              { "description": "Handle concurrent refresh race condition", "is_done": false }
             ]
           }
         },
@@ -386,18 +210,9 @@
           "patch": {
             "progress": "Token refresh endpoint implemented. Working on queuing logic next.",
             "todo_list": [
-              {
-                "description": "Implement token refresh endpoint",
-                "is_done": true
-              },
-              {
-                "description": "Add request queuing during refresh",
-                "is_done": false
-              },
-              {
-                "description": "Handle concurrent refresh race condition",
-                "is_done": false
-              }
+              { "description": "Implement token refresh endpoint", "is_done": true },
+              { "description": "Add request queuing during refresh", "is_done": false },
+              { "description": "Handle concurrent refresh race condition", "is_done": false }
             ]
           }
         }
@@ -410,32 +225,13 @@
       "creator": "alice",
       "progress": "Scope definitions finalized. Implementation merged.",
       "status": "closed",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00002"
-        }
-      ],
-      "patches": [
-        "p-seed00002"
-      ],
+      "assignee": { "kind": "agent", "name": "swe" },
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
+      "patches": ["p-seed00002"],
       "todo_list": [
-        {
-          "description": "Define scope taxonomy",
-          "is_done": true
-        },
-        {
-          "description": "Implement scope validation middleware",
-          "is_done": true
-        },
-        {
-          "description": "Update API docs with scope requirements",
-          "is_done": true
-        }
+        { "description": "Define scope taxonomy", "is_done": true },
+        { "description": "Implement scope validation middleware", "is_done": true },
+        { "description": "Update API docs with scope requirements", "is_done": true }
       ],
       "last_updated_at": "2026-03-13T11:30:00.000Z",
       "history": [
@@ -448,30 +244,13 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00002"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Define scope taxonomy",
-                "is_done": false
-              },
-              {
-                "description": "Implement scope validation middleware",
-                "is_done": false
-              },
-              {
-                "description": "Update API docs with scope requirements",
-                "is_done": false
-              }
+              { "description": "Define scope taxonomy", "is_done": false },
+              { "description": "Implement scope validation middleware", "is_done": false },
+              { "description": "Update API docs with scope requirements", "is_done": false }
             ]
           }
         },
@@ -481,18 +260,9 @@
             "status": "in-progress",
             "progress": "Defining scope taxonomy.",
             "todo_list": [
-              {
-                "description": "Define scope taxonomy",
-                "is_done": true
-              },
-              {
-                "description": "Implement scope validation middleware",
-                "is_done": false
-              },
-              {
-                "description": "Update API docs with scope requirements",
-                "is_done": false
-              }
+              { "description": "Define scope taxonomy", "is_done": true },
+              { "description": "Implement scope validation middleware", "is_done": false },
+              { "description": "Update API docs with scope requirements", "is_done": false }
             ]
           }
         },
@@ -500,22 +270,11 @@
           "timestamp": "2026-03-12T09:00:00.000Z",
           "patch": {
             "progress": "Middleware implemented, PR up for review.",
-            "patches": [
-              "p-seed00002"
-            ],
+            "patches": ["p-seed00002"],
             "todo_list": [
-              {
-                "description": "Define scope taxonomy",
-                "is_done": true
-              },
-              {
-                "description": "Implement scope validation middleware",
-                "is_done": true
-              },
-              {
-                "description": "Update API docs with scope requirements",
-                "is_done": false
-              }
+              { "description": "Define scope taxonomy", "is_done": true },
+              { "description": "Implement scope validation middleware", "is_done": true },
+              { "description": "Update API docs with scope requirements", "is_done": false }
             ]
           }
         }
@@ -528,16 +287,8 @@
       "creator": "alice",
       "progress": "Migration scripts written and tested. Deployed to staging successfully.",
       "status": "closed",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
+      "assignee": { "kind": "agent", "name": "swe" },
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": [],
       "todo_list": [],
       "last_updated_at": "2026-03-14T10:00:00.000Z",
@@ -552,12 +303,7 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00001"
-              }
-            ],
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": []
           }
@@ -565,10 +311,7 @@
         {
           "timestamp": "2026-02-26T09:00:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Writing migration scripts; planning blue/green rollout."
           }
@@ -588,35 +331,16 @@
       "creator": "alice",
       "progress": "Initial implementation had memory leak in Redis connection pool. Agent investigating and fixing.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
-      "patches": [
-        "p-seed00003"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": ["p-seed00003"],
       "todo_list": [
-        {
-          "description": "Design rate limit tiers",
-          "is_done": true
-        },
-        {
-          "description": "Implement sliding window algorithm",
-          "is_done": true
-        },
-        {
-          "description": "Fix Redis connection pool leak",
-          "is_done": false
-        }
+        { "description": "Design rate limit tiers", "is_done": true },
+        { "description": "Implement sliding window algorithm", "is_done": true },
+        { "description": "Fix Redis connection pool leak", "is_done": false }
       ],
       "last_updated_at": "2026-05-13T11:00:00.000Z",
       "history": [
@@ -630,39 +354,20 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00001"
-              }
-            ],
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Design rate limit tiers",
-                "is_done": false
-              },
-              {
-                "description": "Implement sliding window algorithm",
-                "is_done": false
-              },
-              {
-                "description": "Fix Redis connection pool leak",
-                "is_done": false
-              }
+              { "description": "Design rate limit tiers", "is_done": false },
+              { "description": "Implement sliding window algorithm", "is_done": false },
+              { "description": "Fix Redis connection pool leak", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-03-10T13:30:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "swe picked up. Researching sliding window in Redis."
           }
@@ -671,22 +376,11 @@
           "timestamp": "2026-03-12T15:00:00.000Z",
           "patch": {
             "progress": "Sliding window prototype works. Opening PR.",
-            "patches": [
-              "p-seed00003"
-            ],
+            "patches": ["p-seed00003"],
             "todo_list": [
-              {
-                "description": "Design rate limit tiers",
-                "is_done": true
-              },
-              {
-                "description": "Implement sliding window algorithm",
-                "is_done": true
-              },
-              {
-                "description": "Fix Redis connection pool leak",
-                "is_done": false
-              }
+              { "description": "Design rate limit tiers", "is_done": true },
+              { "description": "Implement sliding window algorithm", "is_done": true },
+              { "description": "Fix Redis connection pool leak", "is_done": false }
             ]
           }
         },
@@ -705,10 +399,7 @@
       "creator": "dev-user",
       "progress": "Root cause identified: session middleware not handling null session gracefully. Fix deployed.",
       "status": "closed",
-      "assignee": {
-        "kind": "user",
-        "name": "dev-user"
-      },
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "todo_list": [],
@@ -732,12 +423,9 @@
         {
           "timestamp": "2026-02-07T11:30:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "user",
-              "name": "dev-user"
-            },
+            "assignee": { "kind": "user", "name": "dev-user" },
             "status": "in-progress",
-            "progress": "Reproduced locally \u2014 null session triggers TypeError in cleanup middleware."
+            "progress": "Reproduced locally — null session triggers TypeError in cleanup middleware."
           }
         },
         {
@@ -759,22 +447,10 @@
       "dependencies": [],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Create theme token system (colors, shadows, borders)",
-          "is_done": false
-        },
-        {
-          "description": "Implement ThemeProvider context",
-          "is_done": false
-        },
-        {
-          "description": "Add toggle component to settings",
-          "is_done": false
-        },
-        {
-          "description": "Update all component styles for dark theme",
-          "is_done": false
-        }
+        { "description": "Create theme token system (colors, shadows, borders)", "is_done": false },
+        { "description": "Implement ThemeProvider context", "is_done": false },
+        { "description": "Add toggle component to settings", "is_done": false },
+        { "description": "Update all component styles for dark theme", "is_done": false }
       ]
     },
     "i-seed00009": {
@@ -784,30 +460,16 @@
       "creator": "alice",
       "progress": "Profiling complete. Main bottleneck is the unindexed LIKE query on description field. Adding GIN index.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
       "dependencies": [],
-      "patches": [
-        "p-seed00007"
-      ],
+      "patches": ["p-seed00007"],
       "todo_list": [
-        {
-          "description": "Profile current query performance",
-          "is_done": true
-        },
-        {
-          "description": "Add GIN index on description column",
-          "is_done": true
-        },
-        {
-          "description": "Benchmark after indexing",
-          "is_done": false
-        }
+        { "description": "Profile current query performance", "is_done": true },
+        { "description": "Add GIN index on description column", "is_done": true },
+        { "description": "Benchmark after indexing", "is_done": false }
       ],
       "last_updated_at": "2026-05-12T16:00:00.000Z",
       "history": [
@@ -821,49 +483,26 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
+            "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Profile current query performance",
-                "is_done": false
-              },
-              {
-                "description": "Add GIN index on description column",
-                "is_done": false
-              },
-              {
-                "description": "Benchmark after indexing",
-                "is_done": false
-              }
+              { "description": "Profile current query performance", "is_done": false },
+              { "description": "Add GIN index on description column", "is_done": false },
+              { "description": "Benchmark after indexing", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-03-13T14:00:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Profiling: 95th percentile latency at 2.4s on description LIKE search.",
             "todo_list": [
-              {
-                "description": "Profile current query performance",
-                "is_done": true
-              },
-              {
-                "description": "Add GIN index on description column",
-                "is_done": false
-              },
-              {
-                "description": "Benchmark after indexing",
-                "is_done": false
-              }
+              { "description": "Profile current query performance", "is_done": true },
+              { "description": "Add GIN index on description column", "is_done": false },
+              { "description": "Benchmark after indexing", "is_done": false }
             ]
           }
         },
@@ -871,22 +510,11 @@
           "timestamp": "2026-03-15T08:55:00.000Z",
           "patch": {
             "progress": "GIN index PR open. Pending benchmark.",
-            "patches": [
-              "p-seed00007"
-            ],
+            "patches": ["p-seed00007"],
             "todo_list": [
-              {
-                "description": "Profile current query performance",
-                "is_done": true
-              },
-              {
-                "description": "Add GIN index on description column",
-                "is_done": true
-              },
-              {
-                "description": "Benchmark after indexing",
-                "is_done": false
-              }
+              { "description": "Profile current query performance", "is_done": true },
+              { "description": "Add GIN index on description column", "is_done": true },
+              { "description": "Benchmark after indexing", "is_done": false }
             ]
           }
         }
@@ -899,10 +527,7 @@
       "creator": "dev-user",
       "progress": "",
       "status": "dropped",
-      "assignee": {
-        "kind": "user",
-        "name": "dev-user"
-      },
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "todo_list": []
@@ -914,14 +539,9 @@
       "creator": "swe",
       "progress": "Agent reviewing patch. Checking security of token handling and error edge cases.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "reviewer"
-      },
+      "assignee": { "kind": "agent", "name": "reviewer" },
       "dependencies": [],
-      "patches": [
-        "p-seed00001"
-      ],
+      "patches": ["p-seed00001"],
       "form": {
         "prompt": "Code review for **OAuth2 provider integration** (`p-seed00001`).\n\nPlease evaluate the patch against the focus areas:\n- Token handling & secret storage\n- Error edge cases (revoked, expired, malformed)\n- Test coverage\n\nPick a verdict and leave a short rationale.",
         "fields": [
@@ -933,18 +553,9 @@
               "type": "select",
               "radio": false,
               "options": [
-                {
-                  "value": "approve",
-                  "label": "Approve"
-                },
-                {
-                  "value": "approve_with_nits",
-                  "label": "Approve with nits"
-                },
-                {
-                  "value": "request_changes",
-                  "label": "Request changes"
-                }
+                { "value": "approve", "label": "Approve" },
+                { "value": "approve_with_nits", "label": "Approve with nits" },
+                { "value": "request_changes", "label": "Request changes" }
               ]
             }
           },
@@ -962,7 +573,7 @@
           {
             "key": "rationale",
             "label": "Rationale",
-            "description": "Notes for the author \u2014 what landed well, what to address.",
+            "description": "Notes for the author — what landed well, what to address.",
             "input": {
               "type": "textarea",
               "placeholder": "Bullet points are fine.",
@@ -972,9 +583,7 @@
           {
             "key": "blocks_merge",
             "label": "Block merge until addressed",
-            "input": {
-              "type": "checkbox"
-            },
+            "input": { "type": "checkbox" },
             "default": false
           }
         ],
@@ -983,26 +592,15 @@
             "id": "submit_review",
             "label": "Submit review",
             "style": "primary",
-            "requires": [
-              "verdict",
-              "headline"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["verdict", "headline"],
+            "effect": { "type": "record_only" }
           },
           {
             "id": "request_changes",
             "label": "Request changes",
             "style": "default",
-            "requires": [
-              "verdict",
-              "rationale"
-            ],
-            "effect": {
-              "type": "update_issue",
-              "status": "open"
-            }
+            "requires": ["verdict", "rationale"],
+            "effect": { "type": "update_issue", "status": "open" }
           }
         ]
       }
@@ -1014,19 +612,9 @@
       "creator": "alice",
       "progress": "",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
-      "dependencies": [
-        {
-          "type": "blocked-on",
-          "issue_id": "i-seed00006"
-        }
-      ],
-      "patches": [
-        "p-seed00003"
-      ]
+      "assignee": { "kind": "agent", "name": "swe" },
+      "dependencies": [{ "type": "blocked-on", "issue_id": "i-seed00006" }],
+      "patches": ["p-seed00003"]
     },
     "i-seed00013": {
       "type": "task",
@@ -1035,39 +623,17 @@
       "creator": "alice",
       "progress": "Agent implementing ConnectionManager with JWT auth and exponential backoff reconnection.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
-      "patches": [
-        "p-seed00008"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": ["p-seed00008"],
       "todo_list": [
-        {
-          "description": "Implement ConnectionManager class",
-          "is_done": true
-        },
-        {
-          "description": "Add JWT authentication on connect",
-          "is_done": true
-        },
-        {
-          "description": "Handle reconnection with exponential backoff",
-          "is_done": false
-        },
-        {
-          "description": "Write unit tests",
-          "is_done": false
-        }
+        { "description": "Implement ConnectionManager class", "is_done": true },
+        { "description": "Add JWT authentication on connect", "is_done": true },
+        { "description": "Handle reconnection with exponential backoff", "is_done": false },
+        { "description": "Write unit tests", "is_done": false }
       ],
       "last_updated_at": "2026-05-12T09:30:00.000Z",
       "history": [
@@ -1080,37 +646,15 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00001"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Implement ConnectionManager class",
-                "is_done": false
-              },
-              {
-                "description": "Add JWT authentication on connect",
-                "is_done": false
-              },
-              {
-                "description": "Handle reconnection with exponential backoff",
-                "is_done": false
-              },
-              {
-                "description": "Write unit tests",
-                "is_done": false
-              }
+              { "description": "Implement ConnectionManager class", "is_done": false },
+              { "description": "Add JWT authentication on connect", "is_done": false },
+              { "description": "Handle reconnection with exponential backoff", "is_done": false },
+              { "description": "Write unit tests", "is_done": false }
             ]
           }
         },
@@ -1125,26 +669,12 @@
           "timestamp": "2026-03-15T10:45:00.000Z",
           "patch": {
             "progress": "ConnectionManager + JWT auth done. PR open.",
-            "patches": [
-              "p-seed00008"
-            ],
+            "patches": ["p-seed00008"],
             "todo_list": [
-              {
-                "description": "Implement ConnectionManager class",
-                "is_done": true
-              },
-              {
-                "description": "Add JWT authentication on connect",
-                "is_done": true
-              },
-              {
-                "description": "Handle reconnection with exponential backoff",
-                "is_done": false
-              },
-              {
-                "description": "Write unit tests",
-                "is_done": false
-              }
+              { "description": "Implement ConnectionManager class", "is_done": true },
+              { "description": "Add JWT authentication on connect", "is_done": true },
+              { "description": "Handle reconnection with exponential backoff", "is_done": false },
+              { "description": "Write unit tests", "is_done": false }
             ]
           }
         }
@@ -1157,35 +687,16 @@
       "creator": "alice",
       "progress": "Yjs integration complete. Y-WebSocket provider connected. Persistence adapter merged.",
       "status": "closed",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
-      "patches": [
-        "p-seed00005"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": ["p-seed00005"],
       "todo_list": [
-        {
-          "description": "Set up Yjs document model",
-          "is_done": true
-        },
-        {
-          "description": "Implement Y-WebSocket provider",
-          "is_done": true
-        },
-        {
-          "description": "Add PostgreSQL persistence adapter",
-          "is_done": true
-        }
+        { "description": "Set up Yjs document model", "is_done": true },
+        { "description": "Implement Y-WebSocket provider", "is_done": true },
+        { "description": "Add PostgreSQL persistence adapter", "is_done": true }
       ],
       "last_updated_at": "2026-03-14T18:45:00.000Z",
       "history": [
@@ -1198,33 +709,14 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00001"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Set up Yjs document model",
-                "is_done": false
-              },
-              {
-                "description": "Implement Y-WebSocket provider",
-                "is_done": false
-              },
-              {
-                "description": "Add PostgreSQL persistence adapter",
-                "is_done": false
-              }
+              { "description": "Set up Yjs document model", "is_done": false },
+              { "description": "Implement Y-WebSocket provider", "is_done": false },
+              { "description": "Add PostgreSQL persistence adapter", "is_done": false }
             ]
           }
         },
@@ -1239,22 +731,11 @@
           "timestamp": "2026-03-14T17:30:00.000Z",
           "patch": {
             "progress": "Provider + persistence adapter merged.",
-            "patches": [
-              "p-seed00005"
-            ],
+            "patches": ["p-seed00005"],
             "todo_list": [
-              {
-                "description": "Set up Yjs document model",
-                "is_done": true
-              },
-              {
-                "description": "Implement Y-WebSocket provider",
-                "is_done": true
-              },
-              {
-                "description": "Add PostgreSQL persistence adapter",
-                "is_done": true
-              }
+              { "description": "Set up Yjs document model", "is_done": true },
+              { "description": "Implement Y-WebSocket provider", "is_done": true },
+              { "description": "Add PostgreSQL persistence adapter", "is_done": true }
             ]
           }
         }
@@ -1267,30 +748,16 @@
       "creator": "alice",
       "progress": "Agent analyzing the race condition and implementing distributed lock with Redis SETNX.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
       "dependencies": [],
-      "patches": [
-        "p-seed00009"
-      ],
+      "patches": ["p-seed00009"],
       "todo_list": [
-        {
-          "description": "Reproduce the race condition in tests",
-          "is_done": true
-        },
-        {
-          "description": "Implement distributed lock with Redis SETNX",
-          "is_done": true
-        },
-        {
-          "description": "Add cleanup worker metrics",
-          "is_done": false
-        }
+        { "description": "Reproduce the race condition in tests", "is_done": true },
+        { "description": "Implement distributed lock with Redis SETNX", "is_done": true },
+        { "description": "Add cleanup worker metrics", "is_done": false }
       ],
       "last_updated_at": "2026-05-13T09:00:00.000Z",
       "history": [
@@ -1304,49 +771,26 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
+            "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Reproduce the race condition in tests",
-                "is_done": false
-              },
-              {
-                "description": "Implement distributed lock with Redis SETNX",
-                "is_done": false
-              },
-              {
-                "description": "Add cleanup worker metrics",
-                "is_done": false
-              }
+              { "description": "Reproduce the race condition in tests", "is_done": false },
+              { "description": "Implement distributed lock with Redis SETNX", "is_done": false },
+              { "description": "Add cleanup worker metrics", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-03-13T10:00:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "swe agent investigating. Reproduced race in test harness.",
             "todo_list": [
-              {
-                "description": "Reproduce the race condition in tests",
-                "is_done": true
-              },
-              {
-                "description": "Implement distributed lock with Redis SETNX",
-                "is_done": false
-              },
-              {
-                "description": "Add cleanup worker metrics",
-                "is_done": false
-              }
+              { "description": "Reproduce the race condition in tests", "is_done": true },
+              { "description": "Implement distributed lock with Redis SETNX", "is_done": false },
+              { "description": "Add cleanup worker metrics", "is_done": false }
             ]
           }
         },
@@ -1354,22 +798,11 @@
           "timestamp": "2026-03-15T13:20:00.000Z",
           "patch": {
             "progress": "Distributed lock implemented; PR up for review.",
-            "patches": [
-              "p-seed00009"
-            ],
+            "patches": ["p-seed00009"],
             "todo_list": [
-              {
-                "description": "Reproduce the race condition in tests",
-                "is_done": true
-              },
-              {
-                "description": "Implement distributed lock with Redis SETNX",
-                "is_done": true
-              },
-              {
-                "description": "Add cleanup worker metrics",
-                "is_done": false
-              }
+              { "description": "Reproduce the race condition in tests", "is_done": true },
+              { "description": "Implement distributed lock with Redis SETNX", "is_done": true },
+              { "description": "Add cleanup worker metrics", "is_done": false }
             ]
           }
         }
@@ -1382,34 +815,17 @@
       "creator": "alice",
       "progress": "Root cause found: AbortSignal listener not registered. Fix implemented and patch submitted.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
       "dependencies": [],
-      "patches": [
-        "p-seed00006"
-      ],
+      "patches": ["p-seed00006"],
       "todo_list": [
-        {
-          "description": "Profile memory usage under load",
-          "is_done": true
-        },
-        {
-          "description": "Identify root cause of listener accumulation",
-          "is_done": true
-        },
-        {
-          "description": "Register AbortSignal cleanup handler",
-          "is_done": true
-        },
-        {
-          "description": "Add connection count metrics endpoint",
-          "is_done": true
-        }
+        { "description": "Profile memory usage under load", "is_done": true },
+        { "description": "Identify root cause of listener accumulation", "is_done": true },
+        { "description": "Register AbortSignal cleanup handler", "is_done": true },
+        { "description": "Add connection count metrics endpoint", "is_done": true }
       ],
       "last_updated_at": "2026-05-12T20:00:00.000Z",
       "history": [
@@ -1423,40 +839,23 @@
             "progress": "",
             "status": "open",
             "assignee": null,
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
+            "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Profile memory usage under load",
-                "is_done": false
-              },
-              {
-                "description": "Identify root cause of listener accumulation",
-                "is_done": false
-              },
-              {
-                "description": "Register AbortSignal cleanup handler",
-                "is_done": false
-              },
-              {
-                "description": "Add connection count metrics endpoint",
-                "is_done": false
-              }
+              { "description": "Profile memory usage under load", "is_done": false },
+              { "description": "Identify root cause of listener accumulation", "is_done": false },
+              { "description": "Register AbortSignal cleanup handler", "is_done": false },
+              { "description": "Add connection count metrics endpoint", "is_done": false }
             ]
           }
         },
         {
           "timestamp": "2026-03-10T09:20:00.000Z",
           "patch": {
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
-            "progress": "Memory profile shows listener set growing unbounded \u2014 investigating."
+            "progress": "Memory profile shows listener set growing unbounded — investigating."
           }
         },
         {
@@ -1464,22 +863,10 @@
           "patch": {
             "progress": "Root cause found: AbortSignal listener not registered.",
             "todo_list": [
-              {
-                "description": "Profile memory usage under load",
-                "is_done": true
-              },
-              {
-                "description": "Identify root cause of listener accumulation",
-                "is_done": true
-              },
-              {
-                "description": "Register AbortSignal cleanup handler",
-                "is_done": false
-              },
-              {
-                "description": "Add connection count metrics endpoint",
-                "is_done": false
-              }
+              { "description": "Profile memory usage under load", "is_done": true },
+              { "description": "Identify root cause of listener accumulation", "is_done": true },
+              { "description": "Register AbortSignal cleanup handler", "is_done": false },
+              { "description": "Add connection count metrics endpoint", "is_done": false }
             ]
           }
         },
@@ -1487,26 +874,12 @@
           "timestamp": "2026-03-15T11:30:00.000Z",
           "patch": {
             "progress": "Fix implemented; PR p-seed00006 submitted for review.",
-            "patches": [
-              "p-seed00006"
-            ],
+            "patches": ["p-seed00006"],
             "todo_list": [
-              {
-                "description": "Profile memory usage under load",
-                "is_done": true
-              },
-              {
-                "description": "Identify root cause of listener accumulation",
-                "is_done": true
-              },
-              {
-                "description": "Register AbortSignal cleanup handler",
-                "is_done": true
-              },
-              {
-                "description": "Add connection count metrics endpoint",
-                "is_done": true
-              }
+              { "description": "Profile memory usage under load", "is_done": true },
+              { "description": "Identify root cause of listener accumulation", "is_done": true },
+              { "description": "Register AbortSignal cleanup handler", "is_done": true },
+              { "description": "Add connection count metrics endpoint", "is_done": true }
             ]
           }
         }
@@ -1519,43 +892,18 @@
       "creator": "alice",
       "progress": "Gateway deployed. Users and Issues subgraphs live. Sessions subgraph in progress.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/api-gateway"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00001"
-        }
-      ],
-      "patches": [
-        "p-seed00004"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": ["p-seed00004"],
       "todo_list": [
-        {
-          "description": "Deploy Apollo Gateway",
-          "is_done": true
-        },
-        {
-          "description": "Implement Users subgraph",
-          "is_done": true
-        },
-        {
-          "description": "Implement Issues subgraph",
-          "is_done": true
-        },
-        {
-          "description": "Implement Sessions subgraph",
-          "is_done": false
-        },
-        {
-          "description": "Implement Patches subgraph",
-          "is_done": false
-        }
+        { "description": "Deploy Apollo Gateway", "is_done": true },
+        { "description": "Implement Users subgraph", "is_done": true },
+        { "description": "Implement Issues subgraph", "is_done": true },
+        { "description": "Implement Sessions subgraph", "is_done": false },
+        { "description": "Implement Patches subgraph", "is_done": false }
       ]
     },
     "i-seed00018": {
@@ -1565,14 +913,9 @@
       "creator": "swe",
       "progress": "Agent reviewing patch p-seed00006. Checking cleanup logic.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "reviewer"
-      },
+      "assignee": { "kind": "agent", "name": "reviewer" },
       "dependencies": [],
-      "patches": [
-        "p-seed00006"
-      ]
+      "patches": ["p-seed00006"]
     },
     "i-seed00019": {
       "type": "feature",
@@ -1585,18 +928,9 @@
       "dependencies": [],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Design webhook registration API",
-          "is_done": false
-        },
-        {
-          "description": "Implement delivery worker with retries",
-          "is_done": false
-        },
-        {
-          "description": "Add HMAC signature verification",
-          "is_done": false
-        }
+        { "description": "Design webhook registration API", "is_done": false },
+        { "description": "Implement delivery worker with retries", "is_done": false },
+        { "description": "Add HMAC signature verification", "is_done": false }
       ]
     },
     "i-seed00020": {
@@ -1606,39 +940,17 @@
       "creator": "swe",
       "progress": "Mutex implementation in progress. First attempt deadlocked under burst load; redesigning with explicit promise sharing.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00003"
-        }
-      ],
-      "patches": [
-        "p-seed00010"
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
+      "patches": ["p-seed00010"],
       "todo_list": [
-        {
-          "description": "Design per-client refresh queue API",
-          "is_done": true
-        },
-        {
-          "description": "Wire mutex into HTTP client",
-          "is_done": true
-        },
-        {
-          "description": "Fix burst-load deadlock",
-          "is_done": false
-        },
-        {
-          "description": "Surface refresh errors to all queued callers",
-          "is_done": false
-        }
+        { "description": "Design per-client refresh queue API", "is_done": true },
+        { "description": "Wire mutex into HTTP client", "is_done": true },
+        { "description": "Fix burst-load deadlock", "is_done": false },
+        { "description": "Surface refresh errors to all queued callers", "is_done": false }
       ],
       "last_updated_at": "2026-05-13T17:30:00.000Z",
       "history": [
@@ -1651,37 +963,15 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00003"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Design per-client refresh queue API",
-                "is_done": false
-              },
-              {
-                "description": "Wire mutex into HTTP client",
-                "is_done": false
-              },
-              {
-                "description": "Fix burst-load deadlock",
-                "is_done": false
-              },
-              {
-                "description": "Surface refresh errors to all queued callers",
-                "is_done": false
-              }
+              { "description": "Design per-client refresh queue API", "is_done": false },
+              { "description": "Wire mutex into HTTP client", "is_done": false },
+              { "description": "Fix burst-load deadlock", "is_done": false },
+              { "description": "Surface refresh errors to all queued callers", "is_done": false }
             ]
           }
         },
@@ -1691,22 +981,10 @@
             "status": "in-progress",
             "progress": "API design ratified. Implementing mutex.",
             "todo_list": [
-              {
-                "description": "Design per-client refresh queue API",
-                "is_done": true
-              },
-              {
-                "description": "Wire mutex into HTTP client",
-                "is_done": false
-              },
-              {
-                "description": "Fix burst-load deadlock",
-                "is_done": false
-              },
-              {
-                "description": "Surface refresh errors to all queued callers",
-                "is_done": false
-              }
+              { "description": "Design per-client refresh queue API", "is_done": true },
+              { "description": "Wire mutex into HTTP client", "is_done": false },
+              { "description": "Fix burst-load deadlock", "is_done": false },
+              { "description": "Surface refresh errors to all queued callers", "is_done": false }
             ]
           }
         },
@@ -1714,26 +992,12 @@
           "timestamp": "2026-03-15T14:30:00.000Z",
           "patch": {
             "progress": "Initial wiring complete; deadlock observed under burst load. Investigating.",
-            "patches": [
-              "p-seed00010"
-            ],
+            "patches": ["p-seed00010"],
             "todo_list": [
-              {
-                "description": "Design per-client refresh queue API",
-                "is_done": true
-              },
-              {
-                "description": "Wire mutex into HTTP client",
-                "is_done": true
-              },
-              {
-                "description": "Fix burst-load deadlock",
-                "is_done": false
-              },
-              {
-                "description": "Surface refresh errors to all queued callers",
-                "is_done": false
-              }
+              { "description": "Design per-client refresh queue API", "is_done": true },
+              { "description": "Wire mutex into HTTP client", "is_done": true },
+              { "description": "Fix burst-load deadlock", "is_done": false },
+              { "description": "Surface refresh errors to all queued callers", "is_done": false }
             ]
           }
         }
@@ -1746,37 +1010,17 @@
       "creator": "swe",
       "progress": "Initial test scaffolding in place. Covering burst-load scenarios.",
       "status": "in-progress",
-      "assignee": {
-        "kind": "agent",
-        "name": "swe"
-      },
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
-      "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00020"
-        }
-      ],
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Cover happy-path single refresh",
-          "is_done": true
-        },
-        {
-          "description": "Cover concurrent caller resolution",
-          "is_done": true
-        },
-        {
-          "description": "Cover error propagation to all queued callers",
-          "is_done": false
-        },
-        {
-          "description": "Cover burst-load deadlock regression",
-          "is_done": false
-        }
+        { "description": "Cover happy-path single refresh", "is_done": true },
+        { "description": "Cover concurrent caller resolution", "is_done": true },
+        { "description": "Cover error propagation to all queued callers", "is_done": false },
+        { "description": "Cover burst-load deadlock regression", "is_done": false }
       ],
       "last_updated_at": "2026-05-14T11:00:00.000Z",
       "history": [
@@ -1789,37 +1033,15 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": {
-              "kind": "agent",
-              "name": "swe"
-            },
-            "session_settings": {
-              "repo_name": "acme/web-app"
-            },
-            "dependencies": [
-              {
-                "type": "child-of",
-                "issue_id": "i-seed00020"
-              }
-            ],
+            "assignee": { "kind": "agent", "name": "swe" },
+            "session_settings": { "repo_name": "acme/web-app" },
+            "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
             "patches": [],
             "todo_list": [
-              {
-                "description": "Cover happy-path single refresh",
-                "is_done": false
-              },
-              {
-                "description": "Cover concurrent caller resolution",
-                "is_done": false
-              },
-              {
-                "description": "Cover error propagation to all queued callers",
-                "is_done": false
-              },
-              {
-                "description": "Cover burst-load deadlock regression",
-                "is_done": false
-              }
+              { "description": "Cover happy-path single refresh", "is_done": false },
+              { "description": "Cover concurrent caller resolution", "is_done": false },
+              { "description": "Cover error propagation to all queued callers", "is_done": false },
+              { "description": "Cover burst-load deadlock regression", "is_done": false }
             ]
           }
         },
@@ -1835,22 +1057,10 @@
           "patch": {
             "progress": "Concurrent caller resolution test green. Error propagation next.",
             "todo_list": [
-              {
-                "description": "Cover happy-path single refresh",
-                "is_done": true
-              },
-              {
-                "description": "Cover concurrent caller resolution",
-                "is_done": true
-              },
-              {
-                "description": "Cover error propagation to all queued callers",
-                "is_done": false
-              },
-              {
-                "description": "Cover burst-load deadlock regression",
-                "is_done": false
-              }
+              { "description": "Cover happy-path single refresh", "is_done": true },
+              { "description": "Cover concurrent caller resolution", "is_done": true },
+              { "description": "Cover error propagation to all queued callers", "is_done": false },
+              { "description": "Cover burst-load deadlock regression", "is_done": false }
             ]
           }
         }
@@ -1868,33 +1078,15 @@
         "repo_name": "acme/web-app"
       },
       "dependencies": [
-        {
-          "type": "child-of",
-          "issue_id": "i-seed00020"
-        },
-        {
-          "type": "blocked-on",
-          "issue_id": "i-seed00020"
-        }
+        { "type": "child-of", "issue_id": "i-seed00020" },
+        { "type": "blocked-on", "issue_id": "i-seed00020" }
       ],
       "patches": [],
       "todo_list": [
-        {
-          "description": "Build k6 load harness",
-          "is_done": false
-        },
-        {
-          "description": "Run baseline (no mutex) measurements",
-          "is_done": false
-        },
-        {
-          "description": "Run mutex-guarded measurements",
-          "is_done": false
-        },
-        {
-          "description": "Publish comparison report",
-          "is_done": false
-        }
+        { "description": "Build k6 load harness", "is_done": false },
+        { "description": "Run baseline (no mutex) measurements", "is_done": false },
+        { "description": "Run mutex-guarded measurements", "is_done": false },
+        { "description": "Publish comparison report", "is_done": false }
       ]
     },
     "i-seed00023": {
@@ -1904,10 +1096,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": {
-        "kind": "user",
-        "name": "bob"
-      },
+      "assignee": { "kind": "user", "name": "bob" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1920,18 +1109,9 @@
               "type": "select",
               "radio": true,
               "options": [
-                {
-                  "value": "approve",
-                  "label": "Approve"
-                },
-                {
-                  "value": "changes",
-                  "label": "Request changes"
-                },
-                {
-                  "value": "reject",
-                  "label": "Reject"
-                }
+                { "value": "approve", "label": "Approve" },
+                { "value": "changes", "label": "Request changes" },
+                { "value": "reject", "label": "Reject" }
               ]
             }
           },
@@ -1958,9 +1138,7 @@
           {
             "key": "notify_team",
             "label": "Notify the platform team",
-            "input": {
-              "type": "checkbox"
-            }
+            "input": { "type": "checkbox" }
           }
         ],
         "actions": [
@@ -1968,25 +1146,15 @@
             "id": "submit",
             "label": "Submit review",
             "style": "primary",
-            "requires": [
-              "decision",
-              "summary"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["decision", "summary"],
+            "effect": { "type": "record_only" }
           },
           {
             "id": "reject",
             "label": "Reject without notes",
             "style": "danger",
-            "requires": [
-              "decision"
-            ],
-            "effect": {
-              "type": "update_issue",
-              "status": "closed"
-            }
+            "requires": ["decision"],
+            "effect": { "type": "update_issue", "status": "closed" }
           }
         ]
       }
@@ -1998,10 +1166,7 @@
       "creator": "swe",
       "progress": "",
       "status": "closed",
-      "assignee": {
-        "kind": "user",
-        "name": "alice"
-      },
+      "assignee": { "kind": "user", "name": "alice" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -2014,14 +1179,8 @@
               "type": "select",
               "radio": false,
               "options": [
-                {
-                  "value": "approve",
-                  "label": "Approve"
-                },
-                {
-                  "value": "changes",
-                  "label": "Request changes"
-                }
+                { "value": "approve", "label": "Approve" },
+                { "value": "changes", "label": "Request changes" }
               ]
             }
           },
@@ -2040,20 +1199,14 @@
             "id": "submit",
             "label": "Submit review",
             "style": "primary",
-            "requires": [
-              "decision"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["decision"],
+            "effect": { "type": "record_only" }
           }
         ]
       },
       "form_response": {
         "action_id": "submit",
-        "actor": {
-          "Username": "alice"
-        },
+        "actor": { "Username": "alice" },
         "values": {
           "decision": "approve",
           "notes": "Looks good. The deadlock-prevention story is convincing; please add a regression test before landing."
@@ -2068,10 +1221,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": {
-        "kind": "user",
-        "name": "dev-user"
-      },
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -2080,7 +1230,7 @@
           {
             "key": "team_name",
             "label": "Team name",
-            "description": "1\u201340 characters. Letters, numbers, spaces, and dashes only.",
+            "description": "1–40 characters. Letters, numbers, spaces, and dashes only.",
             "input": {
               "type": "text",
               "placeholder": "e.g. Platform Foundations",
@@ -2104,7 +1254,7 @@
           {
             "key": "elevator_pitch",
             "label": "One-line pitch",
-            "description": "Single line. Pure `text` input with no constraints \u2014 for contrast.",
+            "description": "Single line. Pure `text` input with no constraints — for contrast.",
             "input": {
               "type": "text"
             }
@@ -2137,13 +1287,8 @@
             "id": "save",
             "label": "Save responses",
             "style": "primary",
-            "requires": [
-              "team_name",
-              "contact_email"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["team_name", "contact_email"],
+            "effect": { "type": "record_only" }
           }
         ]
       }
@@ -2155,10 +1300,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": {
-        "kind": "user",
-        "name": "dev-user"
-      },
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -2172,26 +1314,11 @@
               "type": "select",
               "radio": true,
               "options": [
-                {
-                  "value": "vscode",
-                  "label": "VS Code"
-                },
-                {
-                  "value": "jetbrains",
-                  "label": "JetBrains IDE"
-                },
-                {
-                  "value": "vim",
-                  "label": "Vim / Neovim"
-                },
-                {
-                  "value": "emacs",
-                  "label": "Emacs"
-                },
-                {
-                  "value": "other",
-                  "label": "Other"
-                }
+                { "value": "vscode", "label": "VS Code" },
+                { "value": "jetbrains", "label": "JetBrains IDE" },
+                { "value": "vim", "label": "Vim / Neovim" },
+                { "value": "emacs", "label": "Emacs" },
+                { "value": "other", "label": "Other" }
               ]
             },
             "default": "vscode"
@@ -2204,34 +1331,13 @@
               "type": "select",
               "radio": false,
               "options": [
-                {
-                  "value": "k8s",
-                  "label": "Kubernetes"
-                },
-                {
-                  "value": "ecs",
-                  "label": "AWS ECS"
-                },
-                {
-                  "value": "lambda",
-                  "label": "AWS Lambda"
-                },
-                {
-                  "value": "fly",
-                  "label": "Fly.io"
-                },
-                {
-                  "value": "render",
-                  "label": "Render"
-                },
-                {
-                  "value": "vercel",
-                  "label": "Vercel"
-                },
-                {
-                  "value": "bare_metal",
-                  "label": "Bare metal"
-                }
+                { "value": "k8s", "label": "Kubernetes" },
+                { "value": "ecs", "label": "AWS ECS" },
+                { "value": "lambda", "label": "AWS Lambda" },
+                { "value": "fly", "label": "Fly.io" },
+                { "value": "render", "label": "Render" },
+                { "value": "vercel", "label": "Vercel" },
+                { "value": "bare_metal", "label": "Bare metal" }
               ]
             }
           },
@@ -2239,27 +1345,21 @@
             "key": "wants_newsletter",
             "label": "Subscribe to the platform newsletter",
             "description": "Checkbox with `default: true`.",
-            "input": {
-              "type": "checkbox"
-            },
+            "input": { "type": "checkbox" },
             "default": true
           },
           {
             "key": "share_publicly",
             "label": "Allow anonymised results to be shared publicly",
             "description": "Checkbox with `default: false`.",
-            "input": {
-              "type": "checkbox"
-            },
+            "input": { "type": "checkbox" },
             "default": false
           },
           {
             "key": "beta_testing",
             "label": "Available for beta testing new features",
             "description": "Checkbox with no `default` (initially unset).",
-            "input": {
-              "type": "checkbox"
-            }
+            "input": { "type": "checkbox" }
           }
         ],
         "actions": [
@@ -2267,13 +1367,8 @@
             "id": "save",
             "label": "Save preferences",
             "style": "primary",
-            "requires": [
-              "primary_editor",
-              "deploy_target"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["primary_editor", "deploy_target"],
+            "effect": { "type": "record_only" }
           }
         ]
       }
@@ -2285,10 +1380,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": {
-        "kind": "user",
-        "name": "dev-user"
-      },
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -2330,7 +1422,7 @@
           {
             "key": "budget_usd",
             "label": "Monthly budget (USD)",
-            "description": "Completely unbounded \u2014 no `min`, `max`, or `step`. For contrast.",
+            "description": "Completely unbounded — no `min`, `max`, or `step`. For contrast.",
             "input": {
               "type": "number"
             }
@@ -2341,12 +1433,8 @@
             "id": "save",
             "label": "Save numbers",
             "style": "primary",
-            "requires": [
-              "team_size"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["team_size"],
+            "effect": { "type": "record_only" }
           }
         ]
       }
@@ -2356,12 +1444,9 @@
       "title": "Survey: actions & states",
       "description": "Already-submitted survey demonstrating the read-only `form_response` path on a non-review issue, plus a mix of action `style` (`primary` / `danger` / `default`) and `effect` (`update_issue` / `record_only`) variants.",
       "creator": "alice",
-      "progress": "Response submitted by bob \u2014 issue closed via the `confirm_shutdown` action.",
+      "progress": "Response submitted by bob — issue closed via the `confirm_shutdown` action.",
       "status": "closed",
-      "assignee": {
-        "kind": "user",
-        "name": "bob"
-      },
+      "assignee": { "kind": "user", "name": "bob" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -2375,18 +1460,9 @@
               "type": "select",
               "radio": true,
               "options": [
-                {
-                  "value": "high",
-                  "label": "High \u2014 verified no traffic"
-                },
-                {
-                  "value": "medium",
-                  "label": "Medium \u2014 traffic but recoverable"
-                },
-                {
-                  "value": "low",
-                  "label": "Low \u2014 need more data"
-                }
+                { "value": "high", "label": "High — verified no traffic" },
+                { "value": "medium", "label": "Medium — traffic but recoverable" },
+                { "value": "low", "label": "Low — need more data" }
               ]
             }
           },
@@ -2396,16 +1472,14 @@
             "description": "Free-text rationale or a concrete window.",
             "input": {
               "type": "textarea",
-              "placeholder": "e.g. Sun 02:00\u201304:00 UTC, low-traffic window",
+              "placeholder": "e.g. Sun 02:00–04:00 UTC, low-traffic window",
               "rows": 3
             }
           },
           {
             "key": "notify_oncall",
             "label": "Page oncall before action",
-            "input": {
-              "type": "checkbox"
-            },
+            "input": { "type": "checkbox" },
             "default": true
           }
         ],
@@ -2414,45 +1488,31 @@
             "id": "confirm_shutdown",
             "label": "Confirm shutdown",
             "style": "danger",
-            "requires": [
-              "confidence",
-              "shutdown_window"
-            ],
-            "effect": {
-              "type": "update_issue",
-              "status": "closed"
-            }
+            "requires": ["confidence", "shutdown_window"],
+            "effect": { "type": "update_issue", "status": "closed" }
           },
           {
             "id": "defer",
             "label": "Defer 7 days",
             "style": "default",
-            "requires": [
-              "confidence"
-            ],
-            "effect": {
-              "type": "record_only"
-            }
+            "requires": ["confidence"],
+            "effect": { "type": "record_only" }
           },
           {
             "id": "escalate",
             "label": "Escalate to platform lead",
             "style": "primary",
             "requires": [],
-            "effect": {
-              "type": "record_only"
-            }
+            "effect": { "type": "record_only" }
           }
         ]
       },
       "form_response": {
         "action_id": "confirm_shutdown",
-        "actor": {
-          "Username": "bob"
-        },
+        "actor": { "Username": "bob" },
         "values": {
           "confidence": "high",
-          "shutdown_window": "Sun 2026-05-17 02:00\u201304:00 UTC. Verified zero traffic for 31 days; oncall paged ahead of cutover.",
+          "shutdown_window": "Sun 2026-05-17 02:00–04:00 UTC. Verified zero traffic for 31 days; oncall paged ahead of cutover.",
           "notify_oncall": true
         },
         "submitted_at": "2026-05-15T19:05:00.000Z"
@@ -2773,9 +1833,7 @@
     },
     "t-seed00014": {
       "prompt": "You are an agent specializing in software engineering. Task: walk through the realtime collab demo deployment runbook.",
-      "context": {
-        "type": "none"
-      },
+      "context": { "type": "none" },
       "interactive": {
         "conversation_id": "c-seed00007"
       },
@@ -2787,9 +1845,7 @@
     },
     "t-seed00015": {
       "prompt": "You are an agent specializing in software engineering. Task: walk through the realtime collab demo deployment runbook.",
-      "context": {
-        "type": "none"
-      },
+      "context": { "type": "none" },
       "interactive": {
         "conversation_id": "c-seed00007"
       },
@@ -2800,9 +1856,7 @@
     },
     "t-seed00016": {
       "prompt": "Interactive session for the Welcome conversation.",
-      "context": {
-        "type": "none"
-      },
+      "context": { "type": "none" },
       "interactive": {
         "conversation_id": "c-seed00001"
       },
@@ -2813,9 +1867,7 @@
     },
     "t-seed00017": {
       "prompt": "Interactive session for Q1 retro notes.",
-      "context": {
-        "type": "none"
-      },
+      "context": { "type": "none" },
       "interactive": {
         "conversation_id": "c-seed00002"
       },
@@ -2827,9 +1879,7 @@
     },
     "t-seed00018": {
       "prompt": "Interactive session for the realtime collab design conversation.",
-      "context": {
-        "type": "none"
-      },
+      "context": { "type": "none" },
       "interactive": {
         "conversation_id": "c-seed00004"
       },
@@ -2891,9 +1941,7 @@
               "head_ref": "feature/oauth2-provider",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/142",
-              "ci": {
-                "state": "Pending"
-              }
+              "ci": { "state": "Pending" }
             }
           }
         },
@@ -2956,9 +2004,7 @@
               "head_ref": "feature/oauth2-scopes",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/138",
-              "ci": {
-                "state": "Pending"
-              }
+              "ci": { "state": "Pending" }
             }
           }
         },
@@ -2981,9 +2027,7 @@
               "head_ref": "feature/oauth2-scopes",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/138",
-              "ci": {
-                "state": "Success"
-              }
+              "ci": { "state": "Success" }
             }
           }
         }
@@ -3045,9 +2089,7 @@
               "head_ref": "feature/rate-limiter",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/145",
-              "ci": {
-                "state": "Pending"
-              }
+              "ci": { "state": "Pending" }
             }
           }
         },
@@ -3189,7 +2231,7 @@
       "creator": "swe",
       "reviews": [
         {
-          "contents": "Good first cut. Two notes: (1) consider moving `startHeartbeat` interval to a class constant; (2) the connection map is keyed by user_id \u2014 what's the plan for multiple concurrent connections from one user?",
+          "contents": "Good first cut. Two notes: (1) consider moving `startHeartbeat` interval to a class constant; (2) the connection map is keyed by user_id — what's the plan for multiple concurrent connections from one user?",
           "is_approved": false,
           "author": "reviewer",
           "submitted_at": "2026-03-15T11:00:00.000Z"
@@ -3212,7 +2254,7 @@
     },
     "p-seed00009": {
       "title": "Distributed lock for session cleanup worker (Redis SETNX)",
-      "description": "Replaces the racy `SELECT \u2026 FOR UPDATE SKIP LOCKED` approach with a per-session Redis SETNX lock keyed by session_id. Locks auto-expire after 30s so a crashed worker can't strand a session.",
+      "description": "Replaces the racy `SELECT … FOR UPDATE SKIP LOCKED` approach with a per-session Redis SETNX lock keyed by session_id. Locks auto-expire after 30s so a crashed worker can't strand a session.",
       "diff": "diff --git a/src/workers/session-cleanup.ts b/src/workers/session-cleanup.ts\nindex eee0000..fff1111 100644\n--- a/src/workers/session-cleanup.ts\n+++ b/src/workers/session-cleanup.ts\n@@ -10,8 +10,15 @@\n   async run() {\n     const expired = await this.findExpiredSessions();\n     for (const session of expired) {\n+      const locked = await this.redis.set(\n+        `cleanup:${session.id}`,\n+        this.workerId,\n+        'NX',\n+        'EX',\n+        30,\n+      );\n+      if (!locked) continue;\n       await this.cleanup(session);\n     }\n   }\n",
       "status": "Open",
       "is_automatic_backup": false,
@@ -3242,7 +2284,7 @@
       "creator": "swe",
       "reviews": [
         {
-          "contents": "The queue itself is clean, but the deadlock under burst load needs to be fixed before merge. Specifically, when the in-flight promise rejects, queued callers should also see the rejection \u2014 right now if `inflight.delete` runs before they `.then()`, the next call sees no in-flight and starts another refresh, which is the bug.",
+          "contents": "The queue itself is clean, but the deadlock under burst load needs to be fixed before merge. Specifically, when the in-flight promise rejects, queued callers should also see the rejection — right now if `inflight.delete` runs before they `.then()`, the next call sees no in-flight and starts another refresh, which is the bug.",
           "is_approved": false,
           "author": "reviewer",
           "submitted_at": "2026-03-15T15:00:00.000Z"
@@ -3304,9 +2346,7 @@
       "merge_policy": {
         "reviewers": [
           {
-            "any_of": [
-              "reviewer"
-            ]
+            "any_of": ["reviewer"]
           }
         ]
       }
@@ -3319,25 +2359,16 @@
         "reviewers": [
           {
             "label": "code-review",
-            "any_of": [
-              "reviewer",
-              "carol"
-            ],
+            "any_of": ["reviewer", "carol"],
             "count": 2
           },
           {
             "label": "human-signoff",
-            "any_of": [
-              "alice",
-              "bob"
-            ]
+            "any_of": ["alice", "bob"]
           }
         ],
         "mergers": {
-          "any_of": [
-            "@patch.author",
-            "alice"
-          ]
+          "any_of": ["@patch.author", "alice"]
         }
       }
     }
@@ -3407,82 +2438,25 @@
     }
   },
   "label_associations": [
-    {
-      "label_id": "l-seed00001",
-      "object_id": "i-seed00001"
-    },
-    {
-      "label_id": "l-seed00001",
-      "object_id": "i-seed00002"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00002"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00003"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00004"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00020"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00021"
-    },
-    {
-      "label_id": "l-seed00002",
-      "object_id": "i-seed00022"
-    },
-    {
-      "label_id": "l-seed00003",
-      "object_id": "i-seed00006"
-    },
-    {
-      "label_id": "l-seed00001",
-      "object_id": "i-seed00008"
-    },
-    {
-      "label_id": "l-seed00004",
-      "object_id": "i-seed00013"
-    },
-    {
-      "label_id": "l-seed00004",
-      "object_id": "i-seed00014"
-    },
-    {
-      "label_id": "l-seed00005",
-      "object_id": "i-seed00017"
-    },
-    {
-      "label_id": "l-seed00006",
-      "object_id": "i-seed00015"
-    },
-    {
-      "label_id": "l-seed00006",
-      "object_id": "i-seed00016"
-    },
-    {
-      "label_id": "l-inbox",
-      "object_id": "i-seed00007"
-    },
-    {
-      "label_id": "l-inbox",
-      "object_id": "i-seed00008"
-    },
-    {
-      "label_id": "l-inbox",
-      "object_id": "i-seed00010"
-    },
-    {
-      "label_id": "l-inbox",
-      "object_id": "i-seed00019"
-    }
+    { "label_id": "l-seed00001", "object_id": "i-seed00001" },
+    { "label_id": "l-seed00001", "object_id": "i-seed00002" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00002" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00003" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00004" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00020" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00021" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00022" },
+    { "label_id": "l-seed00003", "object_id": "i-seed00006" },
+    { "label_id": "l-seed00001", "object_id": "i-seed00008" },
+    { "label_id": "l-seed00004", "object_id": "i-seed00013" },
+    { "label_id": "l-seed00004", "object_id": "i-seed00014" },
+    { "label_id": "l-seed00005", "object_id": "i-seed00017" },
+    { "label_id": "l-seed00006", "object_id": "i-seed00015" },
+    { "label_id": "l-seed00006", "object_id": "i-seed00016" },
+    { "label_id": "l-inbox", "object_id": "i-seed00007" },
+    { "label_id": "l-inbox", "object_id": "i-seed00008" },
+    { "label_id": "l-inbox", "object_id": "i-seed00010" },
+    { "label_id": "l-inbox", "object_id": "i-seed00019" }
   ],
   "conversations": {
     "c-seed00001": {
@@ -3514,7 +2488,7 @@
     },
     "c-seed00004": {
       "conversation_id": "c-seed00004",
-      "title": "Realtime collab \u2014 design questions",
+      "title": "Realtime collab — design questions",
       "agent_name": "architect-bot",
       "status": "active",
       "creator": "bob",
@@ -3616,7 +2590,7 @@
       },
       {
         "type": "assistant_message",
-        "content": "Yes \u2014 i-seed00003 is blocked on resolving the concurrent-refresh race condition. There's a draft mutex design in p-seed00010 that addresses it but needs review.",
+        "content": "Yes — i-seed00003 is blocked on resolving the concurrent-refresh race condition. There's a draft mutex design in p-seed00010 that addresses it but needs review.",
         "timestamp": "2026-05-12T16:05:00.000Z"
       }
     ],
@@ -3660,7 +2634,7 @@
       },
       {
         "type": "assistant_message",
-        "content": "Phase 3, per the plan. Targets are not committed yet \u2014 depends on client migration.",
+        "content": "Phase 3, per the plan. Targets are not committed yet — depends on client migration.",
         "timestamp": "2026-05-14T10:00:00.000Z"
       }
     ],
@@ -3682,7 +2656,7 @@
       },
       {
         "type": "assistant_message",
-        "content": "Unrelated \u2014 the leak is in the SSE broadcaster's per-client listener registry, not the websocket gateway. Different process.",
+        "content": "Unrelated — the leak is in the SSE broadcaster's per-client listener registry, not the websocket gateway. Different process.",
         "timestamp": "2026-05-09T10:32:00.000Z"
       }
     ],
@@ -3722,145 +2696,38 @@
     ]
   },
   "relations": [
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00001",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00002",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00005",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00006",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00013",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00001",
-      "target_id": "i-seed00017",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00002",
-      "target_id": "i-seed00002",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00002",
-      "target_id": "i-seed00005",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00002",
-      "target_id": "d-seed00001",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "i-seed00002",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "i-seed00003",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "i-seed00004",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "p-seed00001",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "p-seed00002",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "p-seed00010",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00003",
-      "target_id": "d-seed00001",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00004",
-      "target_id": "i-seed00013",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00004",
-      "target_id": "i-seed00014",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00004",
-      "target_id": "p-seed00005",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00004",
-      "target_id": "p-seed00007",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00004",
-      "target_id": "d-seed00004",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00005",
-      "target_id": "i-seed00017",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00005",
-      "target_id": "p-seed00004",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00005",
-      "target_id": "d-seed00005",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00006",
-      "target_id": "i-seed00016",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00006",
-      "target_id": "i-seed00018",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00006",
-      "target_id": "p-seed00006",
-      "rel_type": "refers-to"
-    },
-    {
-      "source_id": "c-seed00006",
-      "target_id": "d-seed00002",
-      "rel_type": "refers-to"
-    }
+    { "source_id": "c-seed00001", "target_id": "i-seed00001", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00002", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00005", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00006", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00013", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "i-seed00017", "rel_type": "refers-to" },
+
+    { "source_id": "c-seed00002", "target_id": "i-seed00002", "rel_type": "refers-to" },
+    { "source_id": "c-seed00002", "target_id": "i-seed00005", "rel_type": "refers-to" },
+    { "source_id": "c-seed00002", "target_id": "d-seed00001", "rel_type": "refers-to" },
+
+    { "source_id": "c-seed00003", "target_id": "i-seed00002", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "i-seed00003", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "i-seed00004", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00001", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00002", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "p-seed00010", "rel_type": "refers-to" },
+    { "source_id": "c-seed00003", "target_id": "d-seed00001", "rel_type": "refers-to" },
+
+    { "source_id": "c-seed00004", "target_id": "i-seed00013", "rel_type": "refers-to" },
+    { "source_id": "c-seed00004", "target_id": "i-seed00014", "rel_type": "refers-to" },
+    { "source_id": "c-seed00004", "target_id": "p-seed00005", "rel_type": "refers-to" },
+    { "source_id": "c-seed00004", "target_id": "p-seed00007", "rel_type": "refers-to" },
+    { "source_id": "c-seed00004", "target_id": "d-seed00004", "rel_type": "refers-to" },
+
+    { "source_id": "c-seed00005", "target_id": "i-seed00017", "rel_type": "refers-to" },
+    { "source_id": "c-seed00005", "target_id": "p-seed00004", "rel_type": "refers-to" },
+    { "source_id": "c-seed00005", "target_id": "d-seed00005", "rel_type": "refers-to" },
+
+    { "source_id": "c-seed00006", "target_id": "i-seed00016", "rel_type": "refers-to" },
+    { "source_id": "c-seed00006", "target_id": "i-seed00018", "rel_type": "refers-to" },
+    { "source_id": "c-seed00006", "target_id": "p-seed00006", "rel_type": "refers-to" },
+    { "source_id": "c-seed00006", "target_id": "d-seed00002", "rel_type": "refers-to" }
   ]
 }
