@@ -13,7 +13,7 @@ interface ListRelationsResponse {
 }
 
 // Module-local store for relations seeded from the fixture (e.g. conversation
-// `refers_to` links). Parallels `conversationEvents` in routes/conversations.ts:
+// `refers-to` links). Parallels `conversationEvents` in routes/conversations.ts:
 // loadSeedData clears + repopulates via the exported helpers, and the GET route
 // merges these with the dynamically-derived issue dependency relations.
 const seededRelations: RelationResponse[] = [];

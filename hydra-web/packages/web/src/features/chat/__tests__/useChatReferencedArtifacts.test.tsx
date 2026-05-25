@@ -41,7 +41,7 @@ function makeWrapper() {
 }
 
 function makeRelation(targetId: string, sourceId = "c-abc") {
-  return { source_id: sourceId, target_id: targetId, rel_type: "refers_to" };
+  return { source_id: sourceId, target_id: targetId, rel_type: "refers-to" };
 }
 
 function makeIssue(id: string, title = `Issue ${id}`): IssueSummaryRecord {
@@ -181,7 +181,7 @@ describe("useChatReferencedArtifacts", () => {
 
     expect(mockListRelations).toHaveBeenCalledWith({
       source_id: "c-abc",
-      rel_type: "refers_to",
+      rel_type: "refers-to",
     });
     expect(mockListIssues).toHaveBeenCalledTimes(1);
     expect(mockListIssues).toHaveBeenCalledWith({
