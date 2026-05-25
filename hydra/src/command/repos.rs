@@ -193,7 +193,7 @@ async fn fetch_repositories(
     client: &HydraClient,
     include_deleted: bool,
 ) -> Result<Vec<RepositoryRecord>> {
-    let query = SearchRepositoriesQuery::new(if include_deleted { Some(true) } else { None });
+    let query = SearchRepositoriesQuery::new(if include_deleted { Some(true) } else { None }, None);
     let response = client
         .list_repositories(&query)
         .await

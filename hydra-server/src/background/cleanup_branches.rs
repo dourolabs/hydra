@@ -30,7 +30,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
 
-        let query = SearchRepositoriesQuery::new(Some(false));
+        let query = SearchRepositoriesQuery::new(Some(false), None);
         let repositories = match self.state.store().list_repositories(&query).await {
             Ok(repos) => repos,
             Err(err) => {

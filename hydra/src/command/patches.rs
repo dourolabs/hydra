@@ -1035,7 +1035,7 @@ async fn merge_patch(
             // Try to get the default branch from the repository config.
             let repo_name = &patch.service_repo_name;
             let repos_response = client
-                .list_repositories(&SearchRepositoriesQuery::new(None))
+                .list_repositories(&SearchRepositoriesQuery::new(None, None))
                 .await
                 .context("failed to list repositories")?;
             let repo_config = repos_response

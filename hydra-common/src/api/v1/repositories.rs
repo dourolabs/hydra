@@ -250,6 +250,99 @@ impl Repository {
     pub fn is_local(&self) -> bool {
         self.remote_url.starts_with("file://") || self.remote_url.starts_with('/')
     }
+
+    /// Canonical form of a remote URL for equality matching.
+    ///
+    /// Rules (in order):
+    ///   1. Trim whitespace.
+    ///   2. Lowercase the host.
+    ///   3. SSH form `git@HOST:OWNER/REPO[.git]` → `https://HOST/OWNER/REPO`.
+    ///   4. Strip any `:PORT` from the host.
+    ///   5. Strip trailing `.git`.
+    ///   6. Strip trailing `/`.
+    ///   7. Strip query string and fragment.
+    ///   8. Leave `file://` and absolute-path remotes untouched
+    ///      (already canonical).
+    pub fn normalize_remote_url(raw: &str) -> String {
+        let trimmed = raw.trim();
+
+        // Rule 8: file:// and absolute-path remotes are already canonical.
+        if trimmed.starts_with("file://") || trimmed.starts_with('/') {
+            return trimmed.to_string();
+        }
+
+        // Rule 3: SCP-style SSH form `git@HOST:OWNER/REPO[.git]` →
+        // `https://HOST/OWNER/REPO[.git]`. (`.git` is stripped by rule 5 below.)
+        let converted = if let Some(rest) = trimmed.strip_prefix("git@")
+            && let Some((host, path)) = rest.split_once(':')
+        {
+            format!("https://{host}/{path}")
+        } else {
+            trimmed.to_string()
+        };
+
+        // Rule 7: strip query string and fragment.
+        let without_query = match converted.split_once('?') {
+            Some((head, _)) => head.to_string(),
+            None => converted,
+        };
+        let without_fragment = match without_query.split_once('#') {
+            Some((head, _)) => head.to_string(),
+            None => without_query,
+        };
+
+        // Split scheme:// from the rest. If there's no scheme, leave the input
+        // alone (no host to lowercase or port to strip).
+        let Some((scheme_with_sep, after_scheme)) = without_fragment.split_once("://") else {
+            // Still apply rules 5 and 6 to whatever's left.
+            let mut s = without_fragment;
+            loop {
+                let before = s.len();
+                if let Some(stripped) = s.strip_suffix(".git") {
+                    s = stripped.to_string();
+                }
+                while s.ends_with('/') {
+                    s.pop();
+                }
+                if s.len() == before {
+                    break;
+                }
+            }
+            return s;
+        };
+
+        // Split host from path. The first `/` after the scheme separates them.
+        let (host_part, path_part) = match after_scheme.split_once('/') {
+            Some((h, p)) => (h.to_string(), format!("/{p}")),
+            None => (after_scheme.to_string(), String::new()),
+        };
+
+        // Rules 2 + 4: lowercase host, strip `:PORT`.
+        let host_no_port = match host_part.rfind(':') {
+            Some(idx) => &host_part[..idx],
+            None => host_part.as_str(),
+        };
+        let host = host_no_port.to_lowercase();
+
+        let mut result = format!("{scheme_with_sep}://{host}{path_part}");
+
+        // Rules 5 + 6: strip trailing `.git` and `/`. Run in a small fixed loop
+        // so `…/repo.git/` collapses cleanly regardless of order.
+        loop {
+            let before = result.len();
+            if let Some(stripped) = result.strip_suffix(".git") {
+                result = stripped.to_string();
+            }
+            while result.ends_with('/') {
+                result.pop();
+            }
+            if result.len() == before {
+                break;
+            }
+        }
+
+        result
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,13 +416,23 @@ impl UpsertRepositoryResponse {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchRepositoriesQuery {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_deleted: Option<bool>,
+
+    /// Filter to repositories whose `Repository.remote_url`, after canonical
+    /// normalization via [`Repository::normalize_remote_url`], equals the
+    /// normalized form of this value. Comparison is exact on the normalized
+    /// strings; partial / substring / glob matches are not supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
 }
 
 impl SearchRepositoriesQuery {
-    pub fn new(include_deleted: Option<bool>) -> Self {
-        Self { include_deleted }
+    pub fn new(include_deleted: Option<bool>, remote_url: Option<String>) -> Self {
+        Self {
+            include_deleted,
+            remote_url,
+        }
     }
 }
 
@@ -463,6 +566,190 @@ mod tests {
             None,
         );
         assert!(!repo.is_local());
+    }
+
+    // ---- normalize_remote_url -------------------------------------------
+
+    #[test]
+    fn normalize_remote_url_github_https_with_git_suffix() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra.git"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_github_https_without_git_suffix() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_github_ssh_with_git_suffix() {
+        assert_eq!(
+            Repository::normalize_remote_url("git@github.com:dourolabs/hydra.git"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_github_ssh_without_git_suffix() {
+        assert_eq!(
+            Repository::normalize_remote_url("git@github.com:dourolabs/hydra"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_trailing_slash() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra/"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_uppercase_host() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://GitHub.com/dourolabs/hydra"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_strips_https_default_port() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com:443/dourolabs/hydra.git"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_strips_ssh_default_port() {
+        assert_eq!(
+            Repository::normalize_remote_url("ssh://git@github.com:22/dourolabs/hydra.git"),
+            "ssh://git@github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_strips_query_string() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra?ref=main"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_strips_fragment() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra#readme"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_strips_query_and_fragment() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://github.com/dourolabs/hydra.git?ref=main#L42"),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_leaves_file_url_untouched() {
+        assert_eq!(
+            Repository::normalize_remote_url("file:///home/user/repo"),
+            "file:///home/user/repo"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_leaves_absolute_path_untouched() {
+        assert_eq!(
+            Repository::normalize_remote_url("/home/user/repo"),
+            "/home/user/repo"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_trims_whitespace() {
+        assert_eq!(
+            Repository::normalize_remote_url("  https://github.com/dourolabs/hydra.git  "),
+            "https://github.com/dourolabs/hydra"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_gitlab_https() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://gitlab.com/group/subgroup/proj.git"),
+            "https://gitlab.com/group/subgroup/proj"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_bitbucket_https() {
+        assert_eq!(
+            Repository::normalize_remote_url("https://bitbucket.org/team/proj.git/"),
+            "https://bitbucket.org/team/proj"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_url_idempotent() {
+        let canonical = "https://github.com/dourolabs/hydra";
+        assert_eq!(Repository::normalize_remote_url(canonical), canonical);
+    }
+
+    #[test]
+    fn normalize_remote_url_ssh_to_https_equivalence() {
+        // Different surface forms of the same remote should normalize to the same string.
+        let canonical = Repository::normalize_remote_url("https://github.com/dourolabs/hydra");
+        for variant in [
+            "https://github.com/dourolabs/hydra.git",
+            "https://github.com/dourolabs/hydra/",
+            "https://GitHub.com/dourolabs/hydra",
+            "https://github.com:443/dourolabs/hydra",
+            "git@github.com:dourolabs/hydra.git",
+            "git@github.com:dourolabs/hydra",
+            "  https://github.com/dourolabs/hydra.git  ",
+            "https://github.com/dourolabs/hydra?ref=main",
+            "https://github.com/dourolabs/hydra#readme",
+        ] {
+            assert_eq!(
+                Repository::normalize_remote_url(variant),
+                canonical,
+                "variant `{variant}` should normalize to `{canonical}`"
+            );
+        }
+    }
+
+    #[test]
+    fn search_repositories_query_remote_url_round_trips() {
+        let q = SearchRepositoriesQuery::new(
+            None,
+            Some("https://github.com/dourolabs/hydra".to_string()),
+        );
+        let value = serde_json::to_value(&q).unwrap();
+        let back: SearchRepositoriesQuery = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            back.remote_url.as_deref(),
+            Some("https://github.com/dourolabs/hydra")
+        );
+        assert_eq!(back.include_deleted, None);
+    }
+
+    #[test]
+    fn search_repositories_query_remote_url_omitted_when_none() {
+        let q = SearchRepositoriesQuery::new(None, None);
+        let value = serde_json::to_value(&q).unwrap();
+        assert!(
+            !value.as_object().unwrap().contains_key("remote_url"),
+            "remote_url should be omitted on the wire when None"
+        );
     }
 
     // ---- MergePolicy ----------------------------------------------------
