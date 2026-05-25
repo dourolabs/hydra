@@ -547,7 +547,7 @@ impl AppState {
 
         // Extract actor_id from ActorRef for the FormResponse
         let actor_id = match &actor {
-            ActorRef::Authenticated { actor_id } => actor_id.clone(),
+            ActorRef::Authenticated { actor_id, .. } => actor_id.clone(),
             ActorRef::System {
                 on_behalf_of: Some(id),
                 ..

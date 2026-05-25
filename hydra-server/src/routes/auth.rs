@@ -36,7 +36,7 @@ pub async fn require_auth(
         }
     };
 
-    let actor = match state.get_actor(auth_token.actor_name()).await {
+    let mut actor = match state.get_actor(auth_token.actor_name()).await {
         Ok(actor) => actor,
         Err(error) => {
             let message = auth_failure_message(&error);
@@ -45,20 +45,25 @@ pub async fn require_auth(
         }
     };
 
-    // Check the auth_tokens table first (supports multiple tokens per actor).
+    // Phase 3a (`/designs/actor-system-overhaul.md` §5.3): look up the
+    // token row directly by its hash. The returned `session_id` is
+    // hydrated onto `Actor.session_id` so `ActorRef::from(&actor)`
+    // carries it into every downstream mutation.
     let token_hash = Actor::hash_auth_token(auth_token.raw_token());
-    let token_valid = match state
+    let matched_row = state
         .store()
-        .get_auth_token_hashes(auth_token.actor_name())
+        .get_auth_token_by_hash(&token_hash)
         .await
-    {
-        Ok(hashes) => hashes.iter().any(|h| h == &token_hash),
-        Err(_) => false,
-    };
+        .ok()
+        .flatten()
+        .filter(|row| row.actor_name == auth_token.actor_name());
 
     // Fall back to the legacy single-token hash on the Actor struct for
-    // backward compatibility with tokens created before the migration.
-    if token_valid || actor.verify_auth_token(&auth_token) {
+    // backward compatibility with tokens created before the auth_tokens
+    // table existed. Phase 3b will delete this fallback.
+    let token_valid = matched_row.is_some() || actor.verify_auth_token(&auth_token);
+    if token_valid {
+        actor.session_id = matched_row.and_then(|row| row.session_id);
         info!(actor = %actor.name(), "authorization accepted");
         request.extensions_mut().insert(actor);
         Ok(next.run(request).await)

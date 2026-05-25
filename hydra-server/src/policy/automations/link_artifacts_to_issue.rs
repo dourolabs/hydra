@@ -63,9 +63,11 @@ impl Automation for LinkArtifactsToIssueAutomation {
         let issue_id = match actor {
             ActorRef::Authenticated {
                 actor_id: ActorId::Session(sid),
+                ..
             }
             | ActorRef::Authenticated {
                 actor_id: ActorId::Adhoc(sid),
+                ..
             } => {
                 let session = match ctx.store.get_session(sid, false).await {
                     Ok(s) => s,
@@ -86,6 +88,7 @@ impl Automation for LinkArtifactsToIssueAutomation {
             }
             ActorRef::Authenticated {
                 actor_id: ActorId::Issue(iid),
+                ..
             } => iid.clone(),
             _ => return Ok(()),
         };
@@ -145,18 +148,21 @@ mod tests {
     fn session_actor(session_id: &hydra_common::SessionId) -> ActorRef {
         ActorRef::Authenticated {
             actor_id: ActorId::Session(session_id.clone()),
+            session_id: None,
         }
     }
 
     fn issue_actor(issue_id: &IssueId) -> ActorRef {
         ActorRef::Authenticated {
             actor_id: ActorId::Issue(issue_id.clone()),
+            session_id: None,
         }
     }
 
     fn human_actor() -> ActorRef {
         ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice").into()),
+            session_id: None,
         }
     }
 

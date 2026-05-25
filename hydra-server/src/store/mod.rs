@@ -152,6 +152,18 @@ pub struct ObjectRelationship {
     pub rel_type: RelationshipType,
 }
 
+/// An `auth_tokens` row resolved by token hash.
+///
+/// Phase 3a (`/designs/actor-system-overhaul.md` §7.2 + §5.3) replaces
+/// the `get_auth_token_hashes(actor_name).contains(hash)` linear scan
+/// with a hash-keyed lookup that also returns the session id (if any)
+/// that minted the token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthTokenRow {
+    pub actor_name: String,
+    pub session_id: Option<SessionId>,
+}
+
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
@@ -746,6 +758,17 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns all token hashes for the given actor.
     async fn get_auth_token_hashes(&self, actor_name: &str) -> Result<Vec<String>, StoreError>;
 
+    /// Looks up an auth-token row by its hashed token.
+    ///
+    /// Phase 3a of `/designs/actor-system-overhaul.md` (§5.3) uses this
+    /// in `require_auth` to replace the per-actor linear scan and to
+    /// recover the session id that minted the token (when any) so the
+    /// resulting `ActorRef::Authenticated` carries it into mutations.
+    async fn get_auth_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<AuthTokenRow>, StoreError>;
+
     // ---- User secrets (read-only) ----
 
     /// Returns the encrypted value of a user secret, or None if not set.
@@ -1099,7 +1122,17 @@ pub trait Store: ReadOnlyStore {
     // ---- Auth token mutations ----
 
     /// Adds a token hash for the given actor.
-    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError>;
+    ///
+    /// `session_id` records the session that minted the token
+    /// (`/designs/actor-system-overhaul.md` §7.2). It is `Some` for the
+    /// session-spawn path in `create_actor_for_job` and `None` for user
+    /// logins or any other non-session token issuance.
+    async fn add_auth_token(
+        &self,
+        actor_name: &str,
+        token_hash: &str,
+        session_id: Option<&SessionId>,
+    ) -> Result<(), StoreError>;
 
     /// Deletes all auth tokens for the given actor.
     async fn delete_auth_tokens_for_actor(&self, actor_name: &str) -> Result<(), StoreError>;

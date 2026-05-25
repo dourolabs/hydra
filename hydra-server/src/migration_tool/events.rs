@@ -126,6 +126,7 @@ fn session_id_from_actor_json(actor: &str) -> Option<String> {
     match parsed {
         ActorRef::Authenticated {
             actor_id: ActorId::Session(session_id),
+            ..
         } => Some(session_id.as_ref().to_string()),
         _ => None,
     }
@@ -840,6 +841,7 @@ mod tests {
     ) {
         let actor = ActorRef::Authenticated {
             actor_id: ActorId::Session(actor_session.clone()),
+            session_id: None,
         };
         let actor_json = serde_json::to_string(&actor).unwrap();
         let event_data = serde_json::json!({

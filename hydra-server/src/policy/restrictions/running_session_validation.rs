@@ -170,12 +170,14 @@ mod tests {
     fn session_actor(session_id: SessionId) -> ActorRef {
         ActorRef::Authenticated {
             actor_id: ActorId::Session(session_id),
+            session_id: None,
         }
     }
 
     fn issue_actor(issue_id: IssueId) -> ActorRef {
         ActorRef::Authenticated {
             actor_id: ActorId::Issue(issue_id),
+            session_id: None,
         }
     }
 

@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary,
-    SessionMode, Status, Store, StoreError, TaskStatusLog,
+    AuthTokenRow, ConversationEventSummary, ReadOnlyStore, Session, SessionEvent,
+    SessionEventSummary, SessionMode, Status, Store, StoreError, TaskStatusLog,
 };
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
@@ -65,8 +65,8 @@ pub struct MemoryStore {
     object_labels: DashMap<HydraId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<HydraId>>,
-    /// Maps actor_name to list of token hashes
-    auth_tokens: DashMap<String, Vec<String>>,
+    /// Maps actor_name to (token_hash, session_id) entries for that actor.
+    auth_tokens: DashMap<String, Vec<(String, Option<SessionId>)>>,
     /// Maps (username, secret_name, internal) to encrypted_value
     user_secrets: DashMap<(Username, String, bool), Vec<u8>>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
@@ -1464,8 +1464,26 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self
             .auth_tokens
             .get(actor_name)
-            .map(|v| v.value().clone())
+            .map(|v| v.value().iter().map(|(h, _)| h.clone()).collect())
             .unwrap_or_default())
+    }
+
+    async fn get_auth_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<AuthTokenRow>, StoreError> {
+        for entry in self.auth_tokens.iter() {
+            let actor_name = entry.key();
+            for (hash, session_id) in entry.value() {
+                if hash == token_hash {
+                    return Ok(Some(AuthTokenRow {
+                        actor_name: actor_name.clone(),
+                        session_id: session_id.clone(),
+                    }));
+                }
+            }
+        }
+        Ok(None)
     }
 
     // ---- User secrets (read-only) ----
@@ -2344,11 +2362,16 @@ impl Store for MemoryStore {
 
     // ---- Auth token mutations ----
 
-    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+    async fn add_auth_token(
+        &self,
+        actor_name: &str,
+        token_hash: &str,
+        session_id: Option<&SessionId>,
+    ) -> Result<(), StoreError> {
         let mut entry = self.auth_tokens.entry(actor_name.to_string()).or_default();
         let hash = token_hash.to_string();
-        if !entry.contains(&hash) {
-            entry.push(hash);
+        if !entry.iter().any(|(h, _)| h == &hash) {
+            entry.push((hash, session_id.cloned()));
         }
         Ok(())
     }
@@ -3138,6 +3161,7 @@ mod tests {
 
         let user_actor = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice").into()),
+            session_id: None,
         };
         let system_actor = ActorRef::System {
             worker_name: "scheduler".into(),
@@ -4410,6 +4434,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
+            session_id: None,
         };
 
         let name = actor.name();
@@ -4431,6 +4456,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(SessionId::new()),
             creator: Username::from("creator"),
+            session_id: None,
         };
         let name = actor.name();
 
@@ -4455,6 +4481,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(task_id),
             creator: Username::from("creator"),
+            session_id: None,
         };
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
@@ -4481,6 +4508,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
+            session_id: None,
         };
 
         let err = store
@@ -4523,8 +4551,14 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_add_and_get() {
         let store = MemoryStore::new();
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash2", None)
+            .await
+            .unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
@@ -4540,8 +4574,14 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_delete_for_actor() {
         let store = MemoryStore::new();
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash2", None)
+            .await
+            .unwrap();
         store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
@@ -4551,11 +4591,59 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_duplicate_insert_is_idempotent() {
         let store = MemoryStore::new();
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_with_session_id_round_trips() {
+        let store = MemoryStore::new();
+        let sid = SessionId::new();
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("token row should exist");
+        assert_eq!(row.actor_name, "agents/swe");
+        assert_eq!(row.session_id, Some(sid));
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_without_session_id_round_trips() {
+        let store = MemoryStore::new();
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("token row should exist");
+        assert_eq!(row.actor_name, "u-alice");
+        assert_eq!(row.session_id, None);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_missing_returns_none() {
+        let store = MemoryStore::new();
+        let row = store.get_auth_token_by_hash("nope").await.unwrap();
+        assert!(row.is_none());
     }
 
     #[tokio::test]
