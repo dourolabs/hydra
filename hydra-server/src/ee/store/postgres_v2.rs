@@ -2015,6 +2015,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
+        let normalized_needle = query
+            .remote_url
+            .as_deref()
+            .map(Repository::normalize_remote_url);
         let sql = format!(
             "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
@@ -2030,6 +2034,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
         for row in rows {
             // Skip deleted repositories unless include_deleted is true
             if !include_deleted && row.deleted {
+                continue;
+            }
+            if let Some(needle) = normalized_needle.as_deref()
+                && Repository::normalize_remote_url(&row.remote_url) != needle
+            {
                 continue;
             }
 
@@ -5548,6 +5557,79 @@ mod tests {
             }),
             Some("some feedback text".to_string()),
         )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_repositories_filters_by_remote_url_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alpha = RepoName::from_str("dourolabs/alpha").unwrap();
+        let beta = RepoName::from_str("dourolabs/beta").unwrap();
+        let gamma = RepoName::from_str("dourolabs/gamma").unwrap();
+
+        store
+            .add_repository(
+                alpha.clone(),
+                Repository::new(
+                    "https://github.com/dourolabs/alpha.git".to_string(),
+                    None,
+                    None,
+                ),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_repository(
+                beta.clone(),
+                Repository::new(
+                    "https://github.com/dourolabs/beta.git".to_string(),
+                    None,
+                    None,
+                ),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_repository(
+                gamma.clone(),
+                Repository::new("git@github.com:dourolabs/alpha".to_string(), None, None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let q = SearchRepositoriesQuery::new(
+            None,
+            Some("https://GitHub.com/dourolabs/alpha/".to_string()),
+        );
+        let list = store.list_repositories(&q).await.unwrap();
+        assert_eq!(list.len(), 2);
+        let names: Vec<_> = list.iter().map(|(n, _)| n.clone()).collect();
+        assert!(names.contains(&alpha));
+        assert!(names.contains(&gamma));
+
+        let q = SearchRepositoriesQuery::new(
+            None,
+            Some("https://github.com/dourolabs/beta".to_string()),
+        );
+        let list = store.list_repositories(&q).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, beta);
+
+        let q = SearchRepositoriesQuery::new(
+            None,
+            Some("https://github.com/dourolabs/missing".to_string()),
+        );
+        let list = store.list_repositories(&q).await.unwrap();
+        assert!(list.is_empty());
+
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 3);
     }
 
     #[sqlx::test(migrations = "./migrations")]

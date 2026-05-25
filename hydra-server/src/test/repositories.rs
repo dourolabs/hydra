@@ -235,6 +235,96 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
     Ok(())
 }
 
+#[tokio::test]
+async fn list_repositories_filters_by_remote_url() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let alpha = RepoName::from_str("dourolabs/alpha")?;
+    let beta = RepoName::from_str("dourolabs/beta")?;
+    let gamma = RepoName::from_str("dourolabs/gamma")?;
+    // alpha and gamma share a canonical remote URL — different surface forms.
+    handles
+        .state
+        .create_repository(
+            alpha.clone(),
+            Repository::new(
+                "https://github.com/dourolabs/alpha.git".to_string(),
+                None,
+                None,
+            ),
+            ActorRef::test(),
+        )
+        .await?;
+    handles
+        .state
+        .create_repository(
+            beta.clone(),
+            Repository::new(
+                "https://github.com/dourolabs/beta.git".to_string(),
+                None,
+                None,
+            ),
+            ActorRef::test(),
+        )
+        .await?;
+    handles
+        .state
+        .create_repository(
+            gamma.clone(),
+            Repository::new("git@github.com:dourolabs/alpha".to_string(), None, None),
+            ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    // Exactly-one-match case: distinct repository identified by an equivalent
+    // surface form (trailing `.git` stripped, host capitalisation differs).
+    let response = client
+        .get(format!("{}/v1/repositories", server.base_url()))
+        .query(&[("remote_url", "https://GitHub.com/dourolabs/beta.git")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListRepositoriesResponse = response.json().await?;
+    assert_eq!(body.repositories.len(), 1);
+    assert_eq!(body.repositories[0].name, beta);
+
+    // ≥2-match case: two repositories share a normalized URL. Handler returns
+    // all matches — disambiguation is the client's job.
+    let response = client
+        .get(format!("{}/v1/repositories", server.base_url()))
+        .query(&[("remote_url", "https://github.com/dourolabs/alpha/")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListRepositoriesResponse = response.json().await?;
+    assert_eq!(body.repositories.len(), 2);
+    let names: Vec<_> = body.repositories.iter().map(|r| r.name.clone()).collect();
+    assert!(names.contains(&alpha));
+    assert!(names.contains(&gamma));
+
+    // 0-match case.
+    let response = client
+        .get(format!("{}/v1/repositories", server.base_url()))
+        .query(&[("remote_url", "https://github.com/dourolabs/missing")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListRepositoriesResponse = response.json().await?;
+    assert!(body.repositories.is_empty());
+
+    // No filter → all three.
+    let response = client
+        .get(format!("{}/v1/repositories", server.base_url()))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListRepositoriesResponse = response.json().await?;
+    assert_eq!(body.repositories.len(), 3);
+
+    Ok(())
+}
+
 fn create_remote_repository() -> anyhow::Result<TempDir> {
     let directory = TempDir::new()?;
     let repository = GitRepository::init(directory.path())?;
