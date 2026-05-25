@@ -1,12 +1,16 @@
 import { useEffect } from "react";
+import { useIsMobile } from "../../hooks/useIsMobile";
 
 /**
  * Register a global Cmd/Ctrl-K listener that toggles the search modal.
  * Ignores presses that are already consumed by the focused element
- * (e.g. a code editor that handles its own shortcut).
+ * (e.g. a code editor that handles its own shortcut). Disabled on
+ * mobile viewports, where there is typically no physical keyboard.
  */
 export function useGlobalSearchShortcut(toggle: () => void): void {
+  const isMobile = useIsMobile();
   useEffect(() => {
+    if (isMobile) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const isK = event.key === "k" || event.key === "K";
@@ -20,5 +24,5 @@ export function useGlobalSearchShortcut(toggle: () => void): void {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggle]);
+  }, [toggle, isMobile]);
 }

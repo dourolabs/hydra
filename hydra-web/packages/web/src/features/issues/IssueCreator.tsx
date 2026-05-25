@@ -6,6 +6,7 @@ import type { RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
@@ -28,6 +29,7 @@ interface IssueCreatorProps {
 export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { user } = useAuth();
   const { addToast } = useToast();
+  const isMobile = useIsMobile();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
   const [title, setTitle, clearTitleDraft] = useFormDraft("hydra:draft:issue-creator:title", "");
@@ -90,6 +92,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isMobile) return;
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       handleSubmit();
     }

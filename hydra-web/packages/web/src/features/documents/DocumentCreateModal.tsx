@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Input, Textarea } from "@hydra/ui";
 import { apiClient } from "../../api/client";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useToast } from "../toast/useToast";
 import styles from "./DocumentCreateModal.module.css";
 
@@ -13,6 +14,7 @@ interface DocumentCreateModalProps {
 export function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
 
   const [title, setTitle] = useState("");
   const [path, setPath] = useState("");
@@ -63,12 +65,13 @@ export function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps)
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isMobile) return;
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSubmit();
       }
     },
-    [handleSubmit],
+    [isMobile, handleSubmit],
   );
 
   const handleClose = useCallback(() => {
@@ -107,9 +110,11 @@ export function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps)
           />
         </div>
         <div className={styles.createFooter}>
-          <span className={styles.createHint}>
-            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to create
-          </span>
+          {!isMobile && (
+            <span className={styles.createHint}>
+              {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to create
+            </span>
+          )}
           <div className={styles.createActions}>
             <Button variant="secondary" size="md" onClick={handleClose}>
               Cancel
