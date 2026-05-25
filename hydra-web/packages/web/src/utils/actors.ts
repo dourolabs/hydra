@@ -4,8 +4,13 @@ import type { ActorId, ActorRef } from "@hydra/api";
 export function actorIdDisplayName(id: ActorId): string {
   if ("Username" in id) return id.Username;
   if ("Session" in id) return id.Session;
+  if ("Issue" in id) return id.Issue;
   if ("Service" in id) return id.Service;
-  return id.Issue;
+  if ("User" in id) return id.User;
+  if ("Agent" in id) return id.Agent;
+  if ("Adhoc" in id) return id.Adhoc;
+  if ("External" in id) return `external/${id.External.system}/${id.External.username}`;
+  return id.Legacy;
 }
 
 /** Extract a human-readable display name from an ActorRef. */
