@@ -204,7 +204,6 @@ mod tests {
             status,
             None,
             None,
-            None,
             Vec::new(),
             deps,
             Vec::new(),

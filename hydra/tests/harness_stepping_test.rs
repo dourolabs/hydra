@@ -2,6 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::issues::{Issue, IssueStatus, IssueType, SessionSettings, UpsertIssueRequest};
+use hydra_common::principal::Principal;
 use hydra_common::sessions::SearchSessionsQuery;
 use hydra_common::users::Username;
 use std::str::FromStr;
@@ -25,7 +26,13 @@ async fn create_spawnable_issue(
         Username::from("default"),
         String::new(),
         IssueStatus::Open,
-        Some(agent_name.to_string()),
+        // The agent_queue assignment check is typed: it only picks up
+        // `Principal::Agent { name: agent.name }`. The harness builder
+        // (`with_agent`) seeds the agent row so `principal_exists` passes.
+        Some(Principal::Agent {
+            name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
+                .expect("test agent name should validate"),
+        }),
         Some(job_settings),
         Vec::new(),
         Vec::new(),

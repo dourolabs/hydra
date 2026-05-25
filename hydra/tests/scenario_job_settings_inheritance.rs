@@ -139,7 +139,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     assert_eq!(pm_tasks.len(), 1);
 
     let create_cmd = format!(
-        "hydra issues create 'Implement child feature' --assignee swe --deps child-of:{parent_id} --repo-name acme/child-test"
+        "hydra issues create 'Implement child feature' --assignee agents/swe --deps child-of:{parent_id} --repo-name acme/child-test"
     );
     let set_status_cmd = format!("hydra issues update {parent_id} --status in-progress");
     let _pm_result = harness

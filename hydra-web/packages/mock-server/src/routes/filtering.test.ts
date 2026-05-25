@@ -105,10 +105,27 @@ describe("Issue list filtering", () => {
   });
 
   it("filters by assignee", async () => {
-    store.create("issues", "i-1", makeIssue({ assignee: "alice" }), "issue");
-    store.create("issues", "i-2", makeIssue({ assignee: "bob" }), "issue");
-    store.create("issues", "i-3", makeIssue({ assignee: "alice" }), "issue");
-    const data = await listIssues({ assignee: "alice" });
+    // Phase 4b: assignee is a typed ActorPrincipal; the query-string
+    // filter is the canonical path form (`users/<name>`).
+    store.create(
+      "issues",
+      "i-1",
+      makeIssue({ assignee: { kind: "user", name: "alice" } }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-2",
+      makeIssue({ assignee: { kind: "user", name: "bob" } }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-3",
+      makeIssue({ assignee: { kind: "user", name: "alice" } }),
+      "issue",
+    );
+    const data = await listIssues({ assignee: "users/alice" });
     expect(data.issues).toHaveLength(2);
   });
 
@@ -132,10 +149,25 @@ describe("Issue list filtering", () => {
   });
 
   it("combines multiple filters with AND logic", async () => {
-    store.create("issues", "i-1", makeIssue({ status: "open", assignee: "alice" }), "issue");
-    store.create("issues", "i-2", makeIssue({ status: "closed", assignee: "alice" }), "issue");
-    store.create("issues", "i-3", makeIssue({ status: "open", assignee: "bob" }), "issue");
-    const data = await listIssues({ status: "open", assignee: "alice" });
+    store.create(
+      "issues",
+      "i-1",
+      makeIssue({ status: "open", assignee: { kind: "user", name: "alice" } }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-2",
+      makeIssue({ status: "closed", assignee: { kind: "user", name: "alice" } }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-3",
+      makeIssue({ status: "open", assignee: { kind: "user", name: "bob" } }),
+      "issue",
+    );
+    const data = await listIssues({ status: "open", assignee: "users/alice" });
     expect(data.issues).toHaveLength(1);
   });
 

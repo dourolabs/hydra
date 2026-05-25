@@ -244,11 +244,7 @@ impl MemoryStore {
             .as_ref()
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty());
-        let assignee_filter = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
+        let assignee_filter = query.assignee.as_ref();
         let creator_filter = query
             .creator
             .as_ref()
@@ -2532,7 +2528,7 @@ fn issue_matches(
     issue_type_filter: Option<IssueType>,
     status_filter: &[IssueStatus],
     search_term: Option<&str>,
-    assignee_filter: Option<&str>,
+    assignee_filter: Option<&hydra_common::principal::Principal>,
     issue_id: &IssueId,
     issue: &Issue,
 ) -> bool {
@@ -2548,7 +2544,7 @@ fn issue_matches(
 
     if let Some(expected_assignee) = assignee_filter {
         match issue.assignee.as_ref() {
-            Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
+            Some(current) if current == expected_assignee => {}
             _ => return false,
         }
     }
@@ -2567,8 +2563,8 @@ fn issue_matches(
             || issue.creator.as_ref().to_lowercase().contains(term)
             || issue
                 .assignee
-                .as_deref()
-                .map(|value| value.to_lowercase().contains(term))
+                .as_ref()
+                .map(|p| p.to_path().to_lowercase().contains(term))
                 .unwrap_or(false);
     }
 
@@ -2709,7 +2705,6 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open,
-            None,
             None,
             None,
             Vec::new(),
@@ -3178,32 +3173,23 @@ mod tests {
         use hydra_common::principal::Principal as ActorPrincipal;
         let store = MemoryStore::new();
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("users/alice".to_string());
-        issue.assignee_principal = Some(ActorPrincipal::User {
+        let alice = ActorPrincipal::User {
             name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
-        });
-        let (issue_id, _) = store
-            .add_issue(issue.clone(), &ActorRef::test())
-            .await
-            .unwrap();
+        };
+        issue.assignee = Some(alice.clone());
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
-        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+        assert_eq!(fetched.item.assignee, Some(alice));
     }
 
     #[tokio::test]
-    async fn issue_round_trips_assignee_principal_none() {
+    async fn issue_round_trips_assignee_none() {
         let store = MemoryStore::new();
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("not a valid username!!".to_string());
-        issue.assignee_principal = None;
+        issue.assignee = None;
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(
-            fetched.item.assignee,
-            Some("not a valid username!!".to_string())
-        );
-        assert_eq!(fetched.item.assignee_principal, None);
+        assert_eq!(fetched.item.assignee, None);
     }
 
     #[tokio::test]
@@ -5478,9 +5464,13 @@ mod tests {
     async fn list_issues_filters_by_assignee() {
         let store = MemoryStore::new();
 
+        let alice = hydra_common::principal::Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        };
+
         // Create an issue with assignee
         let mut assigned_issue = sample_issue(vec![]);
-        assigned_issue.assignee = Some("alice".to_string());
+        assigned_issue.assignee = Some(alice.clone());
         let (assigned_issue_id, _) = store
             .add_issue(assigned_issue, &ActorRef::test())
             .await
@@ -5493,16 +5483,19 @@ mod tests {
             .unwrap();
 
         // Filter by assignee
-        let query = SearchIssuesQuery::new(None, vec![], Some("alice".to_string()), None, None);
+        let query = SearchIssuesQuery::new(None, vec![], Some(alice.clone()), None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, assigned_issue_id);
 
-        // Case-insensitive assignee matching
-        let query = SearchIssuesQuery::new(None, vec![], Some("ALICE".to_string()), None, None);
+        // Phase 4b: equality is typed, not case-insensitive. A different
+        // principal kind never matches even if the underlying name does.
+        let agent_alice = hydra_common::principal::Principal::Agent {
+            name: hydra_common::api::v1::agents::AgentName::try_new("alice").unwrap(),
+        };
+        let query = SearchIssuesQuery::new(None, vec![], Some(agent_alice), None, None);
         let issues = store.list_issues(&query).await.unwrap();
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].0, assigned_issue_id);
+        assert!(issues.is_empty());
     }
 
     #[tokio::test]
@@ -5546,22 +5539,29 @@ mod tests {
     async fn list_issues_combines_multiple_filters() {
         let store = MemoryStore::new();
 
+        let alice = hydra_common::principal::Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        };
+        let bob = hydra_common::principal::Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
+        };
+
         // Create a bug issue assigned to alice
         let mut bug_alice = sample_issue(vec![]);
         bug_alice.issue_type = IssueType::Bug;
-        bug_alice.assignee = Some("alice".to_string());
+        bug_alice.assignee = Some(alice.clone());
         let (bug_alice_id, _) = store.add_issue(bug_alice, &ActorRef::test()).await.unwrap();
 
         // Create a bug issue assigned to bob
         let mut bug_bob = sample_issue(vec![]);
         bug_bob.issue_type = IssueType::Bug;
-        bug_bob.assignee = Some("bob".to_string());
+        bug_bob.assignee = Some(bob);
         store.add_issue(bug_bob, &ActorRef::test()).await.unwrap();
 
         // Create a task issue assigned to alice
         let mut task_alice = sample_issue(vec![]);
         task_alice.issue_type = IssueType::Task;
-        task_alice.assignee = Some("alice".to_string());
+        task_alice.assignee = Some(alice.clone());
         store
             .add_issue(task_alice, &ActorRef::test())
             .await
@@ -5571,7 +5571,7 @@ mod tests {
         let query = SearchIssuesQuery::new(
             Some(hydra_common::api::v1::issues::IssueType::Bug),
             vec![],
-            Some("alice".to_string()),
+            Some(alice),
             None,
             None,
         );
@@ -7330,7 +7330,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -7347,7 +7346,6 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
-            None,
             None,
             None,
             Vec::new(),

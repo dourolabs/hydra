@@ -1,8 +1,6 @@
 use crate::{
     domain::actors::ActorRef,
-    domain::issues::{
-        Issue, IssueDependencyType, IssueStatus, TodoItem, parse_assignee_as_principal,
-    },
+    domain::issues::{Issue, IssueDependencyType, IssueStatus, TodoItem},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use chrono::Utc;
@@ -12,12 +10,13 @@ use hydra_common::{
     api::v1::form::{Effect, FormResponse, Input},
     api::v1::issues::SearchIssuesQuery,
     issues::IssueId,
+    principal::Principal,
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::app_state::AppState;
 
@@ -27,6 +26,18 @@ pub enum UpsertIssueError {
     JobIdProvidedForUpdate,
     #[error("issue creator must be set")]
     MissingCreator,
+    /// `issue.assignee` referenced a User or Agent that does not exist in
+    /// the store. Returned as HTTP 400 by `routes::issues`. External
+    /// principals are not validated (no DB lookup is meaningful), so this
+    /// variant never wraps a `Principal::External`.
+    #[error("unknown actor '{principal}'")]
+    UnknownAssignee { principal: Principal },
+    #[error("failed to validate assignee existence")]
+    AssigneeLookup {
+        #[source]
+        source: StoreError,
+        principal: Principal,
+    },
     #[error("issue dependency '{dependency_id}' not found")]
     MissingDependency {
         #[source]
@@ -191,20 +202,24 @@ impl AppState {
             label_names,
             ..
         } = request;
-        let mut issue: Issue = issue.into();
-        // Phase 4a dual-write: derive the typed `assignee_principal`
-        // server-side whenever the client provides a string `assignee`.
-        // Phase 4b will move this off the legacy path entirely and let
-        // the client supply the typed value directly.
-        if let Some(ref assignee) = issue.assignee
-            && issue.assignee_principal.is_none()
-        {
-            match parse_assignee_as_principal(assignee) {
-                Some(principal) => issue.assignee_principal = Some(principal),
-                None => warn!(
-                    %assignee,
-                    "unparseable assignee; leaving assignee_principal NULL"
-                ),
+        let issue: Issue = issue.into();
+        // Phase 4b: validate that the typed assignee actually exists.
+        // Unknown User / Agent principals are rejected with 400. External
+        // principals are not validated (no DB lookup is meaningful).
+        if let Some(ref principal) = issue.assignee {
+            let exists = self
+                .store
+                .as_ref()
+                .principal_exists(principal)
+                .await
+                .map_err(|source| UpsertIssueError::AssigneeLookup {
+                    source,
+                    principal: principal.clone(),
+                })?;
+            if !exists {
+                return Err(UpsertIssueError::UnknownAssignee {
+                    principal: principal.clone(),
+                });
             }
         }
         if let Some(ref form) = issue.form {
@@ -941,6 +956,7 @@ fn validate_field_value(input: &Input, value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::UpsertIssueError;
     use crate::{
         app::{
             ServerEvent,
@@ -956,6 +972,7 @@ mod tests {
     };
     use chrono::Utc;
     use hydra_common::api::v1 as api;
+    use hydra_common::principal::Principal;
     use std::sync::Arc;
 
     /// Wait briefly for automations to process events.
@@ -1125,11 +1142,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upsert_issue_dual_writes_assignee_principal_from_users_path() {
-        use hydra_common::principal::Principal as ActorPrincipal;
+    async fn upsert_issue_rejects_unknown_user_assignee() {
         let state = test_state();
         let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
-        issue.assignee = Some("users/alice".to_string());
+        issue.assignee = Some(Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("ghost").unwrap(),
+        });
+
+        let err = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap_err();
+
+        match err {
+            UpsertIssueError::UnknownAssignee { principal } => {
+                assert_eq!(principal.to_string(), "users/ghost");
+            }
+            other => panic!("expected UnknownAssignee, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_accepts_known_user_assignee() {
+        let state = test_state();
+        // Seed a user so principal_exists returns true.
+        let alice = hydra_common::api::v1::users::Username::try_new("alice").unwrap();
+        state
+            .store
+            .add_user(
+                crate::domain::users::User::new(
+                    crate::domain::users::Username::from("alice"),
+                    None,
+                    false,
+                ),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        issue.assignee = Some(Principal::User {
+            name: alice.clone(),
+        });
 
         let (issue_id, _) = state
             .upsert_issue(
@@ -1141,46 +1199,33 @@ mod tests {
             .unwrap();
 
         let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
-        assert_eq!(
-            fetched.item.assignee_principal,
-            Some(ActorPrincipal::User {
-                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
-            })
-        );
+        assert_eq!(fetched.item.assignee, Some(Principal::User { name: alice }));
     }
 
     #[tokio::test]
-    async fn upsert_issue_dual_writes_assignee_principal_from_bare_username() {
-        use hydra_common::principal::Principal as ActorPrincipal;
+    async fn upsert_issue_accepts_existing_agent_assignee() {
         let state = test_state();
-        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
-        issue.assignee = Some("alice".to_string());
-
-        let (issue_id, _) = state
-            .upsert_issue(
+        // Seed an agent so principal_exists returns true.
+        let swe_name = hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap();
+        state
+            .store
+            .add_agent(crate::domain::agents::Agent::new(
+                swe_name.as_str().to_string(),
+                "/agents/swe/prompt.md".to_string(),
                 None,
-                api::issues::UpsertIssueRequest::new(issue.into(), None),
-                ActorRef::test(),
-            )
+                3,
+                4,
+                false,
+                false,
+                Vec::new(),
+            ))
             .await
             .unwrap();
 
-        let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("alice".to_string()));
-        assert_eq!(
-            fetched.item.assignee_principal,
-            Some(ActorPrincipal::User {
-                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn upsert_issue_leaves_assignee_principal_none_when_unparseable() {
-        let state = test_state();
         let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
-        issue.assignee = Some("not a valid username!!".to_string());
+        issue.assignee = Some(Principal::Agent {
+            name: swe_name.clone(),
+        });
 
         let (issue_id, _) = state
             .upsert_issue(
@@ -1194,9 +1239,37 @@ mod tests {
         let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(
             fetched.item.assignee,
-            Some("not a valid username!!".to_string())
+            Some(Principal::Agent { name: swe_name })
         );
-        assert_eq!(fetched.item.assignee_principal, None);
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_accepts_external_assignee_without_db_lookup() {
+        let state = test_state();
+        let github = hydra_common::principal::ExternalSystem::try_new("github").unwrap();
+        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        issue.assignee = Some(Principal::External {
+            system: github.clone(),
+            username: "anyone".to_string(),
+        });
+
+        let (issue_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = state.store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.assignee,
+            Some(Principal::External {
+                system: github,
+                username: "anyone".to_string(),
+            })
+        );
     }
 
     #[tokio::test]

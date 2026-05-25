@@ -140,7 +140,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           status: "open",
           dependencies: [],
           patches: [],
-          ...(params.assignee && { assignee: params.assignee }),
+          // Phase 4b: assignee is a typed `ActorPrincipal`. The picker
+          // surfaces agent names today, so wire as `Principal::Agent`.
+          ...(params.assignee && {
+            assignee: { kind: "agent", name: params.assignee } as const,
+          }),
           ...(params.repoName && {
             session_settings: { repo_name: params.repoName },
           }),

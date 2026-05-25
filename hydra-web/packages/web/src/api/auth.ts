@@ -11,6 +11,18 @@ export function actorDisplayName(actor: ActorIdentity): string {
   return actor.issue_id;
 }
 
+/**
+ * Render an `ActorIdentity` as a Principal path (`users/<name>` /
+ * `agents/<name>`), which is the canonical form Phase 4b uses on the wire
+ * (`?assignee=…`, API body fields). Returns `null` for actors that don't
+ * map cleanly onto a Principal (session, adhoc, service, issue).
+ */
+export function actorPrincipalPath(actor: ActorIdentity): string | null {
+  if (actor.type === "user") return `users/${actor.username}`;
+  if (actor.type === "agent") return `agents/${actor.name}`;
+  return null;
+}
+
 export function logout(): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>("/auth/logout", {
     method: "POST",

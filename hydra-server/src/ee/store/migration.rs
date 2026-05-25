@@ -332,12 +332,12 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("open");
             let assignee = row.payload.get("assignee").and_then(|v| v.as_str());
-            // Phase 4a: derive the typed `assignee_principal` for v2 by
-            // running the Phase-4a heuristic on the v1 assignee string.
-            // This populates the new column for migrated rows in lockstep
-            // with new writes from the app layer.
-            let assignee_principal_json: Option<Value> = assignee
-                .and_then(crate::domain::issues::parse_assignee_as_principal)
+            // Phase 4a + 4b: derive the typed `assignee_principal` for v2
+            // using the shared heuristic on `hydra_common::Principal`. Same
+            // rule as the SQL `CASE` in the migration scripts.
+            let typed =
+                assignee.and_then(hydra_common::principal::Principal::parse_legacy_assignee);
+            let assignee_principal_json: Option<Value> = typed
                 .as_ref()
                 .map(serde_json::to_value)
                 .transpose()
@@ -1144,7 +1144,6 @@ mod tests {
             progress: "".to_string(),
             status: IssueStatus::Open,
             assignee: None,
-            assignee_principal: None,
             session_settings: Default::default(),
             todo_list: vec![],
             dependencies: vec![],

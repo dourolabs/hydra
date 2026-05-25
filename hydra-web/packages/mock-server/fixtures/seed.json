@@ -7,7 +7,7 @@
       "creator": "alice",
       "progress": "5 of 8 subtasks complete. Auth and DB migrations done. 3 agents actively working on remaining items.",
       "status": "in-progress",
-      "assignee": "alice",
+      "assignee": { "kind": "user", "name": "alice" },
       "dependencies": [],
       "patches": [],
       "todo_list": [
@@ -45,7 +45,7 @@
         {
           "timestamp": "2026-02-20T11:15:00.000Z",
           "patch": {
-            "assignee": "alice",
+            "assignee": { "kind": "user", "name": "alice" },
             "status": "in-progress",
             "progress": "Kicked off — splitting work into subtasks for auth, database, rate limiting, real-time collab, and GraphQL gateway."
           }
@@ -85,7 +85,7 @@
       "creator": "alice",
       "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -124,7 +124,7 @@
         {
           "timestamp": "2026-03-01T09:30:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Picked up by swe agent. Evaluating Keycloak vs Auth0."
           }
@@ -165,7 +165,7 @@
       "creator": "swe",
       "progress": "Agent implementing concurrent request queuing and token refresh flow.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -187,7 +187,7 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
@@ -225,7 +225,7 @@
       "creator": "alice",
       "progress": "Scope definitions finalized. Implementation merged.",
       "status": "closed",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": ["p-seed00002"],
       "todo_list": [
@@ -244,7 +244,7 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
             "patches": [],
             "todo_list": [
@@ -287,7 +287,7 @@
       "creator": "alice",
       "progress": "Migration scripts written and tested. Deployed to staging successfully.",
       "status": "closed",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": [],
       "todo_list": [],
@@ -311,7 +311,7 @@
         {
           "timestamp": "2026-02-26T09:00:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Writing migration scripts; planning blue/green rollout."
           }
@@ -331,7 +331,7 @@
       "creator": "alice",
       "progress": "Initial implementation had memory leak in Redis connection pool. Agent investigating and fixing.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -367,7 +367,7 @@
         {
           "timestamp": "2026-03-10T13:30:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "swe picked up. Researching sliding window in Redis."
           }
@@ -399,7 +399,7 @@
       "creator": "dev-user",
       "progress": "Root cause identified: session middleware not handling null session gracefully. Fix deployed.",
       "status": "closed",
-      "assignee": "dev-user",
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "todo_list": [],
@@ -423,7 +423,7 @@
         {
           "timestamp": "2026-02-07T11:30:00.000Z",
           "patch": {
-            "assignee": "dev-user",
+            "assignee": { "kind": "user", "name": "dev-user" },
             "status": "in-progress",
             "progress": "Reproduced locally — null session triggers TypeError in cleanup middleware."
           }
@@ -460,7 +460,7 @@
       "creator": "alice",
       "progress": "Profiling complete. Main bottleneck is the unindexed LIKE query on description field. Adding GIN index.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -496,7 +496,7 @@
         {
           "timestamp": "2026-03-13T14:00:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Profiling: 95th percentile latency at 2.4s on description LIKE search.",
             "todo_list": [
@@ -527,7 +527,7 @@
       "creator": "dev-user",
       "progress": "",
       "status": "dropped",
-      "assignee": "dev-user",
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "todo_list": []
@@ -539,7 +539,7 @@
       "creator": "swe",
       "progress": "Agent reviewing patch. Checking security of token handling and error edge cases.",
       "status": "in-progress",
-      "assignee": "reviewer",
+      "assignee": { "kind": "agent", "name": "reviewer" },
       "dependencies": [],
       "patches": ["p-seed00001"],
       "form": {
@@ -612,7 +612,7 @@
       "creator": "alice",
       "progress": "",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "dependencies": [{ "type": "blocked-on", "issue_id": "i-seed00006" }],
       "patches": ["p-seed00003"]
     },
@@ -623,7 +623,7 @@
       "creator": "alice",
       "progress": "Agent implementing ConnectionManager with JWT auth and exponential backoff reconnection.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -646,7 +646,7 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
@@ -687,7 +687,7 @@
       "creator": "alice",
       "progress": "Yjs integration complete. Y-WebSocket provider connected. Persistence adapter merged.",
       "status": "closed",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -709,7 +709,7 @@
             "creator": "alice",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
             "patches": [],
@@ -748,7 +748,7 @@
       "creator": "alice",
       "progress": "Agent analyzing the race condition and implementing distributed lock with Redis SETNX.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -784,7 +784,7 @@
         {
           "timestamp": "2026-03-13T10:00:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "swe agent investigating. Reproduced race in test harness.",
             "todo_list": [
@@ -815,7 +815,7 @@
       "creator": "alice",
       "progress": "Root cause found: AbortSignal listener not registered. Fix implemented and patch submitted.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -853,7 +853,7 @@
         {
           "timestamp": "2026-03-10T09:20:00.000Z",
           "patch": {
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
             "progress": "Memory profile shows listener set growing unbounded — investigating."
           }
@@ -892,7 +892,7 @@
       "creator": "alice",
       "progress": "Gateway deployed. Users and Issues subgraphs live. Sessions subgraph in progress.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/api-gateway"
       },
@@ -913,7 +913,7 @@
       "creator": "swe",
       "progress": "Agent reviewing patch p-seed00006. Checking cleanup logic.",
       "status": "in-progress",
-      "assignee": "reviewer",
+      "assignee": { "kind": "agent", "name": "reviewer" },
       "dependencies": [],
       "patches": ["p-seed00006"]
     },
@@ -940,7 +940,7 @@
       "creator": "swe",
       "progress": "Mutex implementation in progress. First attempt deadlocked under burst load; redesigning with explicit promise sharing.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -963,7 +963,7 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
             "patches": [],
@@ -1010,7 +1010,7 @@
       "creator": "swe",
       "progress": "Initial test scaffolding in place. Covering burst-load scenarios.",
       "status": "in-progress",
-      "assignee": "swe",
+      "assignee": { "kind": "agent", "name": "swe" },
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -1033,7 +1033,7 @@
             "creator": "swe",
             "progress": "",
             "status": "open",
-            "assignee": "swe",
+            "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
             "patches": [],
@@ -1096,7 +1096,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": "bob",
+      "assignee": { "kind": "user", "name": "bob" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1166,7 +1166,7 @@
       "creator": "swe",
       "progress": "",
       "status": "closed",
-      "assignee": "alice",
+      "assignee": { "kind": "user", "name": "alice" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1221,7 +1221,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": "dev-user",
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1300,7 +1300,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": "dev-user",
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1380,7 +1380,7 @@
       "creator": "alice",
       "progress": "",
       "status": "open",
-      "assignee": "dev-user",
+      "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
       "form": {
@@ -1446,7 +1446,7 @@
       "creator": "alice",
       "progress": "Response submitted by bob — issue closed via the `confirm_shutdown` action.",
       "status": "closed",
-      "assignee": "bob",
+      "assignee": { "kind": "user", "name": "bob" },
       "dependencies": [],
       "patches": [],
       "form": {

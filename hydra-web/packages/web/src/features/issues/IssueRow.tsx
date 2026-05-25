@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { Avatar, Badge, SessionStatusIndicator, issueTypeDisplayLabel } from "@hydra/ui";
 import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@hydra/api";
+import { principalDisplayName } from "../principal/formatPrincipal";
 import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
@@ -75,7 +76,9 @@ export function IssueRow({
             <SessionStatusIndicator sessions={sessionSummaries} onSessionClick={handleSessionClick} />
           </span>
         )}
-        {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
+        {issue.assignee && (
+          <Avatar name={principalDisplayName(issue.assignee)} size="sm" />
+        )}
       </span>
       {(showId || showTimestamp) && (
         <span className={styles.bottomRow}>

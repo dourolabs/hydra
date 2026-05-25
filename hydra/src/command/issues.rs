@@ -18,10 +18,29 @@ use hydra_common::{
         IssueType, IssueVersionRecord, SearchIssuesQuery, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
     },
+    principal::{Principal, PrincipalParseError},
     users::Username,
     HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
+
+/// clap value parser for `--assignee`. Phase 4b requires the full
+/// canonical path form (`users/<name>`, `agents/<name>`, or
+/// `external/<system>/<name>`). Bare strings (e.g. `alice`) are rejected
+/// with a hint pointing at the right form.
+fn parse_assignee_principal(value: &str) -> Result<Principal, String> {
+    Principal::from_str(value).map_err(|err| {
+        let hint = match err {
+            PrincipalParseError::UnknownKind(_) if !value.contains('/') => {
+                format!(" (got: '{value}'; did you mean 'users/{value}'?)")
+            }
+            _ => String::new(),
+        };
+        format!(
+            "--assignee requires a full path: users/<name>, agents/<name>, or external/<system>/<name>{hint}"
+        )
+    })
+}
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
@@ -39,9 +58,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_STATUS")]
         status: Option<IssueStatus>,
 
-        /// Filter by assignee.
-        #[arg(long, value_name = "ASSIGNEE")]
-        assignee: Option<String>,
+        /// Filter by assignee. Requires the full canonical path form:
+        /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
+        #[arg(long, value_name = "ASSIGNEE", value_parser = parse_assignee_principal)]
+        assignee: Option<Principal>,
 
         /// Search by query string.
         #[arg(long, value_name = "QUERY")]
@@ -77,9 +97,11 @@ pub enum IssueCommands {
         #[arg(long = "patches", value_name = "PATCH_ID", value_delimiter = ',')]
         patches: Vec<PatchId>,
 
-        /// Assignee for the issue.
-        #[arg(long, value_name = "ASSIGNEE")]
-        assignee: Option<String>,
+        /// Assignee for the issue. Requires the full canonical path
+        /// form: `users/<name>`, `agents/<name>`, or
+        /// `external/<system>/<name>`.
+        #[arg(long, value_name = "ASSIGNEE", value_parser = parse_assignee_principal)]
+        assignee: Option<Principal>,
 
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
@@ -159,9 +181,15 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_STATUS")]
         status: Option<IssueStatus>,
 
-        /// Updated assignee.
-        #[arg(long, value_name = "ASSIGNEE", conflicts_with = "clear_assignee")]
-        assignee: Option<String>,
+        /// Updated assignee. Requires the full canonical path form:
+        /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            conflicts_with = "clear_assignee",
+            value_parser = parse_assignee_principal,
+        )]
+        assignee: Option<Principal>,
 
         /// Remove the current assignee.
         #[arg(long)]
@@ -522,7 +550,7 @@ async fn fetch_issues(
     id: Option<IssueId>,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
-    assignee: Option<String>,
+    assignee: Option<Principal>,
     query: Option<String>,
     label_ids: Vec<LabelId>,
     include_deleted: bool,
@@ -543,29 +571,15 @@ async fn fetch_issues(
                 bail!("Issue '{issue_id}' does not match the requested status.");
             }
         }
-        if let Some(expected_assignee) = assignee {
-            let trimmed_assignee = expected_assignee.trim();
-            if trimmed_assignee.is_empty() {
-                bail!("Assignee filter must not be empty.");
-            }
-            match record.issue.assignee.as_deref() {
-                Some(current) if current.eq_ignore_ascii_case(trimmed_assignee) => {}
-                _ => bail!("Issue '{issue_id}' is not assigned to {trimmed_assignee}."),
+        if let Some(ref expected_assignee) = assignee {
+            // Phase 4b: comparison is typed equality on Principal — no
+            // ascii-case folding, kinds must match.
+            if record.issue.assignee.as_ref() != Some(expected_assignee) {
+                bail!("Issue '{issue_id}' is not assigned to {expected_assignee}.");
             }
         }
         return Ok(vec![IssueSummaryRecord::from(&record)]);
     }
-
-    let trimmed_assignee = match assignee {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                bail!("Assignee filter must not be empty.");
-            }
-            Some(trimmed.to_string())
-        }
-        None => None,
-    };
 
     let trimmed_query = query.and_then(|value| {
         let trimmed = value.trim();
@@ -580,7 +594,7 @@ async fn fetch_issues(
     let mut search_query = SearchIssuesQuery::new(
         issue_type,
         status.into_iter().collect(),
-        trimmed_assignee.clone(),
+        assignee.clone(),
         trimmed_query,
         include_deleted_opt,
     );
@@ -608,13 +622,12 @@ async fn fetch_issues(
                 );
             }
         }
-        if let Some(ref expected_assignee) = trimmed_assignee {
-            match issue.issue.assignee.as_deref() {
-                Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
-                _ => bail!(
+        if let Some(ref expected_assignee) = assignee {
+            if issue.issue.assignee.as_ref() != Some(expected_assignee) {
+                bail!(
                     "Issue {} is not assigned to {expected_assignee}",
                     issue.issue_id
-                ),
+                );
             }
         }
     }
@@ -804,7 +817,7 @@ async fn create_issue(
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
-    assignee: Option<String>,
+    assignee: Option<Principal>,
     creator: Username,
     description: String,
     progress: Option<String>,
@@ -828,17 +841,6 @@ async fn create_issue(
     let progress = progress
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
-
-    let assignee = match assignee {
-        Some(value) => {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                bail!("Assignee must not be empty.");
-            }
-            Some(trimmed)
-        }
-        None => None,
-    };
 
     let inherited_job_settings = resolve_inherited_job_settings(client, current_issue_id).await?;
 
@@ -906,7 +908,7 @@ async fn update_issue(
     issue_type: Option<IssueType>,
     title: Option<String>,
     status: Option<IssueStatus>,
-    assignee: Option<String>,
+    assignee: Option<Principal>,
     clear_assignee: bool,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
@@ -946,14 +948,8 @@ async fn update_issue(
 
     let assignee = if clear_assignee {
         Some(None)
-    } else if let Some(value) = assignee {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("Assignee must not be empty.");
-        }
-        Some(Some(trimmed.to_string()))
     } else {
-        None
+        assignee.map(Some)
     };
 
     let dependencies_update = if clear_dependencies {
@@ -1298,6 +1294,16 @@ mod tests {
             .unwrap()
     }
 
+    /// Construct a `Principal::User` from a `&str` for test fixtures.
+    /// Phase 4b's API surface is typed; callers that used to pass a bare
+    /// string now pass `Principal::User { name }` via this helper.
+    fn user_principal(name: &str) -> Principal {
+        Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new(name)
+                .expect("test username should validate"),
+        }
+    }
+
     fn api_issue_record(
         id: &str,
         issue_type: IssueType,
@@ -1318,7 +1324,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 status,
-                assignee.map(str::to_string),
+                assignee.map(user_principal),
                 None,
                 Vec::new(),
                 dependencies,
@@ -1474,7 +1480,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::Open,
-                    Some("owner-a".into()),
+                    Some(user_principal("owner-a")),
                     None,
                     Vec::new(),
                     vec![],
@@ -1491,7 +1497,7 @@ mod tests {
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
-                .query_param("assignee", "OWNER-A");
+                .query_param("assignee", "users/owner-a");
             then.status(200).json_body_obj(&issues_response);
         });
 
@@ -1500,7 +1506,7 @@ mod tests {
             None,
             None,
             None,
-            Some("OWNER-A".into()),
+            Some(user_principal("owner-a")),
             None,
             Vec::new(),
             false,
@@ -1528,7 +1534,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
-                Some("team-a".into()),
+                Some(user_principal("team-a")),
                 None,
                 Vec::new(),
                 Vec::new(),
@@ -1555,7 +1561,7 @@ mod tests {
             IssueStatus::Closed,
             Vec::new(),
             patch_ids.clone(),
-            Some("team-a".into()),
+            Some(user_principal("team-a")),
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
@@ -1597,7 +1603,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
-                Some("team-a".into()),
+                Some(user_principal("team-a")),
                 Some(job_settings.clone()),
                 Vec::new(),
                 Vec::new(),
@@ -1624,7 +1630,7 @@ mod tests {
             IssueStatus::Closed,
             Vec::new(),
             vec![],
-            Some("team-a".into()),
+            Some(user_principal("team-a")),
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
@@ -2049,35 +2055,34 @@ mod tests {
         .is_err());
     }
 
-    #[tokio::test]
-    async fn create_issue_rejects_empty_assignee() {
-        let server = MockServer::start();
-        let client = hydra_client(&server);
-        assert!(create_issue(
-            &client,
-            IssueType::Bug,
-            "Test Title".to_string(),
-            IssueStatus::Open,
-            vec![],
-            Vec::new(),
-            Some("   ".into()),
-            empty_user(),
-            "Valid description".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-            None,
-            Vec::new(),
-            None,
-            None,
-        )
-        .await
-        .is_err());
+    #[test]
+    fn parse_assignee_principal_rejects_bare_username_with_hint() {
+        let err = parse_assignee_principal("alice").unwrap_err();
+        assert!(
+            err.contains("users/alice"),
+            "error message should hint at users/<name>: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_assignee_principal_rejects_empty_with_hint() {
+        let err = parse_assignee_principal("").unwrap_err();
+        assert!(
+            err.contains("users/<name>"),
+            "error should explain the path form: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_assignee_principal_accepts_users_path() {
+        let p = parse_assignee_principal("users/alice").unwrap();
+        assert_eq!(p, user_principal("alice"));
+    }
+
+    #[test]
+    fn parse_assignee_principal_accepts_agents_path() {
+        let p = parse_assignee_principal("agents/swe").unwrap();
+        assert_eq!(p.to_string(), "agents/swe");
     }
 
     #[test]
@@ -2118,7 +2123,7 @@ mod tests {
                 empty_user(),
                 "New progress".into(),
                 IssueStatus::Closed,
-                Some("owner-b".into()),
+                Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
                 Vec::new(),
                 vec![IssueDependency::new(
@@ -2152,7 +2157,7 @@ mod tests {
             Some(IssueType::Bug),
             None,
             Some(IssueStatus::Closed),
-            Some("owner-b".into()),
+            Some(user_principal("owner-b")),
             false,
             Some("Updated issue description".into()),
             vec![IssueDependency::new(
@@ -2205,7 +2210,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress,
-                Some("owner-a".into()),
+                Some(user_principal("owner-a")),
                 None,
                 Vec::new(),
                 vec![IssueDependency::new(
@@ -2312,7 +2317,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress,
-                Some("owner-a".into()),
+                Some(user_principal("owner-a")),
                 Some(job_settings),
                 Vec::new(),
                 vec![IssueDependency::new(
@@ -2337,7 +2342,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress,
-                Some("owner-a".into()),
+                Some(user_principal("owner-a")),
                 None,
                 Vec::new(),
                 vec![IssueDependency::new(
@@ -2629,7 +2634,7 @@ mod tests {
                     empty_user(),
                     "Working on repro".into(),
                     IssueStatus::Open,
-                    Some("owner-a".into()),
+                    Some(user_principal("owner-a")),
                     None,
                     Vec::new(),
                     vec![IssueDependency::new(
@@ -2686,7 +2691,7 @@ mod tests {
         let second_issue = issue_id("i-2").to_string();
 
         assert!(rendered.contains(&format!("Issue {first_issue} (bug, open)")));
-        assert!(rendered.contains("Assignee: owner-a"));
+        assert!(rendered.contains("Assignee: users/owner-a"));
         assert!(rendered.contains("Description:\n  First issue\n  with context"));
         assert!(rendered.contains("Progress:\n  Working on repro"));
         assert!(rendered.contains(&format!("Dependencies:\n  - blocked-on {dependency_id}")));

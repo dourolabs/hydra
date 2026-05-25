@@ -4,7 +4,7 @@ import { HydraMark, Avatar, Kbd, Icons, Tooltip } from "@hydra/ui";
 import type { ConversationSummary, VersionResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { useAuth } from "../features/auth/useAuth";
-import { actorDisplayName } from "../api/auth";
+import { actorDisplayName, actorPrincipalPath } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
@@ -54,6 +54,11 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const userMeta = user?.actor.type === "user" ? user.actor.username : null;
+  // Phase 4b: the assignee filter on the wire is a Principal path
+  // (`users/<name>` / `agents/<name>`); a bare username is rejected by the
+  // server's deserializer. Build it once from the typed actor so every
+  // "Assigned to me" surface (count, link, active check) speaks path form.
+  const principalPath = user ? actorPrincipalPath(user.actor) : null;
 
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
@@ -71,18 +76,18 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
 
   // ── Counts ──
   const assignedFilters = useMemo<IssueFilters>(
-    () => (displayName ? { assignee: displayName, status: "open" } : {}),
-    [displayName],
+    () => (principalPath ? { assignee: principalPath, status: "open" } : {}),
+    [principalPath],
   );
   const inProgressFilters = useMemo<IssueFilters>(() => ({ status: "in-progress" }), []);
-  const { data: assignedCount = 0 } = useIssueCount(assignedFilters, !!displayName);
+  const { data: assignedCount = 0 } = useIssueCount(assignedFilters, !!principalPath);
   const { data: inProgressCount = 0 } = useIssueCount(inProgressFilters, true);
 
   // URL params used by the Workspace sidebar's links. Encoding the username
   // explicitly keeps the route shareable without a server-side lookup, but
   // means the `Issues` and `Assigned to me` links are computed per-user.
   const yourIssuesHref = displayName ? `/?creator=${encodeURIComponent(displayName)}` : "/";
-  const assignedHref = displayName ? `/?assignee=${encodeURIComponent(displayName)}` : "/";
+  const assignedHref = principalPath ? `/?assignee=${encodeURIComponent(principalPath)}` : "/";
   const inProgressHref = "/?status=in-progress";
 
   // Active-link logic: the link is active iff the current URL matches the
@@ -115,7 +120,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // when the URL carries the current user's creator filter.
   const isYourIssuesActive = displayName ? isOnlyParam("creator", displayName) : false;
   const isAllIssuesActive = isNoFilters();
-  const isAssignedActive = displayName ? isOnlyParam("assignee", displayName) : false;
+  const isAssignedActive = principalPath ? isOnlyParam("assignee", principalPath) : false;
   const isInProgressActive = isOnlyParam("status", "in-progress");
 
   // ── Recent chats ──

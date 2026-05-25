@@ -57,7 +57,7 @@ pub enum ActivityObjectSummary {
         issue_type: IssueType,
         status: IssueStatus,
         description: String,
-        assignee: Option<String>,
+        assignee: Option<hydra_common::principal::Principal>,
         progress: String,
     },
     Patch {
@@ -455,9 +455,10 @@ pub fn write_activity_object_summary(
                 indent,
                 writer,
             )?;
+            let assignee_path = assignee.as_ref().map(|p| p.to_path());
             write_activity_optional_scalar_field(
                 "Assignee",
-                assignee.as_deref(),
+                assignee_path.as_deref(),
                 change_map.get("Assignee").copied(),
                 indent,
                 writer,

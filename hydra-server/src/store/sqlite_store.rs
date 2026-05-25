@@ -238,6 +238,11 @@ struct IssueRow {
     creator: String,
     progress: String,
     status: String,
+    /// Legacy `assignee TEXT` column. Phase 4b reads `assignee_principal`
+    /// as the source of truth; this field is still selected so the
+    /// dual-written column round-trips through `sqlx::FromRow`, but is no
+    /// longer consumed at the Rust layer. Phase 7 drops the column.
+    #[allow(dead_code)]
     assignee: Option<String>,
     #[sqlx(default)]
     assignee_principal: Option<String>,
@@ -932,13 +937,17 @@ impl SqliteStore {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         let assignee_principal_json = issue
-            .assignee_principal
+            .assignee
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
             })?;
+        // Phase 4b soak: dual-write the legacy `assignee TEXT` column from
+        // the typed Principal's canonical path form so out-of-band readers
+        // of the old column keep working. Phase 7 drops the column.
+        let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         sqlx::query(
             "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, form, form_response, feedback, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
@@ -951,7 +960,7 @@ impl SqliteStore {
         .bind(issue.creator.as_str())
         .bind(&issue.progress)
         .bind(issue.status.as_str())
-        .bind(issue.assignee.as_deref())
+        .bind(assignee_path.as_deref())
         .bind(assignee_principal_json.as_deref())
         .bind(&session_settings_json)
         .bind(&todo_list_json)
@@ -1544,7 +1553,11 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
-        let assignee_principal = row
+        // Phase 4b read path: `assignee_principal` is now the source of
+        // truth for `Issue.assignee`. The legacy `assignee TEXT` column is
+        // still dual-written for soak (Phase 7 drops it) but is no longer
+        // read here.
+        let assignee = row
             .assignee_principal
             .as_deref()
             .map(serde_json::from_str)
@@ -1559,8 +1572,7 @@ impl SqliteStore {
             creator: Username::from(row.creator.clone()),
             progress: row.progress.clone(),
             status,
-            assignee: row.assignee.clone(),
-            assignee_principal,
+            assignee,
             session_settings,
             todo_list,
             dependencies: vec![],
@@ -1782,14 +1794,14 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         }
     }
 
-    if let Some(assignee) = query
-        .assignee
-        .as_ref()
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-    {
-        bindings.push(assignee.to_lowercase());
-        predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
+    if let Some(assignee) = query.assignee.as_ref() {
+        // Phase 4b: filter against the typed `assignee_principal` column
+        // (JSON text) using canonical serialization, not lowercased
+        // free-text against the legacy `assignee TEXT`. The serialization
+        // is fixed by serde so a binary `=` predicate is sufficient.
+        let serialized = serde_json::to_string(assignee).unwrap_or_default();
+        bindings.push(serialized);
+        predicates.push(format!("assignee_principal = ?{}", bindings.len()));
     }
 
     if let Some(creator) = query
@@ -6090,7 +6102,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             Vec::new(),
             dependencies,
             Vec::new(),
@@ -6108,8 +6119,9 @@ mod tests {
             Username::from("issue-creator"),
             "50%".to_string(),
             IssueStatus::Open,
-            Some("assignee".to_string()),
-            None,
+            Some(hydra_common::principal::Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
+            }),
             Some(SessionSettings {
                 repo_name: Some(RepoName::from_str("org/proj").unwrap()),
                 remote_url: Some("https://git.example.com/org/proj.git".to_string()),
@@ -6164,22 +6176,29 @@ mod tests {
     }
 
     /// Verifies the inline-SQL backfill clause in
-    /// `20260530000000_add_assignee_principal_to_issues.sql`. We persist a
-    /// row whose typed column is NULL (simulating a row that pre-dates the
-    /// new column), then run the exact UPDATE clause from the migration
-    /// against the pool, and assert the typed column gets populated.
+    /// `20260530000000_add_assignee_principal_to_issues.sql` still
+    /// produces a typed principal that the Phase-4b read path surfaces as
+    /// `Issue.assignee`. We bypass `add_issue` (which now dual-writes both
+    /// columns) and use a raw `UPDATE` to simulate a pre-migration row.
     #[tokio::test]
     async fn migration_backfill_populates_assignee_principal_for_users_path() {
         use hydra_common::principal::Principal as ActorPrincipal;
         let store = create_test_store().await;
-        let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("users/alice".to_string());
-        issue.assignee_principal = None; // simulate a pre-migration row
-        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
-        // Re-run just the UPDATE clause from the migration. ALTER TABLE
-        // already ran at create_test_store time, so we only need to
-        // exercise the row-level backfill expression.
+        // Reset both columns so the row looks pre-Phase-4a: typed NULL,
+        // legacy string populated.
+        sqlx::query("UPDATE issues_v2 SET assignee = ?1, assignee_principal = NULL WHERE id = ?2")
+            .bind("users/alice")
+            .bind(issue_id.as_ref())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        // Re-run just the UPDATE clause from the migration.
         let update_sql = r#"
             UPDATE issues_v2
             SET assignee_principal = CASE
@@ -6213,9 +6232,8 @@ mod tests {
         sqlx::query(update_sql).execute(&store.pool).await.unwrap();
 
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
         assert_eq!(
-            fetched.item.assignee_principal,
+            fetched.item.assignee,
             Some(ActorPrincipal::User {
                 name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
             })
@@ -6227,32 +6245,34 @@ mod tests {
         use hydra_common::principal::Principal as ActorPrincipal;
         let store = create_test_store().await;
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("users/alice".to_string());
-        issue.assignee_principal = Some(ActorPrincipal::User {
+        let alice = ActorPrincipal::User {
             name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
-        });
-        let (issue_id, _) = store
-            .add_issue(issue.clone(), &ActorRef::test())
-            .await
-            .unwrap();
+        };
+        issue.assignee = Some(alice.clone());
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
-        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+        assert_eq!(fetched.item.assignee, Some(alice));
+
+        // Phase 4b soak: the legacy `assignee TEXT` column is still
+        // populated with the canonical path form so out-of-band readers
+        // keep working until Phase 7 drops the column.
+        let assignee_text: Option<String> =
+            sqlx::query_scalar("SELECT assignee FROM issues_v2 WHERE id = ?1")
+                .bind(issue_id.as_ref())
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(assignee_text.as_deref(), Some("users/alice"));
     }
 
     #[tokio::test]
-    async fn issue_round_trips_assignee_principal_none_persisted() {
+    async fn issue_round_trips_assignee_none() {
         let store = create_test_store().await;
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("not a valid username!!".to_string());
-        issue.assignee_principal = None;
+        issue.assignee = None;
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(
-            fetched.item.assignee,
-            Some("not a valid username!!".to_string())
-        );
-        assert_eq!(fetched.item.assignee_principal, None);
+        assert_eq!(fetched.item.assignee, None);
     }
 
     #[tokio::test]
@@ -9150,7 +9170,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -9167,7 +9186,6 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
-            None,
             None,
             None,
             Vec::new(),

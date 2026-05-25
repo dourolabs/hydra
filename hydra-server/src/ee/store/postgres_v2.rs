@@ -325,13 +325,17 @@ impl PostgresStoreV2 {
             .transpose()
             .map_err(|e| StoreError::Internal(format!("failed to serialize form_response: {e}")))?;
         let assignee_principal_json = issue
-            .assignee_principal
+            .assignee
             .as_ref()
             .map(serde_json::to_value)
             .transpose()
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
             })?;
+        // Phase 4b soak: keep the legacy `assignee TEXT` column populated
+        // from the typed Principal's canonical path form so out-of-band
+        // readers keep working. Phase 7 drops the column.
+        let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         let query = format!(
             "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, form, form_response, feedback)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
@@ -345,7 +349,7 @@ impl PostgresStoreV2 {
             .bind(issue.creator.as_str())
             .bind(&issue.progress)
             .bind(issue.status.as_str())
-            .bind(issue.assignee.as_deref())
+            .bind(assignee_path.as_deref())
             .bind(&assignee_principal_json)
             .bind(&job_settings_json)
             .bind(&todo_list_json)
@@ -443,7 +447,10 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
-        let assignee_principal = row
+        // Phase 4b read path: `assignee_principal` is the source of truth
+        // for `Issue.assignee`. The legacy `assignee TEXT` column is still
+        // dual-written but no longer read here.
+        let assignee = row
             .assignee_principal
             .as_ref()
             .map(|v| serde_json::from_value(v.clone()))
@@ -458,8 +465,7 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.clone()),
             progress: row.progress.clone(),
             status,
-            assignee: row.assignee.clone(),
-            assignee_principal,
+            assignee,
             session_settings,
             todo_list,
             dependencies: vec![],
@@ -1597,14 +1603,17 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         }
     }
 
-    if let Some(assignee) = query
-        .assignee
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
-        bindings.push(assignee.to_lowercase());
+    if let Some(assignee) = query.assignee.as_ref() {
+        // Phase 4b: filter against the typed `assignee_principal` JSONB
+        // column using canonical serialization. The TEXT-column LIKE
+        // search continues to participate in the `q` free-text predicate
+        // below (Phase 4b §5).
+        let serialized = serde_json::to_string(assignee).unwrap_or_default();
+        predicates.push(format!(
+            "assignee_principal = ${}::jsonb",
+            bindings.len() + 1
+        ));
+        bindings.push(serialized);
     }
 
     if let Some(creator) = query
@@ -5335,7 +5344,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
@@ -5521,8 +5529,9 @@ mod tests {
             Username::from("issue-creator"),
             "50%".to_string(),
             IssueStatus::Open,
-            Some("assignee".to_string()),
-            None,
+            Some(hydra_common::principal::Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
+            }),
             Some(SessionSettings {
                 repo_name: Some(RepoName::from_str("org/proj").unwrap()),
                 remote_url: Some("https://git.example.com/org/proj.git".to_string()),
@@ -5893,33 +5902,24 @@ mod tests {
         use hydra_common::principal::Principal as ActorPrincipal;
         let store = PostgresStoreV2::new(pool);
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("users/alice".to_string());
-        issue.assignee_principal = Some(ActorPrincipal::User {
+        let alice = ActorPrincipal::User {
             name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
-        });
-        let (issue_id, _) = store
-            .add_issue(issue.clone(), &ActorRef::test())
-            .await
-            .unwrap();
+        };
+        issue.assignee = Some(alice.clone());
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.assignee, Some("users/alice".to_string()));
-        assert_eq!(fetched.item.assignee_principal, issue.assignee_principal);
+        assert_eq!(fetched.item.assignee, Some(alice));
     }
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn issue_round_trips_assignee_principal_none_persisted_v2(pool: PgStorePool) {
+    async fn issue_round_trips_assignee_none_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let mut issue = sample_issue(vec![]);
-        issue.assignee = Some("not a valid username!!".to_string());
-        issue.assignee_principal = None;
+        issue.assignee = None;
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(
-            fetched.item.assignee,
-            Some("not a valid username!!".to_string())
-        );
-        assert_eq!(fetched.item.assignee_principal, None);
+        assert_eq!(fetched.item.assignee, None);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -6645,7 +6645,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             vec![],
             vec![],
             vec![],
@@ -6663,7 +6662,6 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open,
-            None,
             None,
             None,
             vec![],
@@ -7848,7 +7846,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -7865,7 +7862,6 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed,
-            None,
             None,
             None,
             Vec::new(),

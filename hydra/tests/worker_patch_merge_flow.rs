@@ -20,6 +20,7 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
 
     let harness = harness::TestHarness::builder()
         .with_repo(repo_str)
+        .with_agent("swe", "test")
         .build()
         .await?;
 
@@ -161,6 +162,7 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
 
     let harness = harness::TestHarness::builder()
         .with_repo(repo_str)
+        .with_agent("swe", "test")
         .build()
         .await?;
 
@@ -286,6 +288,7 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
 
     let harness = harness::TestHarness::builder()
         .with_repo(repo_str)
+        .with_agent("swe", "test")
         .build()
         .await?;
 

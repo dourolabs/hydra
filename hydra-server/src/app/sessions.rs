@@ -1409,7 +1409,6 @@ mod tests {
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
-                        assignee_principal: None,
                         session_settings: session_settings.clone(),
                         todo_list: Vec::new(),
                         dependencies: Vec::new(),

@@ -34,11 +34,19 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await page.getByTestId("sidebar-issues-all").click();
     await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
 
-    // Assigned to you → dashboard with Assigned filter selected.
+    // Assigned to you → dashboard with Assigned filter selected. The URL
+    // carries the Principal path form (`users/<x>` / `agents/<x>`) — bare
+    // names are rejected by the server's typed deserializer (Phase 4b).
     await page.getByTestId("sidebar-issues-assigned").click();
     await expect(page).toHaveURL(
-      /^http:\/\/localhost:\d+\/\?assignee=[^&]+$/,
+      /^http:\/\/localhost:\d+\/\?assignee=(users|agents)%2F[^&]+$/,
     );
+    // The list should actually render (at least one issue row, the dropped
+    // "Update deployment documentation" item assigned to dev-user). If the
+    // request 400s because of a malformed assignee param, the table is empty.
+    await expect(
+      page.getByText("Update deployment documentation"),
+    ).toBeVisible();
 
     // My issues → dashboard scoped to the current user as creator.
     await page.getByTestId("sidebar-issues-your-issues").click();

@@ -63,7 +63,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
             vec![
                 &format!(
                     "hydra issues create 'Add Redis cache integration' \
-                     --type task --assignee swe \
+                     --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
@@ -151,7 +151,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
                 &format!("hydra issues update {child2_id} --status dropped"),
                 &format!(
                     "hydra issues create 'Add Memcached cache integration (retry)' \
-                     --type task --assignee swe \
+                     --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
@@ -302,7 +302,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
             vec![
                 &format!(
                     "hydra issues create 'Build full-text search with Elasticsearch' \
-                     --type task --assignee swe \
+                     --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),
@@ -391,7 +391,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
                 &format!("hydra issues update {child2_id} --status dropped"),
                 &format!(
                     "hydra issues create 'Build search with SQLite FTS5' \
-                     --type task --assignee swe \
+                     --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
                 ),

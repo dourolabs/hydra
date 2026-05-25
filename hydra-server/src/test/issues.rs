@@ -32,6 +32,14 @@ fn issue(
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
 ) -> Issue {
+    // Phase 4b: server-side `principal_exists` validation rejects unknown
+    // User/Agent assignees, so the test fixture defaults to a
+    // `Principal::External` (which is format-checked only, no DB lookup).
+    use hydra_common::principal::{ExternalSystem, Principal};
+    let assignee_principal = assignee.map(|name| Principal::External {
+        system: ExternalSystem::try_new("test").expect("static external system"),
+        username: name.to_string(),
+    });
     Issue::new(
         issue_type,
         "Test Title".to_string(),
@@ -39,8 +47,7 @@ fn issue(
         creator,
         progress,
         status,
-        assignee.map(str::to_string),
-        None,
+        assignee_principal,
         None,
         todo_list,
         dependencies,
@@ -84,7 +91,6 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                None,
                 Vec::new(),
                 vec![],
                 Vec::new(),
@@ -114,7 +120,6 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 default_user(),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress,
-                None,
                 None,
                 None,
                 Vec::new(),
@@ -153,7 +158,6 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                None,
                 Vec::new(),
                 vec![],
                 Vec::new(),
@@ -183,7 +187,6 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 default_user(),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress,
-                None,
                 None,
                 None,
                 Vec::new(),
@@ -265,7 +268,6 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 default_user(),
                 "Initial progress".to_string(),
                 IssueStatus::Open,
-                None,
                 None,
                 None,
                 Vec::new(),
@@ -663,12 +665,17 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         )
     );
 
+    use hydra_common::principal::{ExternalSystem, Principal as ActorPrincipal};
+    let owner_1 = ActorPrincipal::External {
+        system: ExternalSystem::try_new("test").unwrap(),
+        username: "owner-1".to_string(),
+    };
     let filtered_by_assignee: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
             vec![],
-            Some("OWNER-1".to_string()),
+            Some(owner_1),
             None,
             None,
         ))
@@ -2027,7 +2034,6 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
-                assignee_principal: None,
                 session_settings: Default::default(),
                 todo_list: Vec::new(),
                 dependencies: Vec::new(),

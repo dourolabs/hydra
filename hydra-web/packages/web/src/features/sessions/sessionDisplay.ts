@@ -3,6 +3,7 @@ import type {
   IssueSummaryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
+import { principalDisplayName } from "../principal/formatPrincipal";
 import { descriptionSnippet } from "../../utils/text";
 
 export interface SessionDisplay {
@@ -38,8 +39,12 @@ export function resolveSessionDisplay(
     promptSnippet ||
     "(no title)";
 
+  // Phase 4b: `Issue.assignee` is now typed. The agent-attribution label
+  // still wants a bare username, so unwrap the principal here.
   const agentName =
-    issue?.issue.assignee ?? conversation?.agent_name ?? null;
+    (issue?.issue.assignee && principalDisplayName(issue.issue.assignee)) ??
+    conversation?.agent_name ??
+    null;
 
   return { title, issueId, conversationId, agentName };
 }

@@ -251,8 +251,10 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open,
-            Some(agent_name.to_string()),
-            None,
+            Some(hydra_common::principal::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
+                    .expect("test agent name should validate"),
+            }),
             Some(SessionSettings {
                 repo_name: Some(repo_name.clone()),
                 image: Some("agent-image".to_string()),
@@ -279,8 +281,10 @@ mod tests {
             Username::from("worker"),
             String::new(),
             status,
-            Some(agent_name.to_string()),
-            None,
+            Some(hydra_common::principal::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
+                    .expect("test agent name should validate"),
+            }),
             Some(SessionSettings {
                 repo_name: Some(repo_name.clone()),
                 image: Some("agent-image".to_string()),
@@ -713,7 +717,6 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open,
-            None,
             None,
             None,
             Vec::new(),
