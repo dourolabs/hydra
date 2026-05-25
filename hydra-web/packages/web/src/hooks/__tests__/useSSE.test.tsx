@@ -519,3 +519,178 @@ describe("useSSE SessionEvent / SessionState live-tail wiring", () => {
     expect(wasInvalidated(invalidateSpy, ["sessionEvents", "s-1"])).toBe(false);
   });
 });
+
+describe("useSSE reconnect: jittered backoff + force-close on visible/online", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Loose alias so the helper accepts whatever `vi.spyOn(globalThis, "setTimeout")`
+  // produces across vitest versions without us having to nail the generic
+  // arguments exactly — we only need `.mock.calls`.
+  type SetTimeoutLikeSpy = { mock: { calls: unknown[][] } };
+
+  /**
+   * Trigger the hook's onerror handler on a given mock instance and return
+   * the delay the handler scheduled its reconnect setTimeout with. Filters
+   * setTimeout calls to ones whose delay falls inside the backoff window
+   * [BASE_BACKOFF_MS/2, MAX_BACKOFF_MS] so we don't mis-pick the 100ms
+   * debouncedInvalidate timer or other unrelated schedules.
+   */
+  function fireErrorAndCaptureDelay(
+    setTimeoutSpy: SetTimeoutLikeSpy,
+    es: MockEventSource,
+  ): { delay: number; reconnect: () => void } {
+    const callsBefore = setTimeoutSpy.mock.calls.length;
+    act(() => {
+      es.onerror?.call(es, new Event("error"));
+    });
+    const scheduled = setTimeoutSpy.mock.calls
+      .slice(callsBefore)
+      .find((c) => {
+        const ms = c[1];
+        return typeof ms === "number" && ms >= 500 && ms <= 15_000;
+      });
+    if (!scheduled) {
+      throw new Error("Expected reconnect setTimeout to be scheduled after onerror");
+    }
+    return {
+      delay: scheduled[1] as number,
+      reconnect: scheduled[0] as () => void,
+    };
+  }
+
+  it("half-jitters the reconnect delay (proves jitter is wired)", () => {
+    // Half-jitter formula: delay = ceiling * (0.5 + Math.random() * 0.5).
+    // Pin Math.random() to 0 → expect delay = BASE_BACKOFF_MS * 0.5 = 500.
+    // Without jitter the raw exponential delay would be BASE_BACKOFF_MS = 1000.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    expect(MockEventSource.instances.length).toBe(1);
+
+    const { delay } = fireErrorAndCaptureDelay(
+      setTimeoutSpy,
+      MockEventSource.instances[0],
+    );
+    expect(delay).toBe(500);
+  });
+
+  it("two onerrors in quick succession produce two different delay values", () => {
+    // With pinned-but-distinct Math.random() returns, half-jitter must yield
+    // measurably different delays. This is the issue's "proves jitter is
+    // wired" test; even if retries were not incrementing, jitter alone would
+    // make the two delays differ.
+    const randomSpy = vi.spyOn(Math, "random");
+    randomSpy.mockReturnValueOnce(0).mockReturnValueOnce(0.99);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const first = fireErrorAndCaptureDelay(
+      setTimeoutSpy,
+      MockEventSource.instances[0],
+    );
+
+    // Drive the scheduled reconnect inline (instead of waiting wall-clock)
+    // so the second instance comes up and we can fire a second onerror.
+    act(() => {
+      first.reconnect();
+    });
+    expect(MockEventSource.instances.length).toBe(2);
+
+    const second = fireErrorAndCaptureDelay(
+      setTimeoutSpy,
+      MockEventSource.instances[1],
+    );
+
+    expect(first.delay).not.toBe(second.delay);
+  });
+
+  it("caps backoff at the lowered ceiling (15s, not 30s)", () => {
+    // Force the ceiling-hit case: many retries with Math.random()=1 picks the
+    // top of the jitter range. The delay must be <= 15s, the new ceiling.
+    vi.spyOn(Math, "random").mockReturnValue(0.999_999);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+
+    let current: { delay: number; reconnect: () => void } | null = null;
+    // Simulate 8 consecutive failures so the exponential ceiling clearly
+    // exceeds 15s (2^8 * 1000 = 256_000ms) — every subsequent delay must be
+    // clamped to MAX_BACKOFF_MS.
+    for (let i = 0; i < 8; i++) {
+      const target =
+        current === null
+          ? MockEventSource.instances[0]
+          : (() => {
+              act(() => {
+                current!.reconnect();
+              });
+              return MockEventSource.instances[MockEventSource.instances.length - 1];
+            })();
+      current = fireErrorAndCaptureDelay(setTimeoutSpy, target);
+    }
+
+    expect(current).not.toBeNull();
+    expect(current!.delay).toBeLessThanOrEqual(15_000);
+    // And the floor of half-jitter at the ceiling is 7.5s, so the final delay
+    // must be at least that (proves we hit the ceiling, not some lower rung).
+    expect(current!.delay).toBeGreaterThanOrEqual(7_500);
+  });
+
+  it("force-closes the EventSource on visibility-change-to-visible (bypasses readyState guard)", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    expect(MockEventSource.instances.length).toBe(1);
+
+    const original = MockEventSource.instances[0];
+    // Precondition: the bug scenario — readyState reads OPEN even though
+    // the underlying socket is half-open after suspend.
+    expect(original.readyState).toBe(MockEventSource.OPEN);
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    // The handler must close() the prior instance and construct a new one.
+    // (If the readyState guard inside connect() weren't being bypassed, no
+    // new EventSource would be constructed.)
+    expect(original.readyState).toBe(MockEventSource.CLOSED);
+    expect(MockEventSource.instances.length).toBe(2);
+  });
+
+  it("force-closes the EventSource on the 'online' event", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const original = MockEventSource.instances[0];
+    expect(original.readyState).toBe(MockEventSource.OPEN);
+
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+
+    expect(original.readyState).toBe(MockEventSource.CLOSED);
+    expect(MockEventSource.instances.length).toBe(2);
+  });
+
+  it("removes the 'online' listener on unmount", () => {
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    const { unmount } = renderHook(() => useSSE(), {
+      wrapper: makeWrapper(queryClient),
+    });
+
+    unmount();
+
+    const removedOnline = removeSpy.mock.calls.some(
+      (call) => call[0] === "online",
+    );
+    expect(removedOnline).toBe(true);
+  });
+});
