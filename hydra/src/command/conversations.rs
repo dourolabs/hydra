@@ -148,6 +148,10 @@ pub async fn run(
             message,
             agent_name,
         } => {
+            let agent_name = agent_name
+                .map(hydra_common::api::v1::agents::AgentName::try_new)
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("invalid --agent value: {e}"))?;
             let request = CreateConversationRequest {
                 message,
                 agent_name,

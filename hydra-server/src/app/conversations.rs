@@ -8,7 +8,10 @@ use crate::{
     },
     store::StoreError,
 };
-use hydra_common::{ConversationId, Versioned, api::v1::sessions as api_sessions};
+use hydra_common::{
+    ConversationId, Versioned,
+    api::v1::{agents::AgentName, sessions as api_sessions},
+};
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -65,7 +68,7 @@ impl AppState {
     pub async fn create_conversation(
         &self,
         message: Option<String>,
-        agent_name: Option<String>,
+        agent_name: Option<AgentName>,
         session_settings: crate::domain::issues::SessionSettings,
         actor_ref: ActorRef,
         creator: Username,
@@ -76,12 +79,12 @@ impl AppState {
         // the absence of a registered default conversation agent is a
         // server-config concern handled by the automation, not a
         // client-input error.
-        if let Some(name) = agent_name.as_deref() {
-            match self.resolve_conversation_agent(Some(name)).await {
+        if let Some(name) = agent_name.as_ref() {
+            match self.resolve_conversation_agent(Some(name.as_str())).await {
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     return Err(CreateConversationError::AgentNotFound {
-                        name: name.to_string(),
+                        name: name.as_str().to_string(),
                     });
                 }
                 Err(AgentError::NotFound { name }) => {
@@ -1206,7 +1209,7 @@ mod tests {
         let (conversation_id, _) = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("swe".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1234,7 +1237,7 @@ mod tests {
         let (conversation_id, _) = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("swe".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1332,7 +1335,7 @@ mod tests {
         let result = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("does-not-exist".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("does-not-exist").unwrap()),
                 SessionSettings::default(),
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1386,7 +1389,7 @@ mod tests {
         let (conversation_id, _) = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("swe".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 settings,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1422,7 +1425,7 @@ mod tests {
         let (conversation_id, _) = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("swe".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1469,7 +1472,7 @@ mod tests {
         let (conversation_id, _) = state
             .create_conversation(
                 Some("hello".to_string()),
-                Some("swe".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 ActorRef::test(),
                 Username::from("creator"),

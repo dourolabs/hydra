@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
@@ -33,12 +33,27 @@ impl std::error::Error for AgentNameError {}
 /// [`crate::principal::Principal::Agent`]. In Phase 1 it is introduced
 /// as a separate newtype; Phase 2 will retype `AgentConfig.name` from
 /// `Option<String>` to `Option<AgentName>`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 #[serde(transparent)]
 #[non_exhaustive]
 pub struct AgentName(String);
+
+// Hand-rolled `Deserialize` so the validation in `try_new` (no
+// whitespace / slash / empty) runs on the read path too. Phase 2 of
+// `/designs/actor-system-overhaul.md` (§3.4) makes this the moment
+// where historical malformed `AgentConfig.agent_name` values surface
+// as loud deserialization errors instead of silently passing through.
+impl<'de> Deserialize<'de> for AgentName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        AgentName::try_new(s).map_err(serde::de::Error::custom)
+    }
+}
 
 impl AgentName {
     pub fn as_str(&self) -> &str {

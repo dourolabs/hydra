@@ -14,8 +14,9 @@ const AUTOMATION_NAME: &str = "link_artifacts_to_issue";
 ///
 /// Subscribes to `PatchCreated`/`PatchUpdated` and `DocumentCreated`/`DocumentUpdated`.
 /// Resolves the source issue from the event actor:
-/// - `ActorId::Session(sid)`: loads the session and uses its `spawned_from`
-///   issue (no link if the session has no `spawned_from`).
+/// - `ActorId::Session(sid)` or Phase-2 `ActorId::Adhoc(sid)`: loads
+///   the session and uses its `spawned_from` issue (no link if the
+///   session has no `spawned_from`).
 /// - `ActorId::Issue(iid)`: uses the issue id directly.
 ///
 /// In either case, inserts a `(issue, artifact, has-patch | has-document)` row
@@ -24,6 +25,13 @@ const AUTOMATION_NAME: &str = "link_artifacts_to_issue";
 ///
 /// Human and service actors are intentionally ignored; callers that want a
 /// link should use `POST /v1/relations` directly.
+///
+/// `ActorId::Agent(name)` is also skipped for now: Phase 2 of
+/// `/designs/actor-system-overhaul.md` (§3.4) gives agent-spawned
+/// sessions the agent's shared `ActorId`, which doesn't carry the
+/// session-id needed to recover `spawned_from`. Phase 3 adds
+/// `ActorRef::session_id` (design §5), at which point this automation
+/// will use that to recover the agent-session's issue.
 pub struct LinkArtifactsToIssueAutomation;
 
 impl LinkArtifactsToIssueAutomation {
@@ -55,6 +63,9 @@ impl Automation for LinkArtifactsToIssueAutomation {
         let issue_id = match actor {
             ActorRef::Authenticated {
                 actor_id: ActorId::Session(sid),
+            }
+            | ActorRef::Authenticated {
+                actor_id: ActorId::Adhoc(sid),
             } => {
                 let session = match ctx.store.get_session(sid, false).await {
                     Ok(s) => s,

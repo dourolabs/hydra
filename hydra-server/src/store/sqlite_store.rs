@@ -772,6 +772,7 @@ impl SqliteStore {
     // ---- Conversation helpers ----
 
     fn row_to_conversation(row: &ConversationRow) -> Result<Conversation, StoreError> {
+        use hydra_common::api::v1::agents::AgentName;
         let status = match row.status.as_str() {
             "active" => crate::domain::conversations::ConversationStatus::Active,
             "idle" => crate::domain::conversations::ConversationStatus::Idle,
@@ -788,9 +789,21 @@ impl SqliteStore {
                     "failed to deserialize conversation session_settings: {e}"
                 ))
             })?;
+        // Phase 2: re-validate the persisted `agent_name` on read. The
+        // SQLite column stays `TEXT`; the type-tightening happens at the
+        // Rust boundary so malformed legacy values surface as an internal
+        // error rather than silently passing through as `String`.
+        let agent_name = row
+            .agent_name
+            .as_ref()
+            .map(|s| AgentName::try_new(s.clone()))
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("invalid agent_name in conversation row: {e}"))
+            })?;
         Ok(Conversation {
             title: row.title.clone(),
-            agent_name: row.agent_name.clone(),
+            agent_name,
             status,
             creator: Username::from(row.creator.clone()),
             session_settings,
@@ -836,7 +849,7 @@ impl SqliteStore {
         .bind(id.as_ref())
         .bind(version_number)
         .bind(&conversation.title)
-        .bind(&conversation.agent_name)
+        .bind(conversation.agent_name.as_ref().map(|n| n.as_str()))
         .bind(&session_settings_json)
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
@@ -9521,9 +9534,10 @@ mod tests {
     // ---- Conversation tests ----
 
     fn sample_conversation() -> Conversation {
+        use hydra_common::api::v1::agents::AgentName;
         Conversation {
             title: Some("Test conversation".to_string()),
-            agent_name: Some("test-agent".to_string()),
+            agent_name: Some(AgentName::try_new("test-agent").unwrap()),
             status: crate::domain::conversations::ConversationStatus::Active,
             creator: Username::from("testuser".to_string()),
             session_settings: Default::default(),

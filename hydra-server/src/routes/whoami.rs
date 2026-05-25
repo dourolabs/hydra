@@ -27,15 +27,27 @@ pub async fn whoami(
             creator: actor.creator.clone(),
         },
         ActorId::Service(service_name) => ActorIdentity::Service { service_name },
-        // Phase-1 ActorId additions (User/Agent/Adhoc/External/Legacy)
-        // are not constructed by any hydra-server call site yet — Phases
-        // 2–6 of `/designs/actor-system-overhaul.md` migrate handlers
-        // one variant at a time. Until then, an authenticated token
-        // backed by one of these new variants would indicate a
-        // protocol-level bug.
+        // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4):
+        // `create_actor_for_job` now routes through `actor_id_of` and
+        // mints `Agent` / `Adhoc` actors for sessions. Map them onto
+        // the matching `ActorIdentity` variants so `whoami` surfaces
+        // the new wire form.
+        ActorId::Agent(name) => ActorIdentity::Agent {
+            name,
+            creator: actor.creator.clone(),
+        },
+        ActorId::Adhoc(session_id) => ActorIdentity::Adhoc {
+            session_id,
+            creator: actor.creator.clone(),
+        },
+        // `User` / `External` are introduced in later phases (login
+        // and GitHub-poller flows) — Phase 2 still treats them as
+        // protocol bugs to keep the diff focused. `Legacy` is the
+        // read-only deserialization catch-all and should never reach
+        // an authenticated request path.
         other => {
             return Err(ApiError::internal(format!(
-                "phase-1 invariant violated: authenticated actor has unsupported variant {other:?}"
+                "phase-2 invariant violated: authenticated actor has unsupported variant {other:?}"
             )));
         }
     };

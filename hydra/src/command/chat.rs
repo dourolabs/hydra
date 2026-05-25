@@ -50,9 +50,13 @@ async fn run_noninteractive(
     prompt: &str,
     agent: Option<String>,
 ) -> Result<()> {
+    let agent_name = agent
+        .map(hydra_common::api::v1::agents::AgentName::try_new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid --agent value: {e}"))?;
     let request = CreateConversationRequest {
         message: Some(prompt.to_string()),
-        agent_name: agent,
+        agent_name,
         session_settings: None,
     };
     let conversation = client
@@ -136,9 +140,13 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
         }
     };
 
+    let agent_name = agent
+        .map(hydra_common::api::v1::agents::AgentName::try_new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid --agent value: {e}"))?;
     let request = CreateConversationRequest {
         message: Some(first_message),
-        agent_name: agent,
+        agent_name,
         session_settings: None,
     };
     let conversation = client
@@ -252,7 +260,9 @@ mod tests {
     fn create_conversation_request_serializes_correctly() {
         let request = CreateConversationRequest {
             message: Some("hello".to_string()),
-            agent_name: Some("test-agent".to_string()),
+            agent_name: Some(
+                hydra_common::api::v1::agents::AgentName::try_new("test-agent").unwrap(),
+            ),
             session_settings: None,
         };
         let json = serde_json::to_value(&request).unwrap();

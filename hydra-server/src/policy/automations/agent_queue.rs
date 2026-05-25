@@ -132,12 +132,20 @@ impl AgentQueue {
             }
         };
 
+        // The `agents` domain object holds the name as a free `String`
+        // today; Phase 4+ retypes that to `AgentName`. Validate here so a
+        // malformed stored name surfaces immediately rather than silently
+        // producing a session whose `agent_config.agent_name` is empty.
+        let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
+            .with_context(|| {
+                format!("agent '{}' has invalid name in the store", self.agent.name)
+            })?;
         let request = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless {
                 prompt: prompt.to_string(),
             },
             agent_config: api::sessions::AgentConfig::new(
-                Some(self.agent.name.clone()),
+                Some(agent_name),
                 session_settings.model.clone(),
                 Some(prompt.to_string()),
                 mcp_config,
@@ -3161,7 +3169,7 @@ mod tests {
                 prompt: prompt.to_string(),
             },
             agent_config: api::sessions::AgentConfig::new(
-                Some("agent-a".to_string()),
+                Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),
                 session_settings_b.model.clone(),
                 Some(prompt.to_string()),
                 None,

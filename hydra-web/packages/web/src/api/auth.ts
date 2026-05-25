@@ -5,7 +5,9 @@ import { apiFetch } from "./client";
 export function actorDisplayName(actor: ActorIdentity): string {
   if (actor.type === "user") return actor.username;
   if (actor.type === "session") return actor.session_id;
+  if (actor.type === "adhoc") return actor.session_id;
   if (actor.type === "service") return actor.service_name;
+  if (actor.type === "agent") return actor.name;
   return actor.issue_id;
 }
 

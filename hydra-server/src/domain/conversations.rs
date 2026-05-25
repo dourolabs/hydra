@@ -1,6 +1,7 @@
 use super::issues::SessionSettings;
 use super::users::Username;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::{ConversationId, SessionId};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,7 @@ pub enum ConversationStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Conversation {
     pub title: Option<String>,
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     #[serde(default)]
     pub status: ConversationStatus,
     pub creator: Username,

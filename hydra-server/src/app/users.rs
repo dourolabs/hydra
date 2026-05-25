@@ -147,12 +147,16 @@ impl AppState {
         lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_session(&task_id).await?;
-        let creator = task.creator;
-        let (actor, auth_token) = if let Some(issue_id) = task.spawned_from {
-            Actor::new_for_issue(issue_id, creator)
-        } else {
-            Actor::new_for_session(task_id, creator)
-        };
+        let creator = task.creator.clone();
+        // Phase 2 (`/designs/actor-system-overhaul.md` §3.4): drive the
+        // session's actor identity off `agent_config.agent_name` via
+        // `actor_id_of`. Agent-spawned sessions become
+        // `ActorId::Agent(name)` (shared across all sessions for an
+        // agent — matches the prior `Issue`-shared semantics); ad-hoc
+        // sessions become `ActorId::Adhoc(session_id)`. The
+        // `spawned_from`-vs-not branch is gone.
+        let actor_id = crate::domain::sessions::actor_id_of(&task, &task_id);
+        let (actor, auth_token) = Actor::new_from_actor_id(actor_id, creator);
         if let Err(err) = self
             .store
             .add_actor(actor.clone(), lifecycle_actor.clone())
@@ -160,8 +164,9 @@ impl AppState {
         {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
-                    // Multiple tasks for the same issue share the same ActorId::Issue
-                    // but get separate auth tokens. Insert into auth_tokens below.
+                    // Multiple sessions for the same agent share the same
+                    // ActorId::Agent and reuse the actor row; each session
+                    // gets its own auth token inserted below.
                 }
                 other => return Err(other),
             }
@@ -352,6 +357,88 @@ mod tests {
             "job actor token should be in auth_tokens"
         );
 
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4):
+    // `create_actor_for_job` now reads
+    // `session.agent_config.agent_name` via `actor_id_of` and mints an
+    // `Agent` (when set) or `Adhoc` (when `None`) actor. The
+    // `spawned_from`-vs-not branch is gone.
+    // -----------------------------------------------------------------
+
+    fn session_with_agent(
+        agent_name: Option<hydra_common::api::v1::agents::AgentName>,
+    ) -> crate::domain::sessions::Session {
+        use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+        use crate::domain::task_status::Status;
+        use crate::routes::sessions::mount_spec_from_create_request;
+        use hydra_common::api::v1::sessions::Bundle;
+        use std::collections::HashMap;
+        Session::new(
+            crate::domain::users::Username::from("creator"),
+            None,
+            None,
+            AgentConfig::new(agent_name, None, None, None),
+            mount_spec_from_create_request(Bundle::None, None),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "p".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn create_actor_for_job_agent_session_yields_actor_id_agent() -> anyhow::Result<()> {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::ActorId;
+        use hydra_common::api::v1::agents::AgentName;
+
+        let handles = test_state_handles();
+        let agent_name = AgentName::try_new("swe").unwrap();
+        let session = session_with_agent(Some(agent_name.clone()));
+        let (session_id, _) = handles
+            .state
+            .store
+            .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
+            .await?;
+
+        let (actor, _token) = handles
+            .state
+            .create_actor_for_job(session_id, ActorRef::test())
+            .await?;
+
+        assert_eq!(actor.actor_id, ActorId::Agent(agent_name));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_actor_for_job_adhoc_session_yields_actor_id_adhoc() -> anyhow::Result<()> {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::ActorId;
+
+        let handles = test_state_handles();
+        let session = session_with_agent(None);
+        let (session_id, _) = handles
+            .state
+            .store
+            .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
+            .await?;
+
+        let (actor, _token) = handles
+            .state
+            .create_actor_for_job(session_id.clone(), ActorRef::test())
+            .await?;
+
+        assert_eq!(actor.actor_id, ActorId::Adhoc(session_id));
         Ok(())
     }
 }

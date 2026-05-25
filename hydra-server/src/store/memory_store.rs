@@ -1587,8 +1587,8 @@ impl ReadOnlyStore for MemoryStore {
                         .unwrap_or(false);
                     let matches_agent = conv
                         .agent_name
-                        .as_deref()
-                        .map(|a| a.to_lowercase().contains(term))
+                        .as_ref()
+                        .map(|a| a.as_str().to_lowercase().contains(term))
                         .unwrap_or(false);
                     if !matches_id && !matches_title && !matches_agent {
                         return None;
@@ -7679,9 +7679,10 @@ mod tests {
 
     fn sample_conversation() -> Conversation {
         use crate::domain::conversations::ConversationStatus;
+        use hydra_common::api::v1::agents::AgentName;
         Conversation {
             title: Some("Test conversation".to_string()),
-            agent_name: Some("test-agent".to_string()),
+            agent_name: Some(AgentName::try_new("test-agent").unwrap()),
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
             session_settings: Default::default(),
@@ -7704,7 +7705,10 @@ mod tests {
 
         let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
-        assert_eq!(fetched.item.agent_name.as_deref(), Some("test-agent"));
+        assert_eq!(
+            fetched.item.agent_name.as_ref().map(|n| n.as_str()),
+            Some("test-agent")
+        );
         assert_eq!(fetched.version, 1);
     }
 

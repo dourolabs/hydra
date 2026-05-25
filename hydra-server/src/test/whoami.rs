@@ -110,3 +110,93 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------
+// Phase 2 of `/designs/actor-system-overhaul.md` (§3.4): once
+// `create_actor_for_job` routes through `actor_id_of`, the actor
+// stamped on the auth token has the new typed `Agent` / `Adhoc`
+// variants — and `whoami` must surface them on the wire rather than
+// rejecting the request as a "phase-1 invariant violation". The tests
+// below exercise both arms end-to-end through the HTTP handler so
+// any future regression in the route mapping is caught.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn whoami_returns_agent_identity_for_agent_session() -> anyhow::Result<()> {
+    use crate::app::test_helpers::sample_task;
+    use crate::domain::sessions::AgentConfig;
+    use hydra_common::api::v1::agents::AgentName;
+
+    let handles = test_state_handles();
+    let agent_name = AgentName::try_new("swe").unwrap();
+    let mut task = sample_task();
+    task.agent_config = AgentConfig::new(Some(agent_name.clone()), None, None, None);
+
+    let (session_id, _) = handles
+        .store
+        .add_session(task, chrono::Utc::now(), &ActorRef::test())
+        .await?;
+
+    let (_actor, auth_token) = handles
+        .state
+        .create_actor_for_job(session_id, ActorRef::test())
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(&auth_token);
+    let response = client
+        .get(format!("{}/v1/whoami", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: WhoAmIResponse = response.json().await?;
+    match body.actor {
+        ActorIdentity::Agent { name, creator } => {
+            assert_eq!(name, agent_name);
+            assert_eq!(creator.as_str(), "test-creator");
+        }
+        other => panic!("expected agent identity, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn whoami_returns_adhoc_identity_for_adhoc_session() -> anyhow::Result<()> {
+    use crate::app::test_helpers::sample_task;
+
+    let handles = test_state_handles();
+    // `sample_task` already leaves agent_config.agent_name = None, so
+    // routing through `create_actor_for_job` yields the Adhoc arm.
+    let task = sample_task();
+    let (session_id, _) = handles
+        .store
+        .add_session(task, chrono::Utc::now(), &ActorRef::test())
+        .await?;
+
+    let (_actor, auth_token) = handles
+        .state
+        .create_actor_for_job(session_id.clone(), ActorRef::test())
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(&auth_token);
+    let response = client
+        .get(format!("{}/v1/whoami", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: WhoAmIResponse = response.json().await?;
+    match body.actor {
+        ActorIdentity::Adhoc {
+            session_id: returned_id,
+            creator,
+        } => {
+            assert_eq!(returned_id, session_id);
+            assert_eq!(creator.as_str(), "test-creator");
+        }
+        other => panic!("expected adhoc identity, got {other:?}"),
+    }
+    Ok(())
+}

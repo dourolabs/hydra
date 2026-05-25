@@ -171,7 +171,10 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
             ActorId::Username(username) => username.clone().into(),
-            ActorId::Session(session_id) => {
+            // Phase-2 `Adhoc(sid)` matches the legacy `Session(sid)`
+            // path semantically (a session without an agent name) —
+            // resolve the creator off the session row.
+            ActorId::Session(session_id) | ActorId::Adhoc(session_id) => {
                 let task = ctx.app_state.get_session(session_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
                         "github_pr_sync: failed to load task '{session_id}': {e}"
@@ -187,7 +190,12 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 })?;
                 issue.item.creator
             }
-            ActorId::Service(_) => {
+            // For agent-spawned sessions (Phase 2) the shared agent
+            // actor row carries the creator on the underlying `Actor`
+            // struct — no per-session lookup is needed because the
+            // patch event already came from an authenticated agent
+            // session. Match the legacy `Service` arm's pattern.
+            ActorId::Service(_) | ActorId::Agent(_) => {
                 let actor = ctx
                     .store
                     .get_actor(&actor_id.to_string())
@@ -199,15 +207,12 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     })?;
                 actor.item.creator
             }
-            // Phase-1 ActorId additions (User/Agent/Adhoc/External/Legacy)
-            // are not yet constructed by any hydra-server call site —
-            // Phases 2–6 of `/designs/actor-system-overhaul.md` route
-            // these through. Until then, treat as unsupported.
-            ActorId::User(_)
-            | ActorId::Agent(_)
-            | ActorId::Adhoc(_)
-            | ActorId::External { .. }
-            | ActorId::Legacy(_) => {
+            // `User` / `External` / `Legacy` aren't constructed by
+            // any hydra-server call site that emits patch events yet
+            // (Phases 4–6 add the relevant flows). Treat as
+            // unsupported with a warning so a misconfigured deployment
+            // doesn't silently 500.
+            ActorId::User(_) | ActorId::External { .. } | ActorId::Legacy(_) => {
                 warn!(
                     patch_id = %patch_id,
                     actor_id = %actor_id,
