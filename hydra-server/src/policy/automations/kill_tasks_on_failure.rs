@@ -117,7 +117,6 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
-    use crate::domain::sessions::BundleSpec;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
@@ -145,14 +144,14 @@ mod tests {
     }
 
     fn make_task(issue_id: &hydra_common::IssueId) -> crate::domain::sessions::Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         crate::domain::sessions::Session::new(
             Username::from("test-creator"),
             Some(issue_id.clone()),
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("worker:latest".to_string()),
             HashMap::new(),
             None,

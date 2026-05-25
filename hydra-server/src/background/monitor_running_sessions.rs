@@ -99,14 +99,14 @@ impl ScheduledWorker for MonitorRunningSessionsWorker {
 mod tests {
     use super::*;
     use crate::{
-        app::sessions::mount_spec_for_session,
         domain::{
             actors::ActorRef,
             issues::{Issue, IssueStatus, IssueType},
-            sessions::{AgentConfig, BundleSpec, SessionMode},
+            sessions::{AgentConfig, SessionMode},
             users::Username,
         },
         job_engine::JobStatus,
+        routes::sessions::mount_spec_from_create_request,
         store::{Session, Status, StoreError},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
@@ -123,7 +123,7 @@ mod tests {
             spawned_from,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             HashMap::new(),
             None,

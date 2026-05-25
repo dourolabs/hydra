@@ -15,11 +15,9 @@ pub(crate) mod sessions;
 pub mod test_helpers;
 mod users;
 
-use crate::{
-    domain::patches::Patch, domain::sessions::Bundle, merge_queue::MergeQueueImpl,
-    store::StoreError,
-};
+use crate::{domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError};
 use git2::Repository as GitRepository;
+use hydra_common::api::v1::sessions::Bundle;
 use hydra_common::{PatchId, RepoName, merge_queues::MergeQueue};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
@@ -42,7 +40,7 @@ pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 pub use sessions::{CreateSessionError, SetSessionStatusError};
 pub(crate) use sessions::{
-    WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE, rewrite_local_bundle_url,
+    WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE, rewrite_local_bundle_urls,
 };
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
@@ -76,8 +74,6 @@ pub enum BundleResolutionError {
         #[source]
         source: StoreError,
     },
-    #[error("unsupported bundle specification")]
-    UnsupportedBundleSpec,
 }
 
 #[derive(Debug, Error)]

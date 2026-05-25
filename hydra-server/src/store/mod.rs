@@ -171,60 +171,18 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 }
 
 /// Build the JSON value persisted to `tasks_v2.mount_spec` for a session on
-/// dual-write inserts. Mirrors the 2-item layout
-/// `[MountItem::Bundle, MountItem::Documents]` produced by the migration
-/// backfill (see `20260523020000_add_session_shape_columns.sql`). The
-/// BuildCache item is config-derived and intentionally omitted; runtime spec
-/// construction in `routes/sessions/mount_spec.rs::mount_spec_from_create_request`
-/// (called from `routes/sessions/context.rs::get_session_context`) adds it
-/// when applicable.
-///
-/// Phase E step 16: the legacy `tasks_v2.context` column is gone. We stuff
-/// the transitional `session.context` value into the persisted
-/// `mount_spec.mounts[0].bundle` JSON field (matching the 20260523020000
-/// migration backfill shape). For non-ServiceRepository bundles this is a
-/// no-op (BundleSpec and Bundle agree on the JSON shape); for
-/// ServiceRepository rows it preserves the `{name, rev}` payload across
-/// round-trips so `session_context_from_mount_spec_json` can recover the
-/// original `BundleSpec` on read. The persisted JSON is never served
-/// directly to the worker (the route layer rebuilds it from the resolved
-/// bundle), so the typed `MountItem::Unknown` fallback only matters here
-/// for the read side, which uses the raw JSON.
-///
-/// PR-D made `MountSpec` session-id-free: `MountItem::Bundle` and
-/// `MountItem::BuildCache` no longer carry a `session_id`, so there is no
-/// per-item id to rewrite at write time. The deserializer tolerates the
-/// legacy field on old rows for read-side backward compat.
+/// dual-write inserts. The persisted JSON is a straight serialization of
+/// `session.mount_spec` — PR-F removed the transitional `Session.context`
+/// overlay that previously stamped a `BundleSpec` into the first Bundle
+/// item's `bundle` field.
 pub(crate) fn dual_write_mount_spec_json(
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
-    let spec = session.mount_spec.clone();
-    let mut value = serde_json::to_value(&spec).map_err(|e| {
+    serde_json::to_value(&session.mount_spec).map_err(|e| {
         StoreError::Internal(format!(
             "failed to serialize mount_spec for dual-write: {e}"
         ))
-    })?;
-
-    // Overlay `session.context` (BundleSpec) into the first Bundle item's
-    // `bundle` field so ServiceRepository identity survives the drop of
-    // `tasks_v2.context`. Only applied when there is a Bundle item — fresh
-    // mount specs assembled in tests / automations may not have one.
-    let context_json = serde_json::to_value(&session.context).map_err(|e| {
-        StoreError::Internal(format!(
-            "failed to serialize session context for dual-write: {e}"
-        ))
-    })?;
-    if let Some(mounts) = value.get_mut("mounts").and_then(|m| m.as_array_mut()) {
-        for item in mounts.iter_mut() {
-            if item.get("type").and_then(|t| t.as_str()) == Some("bundle") {
-                if let Some(obj) = item.as_object_mut() {
-                    obj.insert("bundle".to_string(), context_json);
-                }
-                break;
-            }
-        }
-    }
-    Ok(value)
+    })
 }
 
 /// Build the JSON value persisted to `tasks_v2.agent_config` for a session on
@@ -244,41 +202,6 @@ pub(crate) fn dual_write_agent_config_json(
 pub(crate) fn dual_write_mode_json(session: &Session) -> Result<serde_json::Value, StoreError> {
     serde_json::to_value(&session.mode)
         .map_err(|e| StoreError::Internal(format!("failed to serialize mode for dual-write: {e}")))
-}
-
-/// Recover the transitional `Session.context` from a stored `mount_spec`
-/// JSON blob. Pairs with [`dual_write_mount_spec_json`], which stamps the
-/// `BundleSpec` into the first Bundle item's `bundle` field; the same shape
-/// is produced by the 20260523020000 migration backfill, so historical and
-/// post-Phase-E rows decode identically. Returns `BundleSpec::None` when
-/// the blob has no Bundle item (e.g. a hand-crafted mount spec) or the
-/// embedded `bundle` field is missing — both already mean "no bundle"
-/// downstream.
-pub(crate) fn session_context_from_mount_spec_json(
-    mount_spec_json: &str,
-) -> Result<crate::domain::sessions::BundleSpec, StoreError> {
-    let value: serde_json::Value = serde_json::from_str(mount_spec_json).map_err(|e| {
-        StoreError::Internal(format!(
-            "failed to parse mount_spec while deriving session context: {e}"
-        ))
-    })?;
-    let mounts = match value.get("mounts").and_then(|m| m.as_array()) {
-        Some(mounts) => mounts,
-        None => return Ok(crate::domain::sessions::BundleSpec::None),
-    };
-    for item in mounts.iter() {
-        if item.get("type").and_then(|t| t.as_str()) == Some("bundle") {
-            return match item.get("bundle") {
-                Some(bundle_value) => serde_json::from_value(bundle_value.clone()).map_err(|e| {
-                    StoreError::Internal(format!(
-                        "failed to deserialize bundle while deriving session context: {e}"
-                    ))
-                }),
-                None => Ok(crate::domain::sessions::BundleSpec::None),
-            };
-        }
-    }
-    Ok(crate::domain::sessions::BundleSpec::None)
 }
 
 pub(crate) fn session_status_log_from_versions(

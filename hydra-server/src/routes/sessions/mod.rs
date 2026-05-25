@@ -347,10 +347,7 @@ pub async fn get_session_version(
 impl From<BundleResolutionError> for ApiError {
     fn from(error: BundleResolutionError) -> Self {
         match error {
-            BundleResolutionError::UnknownRepository(_)
-            | BundleResolutionError::UnsupportedBundleSpec => {
-                ApiError::bad_request(error.to_string())
-            }
+            BundleResolutionError::UnknownRepository(_) => ApiError::bad_request(error.to_string()),
             BundleResolutionError::RepositoryLookup { .. } => ApiError::internal(error.to_string()),
         }
     }

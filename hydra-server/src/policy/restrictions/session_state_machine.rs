@@ -86,21 +86,21 @@ impl Restriction for TaskStateMachineRestriction {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::sessions::{BundleSpec, Session};
+    use crate::domain::sessions::Session;
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
     use std::collections::HashMap;
 
     fn make_task_with_status(status: Status) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         Session::new(
             Username::from("test-creator"),
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             HashMap::new(),
             None,

@@ -2153,15 +2153,17 @@ mod tests {
         status: Status,
         last_message: Option<String>,
     ) -> crate::store::Session {
-        use crate::app::sessions::mount_spec_for_session;
-        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         crate::store::Session {
             creator: crate::domain::users::Username::from("test-user"),
             spawned_from: None,
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: None,
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,
@@ -2861,16 +2863,18 @@ mod tests {
     }
 
     async fn add_dummy_session(store: &StoreWithEvents) -> SessionId {
-        use crate::app::sessions::mount_spec_for_session;
-        use crate::domain::sessions::{AgentConfig, BundleSpec, SessionMode};
+        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         use crate::store::Session as StoreSession;
         let session = StoreSession {
             creator: crate::domain::users::Username::from("test-user"),
             spawned_from: None,
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: None,
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,

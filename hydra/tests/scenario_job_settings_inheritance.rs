@@ -3,14 +3,14 @@ mod harness;
 use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, JobAssertions, TestHarness};
 use hydra_common::issues::{IssueStatus, IssueType, SessionSettings};
-use hydra_common::sessions::BundleSpec;
+use hydra_common::sessions::{Bundle, MountItem};
 use std::str::FromStr;
 
 /// Scenario 16: Job Settings Inheritance
 ///
 /// Tests that job settings (repo_name, image, model, cpu_limit, memory_limit)
 /// configured on an issue are correctly inherited by spawned tasks. Verifies
-/// that the spawned task has the correct BundleSpec, resource limits, and
+/// that the spawned task has the correct mount_spec, resource limits, and
 /// HYDRA_ISSUE_ID env var.
 #[tokio::test]
 async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
@@ -77,20 +77,29 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
         "spawned task should inherit the memory_limit from job settings"
     );
 
-    // Post-PR-E: agent_queue pre-resolves the service repo to a Bundle::GitRepository
-    // on the request, so `session.context` is derived from `mount_spec` as
-    // GitRepository (no BuildCache present in this test config). The
-    // service-repo identity is preserved end-to-end via the lowered URL.
+    // PR-F: `Session.context` is gone; the lowered git source lives on
+    // `session.mount_spec.mounts[0].bundle`. agent_queue pre-resolves the
+    // service repo to a Bundle::GitRepository on the request.
     let _ = &repo;
-    match &job.session.context {
-        BundleSpec::GitRepository { url, .. } => {
+    let first_bundle = job
+        .session
+        .mount_spec
+        .mounts
+        .iter()
+        .find_map(|m| match m {
+            MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
+            _ => None,
+        })
+        .expect("expected a Bundle item in session.mount_spec");
+    match first_bundle {
+        Bundle::GitRepository { url, .. } => {
             assert!(
                 !url.is_empty(),
-                "expected lowered GitRepository URL on session.context"
+                "expected lowered GitRepository URL on session.mount_spec"
             );
         }
         other => {
-            panic!("expected BundleSpec::GitRepository, got {other:?}");
+            panic!("expected Bundle::GitRepository, got {other:?}");
         }
     }
 
@@ -101,7 +110,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
 }
 
 /// Verify that a PM worker creating a child issue via CLI with --repo-name
-/// results in the child's spawned task having the correct BundleSpec and env vars.
+/// results in the child's spawned task having the correct mount_spec and env vars.
 #[tokio::test]
 async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     let harness = TestHarness::builder()
@@ -158,19 +167,28 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     let swe_tasks = harness.await_sessions(&child_summary.issue_id, 1).await?;
     assert_eq!(swe_tasks.len(), 1, "child should be scheduled for SWE");
 
-    // Verify the spawned task has the correct BundleSpec. Post-PR-E this
-    // is a lowered GitRepository (see comment in the sibling test above).
+    // Verify the spawned task has the lowered bundle on `mount_spec` (PR-F).
     let child_job = user.client().get_session(&swe_tasks[0]).await?;
     let _ = &repo;
-    match &child_job.session.context {
-        BundleSpec::GitRepository { url, .. } => {
+    let first_bundle = child_job
+        .session
+        .mount_spec
+        .mounts
+        .iter()
+        .find_map(|m| match m {
+            MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
+            _ => None,
+        })
+        .expect("expected a Bundle item in child session.mount_spec");
+    match first_bundle {
+        Bundle::GitRepository { url, .. } => {
             assert!(
                 !url.is_empty(),
-                "expected lowered GitRepository URL on child session.context"
+                "expected lowered GitRepository URL on child session.mount_spec"
             );
         }
         other => {
-            panic!("expected BundleSpec::GitRepository, got {other:?}");
+            panic!("expected Bundle::GitRepository, got {other:?}");
         }
     }
 

@@ -17,7 +17,7 @@ use hydra_common::{
         CreateRepositoryRequest, Repository, SearchRepositoriesQuery, UpdateRepositoryRequest,
     },
     session_status::SessionStatusUpdate,
-    sessions::{Bundle, BundleSpec, CreateSessionRequest, SearchSessionsQuery},
+    sessions::{Bundle, CreateSessionRequest, SearchSessionsQuery},
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
@@ -407,11 +407,12 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     // Summary records do not include context; verify core summary fields.
     assert_eq!(listed_job.session_id, job_id);
 
+    // PR-F dropped `Session.context` from the wire shape. The forward-compat
+    // fixture above still includes a (now-unknown) `context` field with an
+    // exotic variant; the client must tolerate it (serde silently ignores
+    // unknown fields). The assertion below just verifies the fetch succeeds.
     let fetched_session = client.get_session(&job_id).await?;
-    assert!(matches!(
-        fetched_session.session.context,
-        BundleSpec::Unknown
-    ));
+    assert_eq!(fetched_session.session_id, job_id);
 
     let kill_response = client.kill_session(&job_id).await?;
     assert_eq!(kill_response.session_id, job_id);

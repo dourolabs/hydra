@@ -886,7 +886,7 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
-    use crate::domain::sessions::{BundleSpec, Session};
+    use crate::domain::sessions::Session;
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use crate::store::{MemoryStore, Store};
@@ -916,14 +916,14 @@ mod tests {
     }
 
     fn dummy_task() -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         Session::new(
             Username::from("test-creator"),
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,

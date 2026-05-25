@@ -442,10 +442,11 @@ mod tests {
     use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
     use crate::domain::documents::Document;
     use crate::domain::issues::SessionSettings;
-    use crate::domain::sessions::{BundleSpec as DomainBundleSpec, Session};
+    use crate::domain::sessions::Session;
     use crate::domain::task_status::Status as TaskStatus;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
+    use crate::routes::sessions::mount_spec_from_create_request;
     use chrono::Utc;
     use hydra_common::SessionId;
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
@@ -541,7 +542,6 @@ mod tests {
         status: TaskStatus,
         conversation_id: Option<ConversationId>,
     ) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
@@ -558,7 +558,7 @@ mod tests {
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&DomainBundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             std::collections::HashMap::new(),
             None,

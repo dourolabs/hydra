@@ -3,7 +3,6 @@ use crate::{
     domain::{
         actors::{Actor, ActorRef},
         secrets::SecretManager,
-        sessions::BundleSpec,
         users::Username,
     },
     store::{MemoryStore, Session, Status},
@@ -1020,15 +1019,17 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
 
     // Create a task owned by the test creator
     let session = {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         Session {
             creator: creator.clone(),
             spawned_from: None,
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: Some("test-image:latest".to_string()),
             env_vars: HashMap::new(),
             cpu_limit: None,

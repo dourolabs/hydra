@@ -1,6 +1,6 @@
 use super::{AppState, BundleResolutionError, ResolvedBundle};
-use crate::domain::sessions::{Bundle, BundleSpec, Session};
-use crate::store::StoreError;
+use crate::domain::sessions::Session;
+use hydra_common::api::v1::sessions::{Bundle, MountItem};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ impl AppState {
         &self,
         session: &Session,
     ) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = self.resolve_context(session).await?;
+        let context = Self::resolve_context(session);
         let image = Self::resolve_image(session, &context, &self.config.job.default_image)?;
 
         Ok(ResolvedTask {
@@ -37,11 +37,25 @@ impl AppState {
         })
     }
 
-    async fn resolve_context(
-        &self,
-        session: &Session,
-    ) -> Result<ResolvedBundle, BundleResolutionError> {
-        self.resolve_bundle_spec(session.context.clone()).await
+    /// Read the resolved bundle off `session.mount_spec`. The first
+    /// `MountItem::Bundle` (typically `mounts[0]`) carries the lowered git
+    /// source; service-repo lowering already happened at session-create time
+    /// (`AppState::mount_spec_from_session_settings` /
+    /// `agent_queue::resolve_mount_spec`), so this is a straight read.
+    fn resolve_context(session: &Session) -> ResolvedBundle {
+        let bundle = session
+            .mount_spec
+            .mounts
+            .iter()
+            .find_map(|m| match m {
+                MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
+                _ => None,
+            })
+            .unwrap_or(Bundle::None);
+        ResolvedBundle {
+            bundle,
+            default_image: None,
+        }
     }
 
     fn resolve_image(
@@ -77,47 +91,5 @@ impl AppState {
         }
 
         Ok(trimmed.to_string())
-    }
-
-    async fn resolve_bundle_spec(
-        &self,
-        spec: BundleSpec,
-    ) -> Result<ResolvedBundle, BundleResolutionError> {
-        match spec {
-            BundleSpec::None => Ok(ResolvedBundle {
-                bundle: Bundle::None,
-                default_image: None,
-            }),
-            BundleSpec::GitRepository { url, rev } => Ok(ResolvedBundle {
-                bundle: Bundle::GitRepository { url, rev },
-                default_image: None,
-            }),
-            BundleSpec::ServiceRepository { name, rev } => {
-                let repository_config =
-                    self.repository_from_store(&name)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::RepositoryNotFound(_) => {
-                                BundleResolutionError::UnknownRepository(name.clone())
-                            }
-                            other => BundleResolutionError::RepositoryLookup {
-                                repo_name: name.clone(),
-                                source: other,
-                            },
-                        })?;
-
-                let resolved_rev = rev
-                    .or_else(|| repository_config.default_branch.clone())
-                    .unwrap_or_else(|| "main".to_string());
-
-                Ok(ResolvedBundle {
-                    bundle: Bundle::GitRepository {
-                        url: repository_config.remote_url.clone(),
-                        rev: resolved_rev,
-                    },
-                    default_image: repository_config.default_image.clone(),
-                })
-            }
-        }
     }
 }

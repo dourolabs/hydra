@@ -1,13 +1,14 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
-use crate::app::{AppState, ServiceState, sessions::mount_spec_for_session};
+use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::{ActorRef, store_github_token_secrets},
     issues::{Issue, IssueStatus, IssueType, SessionSettings},
     patches::{Patch, PatchStatus},
-    sessions::{AgentConfig, Bundle, BundleSpec, SessionMode},
+    sessions::{AgentConfig, SessionMode},
     users::{User, Username},
 };
+use crate::routes::sessions::mount_spec_from_create_request;
 use crate::{
     job_engine::JobStatus,
     store::{MemoryStore, Session, Status},
@@ -18,6 +19,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
+use hydra_common::api::v1::sessions::Bundle;
 use hydra_common::{
     BuildCacheStorageConfig,
     api::v1::{
@@ -55,7 +57,6 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let resolved = resolver_state.resolve_task(&task).await?;
 
     assert_eq!(task.mode.prompt_for_legacy_wire(), "0");
-    assert!(task.service_repo_name().is_none());
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -77,8 +78,7 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
     // Post-PR-E: route the service-repo lookup through `spawned_from`. The
     // server-side `mount_spec_from_session_settings` resolves the repo to
     // a fully-lowered Bundle::GitRepository and `mount_spec` carries no
-    // BuildCache (no build_cache config in this test), so `session.context`
-    // ends up as GitRepository — matching how the new CLI sends sessions.
+    // BuildCache (no build_cache config in this test).
     let handles = crate::test_utils::test_state_handles();
     let state2 = handles.state;
     add_repository(&state2, repo_name.clone(), repo.clone()).await?;
@@ -510,15 +510,16 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
         cache_creation_input_tokens: 12,
     };
     let session = {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         Session {
             creator: Username::from("test-creator"),
             spawned_from: None,
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: Some(default_image.clone()),
             env_vars: HashMap::new(),
             cpu_limit: None,
@@ -733,8 +734,10 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1009,8 +1012,10 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1089,8 +1094,10 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1178,7 +1185,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let context_spec = BundleSpec::GitRepository {
+    let context_bundle = Bundle::GitRepository {
         url: "https://example.com/repo.git".to_string(),
         rev: "main".to_string(),
     };
@@ -1190,8 +1197,10 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1251,8 +1260,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&context_spec),
-                context: context_spec.clone(),
+                mount_spec: mount_spec_from_create_request(context_bundle.clone(), None),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1328,8 +1336,10 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                     None,
                     None,
                 ),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1384,8 +1394,10 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
                 cpu_limit: None,
@@ -1445,8 +1457,10 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1528,7 +1542,7 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
         .await?;
     store_github_token_secrets(&state, &creator, "creator-token", "creator-refresh").await;
 
-    let context_spec = BundleSpec::GitRepository {
+    let context_bundle = Bundle::GitRepository {
         url: "https://example.com/repo.git".to_string(),
         rev: "main".to_string(),
     };
@@ -1540,8 +1554,7 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&context_spec),
-                context: context_spec.clone(),
+                mount_spec: mount_spec_from_create_request(context_bundle, None),
                 image: Some(default_image()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1596,8 +1609,10 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 spawned_from: None,
                 resumed_from: None,
                 agent_config: AgentConfig::default(),
-                mount_spec: mount_spec_for_session(&BundleSpec::None),
-                context: BundleSpec::None,
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
                 image: Some(default_image()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
@@ -1653,21 +1668,33 @@ fn mount_spec_test_config_with_build_cache() -> crate::config::AppConfig {
     config
 }
 
+/// Build a session whose persisted `mount_spec` mirrors the lowered shape
+/// `create_session` would emit for a service-repo issue — fully-resolved
+/// `Bundle::GitRepository` plus, when `build_cache` is `Some`, an interior
+/// `BuildCache` item. PR-F dropped the fetch-time re-derivation; the
+/// persisted spec is now what the worker sees, so test fixtures construct
+/// it directly.
 fn make_session_with_service_repo(
+    repo: &crate::app::Repository,
     repo_name: hydra_common::RepoName,
     env_vars: HashMap<String, String>,
+    build_cache: Option<hydra_common::BuildCacheContext>,
 ) -> Session {
-    let context = BundleSpec::ServiceRepository {
-        name: repo_name,
-        rev: None,
+    let bundle = Bundle::GitRepository {
+        url: repo.remote_url.clone(),
+        rev: repo
+            .default_branch
+            .clone()
+            .unwrap_or_else(|| "main".to_string()),
     };
+    let cache_pair = build_cache.map(|ctx| (repo_name, ctx));
+    let mount_spec = mount_spec_from_create_request(bundle, cache_pair);
     Session {
         creator: Username::from("test-creator"),
         spawned_from: None,
         resumed_from: None,
         agent_config: AgentConfig::default(),
-        mount_spec: mount_spec_for_session(&context),
-        context: context.clone(),
+        mount_spec,
         image: Some(default_image()),
         env_vars,
         cpu_limit: None,
@@ -1693,8 +1720,10 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         spawned_from: None,
         resumed_from: None,
         agent_config: AgentConfig::default(),
-        mount_spec: mount_spec_for_session(&BundleSpec::None),
-        context: BundleSpec::None,
+        mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+            hydra_common::api::v1::sessions::Bundle::None,
+            None,
+        ),
         image: Some(default_image()),
         env_vars,
         cpu_limit: None,
@@ -1749,9 +1778,19 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
 
+    let build_cache_ctx = state
+        .config
+        .build_cache
+        .to_context()
+        .expect("build_cache must be configured for this test");
     let (session_id, _) = store
         .add_session(
-            make_session_with_service_repo(repo_name.clone(), HashMap::new()),
+            make_session_with_service_repo(
+                &repo,
+                repo_name.clone(),
+                HashMap::new(),
+                Some(build_cache_ctx),
+            ),
             Utc::now(),
             &ActorRef::test(),
         )
@@ -1814,7 +1853,7 @@ async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyh
     let (session_id, _) = handles
         .store
         .add_session(
-            make_session_with_service_repo(repo_name, HashMap::new()),
+            make_session_with_service_repo(&repo, repo_name, HashMap::new(), None),
             Utc::now(),
             &ActorRef::test(),
         )
@@ -1846,7 +1885,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
     );
 
     // Session uses a raw git_repository bundle (no service_repo_name available).
-    let context = BundleSpec::GitRepository {
+    let bundle = Bundle::GitRepository {
         url: "https://example.com/repo.git".to_string(),
         rev: "main".to_string(),
     };
@@ -1855,8 +1894,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         spawned_from: None,
         resumed_from: None,
         agent_config: AgentConfig::default(),
-        mount_spec: mount_spec_for_session(&context),
-        context: context.clone(),
+        mount_spec: mount_spec_from_create_request(bundle, None),
         image: Some(default_image()),
         env_vars: HashMap::new(),
         cpu_limit: None,
@@ -1953,5 +1991,67 @@ async fn get_session_context_forwards_issue_branch_env_var_through_resolved_env(
             .map(String::as_str),
         Some("i-abcdefg"),
     );
+    Ok(())
+}
+
+/// PR-F: after dropping `Session.context`, the WorkerContext fetch path is a
+/// straight read of `Session.mount_spec`. Verify it: the mount_spec the
+/// worker sees through `GET /v1/sessions/:id/context` matches what
+/// `GET /v1/sessions/:id` returns, including the `BuildCache` item when
+/// `build_cache` is configured.
+#[tokio::test]
+async fn get_session_context_mount_spec_matches_get_session_with_build_cache() -> anyhow::Result<()>
+{
+    let config = mount_spec_test_config_with_build_cache();
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+    let (repo_name, repo) = service_repository();
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
+
+    let build_cache_ctx = state
+        .config
+        .build_cache
+        .to_context()
+        .expect("build_cache must be configured for this test");
+    let (session_id, _) = store
+        .add_session(
+            make_session_with_service_repo(
+                &repo,
+                repo_name.clone(),
+                HashMap::new(),
+                Some(build_cache_ctx),
+            ),
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(state, store).await?;
+    let client = test_client();
+
+    let context = fetch_worker_context(&server, &session_id).await?;
+    let session_record: v1::sessions::SessionVersionRecord = client
+        .get(format!(
+            "{}/v1/sessions/{}",
+            server.base_url(),
+            session_id.as_ref()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(
+        context.session.mount_spec, session_record.session.mount_spec,
+        "WorkerContext.session.mount_spec must equal GET /v1/sessions/:id mount_spec",
+    );
+    let _ = repo_name;
     Ok(())
 }

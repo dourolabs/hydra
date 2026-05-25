@@ -480,13 +480,14 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::SessionSettings;
     use crate::domain::patches::{Patch, PatchStatus, Review};
-    use crate::domain::sessions::{Bundle, BundleSpec};
     use crate::{
         app::Repository,
         config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        routes::sessions::mount_spec_from_create_request,
         test::{TestStateHandles, test_state_handles, test_state_with_repo_handles},
     };
     use chrono::Utc;
+    use hydra_common::api::v1::sessions::Bundle;
 
     fn default_user() -> Username {
         Username::from("spawner")
@@ -662,19 +663,18 @@ mod tests {
 
     fn task(
         prompt: &str,
-        context: BundleSpec,
+        bundle: Bundle,
         spawned_from: Option<IssueId>,
         image: Option<&str>,
         env_vars: HashMap<String, String>,
     ) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
             Username::from("test-creator"),
             spawned_from,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&context),
+            mount_spec_from_create_request(bundle, None),
             image.map(str::to_string),
             env_vars,
             None,
@@ -813,7 +813,7 @@ mod tests {
             .add_session(
                 task(
                     "Fix the issue",
-                    BundleSpec::None,
+                    Bundle::None,
                     Some(issue_id.clone()),
                     Some("hydra-worker:latest"),
                     HashMap::from([
@@ -1018,7 +1018,7 @@ mod tests {
         assert!(result.is_spawned());
         let session_id = result.into_session_id().unwrap();
         let session = handles.state.get_session(&session_id).await?;
-        assert_eq!(session.context, BundleSpec::None);
+        assert!(session.mount_spec.mounts.is_empty());
         assert_eq!(
             session
                 .env_vars
@@ -1129,7 +1129,7 @@ mod tests {
             .add_session(
                 task(
                     "Parent task",
-                    BundleSpec::None,
+                    Bundle::None,
                     Some(parent_id.clone()),
                     Some("hydra-worker:latest"),
                     HashMap::from([
@@ -1287,31 +1287,34 @@ mod tests {
             .state
             .get_session(&result2.into_session_id().unwrap())
             .await?;
-        // PR-E: `session.context` is now derived from `mount_spec` (no
-        // build_cache in this test → resolves to GitRepository, not
-        // ServiceRepository). The service-repo identity moves to the
-        // resolved bundle URL, which mirrors how the server stamps the
-        // bundle when the resolver runs.
+        // PR-F: `Session.context` is gone; the resolved bundle lives on
+        // `session.mount_spec.mounts[0]` (no build_cache in this test → just
+        // a Bundle::GitRepository with the service-repo URL).
+        use hydra_common::api::v1::sessions::MountItem;
         let expected_url = "https://github.com/dourolabs/hydra.git";
+        let first_bundle = session2.mount_spec.mounts.iter().find_map(|m| match m {
+            MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
+            _ => None,
+        });
         let has_repo_task = matches!(
-            session2.context,
-            BundleSpec::GitRepository { ref url, .. } if url == expected_url
+            first_bundle.as_ref(),
+            Some(Bundle::GitRepository { url, .. }) if url == expected_url
         );
         let _ = repo_name;
         assert!(
             has_repo_task,
-            "expected a task with the resolved service-repo URL, got {:?}",
-            session2.context
+            "expected a task with the resolved service-repo URL, got {first_bundle:?}",
         );
 
         let session1 = handles
             .state
             .get_session(&result1.into_session_id().unwrap())
             .await?;
-        let has_no_repo_task = matches!(session1.context, BundleSpec::None);
+        // Repo-less issue → empty mount_spec.mounts.
         assert!(
-            has_no_repo_task,
-            "expected a task with BundleSpec::None for the repo-less issue"
+            session1.mount_spec.mounts.is_empty(),
+            "expected an empty mount_spec for the repo-less issue, got {:?}",
+            session1.mount_spec.mounts,
         );
 
         Ok(())
@@ -1426,7 +1429,7 @@ mod tests {
             .add_session(
                 task(
                     "Existing",
-                    BundleSpec::None,
+                    Bundle::None,
                     Some(issue_id.clone()),
                     None,
                     HashMap::from([
@@ -1519,7 +1522,7 @@ mod tests {
             .add_session(
                 task(
                     "Pending work",
-                    BundleSpec::None,
+                    Bundle::None,
                     Some(first_issue_id.clone()),
                     None,
                     HashMap::from([
@@ -2779,7 +2782,7 @@ mod tests {
             .add_session(
                 task(
                     "Parent task",
-                    BundleSpec::None,
+                    Bundle::None,
                     Some(parent_id.clone()),
                     Some("hydra-worker:latest"),
                     HashMap::from([
@@ -3191,11 +3194,12 @@ mod tests {
             session_a.status, session_b.status,
             "status must match across paths (default Created)"
         );
-        // The transitional `context` carrier is derived from `mount_spec`
-        // identically on both paths.
+        // PR-F: the transitional `Session.context` is gone; the persisted
+        // `mount_spec` is the single source of truth and must match across
+        // both paths.
         assert_eq!(
-            session_a.context, session_b.context,
-            "context (transitional) must match across paths"
+            session_a.mount_spec, session_b.mount_spec,
+            "mount_spec must match across paths"
         );
         // Both paths inject the standard agent_queue env_vars.
         assert_eq!(

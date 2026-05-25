@@ -154,7 +154,6 @@ function makeRecord(
       mode: { type: "headless", prompt: "do the thing" },
       agent_config: {},
       mount_spec: { working_dir: "repo", mounts: [] },
-      context: { type: "none" },
       creator: "swe",
       status,
       spawned_from: null,

@@ -4,7 +4,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         issues::SessionSettings,
-        sessions::{AgentConfig, Bundle, BundleSpec, SessionMode},
+        sessions::{AgentConfig, SessionMode},
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
@@ -12,6 +12,7 @@ use crate::{
     store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
+use hydra_common::api::v1::sessions::{Bundle, MountItem, MountSpec};
 use hydra_common::{
     ConversationId, SessionId, Versioned,
     api::v1 as api,
@@ -28,84 +29,6 @@ use super::app_state::AppState;
 
 pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
 pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
-
-/// Build the standard 2-item MountSpec (`Bundle` + `Documents`) for a session
-/// at create time. Delegates to
-/// [`crate::routes::sessions::mount_spec_from_create_request`], which is the
-/// single source of truth for `CreateSessionRequest → MountSpec` translation.
-/// `ServiceRepository` can't be lowered without the resolver here, so it is
-/// substituted with `Bundle::None`; `routes/sessions/context.rs` re-runs the
-/// translation against the resolved bundle at WorkerContext fetch time.
-///
-/// PR-E: no longer called by `create_session` — kept alive for other
-/// callers (tests, `routes/sessions/context.rs`) and slated for deletion
-/// alongside `BundleSpec` in PR-F.
-#[allow(dead_code)]
-pub(crate) fn mount_spec_for_session(
-    context: &BundleSpec,
-) -> hydra_common::api::v1::sessions::MountSpec {
-    use hydra_common::api::v1::sessions::Bundle;
-    let bundle = match context {
-        BundleSpec::None => Bundle::None,
-        BundleSpec::GitRepository { url, rev } => Bundle::GitRepository {
-            url: url.clone(),
-            rev: rev.clone(),
-        },
-        _ => Bundle::None,
-    };
-    crate::routes::sessions::mount_spec_from_create_request(bundle, None)
-}
-
-/// Derive the transitional `Session.context` carrier from a `MountSpec`.
-///
-/// Picks the first `MountItem::BuildCache` (yielding `ServiceRepository`) if
-/// present; otherwise inspects the first `MountItem::Bundle.bundle`. The
-/// `service_repo_name()` accessor on `Session` reads `Session.context`, and
-/// the resolver (`routes/sessions/context.rs`) consults that accessor when
-/// deciding whether to append a `BuildCache` mount. PR-F will delete
-/// `Session.context`, this helper, and the resolver re-lowering together.
-pub(crate) fn derive_bundle_spec_from_mount_spec(
-    mount_spec: &hydra_common::api::v1::sessions::MountSpec,
-) -> BundleSpec {
-    use hydra_common::api::v1::sessions::{Bundle, MountItem};
-
-    // Find the bundle rev (if any) on the first `Bundle` item for use as the
-    // ServiceRepository rev fallback.
-    let bundle_rev = mount_spec.mounts.iter().find_map(|m| match m {
-        MountItem::Bundle {
-            bundle: Bundle::GitRepository { rev, .. },
-            ..
-        } => Some(rev.clone()),
-        _ => None,
-    });
-
-    for mount in &mount_spec.mounts {
-        if let MountItem::BuildCache {
-            service_repo_name, ..
-        } = mount
-        {
-            return BundleSpec::ServiceRepository {
-                name: service_repo_name.clone(),
-                rev: bundle_rev,
-            };
-        }
-    }
-
-    for mount in &mount_spec.mounts {
-        if let MountItem::Bundle { bundle, .. } = mount {
-            return match bundle {
-                Bundle::None => BundleSpec::None,
-                Bundle::GitRepository { url, rev } => BundleSpec::GitRepository {
-                    url: url.clone(),
-                    rev: rev.clone(),
-                },
-                _ => BundleSpec::None,
-            };
-        }
-    }
-
-    BundleSpec::None
-}
 
 #[derive(Debug, Error)]
 pub enum CreateSessionError {
@@ -347,12 +270,6 @@ impl AppState {
             req_mount_spec
         };
 
-        // Derive the transitional `Session.context` carrier from `mount_spec`
-        // for the resolver (`routes/sessions/context.rs` still consults
-        // `session.service_repo_name()`). PR-F deletes this field, this
-        // carrier, and `mount_spec_for_session` together.
-        let context = derive_bundle_spec_from_mount_spec(&mount_spec);
-
         let agent_config = AgentConfig::new(agent_name, model, system_prompt, mcp_config);
         let mode: SessionMode = req_mode.into();
 
@@ -372,7 +289,6 @@ impl AppState {
             None,
             None,
         );
-        session.context = context;
 
         self.resolve_task(&session).await?;
 
@@ -1326,6 +1242,22 @@ pub(crate) fn build_bind_mounts_for_local_repo(bundle: &mut Bundle) -> Vec<BindM
     }]
 }
 
+/// Walks a [`MountSpec`]'s mounts and rewrites every `MountItem::Bundle` with
+/// a `file://` URL to point at a container-side mount path. Returns the
+/// resulting bind mounts so the caller can pass them to the container engine.
+///
+/// Used by [`crate::routes::sessions::context::get_session_context`] to serve
+/// container-side URLs to the worker when the engine is containerized.
+pub(crate) fn rewrite_local_bundle_urls(mount_spec: &mut MountSpec) -> Vec<BindMount> {
+    let mut bind_mounts = Vec::new();
+    for mount in mount_spec.mounts.iter_mut() {
+        if let MountItem::Bundle { bundle, .. } = mount {
+            bind_mounts.extend(build_bind_mounts_for_local_repo(bundle));
+        }
+    }
+    bind_mounts
+}
+
 /// If `bundle` is a `GitRepository` with a `file://` URL, rewrites the URL to
 /// a container-side mount path and returns `(host_path, container_path)`.
 /// Returns `None` when no rewriting is needed.
@@ -1974,7 +1906,7 @@ mod tests {
 
     mod bind_mount_tests {
         use super::super::*;
-        use crate::domain::sessions::Bundle;
+        use hydra_common::api::v1::sessions::Bundle;
 
         #[test]
         fn file_url_creates_bind_mount_and_rewrites_bundle() {
@@ -2041,6 +1973,67 @@ mod tests {
                     assert_eq!(url, "file:///mnt/repos/my-project");
                 }
                 _ => panic!("expected GitRepository bundle"),
+            }
+        }
+
+        /// PR-F: `routes/sessions/context.rs::get_session_context` walks
+        /// `session.mount_spec.mounts` via [`rewrite_local_bundle_urls`] and
+        /// only rewrites Bundle items whose `Bundle::GitRepository.url` is a
+        /// `file://` URL. Non-`file://` URLs and `Bundle::None` items are
+        /// left alone.
+        #[test]
+        fn rewrite_local_bundle_urls_walks_mount_spec_and_skips_non_file_urls() {
+            use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath};
+
+            let mut spec = MountSpec::new(
+                RelativePath::new("repo").unwrap(),
+                vec![
+                    MountItem::Bundle {
+                        target: RelativePath::new("repo").unwrap(),
+                        bundle: Bundle::GitRepository {
+                            url: "file:///home/user/local-repo.git".to_string(),
+                            rev: "main".to_string(),
+                        },
+                    },
+                    MountItem::Bundle {
+                        target: RelativePath::new("vendored").unwrap(),
+                        bundle: Bundle::GitRepository {
+                            url: "https://github.com/owner/repo.git".to_string(),
+                            rev: "main".to_string(),
+                        },
+                    },
+                    MountItem::Documents {
+                        target: RelativePath::new("documents").unwrap(),
+                    },
+                ],
+            );
+
+            let bind_mounts = rewrite_local_bundle_urls(&mut spec);
+
+            assert_eq!(bind_mounts.len(), 1, "only the file:// URL should bind");
+            assert_eq!(bind_mounts[0].host_path, "/home/user/local-repo.git");
+            assert_eq!(bind_mounts[0].container_path, "/mnt/repos/local-repo.git");
+
+            match &spec.mounts[0] {
+                MountItem::Bundle {
+                    bundle: Bundle::GitRepository { url, .. },
+                    ..
+                } => {
+                    assert_eq!(url, "file:///mnt/repos/local-repo.git");
+                }
+                other => panic!("expected first item to remain a Bundle, got {other:?}"),
+            }
+            match &spec.mounts[1] {
+                MountItem::Bundle {
+                    bundle: Bundle::GitRepository { url, .. },
+                    ..
+                } => {
+                    assert_eq!(
+                        url, "https://github.com/owner/repo.git",
+                        "non-file:// URLs must not be rewritten"
+                    );
+                }
+                other => panic!("expected second item to remain a Bundle, got {other:?}"),
             }
         }
     }

@@ -18,7 +18,6 @@ import type {
   SetSessionStatusResponse,
   WorkerContext,
   Status,
-  BundleSpec,
   MountItem,
 } from "@hydra/api";
 
@@ -48,28 +47,6 @@ export function conversationIdOf(session: Session): string | null {
   const legacy = session as LegacySession;
   if (session.mode?.type === "interactive") return session.mode.conversation_id;
   return legacy.interactive?.conversation_id ?? null;
-}
-
-function bundleSpecFromMountSpec(
-  mountSpec: CreateSessionRequest["mount_spec"],
-): BundleSpec {
-  for (const mount of mountSpec.mounts) {
-    if (mount.type === "bundle") {
-      const bundle = mount.bundle;
-      if (bundle.type === "git_repository") {
-        return { type: "git_repository", url: bundle.url, rev: bundle.rev };
-      }
-      return { type: "none" };
-    }
-    if (mount.type === "build_cache") {
-      return {
-        type: "service_repository",
-        name: mount.service_repo_name,
-        rev: null,
-      };
-    }
-  }
-  return { type: "none" };
 }
 
 const COLLECTION = "sessions";
@@ -161,7 +138,6 @@ export function createInteractiveSessionForConversation(
         { type: "documents", target: "documents" },
       ],
     },
-    context: { type: "none" },
     creator: DEV_USERNAME,
     status: "running" as Status,
     creation_time: now,
@@ -234,7 +210,6 @@ export function createSessionRoutes(store: Store): Hono {
       mode: body.mode,
       agent_config: body.agent_config,
       mount_spec: mountSpec,
-      context: bundleSpecFromMountSpec(mountSpec),
       spawned_from: body.spawned_from,
       resumed_from: body.resumed_from,
       creator: DEV_USERNAME,
@@ -397,24 +372,12 @@ export function createSessionRoutes(store: Store): Hono {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
-    const bundle =
-      task.context?.type === "git_repository"
-        ? { type: "git_repository" as const, url: task.context.url, rev: task.context.rev }
-        : { type: "none" as const };
-    const mount_spec = {
-      working_dir: "repo",
-      mounts: [
-        {
-          type: "bundle" as const,
-          target: "repo",
-          bundle,
-        },
-        { type: "documents" as const, target: "documents" },
-      ],
-    };
-    const sessionWithMount: Session = { ...task, mount_spec, env_vars: task.env_vars ?? {} };
+    // PR-F: WorkerContext.session is a straight read of the persisted
+    // session; no per-fetch re-derivation of mount_spec from a separate
+    // `context` field.
+    const sessionWithEnv: Session = { ...task, env_vars: task.env_vars ?? {} };
     const resp: WorkerContext = {
-      session: sessionWithMount,
+      session: sessionWithEnv,
       resolved_env: task.env_vars ?? {},
       github_token: null,
       resumed_state: null,
