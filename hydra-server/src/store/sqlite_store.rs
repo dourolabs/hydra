@@ -1441,20 +1441,12 @@ impl SqliteStore {
             })
             .transpose()?;
 
-        // The legacy `context` column is gone; recover the transitional
-        // `Session.context` from the same mount_spec JSON the dual-write
-        // path stamps into `mount_spec.mounts[0].bundle` (matches the
-        // 20260523020000 backfill shape — see
-        // `dual_write_mount_spec_json`).
-        let context = super::session_context_from_mount_spec_json(&row.mount_spec)?;
-
         Ok(Session {
             creator,
             spawned_from,
             resumed_from,
             agent_config,
             mount_spec,
-            context,
             image: row.image.clone(),
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
@@ -7137,8 +7129,9 @@ mod tests {
             None,
             None,
             AgentConfig::default(),
-            crate::app::sessions::mount_spec_for_session(
-                &crate::domain::sessions::BundleSpec::None,
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
             ),
             Some("hydra-worker:latest".to_string()),
             HashMap::new(),
@@ -7606,8 +7599,9 @@ mod tests {
             None,
             None,
             AgentConfig::new(None, Some("claude-3".to_string()), None, Some(mcp_config)),
-            crate::app::sessions::mount_spec_for_session(
-                &crate::domain::sessions::BundleSpec::None,
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
             ),
             Some("my-image:v1".to_string()),
             HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
@@ -10935,7 +10929,6 @@ mod tests {
 
     #[tokio::test]
     async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec() {
-        use crate::domain::sessions::BundleSpec;
         use hydra_common::api::v1::sessions::{
             Bundle, MountItem, MountSpec as ApiMountSpec, RelativePath,
         };
@@ -10956,14 +10949,6 @@ mod tests {
                 },
             ],
         );
-        // Keep `session.context` consistent with `mount_spec.mounts[0].bundle`.
-        // The dual-write path stamps the BundleSpec into the bundle JSON so
-        // that `Session.context` survives a round-trip after Phase E step 16
-        // dropped the legacy `tasks_v2.context` column.
-        session.context = BundleSpec::GitRepository {
-            url: "https://github.com/example/repo".to_string(),
-            rev: "main".to_string(),
-        };
         session.agent_config.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store
@@ -10984,41 +10969,5 @@ mod tests {
                 .expect("agent_config is non-null"),
         );
         assert_eq!(agent_config["model"], "gpt-4o");
-    }
-
-    /// Phase E step 16: `Session.context` recovered from the persisted
-    /// mount_spec JSON survives a round-trip for `BundleSpec::ServiceRepository`,
-    /// even though no typed Bundle variant can hold it. Backs the
-    /// `service_repo_name()` helper used by
-    /// `routes/sessions/context.rs::get_session_context`.
-    #[tokio::test]
-    async fn session_context_round_trips_service_repository_via_mount_spec() {
-        use crate::domain::sessions::BundleSpec;
-        use hydra_common::RepoName;
-        let store = create_test_store().await;
-        let mut session = spawn_task();
-        let repo_name = RepoName::from_str("dourolabs/sample").unwrap();
-        session.context = BundleSpec::ServiceRepository {
-            name: repo_name.clone(),
-            rev: Some("develop".to_string()),
-        };
-        let (sid, _) = store
-            .add_session(session, Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store
-            .get_session(&sid, false)
-            .await
-            .expect("session should read back")
-            .item;
-        match &fetched.context {
-            BundleSpec::ServiceRepository { name, rev } => {
-                assert_eq!(name, &repo_name);
-                assert_eq!(rev.as_deref(), Some("develop"));
-            }
-            other => panic!("expected ServiceRepository, got {other:?}"),
-        }
-        assert_eq!(fetched.service_repo_name(), Some(&repo_name));
     }
 }

@@ -855,23 +855,12 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        // The legacy `context` column is gone; recover the transitional
-        // `Session.context` from the same mount_spec JSON the dual-write
-        // path stamps into `mount_spec.mounts[0].bundle`.
-        let mount_spec_json_str = serde_json::to_string(&row.mount_spec).map_err(|e| {
-            StoreError::Internal(format!(
-                "failed to re-serialize mount_spec for context derivation: {e}"
-            ))
-        })?;
-        let context = crate::store::session_context_from_mount_spec_json(&mount_spec_json_str)?;
-
         Ok(Session {
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
             spawned_from,
             resumed_from,
             agent_config,
             mount_spec,
-            context,
             image: row.image.clone(),
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
@@ -5227,7 +5216,6 @@ mod tests {
                 SessionSettings, TodoItem,
             },
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
-            sessions::BundleSpec,
             users::{User, Username},
         },
         test_utils::test_state_with_store,
@@ -5298,14 +5286,16 @@ mod tests {
     }
 
     fn sample_session() -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
             Username::from("test-creator"),
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             Some("hydra-worker:latest".to_string()),
             Default::default(),
             None,
@@ -5322,14 +5312,16 @@ mod tests {
 
     /// Session with creator and other fields set for round-trip tests.
     fn session_with_creator_for_round_trip() -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         Session::new(
             Username::from("alice"),
             None,
             None,
             AgentConfig::new(None, Some("model-v1".to_string()), None, None),
-            mount_spec_for_session(&BundleSpec::None),
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             Some("hydra-worker:latest".to_string()),
             Default::default(),
             None,
@@ -5361,7 +5353,6 @@ mod tests {
 
     /// Session with every optional field set so serialization round-trip can assert full equality.
     fn sample_session_all_fields() -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         let mcp_config = serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}});
         let mut session = Session::new(
@@ -5369,7 +5360,10 @@ mod tests {
             None,
             None,
             AgentConfig::new(None, Some("model-x".to_string()), None, Some(mcp_config)),
-            mount_spec_for_session(&BundleSpec::None),
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             Some("img:tag".to_string()),
             [("K".to_string(), "V".to_string())].into_iter().collect(),
             Some("1000m".to_string()),
@@ -8520,7 +8514,6 @@ mod tests {
     // ---- Session event log + state ----
 
     fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
@@ -8537,7 +8530,10 @@ mod tests {
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            crate::routes::sessions::mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             Some("hydra-worker:latest".to_string()),
             Default::default(),
             None,
@@ -9351,14 +9347,14 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn dual_write_session_with_git_bundle_carries_url_into_mount_spec_v2(pool: PgStorePool) {
+        use hydra_common::api::v1::sessions::Bundle;
         let store = PostgresStoreV2::new(pool);
-        use crate::app::sessions::mount_spec_for_session;
         let mut session = sample_session();
-        let bundle_ctx = BundleSpec::GitRepository {
+        let bundle = Bundle::GitRepository {
             url: "https://github.com/example/repo".to_string(),
             rev: "main".to_string(),
         };
-        session.mount_spec = mount_spec_for_session(&bundle_ctx);
+        session.mount_spec = crate::routes::sessions::mount_spec_from_create_request(bundle, None);
         session.agent_config.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store

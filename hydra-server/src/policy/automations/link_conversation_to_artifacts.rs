@@ -175,7 +175,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::patches::{Patch, PatchStatus};
-    use crate::domain::sessions::{BundleSpec, Session};
+    use crate::domain::sessions::Session;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::store::Status;
@@ -208,8 +208,8 @@ mod tests {
         spawned_from: Option<IssueId>,
         conversation_id: Option<ConversationId>,
     ) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
@@ -225,8 +225,10 @@ mod tests {
             spawned_from,
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: None,
             env_vars: HashMap::new(),
             cpu_limit: None,

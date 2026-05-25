@@ -699,8 +699,19 @@ mod tests {
             .unwrap();
 
         let session = session_for_conversation(&state, &conversation_id).await;
-        match &session.item.context {
-            crate::domain::sessions::BundleSpec::GitRepository { url, rev } => {
+        use hydra_common::api::v1::sessions::{Bundle, MountItem};
+        let bundle = session
+            .item
+            .mount_spec
+            .mounts
+            .iter()
+            .find_map(|m| match m {
+                MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
+                _ => None,
+            })
+            .expect("mount_spec must carry a Bundle item");
+        match bundle {
+            Bundle::GitRepository { url, rev } => {
                 assert_eq!(url, "https://github.com/org/repo.git");
                 assert_eq!(rev, "feature");
             }

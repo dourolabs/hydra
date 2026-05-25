@@ -3,7 +3,7 @@ use super::users::Username;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::sessions::{McpConfig, MountSpec, TokenUsage};
-use hydra_common::{ConversationId, IssueId, RepoName, SessionId};
+use hydra_common::{ConversationId, IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -131,10 +131,6 @@ pub struct Session {
 
     pub agent_config: AgentConfig,
     pub mount_spec: MountSpec,
-    /// Transitional bundle spec, mirrored from
-    /// [`api::sessions::Session::context`]. Removed in PR-3.
-    #[serde(default, skip_serializing_if = "BundleSpec::is_none")]
-    pub context: BundleSpec,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
@@ -191,7 +187,6 @@ impl Session {
             resumed_from,
             agent_config,
             mount_spec,
-            context: BundleSpec::None,
             image,
             env_vars,
             cpu_limit,
@@ -220,19 +215,6 @@ impl Session {
         matches!(self.mode, SessionMode::Interactive { .. })
     }
 
-    /// Returns the configured service-repository name backing this session,
-    /// if the create-time `BundleSpec` selected one. Reads the transitional
-    /// `Session.context` field; the §6 step 16 PR-5 read path recovers that
-    /// field from `mount_spec.mounts[0].bundle` so the value remains stable
-    /// across DB round-trips even after the legacy `tasks_v2.context`
-    /// column was dropped.
-    pub fn service_repo_name(&self) -> Option<&RepoName> {
-        match &self.context {
-            BundleSpec::ServiceRepository { name, .. } => Some(name),
-            _ => None,
-        }
-    }
-
     /// Returns the prompt string for the worker, regardless of mode.
     /// Headless sessions return `mode.Headless.prompt`; Interactive
     /// sessions return `agent_config.system_prompt` (the agent's prompt,
@@ -245,76 +227,6 @@ impl Session {
                 .system_prompt
                 .as_deref()
                 .unwrap_or_default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum BundleSpec {
-    #[serde(rename = "none")]
-    None,
-    GitRepository {
-        /// Remote Git repository URL that should be cloned for the session context.
-        url: String,
-        /// Specific git revision (branch, tag, or commit) to checkout after cloning.
-        rev: String,
-    },
-    ServiceRepository {
-        /// Name of a repository configured in the service configuration.
-        name: RepoName,
-        /// Optional git revision (branch, tag, or commit) to checkout after cloning.
-        #[serde(default)]
-        rev: Option<String>,
-    },
-}
-
-impl Default for BundleSpec {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-impl BundleSpec {
-    pub fn is_none(&self) -> bool {
-        matches!(self, BundleSpec::None)
-    }
-}
-
-impl From<Bundle> for BundleSpec {
-    fn from(bundle: Bundle) -> Self {
-        match bundle {
-            Bundle::None => BundleSpec::None,
-            Bundle::GitRepository { url, rev } => BundleSpec::GitRepository { url, rev },
-        }
-    }
-}
-
-impl From<api::sessions::BundleSpec> for BundleSpec {
-    fn from(value: api::sessions::BundleSpec) -> Self {
-        match value {
-            api::sessions::BundleSpec::None => BundleSpec::None,
-            api::sessions::BundleSpec::GitRepository { url, rev } => {
-                BundleSpec::GitRepository { url, rev }
-            }
-            api::sessions::BundleSpec::ServiceRepository { name, rev } => {
-                BundleSpec::ServiceRepository { name, rev }
-            }
-            _ => unreachable!("unsupported bundle spec variant"),
-        }
-    }
-}
-
-impl From<BundleSpec> for api::sessions::BundleSpec {
-    fn from(value: BundleSpec) -> Self {
-        match value {
-            BundleSpec::None => api::sessions::BundleSpec::None,
-            BundleSpec::GitRepository { url, rev } => {
-                api::sessions::BundleSpec::GitRepository { url, rev }
-            }
-            BundleSpec::ServiceRepository { name, rev } => {
-                api::sessions::BundleSpec::ServiceRepository { name, rev }
-            }
         }
     }
 }
@@ -437,7 +349,6 @@ impl TryFrom<api::sessions::Session> for Session {
             resumed_from: value.resumed_from,
             agent_config: value.agent_config.into(),
             mount_spec: value.mount_spec,
-            context: value.context.into(),
             image: value.image,
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
@@ -479,7 +390,6 @@ impl From<Session> for api::sessions::Session {
             value.end_time,
         );
         session.usage = value.usage;
-        session.context = value.context.into();
         session
     }
 }
@@ -659,17 +569,16 @@ impl From<SessionEventSummary> for api::sessions::SessionEventSummary {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentConfig, BundleSpec, Session, SessionEvent, SessionEventSummary, SessionMode,
+        AgentConfig, Session, SessionEvent, SessionEventSummary, SessionMode,
         UnknownSessionEventVariant,
     };
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use chrono::Utc;
+    use hydra_common::SessionId;
     use hydra_common::api::v1 as api;
     use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath};
-    use hydra_common::{RepoName, SessionId};
     use std::collections::HashMap;
-    use std::str::FromStr;
 
     fn test_mount_spec() -> MountSpec {
         MountSpec::new(
@@ -678,20 +587,6 @@ mod tests {
                 target: RelativePath::new("documents").unwrap(),
             }],
         )
-    }
-
-    #[test]
-    fn bundle_spec_converts_between_domain_and_api() {
-        let repo = RepoName::from_str("dourolabs/hydra").unwrap();
-        let domain = BundleSpec::ServiceRepository {
-            name: repo.clone(),
-            rev: Some("main".to_string()),
-        };
-
-        let api_spec: api::sessions::BundleSpec = domain.clone().into();
-        let round_trip: BundleSpec = api_spec.into();
-
-        assert_eq!(round_trip, domain);
     }
 
     #[test]

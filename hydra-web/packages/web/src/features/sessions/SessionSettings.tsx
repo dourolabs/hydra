@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Session } from "@hydra/api";
+import type { MountSpec, Session } from "@hydra/api";
 import { Badge, MarkdownViewer } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -9,18 +9,29 @@ interface SessionSettingsProps {
   task: Session;
 }
 
-function formatContext(context: Session["context"]): string {
-  if (!context) return "None";
-  switch (context.type) {
-    case "git_repository":
-      return `${context.url}${context.rev ? ` @ ${context.rev}` : ""}`;
-    case "service_repository":
-      return `${context.name}${context.rev ? ` @ ${context.rev}` : ""}`;
-    case "none":
-      return "None";
-    default:
-      return "Unknown";
+function formatMountSpec(mountSpec: MountSpec): string {
+  // PR-F: `Session.context` is gone; render the first Bundle item's URL
+  // (with optional BuildCache service_repo_name overlay) so the UI keeps
+  // showing the same "what does this session check out" hint.
+  let bundleLabel: string | null = null;
+  let serviceRepo: string | null = null;
+  for (const mount of mountSpec.mounts) {
+    if (mount.type === "bundle" && bundleLabel === null) {
+      if (mount.bundle.type === "git_repository") {
+        bundleLabel = `${mount.bundle.url}${mount.bundle.rev ? ` @ ${mount.bundle.rev}` : ""}`;
+      } else if (mount.bundle.type === "none") {
+        bundleLabel = "None";
+      } else {
+        bundleLabel = "Unknown";
+      }
+    } else if (mount.type === "build_cache") {
+      serviceRepo = mount.service_repo_name;
+    }
   }
+  if (serviceRepo) {
+    return bundleLabel ? `${serviceRepo} (${bundleLabel})` : serviceRepo;
+  }
+  return bundleLabel ?? "None";
 }
 
 function promptOf(task: Session): string | null {
@@ -65,7 +76,7 @@ export function SessionSettings({ task }: SessionSettingsProps) {
     value: <Badge status={normalizeSessionStatus(task.status)} />,
   });
 
-  entries.push({ label: "Context", value: formatContext(task.context) });
+  entries.push({ label: "Context", value: formatMountSpec(task.mount_spec) });
 
   if (task.spawned_from) {
     entries.push({

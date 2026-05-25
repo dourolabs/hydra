@@ -1,7 +1,7 @@
 use crate::{
     domain::{
         actors::{Actor, ActorRef},
-        sessions::{BundleSpec, Session},
+        sessions::Session,
         users::Username,
     },
     store::Status,
@@ -21,14 +21,14 @@ use reqwest::{Client, StatusCode, header};
 use std::collections::HashMap;
 
 fn sample_task(status: Status) -> Session {
-    use crate::app::sessions::mount_spec_for_session;
     use crate::domain::sessions::{AgentConfig, SessionMode};
+    use crate::routes::sessions::mount_spec_from_create_request;
     Session::new(
         Username::from("test-creator"),
         None,
         None,
         AgentConfig::default(),
-        mount_spec_for_session(&BundleSpec::None),
+        mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
         None,
         HashMap::new(),
         None,

@@ -52,7 +52,6 @@ function makeSession(
     prompt: prompt ?? "Default task prompt",
   };
   return {
-    context: { type: "none" },
     creator: "testuser",
     agent_config: {},
     mount_spec: { working_dir: "repo", mounts: [] },

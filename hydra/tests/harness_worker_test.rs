@@ -207,7 +207,7 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
 
     // Session: interactive=true triggers the interactive branch in
     // worker_run; OPENAI_API_KEY=test satisfies Codex::new's env check;
-    // BundleSpec::None keeps mounts minimal (no clone, no build cache).
+    // an empty MountSpec keeps mounts minimal (no clone, no build cache).
     let mut env_vars = HashMap::new();
     env_vars.insert("OPENAI_API_KEY".to_string(), "test".to_string());
     // Pre-PR-E this test exercised `interactive=true` without a

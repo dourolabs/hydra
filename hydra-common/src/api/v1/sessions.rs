@@ -190,14 +190,6 @@ pub struct Session {
     /// Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
     /// serde default; deserialization fails loudly if the field is missing.
     pub mount_spec: MountSpec,
-    /// Transitional bundle spec. Retained through PR-3 (Phase D step 14)
-    /// because the in-memory `mount_spec` lowers `ServiceRepository` to a
-    /// placeholder `Bundle::None`; the resolver still consults this field
-    /// for the service-repository → git-url translation. Removed in PR-4
-    /// (Phase D step 15) once `mount_spec` carries the resolved bundle
-    /// end-to-end.
-    #[serde(default, skip_serializing_if = "BundleSpec::is_none")]
-    pub context: BundleSpec,
 
     // === Universal runtime knobs ===
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,7 +257,6 @@ impl Session {
             resumed_from,
             agent_config,
             mount_spec,
-            context: BundleSpec::None,
             image,
             env_vars,
             cpu_limit,
@@ -321,88 +312,6 @@ pub struct CreateSessionRequest {
     pub spawned_from: Option<IssueId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<SessionId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum BundleSpec {
-    #[serde(rename = "none")]
-    None,
-    GitRepository {
-        /// Remote Git repository URL that should be cloned for the session context.
-        url: String,
-        /// Specific git revision (branch, tag, or commit) to checkout after cloning.
-        rev: String,
-    },
-    ServiceRepository {
-        /// Name of a repository configured in the service configuration.
-        name: RepoName,
-        /// Optional git revision (branch, tag, or commit) to checkout after cloning.
-        #[serde(default)]
-        rev: Option<String>,
-    },
-    #[serde(other)]
-    Unknown,
-}
-
-impl Default for BundleSpec {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-impl BundleSpec {
-    pub fn is_none(&self) -> bool {
-        matches!(self, BundleSpec::None)
-    }
-}
-
-impl From<Bundle> for BundleSpec {
-    fn from(bundle: Bundle) -> Self {
-        match bundle {
-            Bundle::None => BundleSpec::None,
-            Bundle::GitRepository { url, rev } => BundleSpec::GitRepository { url, rev },
-            Bundle::Unknown => BundleSpec::Unknown,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum BundleSpecHelper {
-    #[serde(rename = "none")]
-    None,
-    GitRepository {
-        url: String,
-        rev: String,
-    },
-    ServiceRepository {
-        name: RepoName,
-        #[serde(default)]
-        rev: Option<String>,
-    },
-}
-
-impl<'de> Deserialize<'de> for BundleSpec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        match serde_json::from_value::<BundleSpecHelper>(value) {
-            Ok(BundleSpecHelper::None) => Ok(BundleSpec::None),
-            Ok(BundleSpecHelper::GitRepository { url, rev }) => {
-                Ok(BundleSpec::GitRepository { url, rev })
-            }
-            Ok(BundleSpecHelper::ServiceRepository { name, rev }) => {
-                Ok(BundleSpec::ServiceRepository { name, rev })
-            }
-            Err(_) => Ok(BundleSpec::Unknown),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

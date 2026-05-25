@@ -1994,7 +1994,7 @@ async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
 #[tokio::test]
 async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
     use crate::{
-        domain::{actors::ActorRef, issues::Issue, sessions::BundleSpec, users::Username},
+        domain::{actors::ActorRef, issues::Issue, users::Username},
         job_engine::{JobEngine, JobStatus},
         store::{Session, Status},
         test_utils::{
@@ -2036,15 +2036,17 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
 
     // Helper to create a session linked to this issue
     let make_session = || {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         Session {
             creator: Username::from("test-creator"),
             spawned_from: Some(issue_id.clone()),
             resumed_from: None,
             agent_config: AgentConfig::default(),
-            mount_spec: mount_spec_for_session(&BundleSpec::None),
-            context: BundleSpec::None,
+            mount_spec: mount_spec_from_create_request(
+                hydra_common::api::v1::sessions::Bundle::None,
+                None,
+            ),
             image: None,
             env_vars: HashMap::new(),
             cpu_limit: None,

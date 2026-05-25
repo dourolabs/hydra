@@ -16,7 +16,6 @@ export type { BuildCacheContext } from "./generated/BuildCacheContext";
 export type { BuildCacheSettings } from "./generated/BuildCacheSettings";
 export type { BuildCacheStorageConfig } from "./generated/BuildCacheStorageConfig";
 export type { Bundle } from "./generated/Bundle";
-export type { BundleSpec } from "./generated/BundleSpec";
 export type { CommitRange } from "./generated/CommitRange";
 export type { CreateSessionRequest } from "./generated/CreateSessionRequest";
 export type { CreateSessionResponse } from "./generated/CreateSessionResponse";

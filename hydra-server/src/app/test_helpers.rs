@@ -1,11 +1,12 @@
 use crate::{
-    app::{AppState, ServiceState, sessions::mount_spec_for_session},
+    app::{AppState, ServiceState},
     domain::{
         issues::{Issue, IssueDependency, IssueStatus, IssueType},
-        sessions::{AgentConfig, BundleSpec, Session, SessionMode},
+        sessions::{AgentConfig, Session, SessionMode},
         task_status::Status,
         users::Username,
     },
+    routes::sessions::mount_spec_from_create_request,
     store::MemoryStore,
     test_utils::{MockJobEngine, test_app_config},
 };
@@ -19,7 +20,7 @@ pub fn sample_task() -> Session {
         None,
         None,
         AgentConfig::default(),
-        mount_spec_for_session(&BundleSpec::None),
+        mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
         Some("worker:latest".to_string()),
         HashMap::new(),
         None,
@@ -44,7 +45,7 @@ pub fn task_for_issue_with_status(issue_id: &IssueId, status: Status) -> Session
         Some(issue_id.clone()),
         None,
         AgentConfig::default(),
-        mount_spec_for_session(&BundleSpec::None),
+        mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
         Some("worker:latest".to_string()),
         HashMap::new(),
         None,

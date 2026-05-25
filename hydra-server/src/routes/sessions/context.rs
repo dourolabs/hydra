@@ -1,7 +1,7 @@
 use crate::{
-    app::{AppState, rewrite_local_bundle_url},
+    app::{AppState, rewrite_local_bundle_urls},
     domain::{actors::get_github_token_for_user, sessions::SessionMode},
-    routes::sessions::{ApiError, SessionIdPath, mount_spec_from_create_request},
+    routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
 use hydra_common::{api::v1, constants::ENV_HYDRA_ID};
@@ -18,41 +18,28 @@ pub async fn get_session_context(
         ApiError::not_found(format!("Session '{session_id}' not found"))
     })?;
 
-    let mut resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
+    // Build the API `Session` the worker will see. The persisted
+    // `mount_spec` is now the single source of truth — no re-derivation
+    // from a separate `context` / resolved-bundle path (PR-F).
+    let mut session: v1::sessions::Session = task.clone().into();
 
-    // When running in a containerized engine (e.g. Docker), rewrite file:// URLs
-    // to the container-side mount path so workers receive the correct URL.
+    // When running in a containerized engine (e.g. Docker), rewrite file://
+    // URLs inside `mount_spec.mounts[*].bundle` to the container-side mount
+    // path so the worker receives URLs it can resolve from inside the
+    // container.
     if state.job_engine.is_containerized() {
-        rewrite_local_bundle_url(&mut resolved.context.bundle);
+        let _ = rewrite_local_bundle_urls(&mut session.mount_spec);
     }
 
-    let mut env_vars = resolved.env_vars;
+    // Resolve per-user secrets with global fallback and inject into env_vars
+    // (the worker reads env_vars off `WorkerContext`).
+    let mut env_vars = task.env_vars.clone();
     state
         .resolve_secrets_into_env_vars(&task.creator, &mut env_vars, &task.secrets)
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
-
-    // Build the per-fetch MountSpec from the resolved Bundle. This is the
-    // single source of truth for `CreateSessionRequest → MountSpec` (the
-    // create-time builder in `app/sessions.rs::mount_spec_for_session` and
-    // the migration backfill in `20260523020000_*` both mirror this shape).
-    let bundle: v1::sessions::Bundle = resolved.context.bundle.clone().into();
-    let service_repo_name = task.service_repo_name().cloned();
-    let build_cache = match (service_repo_name, state.config.build_cache.to_context()) {
-        (Some(name), Some(ctx)) => Some((name, ctx)),
-        _ => None,
-    };
-    let mount_spec = mount_spec_from_create_request(bundle, build_cache);
-
-    // Build the API `Session` that the worker will see. Start from the stored
-    // task, then overlay the runtime-resolved env vars and the freshly-built
-    // mount spec so the embedded Session matches what the worker will actually
-    // run with. The worker reads `prompt` / `model` / `mcp_config` / mode
-    // settings off this embedded value — there is no more legacy WorkerContext
-    // duplication of those fields.
-    let mut session: v1::sessions::Session = task.clone().into();
     session.env_vars = env_vars.clone();
-    session.mount_spec = mount_spec;
+
     // For interactive sessions, fill in the server-configured idle-timeout
     // default into the embedded `SessionMode::Interactive` so the worker can
     // read it directly off `session.mode` without a separate handshake field.

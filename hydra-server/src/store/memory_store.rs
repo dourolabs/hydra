@@ -2582,7 +2582,6 @@ mod tests {
             actors::{Actor, ActorId, ActorRef},
             issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
             patches::{GithubPr, Patch, PatchStatus},
-            sessions::BundleSpec,
             task_status::Event,
             users::{User, Username},
         },
@@ -2611,14 +2610,14 @@ mod tests {
     }
 
     fn spawn_task_with_prompt(prompt: &str) -> Session {
-        use crate::app::sessions::mount_spec_for_session;
         use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::routes::sessions::mount_spec_from_create_request;
         Session::new(
             Username::from("test-creator"),
             None,
             None,
             AgentConfig::default(),
-            mount_spec_for_session(&BundleSpec::None),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,
