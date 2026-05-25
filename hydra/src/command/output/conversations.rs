@@ -45,7 +45,11 @@ impl Render for ConversationView<'_> {
         writeln!(
             writer,
             "Agent: {}",
-            self.conversation.agent_name.as_deref().unwrap_or("-")
+            self.conversation
+                .agent_name
+                .as_ref()
+                .map(|n| n.as_str())
+                .unwrap_or("-")
         )?;
         writeln!(writer, "Status: {:?}", self.conversation.status)?;
         writeln!(writer, "Creator: {}", self.conversation.creator)?;
@@ -108,7 +112,11 @@ impl Render for ConversationSummaryRecords<'_> {
             writeln!(
                 writer,
                 "  Agent: {}",
-                conversation.agent_name.as_deref().unwrap_or("-")
+                conversation
+                    .agent_name
+                    .as_ref()
+                    .map(|n| n.as_str())
+                    .unwrap_or("-")
             )?;
             writeln!(writer, "  Creator: {}", conversation.creator)?;
             writeln!(writer, "  Events: {}", conversation.event_count)?;

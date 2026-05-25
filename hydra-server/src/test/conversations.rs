@@ -125,7 +125,7 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
 
     let request = CreateConversationRequest {
         message: Some("Hello, agent!".to_string()),
-        agent_name: Some("test-agent".to_string()),
+        agent_name: Some(hydra_common::api::v1::agents::AgentName::try_new("test-agent").unwrap()),
         session_settings: None,
     };
 
@@ -138,7 +138,10 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     assert_eq!(response.status(), StatusCode::OK);
     let conversation: Conversation = response.json().await?;
     assert!(!conversation.conversation_id.as_ref().is_empty());
-    assert_eq!(conversation.agent_name.as_deref(), Some("test-agent"));
+    assert_eq!(
+        conversation.agent_name.as_ref().map(|n| n.as_str()),
+        Some("test-agent")
+    );
 
     let sessions: ListSessionsResponse = client
         .get(format!("{}/v1/sessions", server.base_url()))
@@ -181,7 +184,9 @@ async fn create_conversation_with_unknown_agent_name_returns_400() -> anyhow::Re
 
     let request = CreateConversationRequest {
         message: Some("Hello, agent!".to_string()),
-        agent_name: Some("does-not-exist".to_string()),
+        agent_name: Some(
+            hydra_common::api::v1::agents::AgentName::try_new("does-not-exist").unwrap(),
+        ),
         session_settings: None,
     };
 

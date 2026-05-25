@@ -1648,7 +1648,7 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
         .post(format!("{}/v1/conversations", server.base_url()))
         .json(&CreateConversationRequest {
             message: Some("hello".to_string()),
-            agent_name: Some("chat".to_string()),
+            agent_name: Some(hydra_common::api::v1::agents::AgentName::try_new("chat").unwrap()),
             session_settings: None,
         })
         .send()

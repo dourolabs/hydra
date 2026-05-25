@@ -1,6 +1,7 @@
 use crate::{
     BuildCacheContext, ConversationId, IssueId, RepoName, SessionId, VersionNumber,
     actor_ref::ActorRef,
+    api::v1::agents::AgentName,
     task_status::{Status, TaskError},
     users::Username,
 };
@@ -70,13 +71,21 @@ pub struct TokenUsage {
 /// field carries a single, unambiguous meaning. `system_prompt` is
 /// resolved server-side from the agent definition; historical rows
 /// loaded through the legacy backfill path leave it `None`.
+///
+/// Phase 2 of the actor-system overhaul
+/// (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
+/// from `Option<String>` to `Option<AgentName>` so the
+/// agent-vs-adhoc discriminant on a session is a validated type, not
+/// a free string. Historic rows with a malformed `agent_name` will
+/// fail to deserialize loudly — that's the design's intended Phase-2
+/// backfill story.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,7 +96,7 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     pub fn new(
-        agent_name: Option<String>,
+        agent_name: Option<AgentName>,
         model: Option<String>,
         system_prompt: Option<String>,
         mcp_config: Option<McpConfig>,
@@ -1399,7 +1408,7 @@ mod tests {
     #[test]
     fn agent_config_round_trips() {
         let cfg = AgentConfig::new(
-            Some("agent-x".to_string()),
+            Some(AgentName::try_new("agent-x").unwrap()),
             Some("gpt-4o".to_string()),
             Some("you are helpful".to_string()),
             Some(serde_json::json!({"servers": {}})),
@@ -1407,6 +1416,67 @@ mod tests {
         let json = serde_json::to_value(&cfg).unwrap();
         let parsed: AgentConfig = serde_json::from_value(json).unwrap();
         assert_eq!(parsed, cfg);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 2 (`/designs/actor-system-overhaul.md` §3.4):
+    // `AgentConfig.agent_name` is now `Option<AgentName>`. The
+    // deserializer must accept the validated form (incl. `null`) and
+    // reject malformed historic values — that's the design's intended
+    // "re-validate on read" backfill strategy.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn agent_config_accepts_none_agent_name_on_deserialize() {
+        let json = serde_json::json!({
+            "agent_name": null,
+            "model": "gpt-4o",
+        });
+        let cfg: AgentConfig = serde_json::from_value(json).unwrap();
+        assert!(cfg.agent_name.is_none());
+        assert_eq!(cfg.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn agent_config_accepts_missing_agent_name_on_deserialize() {
+        // Field is `#[serde(default)]` so the absence of the key is
+        // equivalent to `null`; both produce `None` without error.
+        let json = serde_json::json!({"model": "gpt-4o"});
+        let cfg: AgentConfig = serde_json::from_value(json).unwrap();
+        assert!(cfg.agent_name.is_none());
+    }
+
+    #[test]
+    fn agent_config_rejects_invalid_agent_name_on_deserialize() {
+        // `bad/name` contains `/`, which `AgentName::try_new` rejects.
+        // Pre-Phase-2 this slipped through as a free `String`; now it
+        // fails fast at the deserialization boundary.
+        let json = serde_json::json!({"agent_name": "bad/name"});
+        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected agent_name 'bad/name' to fail validation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn agent_config_rejects_whitespace_agent_name_on_deserialize() {
+        let json = serde_json::json!({"agent_name": "bad name"});
+        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected agent_name 'bad name' to fail validation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn agent_config_rejects_empty_agent_name_on_deserialize() {
+        let json = serde_json::json!({"agent_name": ""});
+        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected empty agent_name to fail validation, got {result:?}"
+        );
     }
 
     #[test]

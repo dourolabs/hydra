@@ -1,3 +1,4 @@
+use crate::api::v1::agents::AgentName;
 use crate::api::v1::users::Username;
 use crate::{IssueId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,25 @@ pub enum ActorIdentity {
     },
     Service {
         service_name: String,
+    },
+    /// Phase 2 of the actor-system overhaul
+    /// (`/designs/actor-system-overhaul.md` §3.4): once
+    /// `create_actor_for_job` routes through `actor_id_of(session)`,
+    /// agent-spawned sessions surface here as `Agent { name, creator }`
+    /// instead of the legacy `Session` / `Issue` variants. `creator`
+    /// is the human on whose behalf the agent ran (the session's
+    /// creator), so CLI clients running inside agent jobs can keep
+    /// resolving "who am I acting as" without a separate lookup.
+    Agent {
+        name: AgentName,
+        creator: Username,
+    },
+    /// Ad-hoc sessions (created outside the agent system) — design
+    /// §3.4. The post-Phase-2 replacement for `ActorId::Session` on
+    /// the session-actor path.
+    Adhoc {
+        session_id: SessionId,
+        creator: Username,
     },
 }
 

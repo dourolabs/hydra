@@ -141,6 +141,34 @@ impl Actor {
         (actor, auth_token)
     }
 
+    /// Build a new `Actor` from an already-constructed [`ActorId`].
+    ///
+    /// Phase 2 of the actor-system overhaul
+    /// (`/designs/actor-system-overhaul.md` §3.4) routes
+    /// `create_actor_for_job` through
+    /// [`crate::domain::sessions::actor_id_of`]; this constructor accepts
+    /// the resulting `ActorId` directly so the agent-vs-adhoc discriminant
+    /// stays in one place. It's the typed replacement for
+    /// `new_for_session` / `new_for_issue` on the job-spawn path.
+    ///
+    /// `ActorId::Legacy` is rejected at debug time: new writes must not
+    /// produce that variant (see `ActorId` docs).
+    pub fn new_from_actor_id(actor_id: ActorId, creator: Username) -> (Actor, String) {
+        debug_assert!(
+            !matches!(actor_id, ActorId::Legacy(_)),
+            "Actor::new_from_actor_id must never be called with ActorId::Legacy"
+        );
+        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let actor = Actor {
+            auth_token_hash,
+            auth_token_salt,
+            actor_id,
+            creator,
+        };
+        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
+        (actor, auth_token)
+    }
+
     fn generate_auth_token() -> (String, String, String) {
         let token = Uuid::new_v4().to_string();
         let salt = Uuid::new_v4().to_string();

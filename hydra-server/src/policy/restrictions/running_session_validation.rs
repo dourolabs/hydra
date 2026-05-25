@@ -69,7 +69,10 @@ impl Restriction for RunningJobValidationRestriction {
         }
 
         let session_id = match ctx.actor.on_behalf_of() {
-            Some(ActorId::Session(s)) => s,
+            // Phase-2 `Adhoc(sid)` is the same shape as the legacy
+            // `Session(sid)` — a session-keyed actor without an agent
+            // identity. Both arms validate the session directly.
+            Some(ActorId::Session(s)) | Some(ActorId::Adhoc(s)) => s,
             Some(ActorId::Issue(issue_id)) => {
                 match self
                     .running_session_for_issue(ctx.store, &issue_id)

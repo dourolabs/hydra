@@ -1,5 +1,6 @@
 use crate::domain::users::Username;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::{IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,14 @@ pub enum ActorIdentity {
     },
     Service {
         service_name: String,
+    },
+    Agent {
+        name: AgentName,
+        creator: Username,
+    },
+    Adhoc {
+        session_id: SessionId,
+        creator: Username,
     },
 }
 
@@ -53,6 +62,17 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
             ActorIdentity::Service { service_name } => {
                 api::whoami::ActorIdentity::Service { service_name }
             }
+            ActorIdentity::Agent { name, creator } => api::whoami::ActorIdentity::Agent {
+                name,
+                creator: creator.into(),
+            },
+            ActorIdentity::Adhoc {
+                session_id,
+                creator,
+            } => api::whoami::ActorIdentity::Adhoc {
+                session_id,
+                creator: creator.into(),
+            },
         }
     }
 }

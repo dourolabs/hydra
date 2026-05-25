@@ -294,12 +294,17 @@ impl TryFrom<ActorIdentity> for ActorId {
     }
 }
 
-/// Parse an actor name string (e.g. `u-alice` or `w-t-abcdef`) into an `ActorId`.
+/// Parse an actor name string (e.g. `u-alice`, `w-s-abcdef`, or
+/// `agents/swe`) into an `ActorId`.
 ///
-/// Returns `None` if the name does not match a recognized prefix or is otherwise
-/// invalid. Only the pre-Phase-1 prefixed-shorthand forms are accepted here;
-/// the new canonical path forms (`users/<x>`, etc.) are parsed via
-/// [`ActorId::from_str`].
+/// Returns `None` if the name does not match a recognized form or is
+/// otherwise invalid. Both the pre-Phase-1 prefixed shorthand
+/// (`u-`/`a-`/`w-`/`svc-`) AND the Phase-1 canonical path forms
+/// (`users/<x>`, `agents/<x>`, `adhoc/<x>`, `external/<sys>/<x>`) are
+/// accepted: the auth layer's `AuthToken::parse` calls this on the
+/// token prefix, and Phase-2 lets `create_actor_for_job` mint tokens
+/// whose prefix uses the new agent/adhoc display form (see
+/// `/designs/actor-system-overhaul.md` §3.4).
 pub fn parse_actor_name(name: &str) -> Option<ActorId> {
     if let Some(username) = name.strip_prefix("u-") {
         if username.is_empty() {
@@ -329,6 +334,36 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
             return None;
         }
         return Some(ActorId::Service(service_name.to_string()));
+    }
+
+    // Phase-1 canonical path forms (design §3.3). Used by the auth
+    // layer once `create_actor_for_job` mints `ActorId::Agent` /
+    // `ActorId::Adhoc` tokens (Phase 2).
+    if let Some(rest) = name.strip_prefix("users/") {
+        let u = Username::try_new(rest).ok()?;
+        return Some(ActorId::User(u));
+    }
+
+    if let Some(rest) = name.strip_prefix("agents/") {
+        let a = AgentName::try_new(rest).ok()?;
+        return Some(ActorId::Agent(a));
+    }
+
+    if let Some(rest) = name.strip_prefix("adhoc/") {
+        let sid = SessionId::from_str(rest).ok()?;
+        return Some(ActorId::Adhoc(sid));
+    }
+
+    if let Some(rest) = name.strip_prefix("external/") {
+        let (system, username) = rest.split_once('/')?;
+        if username.is_empty() {
+            return None;
+        }
+        let sys = ExternalSystem::try_new(system).ok()?;
+        return Some(ActorId::External {
+            system: sys,
+            username: username.to_string(),
+        });
     }
 
     None
@@ -1195,5 +1230,75 @@ mod tests {
             actor_id: gh_external(),
         };
         assert_eq!(r.display_name(), "external/github/jayantk");
+    }
+
+    // -----------------------------------------------------------------
+    // Phase-2: parse_actor_name accepts the canonical path forms used
+    // by `Actor::name()` once `create_actor_for_job` mints `Agent` /
+    // `Adhoc` tokens. The auth layer round-trips `actor.name()` →
+    // `AuthToken::parse(...)` → `Actor::parse_name(...)`, so the new
+    // display forms must parse back.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_actor_name_agent_path() {
+        let result = parse_actor_name("agents/swe");
+        assert_eq!(
+            result,
+            Some(ActorId::Agent(AgentName::try_new("swe").unwrap()))
+        );
+    }
+
+    #[test]
+    fn parse_actor_name_adhoc_path() {
+        let sid = SessionId::from_str("s-abcdef").unwrap();
+        let result = parse_actor_name("adhoc/s-abcdef");
+        assert_eq!(result, Some(ActorId::Adhoc(sid)));
+    }
+
+    #[test]
+    fn parse_actor_name_user_path() {
+        let result = parse_actor_name("users/alice");
+        assert_eq!(
+            result,
+            Some(ActorId::User(Username::try_new("alice").unwrap()))
+        );
+    }
+
+    #[test]
+    fn parse_actor_name_external_path() {
+        let result = parse_actor_name("external/github/jayantk");
+        assert_eq!(
+            result,
+            Some(ActorId::External {
+                system: ExternalSystem::try_new("github").unwrap(),
+                username: "jayantk".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_actor_name_external_missing_username_returns_none() {
+        assert_eq!(parse_actor_name("external/github"), None);
+        assert_eq!(parse_actor_name("external/github/"), None);
+    }
+
+    #[test]
+    fn parse_actor_name_agent_empty_returns_none() {
+        assert_eq!(parse_actor_name("agents/"), None);
+    }
+
+    #[test]
+    fn parse_actor_name_round_trips_with_display_for_agent() {
+        let id = swe_agent();
+        let parsed = parse_actor_name(&id.to_string()).expect("agent display must round-trip");
+        assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn parse_actor_name_round_trips_with_display_for_adhoc() {
+        let id = adhoc_session();
+        let parsed = parse_actor_name(&id.to_string()).expect("adhoc display must round-trip");
+        assert_eq!(parsed, id);
     }
 }

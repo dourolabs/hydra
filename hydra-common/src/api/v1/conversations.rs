@@ -1,3 +1,4 @@
+use super::agents::AgentName;
 use super::issues::SessionSettings;
 use super::sessions::SessionEvent;
 use crate::{ConversationId, SessionId, users::Username};
@@ -86,7 +87,7 @@ impl ConversationEvent {
 pub struct Conversation {
     pub conversation_id: ConversationId,
     pub title: Option<String>,
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     pub status: ConversationStatus,
     pub creator: Username,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
@@ -100,7 +101,7 @@ impl Conversation {
     pub fn new(
         conversation_id: ConversationId,
         title: Option<String>,
-        agent_name: Option<String>,
+        agent_name: Option<AgentName>,
         status: ConversationStatus,
         creator: Username,
         session_settings: SessionSettings,
@@ -152,7 +153,7 @@ impl crate::graph::GraphView for Conversation {
 pub struct ConversationSummary {
     pub conversation_id: ConversationId,
     pub title: Option<String>,
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     pub status: ConversationStatus,
     pub event_count: usize,
     pub last_event_preview: Option<String>,
@@ -166,7 +167,7 @@ impl ConversationSummary {
     pub fn new(
         conversation_id: ConversationId,
         title: Option<String>,
-        agent_name: Option<String>,
+        agent_name: Option<AgentName>,
         status: ConversationStatus,
         event_count: usize,
         last_event_preview: Option<String>,
@@ -195,7 +196,7 @@ pub struct CreateConversationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_settings: Option<SessionSettings>,
 }
@@ -411,7 +412,7 @@ mod tests {
     fn create_conversation_request_with_session_settings_round_trip() {
         let req = CreateConversationRequest {
             message: Some("Hello".to_string()),
-            agent_name: Some("my-agent".to_string()),
+            agent_name: Some(AgentName::try_new("my-agent").unwrap()),
             session_settings: Some(SessionSettings {
                 repo_name: Some(crate::RepoName::from_str("org/repo").unwrap()),
                 ..Default::default()
@@ -573,7 +574,7 @@ mod tests {
             Conversation::new(
                 ConversationId::new(),
                 Some("Triaging flake".to_string()),
-                Some("claude".to_string()),
+                Some(AgentName::try_new("claude").unwrap()),
                 ConversationStatus::Active,
                 Username::from("alice"),
                 SessionSettings::default(),

@@ -1,7 +1,9 @@
 use super::task_status::{Status, TaskError};
 use super::users::Username;
 use chrono::{DateTime, Utc};
+use hydra_common::ActorId;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::sessions::{McpConfig, MountSpec, TokenUsage};
 use hydra_common::{ConversationId, IssueId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -25,10 +27,16 @@ pub struct InteractiveOptions {
 
 /// Per-session knobs handed to the model wrapper. Mirrors
 /// [`api::sessions::AgentConfig`].
+///
+/// Phase 2 of the actor-system overhaul
+/// (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
+/// to `Option<AgentName>` so the agent-vs-adhoc discriminant on a
+/// session is a validated type. `actor_id_of` reads this field to
+/// build the `ActorId` for the session.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -39,7 +47,7 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     pub fn new(
-        agent_name: Option<String>,
+        agent_name: Option<AgentName>,
         model: Option<String>,
         system_prompt: Option<String>,
         mcp_config: Option<McpConfig>,
@@ -152,6 +160,28 @@ pub struct Session {
     pub end_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+}
+
+/// Build the [`ActorId`] for a session from its embedded
+/// [`AgentConfig`] and the session's own id.
+///
+/// Per the actor-system overhaul design
+/// (`/designs/actor-system-overhaul.md` §3.4), the agent-vs-adhoc
+/// discriminant lives on `session.agent_config.agent_name`:
+///
+/// - `Some(name)` → agent-spawned session, attributed to `Agent(name)`.
+/// - `None`       → ad-hoc session, attributed to `Adhoc(session_id)`.
+///
+/// Pure function — no DB, no I/O. The `session_id` is passed
+/// alongside the `Session` value because `Session` is keyed by id in
+/// the store and does not carry its own id as a field. This helper is
+/// the Phase-2 replacement for the legacy `spawned_from`-vs-not
+/// branch in `create_actor_for_job` (see `hydra-server/src/app/users.rs`).
+pub fn actor_id_of(session: &Session, session_id: &SessionId) -> ActorId {
+    match &session.agent_config.agent_name {
+        Some(name) => ActorId::Agent(name.clone()),
+        None => ActorId::Adhoc(session_id.clone()),
+    }
 }
 
 impl Session {
@@ -561,13 +591,15 @@ impl From<SessionEventSummary> for api::sessions::SessionEventSummary {
 mod tests {
     use super::{
         AgentConfig, Session, SessionEvent, SessionEventSummary, SessionMode,
-        UnknownSessionEventVariant,
+        UnknownSessionEventVariant, actor_id_of,
     };
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use chrono::Utc;
+    use hydra_common::ActorId;
     use hydra_common::SessionId;
     use hydra_common::api::v1 as api;
+    use hydra_common::api::v1::agents::AgentName;
     use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath};
     use std::collections::HashMap;
 
@@ -707,5 +739,51 @@ mod tests {
         let domain: SessionEventSummary = api_summary.clone().into();
         let back: api::sessions::SessionEventSummary = domain.into();
         assert_eq!(back, api_summary);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 2 (`/designs/actor-system-overhaul.md` §3.4):
+    // `actor_id_of(session, session_id)` is the pure helper that
+    // discriminates agent-spawned vs ad-hoc sessions off
+    // `agent_config.agent_name`. These tests pin its behaviour for both
+    // arms.
+    // ---------------------------------------------------------------------
+
+    fn session_with(agent_name: Option<AgentName>) -> Session {
+        Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::new(agent_name, None, None, None),
+            test_mount_spec(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless {
+                prompt: "p".to_string(),
+            },
+            Status::Created,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn actor_id_of_agent_session_returns_agent_variant() {
+        let name = AgentName::try_new("swe").unwrap();
+        let session = session_with(Some(name.clone()));
+        let session_id = SessionId::new();
+        let actor_id = actor_id_of(&session, &session_id);
+        assert_eq!(actor_id, ActorId::Agent(name));
+    }
+
+    #[test]
+    fn actor_id_of_adhoc_session_returns_adhoc_variant() {
+        let session = session_with(None);
+        let session_id = SessionId::new();
+        let actor_id = actor_id_of(&session, &session_id);
+        assert_eq!(actor_id, ActorId::Adhoc(session_id));
     }
 }

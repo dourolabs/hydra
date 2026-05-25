@@ -103,7 +103,12 @@ impl Automation for LinkConversationToArtifactsAutomation {
         // review-request issue on behalf of a session) still link back to the
         // originating conversation.
         match actor.on_behalf_of() {
-            Some(ActorId::Session(session_id)) => {
+            // Phase-2 `ActorId::Adhoc(sid)` matches the legacy
+            // `ActorId::Session(sid)` semantically (an ad-hoc session
+            // is just a session without a registered agent name). Both
+            // arms resolve the session and pull `conversation_id` /
+            // `spawned_from` off it.
+            Some(ActorId::Session(session_id)) | Some(ActorId::Adhoc(session_id)) => {
                 let session = match ctx.store.get_session(&session_id, false).await {
                     Ok(s) => s,
                     Err(e) => {
@@ -132,6 +137,10 @@ impl Automation for LinkConversationToArtifactsAutomation {
                     conversation_ids.extend(cids);
                 }
             }
+            // Phase 2 doesn't carry session_id alongside `Agent` actors;
+            // design §5 (Phase 3) adds `ActorRef::session_id` to recover
+            // it. Until then, agent-spawned writes don't link to a
+            // conversation here.
             _ => return Ok(()),
         }
 

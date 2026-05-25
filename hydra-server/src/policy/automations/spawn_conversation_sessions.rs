@@ -148,7 +148,7 @@ async fn spawn_session(
 
     let agent = match ctx
         .app_state
-        .resolve_conversation_agent(conversation.agent_name.as_deref())
+        .resolve_conversation_agent(conversation.agent_name.as_ref().map(|n| n.as_str()))
         .await
     {
         Ok(Some(agent)) => agent,
@@ -487,9 +487,10 @@ mod tests {
         agent_name: Option<&str>,
         status: ConversationStatus,
     ) -> Conversation {
+        use hydra_common::api::v1::agents::AgentName;
         Conversation {
             title: None,
-            agent_name: agent_name.map(String::from),
+            agent_name: agent_name.map(|n| AgentName::try_new(n).expect("valid agent name")),
             status,
             creator: Username::from("creator"),
             session_settings: SessionSettings::default(),

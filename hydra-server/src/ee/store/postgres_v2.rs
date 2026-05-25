@@ -1199,7 +1199,7 @@ impl PostgresStoreV2 {
             .bind(id.as_ref())
             .bind(version_number)
             .bind(&conversation.title)
-            .bind(&conversation.agent_name)
+            .bind(conversation.agent_name.as_ref().map(|n| n.as_str()))
             .bind(&session_settings_json)
             .bind(status_str)
             .bind(conversation.creator.as_str())
@@ -1213,6 +1213,7 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_conversation(row: &ConversationRow) -> Result<Conversation, StoreError> {
+        use hydra_common::api::v1::agents::AgentName;
         let status = match row.status.as_str() {
             "active" => ConversationStatus::Active,
             "idle" => ConversationStatus::Idle,
@@ -1229,10 +1230,22 @@ impl PostgresStoreV2 {
                     "failed to deserialize conversation session_settings: {e}"
                 ))
             })?;
+        // Phase 2: re-validate the persisted `agent_name` on read.
+        // SQLite + Postgres columns stay `TEXT`; the type-tightening
+        // happens at the Rust boundary so malformed legacy values
+        // surface as an internal error rather than silently passing.
+        let agent_name = row
+            .agent_name
+            .as_ref()
+            .map(|s| AgentName::try_new(s.clone()))
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("invalid agent_name in conversation row: {e}"))
+            })?;
 
         Ok(Conversation {
             title: row.title.clone(),
-            agent_name: row.agent_name.clone(),
+            agent_name,
             status,
             creator: Username::from(row.creator.as_str()),
             session_settings,
@@ -8261,7 +8274,9 @@ mod tests {
         // -- Add a conversation --
         let conv = Conversation {
             title: Some("Test conversation".to_string()),
-            agent_name: Some("test-agent".to_string()),
+            agent_name: Some(
+                hydra_common::api::v1::agents::AgentName::try_new("test-agent").unwrap(),
+            ),
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
             session_settings: SessionSettings {

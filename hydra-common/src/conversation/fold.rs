@@ -68,10 +68,11 @@ mod tests {
     use chrono::{Duration, TimeZone};
 
     fn sample_conversation(created_at: DateTime<Utc>) -> Conversation {
+        use crate::api::v1::agents::AgentName;
         Conversation::new(
             ConversationId::new(),
             Some("hello".to_string()),
-            Some("swe".to_string()),
+            Some(AgentName::try_new("swe").unwrap()),
             ConversationStatus::Active,
             Username::from("creator"),
             SessionSettings::default(),

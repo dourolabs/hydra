@@ -150,23 +150,23 @@ impl AppState {
                     })?;
                 // §2.9: request agent_name wins over Conversation.agent_name
                 // when both are set. Warn-log on disagreement.
-                let agent_name = match (
-                    req_agent_config.agent_name.as_deref(),
-                    conversation.item.agent_name.as_deref(),
+                let agent_name: Option<hydra_common::api::v1::agents::AgentName> = match (
+                    req_agent_config.agent_name.as_ref(),
+                    conversation.item.agent_name.as_ref(),
                 ) {
                     (Some(req_name), Some(conv_name)) if req_name != conv_name => {
                         warn!(
-                            request_agent = req_name,
-                            conversation_agent = conv_name,
+                            request_agent = req_name.as_str(),
+                            conversation_agent = conv_name.as_str(),
                             "request.agent_config.agent_name overrides Conversation.agent_name"
                         );
-                        Some(req_name.to_string())
+                        Some(req_name.clone())
                     }
-                    (Some(name), _) | (None, Some(name)) => Some(name.to_string()),
+                    (Some(name), _) | (None, Some(name)) => Some(name.clone()),
                     (None, None) => None,
                 };
                 let agent = self
-                    .resolve_conversation_agent(agent_name.as_deref())
+                    .resolve_conversation_agent(agent_name.as_ref().map(|n| n.as_str()))
                     .await
                     .map_err(|err| match err {
                         AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
@@ -212,10 +212,24 @@ impl AppState {
         // Pre-resolved fields on `agent_config` win over filesystem resolution.
         let mut system_prompt = req_agent_config.system_prompt.clone();
         let mut mcp_config = req_agent_config.mcp_config.clone();
-        let mut agent_name = req_agent_config.agent_name.clone();
+        let mut agent_name: Option<hydra_common::api::v1::agents::AgentName> =
+            req_agent_config.agent_name.clone();
 
         if let Some(agent) = resolved_agent.as_ref() {
-            agent_name = agent_name.or_else(|| Some(agent.name.clone()));
+            // The `agents` domain object keys agent identity by free string
+            // today (Phase 2 only retypes `AgentConfig.agent_name`, not the
+            // agent record itself — Phase 4+). The agent record is the
+            // authoritative source for the canonical name, and the
+            // `resolve_conversation_agent` path already round-trips through
+            // `AgentName` validation when invoked with a name. Defensively
+            // re-validate here so a malformed stored agent name surfaces as a
+            // 500 rather than silently producing an invalid `AgentName`.
+            agent_name = agent_name.or_else(|| {
+                Some(
+                    hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone())
+                        .expect("agents store must hold validated agent names"),
+                )
+            });
 
             if system_prompt.is_none() {
                 system_prompt = Some(

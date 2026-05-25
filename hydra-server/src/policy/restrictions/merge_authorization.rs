@@ -303,7 +303,10 @@ async fn actor_username(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<S
     let actor_id = actor.on_behalf_of()?;
     match actor_id {
         ActorId::Username(u) => Some(u.as_str().to_string()),
-        ActorId::Session(sid) => store
+        // Phase-2 `Adhoc(sid)` matches the legacy `Session(sid)` arm:
+        // both are sessions without a registered agent identity, so
+        // the merger username is the session's creator.
+        ActorId::Session(sid) | ActorId::Adhoc(sid) => store
             .get_session(&sid, false)
             .await
             .ok()
@@ -313,16 +316,22 @@ async fn actor_username(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<S
             .await
             .ok()
             .map(|i| i.item.creator.as_str().to_string()),
+        // Agent-spawned sessions share an actor row keyed by agent
+        // name; resolve via that row's creator so an agent acting on
+        // behalf of `alice` is matched as `alice` for merger
+        // membership. This is the closest Phase-2 approximation —
+        // Phase 6 of `/designs/actor-system-overhaul.md` revisits
+        // merger semantics with the typed `Principal`.
+        ActorId::Agent(_) => store
+            .get_actor(&actor_id.to_string())
+            .await
+            .ok()
+            .map(|a| a.item.creator.as_str().to_string()),
         ActorId::Service(_) => None,
-        // Phase-1 ActorId additions are not yet produced by any hydra-server
-        // call site; the merger-authorization resolver doesn't know how to
-        // map them yet (Phase 6 of `/designs/actor-system-overhaul.md`
-        // updates this resolver). Treat them as "not in mergers" for now.
-        ActorId::User(_)
-        | ActorId::Agent(_)
-        | ActorId::Adhoc(_)
-        | ActorId::External { .. }
-        | ActorId::Legacy(_) => None,
+        // `User` / `External` / `Legacy` aren't produced by any
+        // hydra-server call site that flows through merge auth yet.
+        // Phase 6 updates this resolver.
+        ActorId::User(_) | ActorId::External { .. } | ActorId::Legacy(_) => None,
     }
 }
 

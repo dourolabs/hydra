@@ -12,9 +12,18 @@ pub async fn resolve_username(client: &dyn HydraClientInterface) -> Result<Usern
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
-            Ok(creator)
-        }
+        // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4): once
+        // `create_actor_for_job` routes through `actor_id_of`, an
+        // agent-spawned session's `whoami` returns `Agent { name,
+        // creator }` and an ad-hoc session returns `Adhoc { session_id,
+        // creator }`. Both expose the human on whose behalf the
+        // session ran — the same field the legacy `Session` / `Issue`
+        // arms used for attribution — so the CLI keeps working without
+        // a separate lookup.
+        ActorIdentity::Session { creator, .. }
+        | ActorIdentity::Issue { creator, .. }
+        | ActorIdentity::Adhoc { creator, .. }
+        | ActorIdentity::Agent { creator, .. } => Ok(creator),
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }
