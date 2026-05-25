@@ -6,9 +6,9 @@
 
 All subcommands honor global CLI flags such as `--server-url`, `--token`, and `--output-format`. Pretty output prints concise tables, while `--output-format jsonl` streams machine-friendly objects (including full diffs). Auth tokens must allow access to the target repository and Hydra tenant.
 
-## How patches relate to jobs and issues
+## How patches relate to repositories and issues
 
-- Each patch stores the git diff, status, and `service_repo_name` pulled from the owning job (`--job` or `HYDRA_ID`). This lets automation trace changes back to the bundle that spawned them.
+- Each patch stores the git diff, status, and `service_repo_name`. The CLI discovers `service_repo_name` from the current working directory's git remote (default `origin`, configurable via `--remote`), matched against registered repositories on the server. Override the resolution with `--service-repo <org/repo>` when discovery is ambiguous or you are operating outside a checkout.
 - Patches are always tied to an issue id (`--issue-id`, defaults to `HYDRA_ISSUE_ID`). Merge-request tracking issues are created automatically by a server-side automation when a patch is created.
 - Status updates (e.g., `Open`, `ChangesRequested`) flow through `hydra patches update` and power dashboards, merge queues, and reminder jobs.
 
@@ -37,16 +37,24 @@ hydra patches create \
   --title "Fix migrations" \
   --description "Explain the schema drift" \
   --issue-id i-123 \
-  [--job t-456] \
-  [--range base..HEAD] \
+  [--service-repo dourolabs/hydra] \
+  [--remote origin] \
+  [--base-ref origin/main] \
   [--allow-uncommitted]
 ```
 
 - `--title`/`--description` are required and trimmed server-side.
-- `--job` (or `HYDRA_ID`) provides the service repo name; omit only for purely local diffs.
+- `--service-repo <org/repo>` overrides the auto-discovered repository. When omitted, the CLI reads the URL of the `--remote` git remote (default `origin`) and queries the server to find the matching registered repository.
 - `--issue-id` (default `HYDRA_ISSUE_ID`) determines which task the patch belongs to and drives default commit range selection.
-- `--range` overrides the diff base; otherwise Hydra uses `hydra/<issue>/base..HEAD`.
+- `--base-ref` overrides the diff base; otherwise Hydra resolves from the issue (or `origin/main`).
 - `--allow-uncommitted` bypasses the clean-tree check when you intentionally want to snapshot staged work-in-progress.
+
+If the resolver cannot match a single repository it errors out with a message naming the override flag:
+
+- `call from inside a git repo, or pass --service-repo <org/repo>` when invoked outside a git checkout.
+- `git repository at '<path>' has no remote '<name>'; pass --service-repo <org/repo>` when the requested remote is not configured.
+- `remote '<url>' is not a registered service repository; register it with 'hydra repos create' or pass --service-repo <org/repo>` when no registered repository matches the URL.
+- `remote '<url>' matches multiple service repositories (<a>, <b>); pass --service-repo <org/repo> to disambiguate` when more than one matches.
 
 ### Apply
 
@@ -73,10 +81,12 @@ Adds a timestamped review entry to the patch. Include `--approve` to mark it as 
 hydra patches update <PATCH_ID> \
   [--title "New title"] \
   [--description "More details"] \
-  [--status Open|ChangesRequested|Merged]
+  [--status Open|ChangesRequested|Merged] \
+  [--service-repo dourolabs/hydra] \
+  [--remote origin]
 ```
 
-Requires at least one field. Use this to reflect review outcomes or edit metadata before landing the patch.
+Requires at least one field. Use this to reflect review outcomes or edit metadata before landing the patch. `--service-repo` and `--remote` mirror `create` for symmetry.
 
 ### Merge queue
 
@@ -103,11 +113,18 @@ Uploads arbitrary files (logs, screenshots, binaries) and returns the hosted URL
 ## Examples
 
 ```bash
-# Create a patch, push a branch, and attach to the current job
-env HYDRA_ID=t-wwkhrw HYDRA_ISSUE_ID=i-zmgovr \
+# Create a patch from inside a registered service-repo checkout
+env HYDRA_ISSUE_ID=i-zmgovr \
   hydra patches create \
     --title "Patches docs" \
     --description "Add reference guide"
+
+# Explicitly select the service repository (skips pwd discovery)
+hydra patches create \
+  --issue-id i-zmgovr \
+  --service-repo dourolabs/hydra \
+  --title "Patches docs" \
+  --description "Add reference guide"
 
 # Review a teammate's patch with approval
 hydra patches review p-123 --author "teammate" --contents "Ship it" --approve
