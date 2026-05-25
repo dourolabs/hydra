@@ -438,6 +438,7 @@ mod tests {
     fn user_actor(name: &str) -> CommonActorRef {
         CommonActorRef::Authenticated {
             actor_id: ActorId::Username(ApiUsername::from(name)),
+            session_id: None,
         }
     }
 

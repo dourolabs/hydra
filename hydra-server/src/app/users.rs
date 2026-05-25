@@ -127,14 +127,16 @@ impl AppState {
         }
 
         // Store the new token hash in the auth_tokens table so multiple
-        // devices can be logged in simultaneously.
+        // devices can be logged in simultaneously. User logins are not
+        // session-scoped, so session_id is None
+        // (`/designs/actor-system-overhaul.md` §5.2 / §7.3).
         let token_hash = Actor::hash_auth_token(
             auth_token
                 .strip_prefix(&format!("{}:", actor.name()))
                 .expect("auth token should include actor name prefix"),
         );
         self.store
-            .add_auth_token(&actor.name(), &token_hash)
+            .add_auth_token(&actor.name(), &token_hash, None)
             .await
             .map_err(|source| LoginError::Store { source })?;
 
@@ -174,13 +176,16 @@ impl AppState {
 
         // Store the new token hash in the auth_tokens table so multiple
         // sessions for the same actor can authenticate independently.
+        // Phase 3a (`/designs/actor-system-overhaul.md` §7.3): record the
+        // minting session so `require_auth` can hydrate the
+        // `ActorRef::Authenticated.session_id` on every request.
         let token_hash = Actor::hash_auth_token(
             auth_token
                 .strip_prefix(&format!("{}:", actor.name()))
                 .expect("auth token should include actor name prefix"),
         );
         self.store
-            .add_auth_token(&actor.name(), &token_hash)
+            .add_auth_token(&actor.name(), &token_hash, Some(&task_id))
             .await?;
 
         Ok((actor, auth_token))

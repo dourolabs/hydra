@@ -74,6 +74,16 @@ pub struct Actor {
     pub auth_token_salt: String,
     pub actor_id: ActorId,
     pub creator: Username,
+    /// Session that minted the request's authenticating token, when the
+    /// `Actor` was produced by [`crate::routes::auth::require_auth`].
+    ///
+    /// Runtime-only: `#[serde(skip)]` keeps the persisted `Actor` row
+    /// shape unchanged. `require_auth` sets this from the matched
+    /// `auth_tokens.session_id` so that `ActorRef::from(&actor)` carries
+    /// the session id into every downstream mutation
+    /// (`/designs/actor-system-overhaul.md` §5.2).
+    #[serde(skip)]
+    pub session_id: Option<SessionId>,
 }
 
 impl Actor {
@@ -86,6 +96,7 @@ impl Actor {
             auth_token_salt,
             actor_id,
             creator,
+            session_id: None,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -110,6 +121,7 @@ impl Actor {
             auth_token_salt,
             actor_id,
             creator,
+            session_id: None,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -123,6 +135,7 @@ impl Actor {
             auth_token_salt,
             actor_id,
             creator,
+            session_id: None,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -136,6 +149,7 @@ impl Actor {
             auth_token_salt,
             actor_id,
             creator,
+            session_id: None,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -164,6 +178,7 @@ impl Actor {
             auth_token_salt,
             actor_id,
             creator,
+            session_id: None,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -425,6 +440,7 @@ impl From<&Actor> for ActorRef {
     fn from(actor: &Actor) -> Self {
         ActorRef::Authenticated {
             actor_id: actor.actor_id.clone(),
+            session_id: actor.session_id.clone(),
         }
     }
 }
@@ -515,8 +531,29 @@ mod tests {
             actor_ref,
             ActorRef::Authenticated {
                 actor_id: ActorId::Username(CommonUsername::from("alice")),
+                session_id: None,
             }
         );
+    }
+
+    #[test]
+    fn from_actor_ref_propagates_session_id() {
+        let mut actor = Actor {
+            auth_token_hash: String::new(),
+            auth_token_salt: String::new(),
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            creator: Username::from("creator"),
+            session_id: None,
+        };
+        let sid = SessionId::new();
+        actor.session_id = Some(sid.clone());
+        let actor_ref = ActorRef::from(&actor);
+        match actor_ref {
+            ActorRef::Authenticated { session_id, .. } => assert_eq!(session_id, Some(sid)),
+            other => panic!("expected Authenticated, got {other:?}"),
+        }
     }
 
     #[test]

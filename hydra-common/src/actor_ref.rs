@@ -130,6 +130,18 @@ impl fmt::Display for ActorId {
 pub enum ActorRef {
     Authenticated {
         actor_id: ActorId,
+        /// Session that minted the authenticating token, if any.
+        ///
+        /// Phase 3a of `/designs/actor-system-overhaul.md` (§5.2) carries
+        /// the originating session id end-to-end on session-spawned
+        /// actors (`ActorId::Agent` / `ActorId::Adhoc`). User logins are
+        /// not session-scoped, so `None` is valid for those.
+        ///
+        /// `#[serde(default)]` keeps existing version-history rows (which
+        /// predate this field) deserializing as `session_id: None`
+        /// (§5.4).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<SessionId>,
     },
     System {
         worker_name: String,
@@ -145,7 +157,7 @@ impl ActorRef {
     /// Human-readable display name for this actor reference.
     pub fn display_name(&self) -> String {
         match self {
-            ActorRef::Authenticated { actor_id } => actor_id_display_name(actor_id),
+            ActorRef::Authenticated { actor_id, .. } => actor_id_display_name(actor_id),
             ActorRef::System {
                 worker_name,
                 on_behalf_of,
@@ -190,7 +202,7 @@ impl ActorRef {
     /// `Username("alice")`.
     pub fn on_behalf_of(&self) -> Option<ActorId> {
         match self {
-            ActorRef::Authenticated { actor_id } => Some(actor_id.clone()),
+            ActorRef::Authenticated { actor_id, .. } => Some(actor_id.clone()),
             ActorRef::System { on_behalf_of, .. } => on_behalf_of.clone(),
             ActorRef::Automation { triggered_by, .. } => {
                 triggered_by.as_ref().and_then(|t| t.on_behalf_of())
@@ -608,6 +620,7 @@ mod tests {
     fn actor_ref_serialization_round_trip_authenticated() {
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("bob")),
+            session_id: None,
         };
         let json = serde_json::to_string(&actor_ref).unwrap();
         let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
@@ -631,6 +644,7 @@ mod tests {
             automation_name: "cascade_issue_status".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("dave")),
+                session_id: None,
             })),
         };
         let json = serde_json::to_string(&actor_ref).unwrap();
@@ -642,6 +656,7 @@ mod tests {
     fn actor_ref_display_name_authenticated() {
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
+            session_id: None,
         };
         assert_eq!(actor_ref.display_name(), "alice");
     }
@@ -670,6 +685,7 @@ mod tests {
             automation_name: "cascade".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("eve")),
+                session_id: None,
             })),
         };
         assert_eq!(actor_ref.display_name(), "cascade (triggered by eve)");
@@ -726,6 +742,7 @@ mod tests {
         let issue_id = IssueId::from_str("i-abcdef").unwrap();
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Issue(issue_id),
+            session_id: None,
         };
         assert_eq!(actor_ref.display_name(), "i-abcdef");
     }
@@ -890,6 +907,7 @@ mod tests {
     fn actor_ref_display_name_service() {
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Service("bff".to_string()),
+            session_id: None,
         };
         assert_eq!(actor_ref.display_name(), "svc-bff");
     }
@@ -898,6 +916,7 @@ mod tests {
     fn on_behalf_of_authenticated_returns_actor_id() {
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
+            session_id: None,
         };
         assert_eq!(
             actor_ref.on_behalf_of(),
@@ -932,6 +951,7 @@ mod tests {
             automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("carol")),
+                session_id: None,
             })),
         };
         assert_eq!(
@@ -947,6 +967,7 @@ mod tests {
             automation_name: "github_pr_sync".into(),
             triggered_by: Some(Box::new(ActorRef::Authenticated {
                 actor_id: ActorId::Username(Username::from("dave")),
+                session_id: None,
             })),
         };
         let outer = ActorRef::Automation {
@@ -1212,6 +1233,7 @@ mod tests {
     fn actor_ref_display_name_user() {
         let r = ActorRef::Authenticated {
             actor_id: alice_user(),
+            session_id: None,
         };
         assert_eq!(r.display_name(), "alice");
     }
@@ -1220,6 +1242,7 @@ mod tests {
     fn actor_ref_display_name_agent() {
         let r = ActorRef::Authenticated {
             actor_id: swe_agent(),
+            session_id: None,
         };
         assert_eq!(r.display_name(), "swe");
     }
@@ -1228,6 +1251,7 @@ mod tests {
     fn actor_ref_display_name_external() {
         let r = ActorRef::Authenticated {
             actor_id: gh_external(),
+            session_id: None,
         };
         assert_eq!(r.display_name(), "external/github/jayantk");
     }
@@ -1300,5 +1324,52 @@ mod tests {
         let id = adhoc_session();
         let parsed = parse_actor_name(&id.to_string()).expect("adhoc display must round-trip");
         assert_eq!(parsed, id);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 3a: ActorRef::Authenticated.session_id round-trip + §5.4
+    // back-compat contract — JSON blobs without the field must
+    // deserialize as `session_id: None`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn actor_ref_authenticated_with_session_id_round_trips() {
+        let sid = SessionId::from_str("s-abcdef").unwrap();
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(AgentName::try_new("swe").unwrap()),
+            session_id: Some(sid),
+        };
+        let json = serde_json::to_string(&actor_ref).unwrap();
+        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_ref, deserialized);
+    }
+
+    #[test]
+    fn actor_ref_authenticated_with_none_session_id_round_trips() {
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+            session_id: None,
+        };
+        let json = serde_json::to_string(&actor_ref).unwrap();
+        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_ref, deserialized);
+    }
+
+    #[test]
+    fn actor_ref_authenticated_without_field_deserializes_to_none() {
+        // Pre-Phase-3a Versioned<T>.actor blobs predate session_id.
+        // Per design §5.4, deserializing such a blob must yield
+        // `session_id: None`.
+        let legacy = json!({
+            "Authenticated": { "actor_id": { "Username": "alice" } }
+        });
+        let deserialized: ActorRef = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            deserialized,
+            ActorRef::Authenticated {
+                actor_id: ActorId::Username(Username::from("alice")),
+                session_id: None,
+            }
+        );
     }
 }

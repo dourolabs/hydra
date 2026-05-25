@@ -39,8 +39,8 @@ use tokio::sync::OnceCell;
 #[cfg(test)]
 use super::{AgentConfig, SessionMode};
 use super::{
-    ConversationEventSummary, ReadOnlyStore, Session, SessionEvent, SessionEventSummary, Status,
-    Store, StoreError, TaskError, TaskStatusLog,
+    AuthTokenRow, ConversationEventSummary, ReadOnlyStore, Session, SessionEvent,
+    SessionEventSummary, Status, Store, StoreError, TaskError, TaskStatusLog,
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
@@ -715,6 +715,7 @@ impl SqliteStore {
             auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            session_id: None,
         })
     }
 
@@ -3769,6 +3770,33 @@ impl ReadOnlyStore for SqliteStore {
         Ok(rows)
     }
 
+    async fn get_auth_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<AuthTokenRow>, StoreError> {
+        let sql = format!(
+            "SELECT actor_name, session_id FROM {TABLE_AUTH_TOKENS} WHERE token_hash = ?1 LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let Some((actor_name, session_id)) = row else {
+            return Ok(None);
+        };
+        let session_id = match session_id {
+            Some(s) => Some(SessionId::from_str(&s).map_err(|e| {
+                StoreError::Internal(format!("invalid session_id in auth_tokens: {e}"))
+            })?),
+            None => None,
+        };
+        Ok(Some(AuthTokenRow {
+            actor_name,
+            session_id,
+        }))
+    }
+
     async fn get_user_secret(
         &self,
         username: &Username,
@@ -4962,16 +4990,22 @@ impl Store for SqliteStore {
 
     // ---- Auth token mutations ----
 
-    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+    async fn add_auth_token(
+        &self,
+        actor_name: &str,
+        token_hash: &str,
+        session_id: Option<&SessionId>,
+    ) -> Result<(), StoreError> {
         let now = Utc::now().to_rfc3339();
         let sql = format!(
-            "INSERT OR IGNORE INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, created_at) \
-             VALUES (?1, ?2, ?3)"
+            "INSERT OR IGNORE INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, created_at, session_id) \
+             VALUES (?1, ?2, ?3, ?4)"
         );
         sqlx::query(&sql)
             .bind(actor_name)
             .bind(token_hash)
             .bind(&now)
+            .bind(session_id.map(|s| s.to_string()))
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -5655,6 +5689,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
+            session_id: None,
         };
 
         let name = actor.name();
@@ -5676,6 +5711,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(SessionId::new()),
             creator: Username::from("creator"),
+            session_id: None,
         };
         let name = actor.name();
 
@@ -5700,6 +5736,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Session(task_id),
             creator: Username::from("creator"),
+            session_id: None,
         };
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
@@ -5726,6 +5763,7 @@ mod tests {
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Username::from("ada"),
+            session_id: None,
         };
 
         let err = store
@@ -5773,12 +5811,14 @@ mod tests {
             auth_token_salt: "salt1".to_string(),
             actor_id: ActorId::Username(Username::from("alice").into()),
             creator: Username::from("alice"),
+            session_id: None,
         };
         let actor2 = Actor {
             auth_token_hash: "hash2".to_string(),
             auth_token_salt: "salt2".to_string(),
             actor_id: ActorId::Username(Username::from("bob").into()),
             creator: Username::from("bob"),
+            session_id: None,
         };
 
         store
@@ -8376,8 +8416,14 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_add_and_get() {
         let store = create_test_store().await;
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash2", None)
+            .await
+            .unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
@@ -8393,8 +8439,14 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_delete_for_actor() {
         let store = create_test_store().await;
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash2", None)
+            .await
+            .unwrap();
         store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
@@ -8404,11 +8456,59 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_duplicate_insert_is_idempotent() {
         let store = create_test_store().await;
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_with_session_id_round_trips() {
+        let store = create_test_store().await;
+        let sid = SessionId::new();
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("token row should exist");
+        assert_eq!(row.actor_name, "agents/swe");
+        assert_eq!(row.session_id, Some(sid));
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_without_session_id_round_trips() {
+        let store = create_test_store().await;
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("token row should exist");
+        assert_eq!(row.actor_name, "u-alice");
+        assert_eq!(row.session_id, None);
+    }
+
+    #[tokio::test]
+    async fn auth_tokens_by_hash_missing_returns_none() {
+        let store = create_test_store().await;
+        let row = store.get_auth_token_by_hash("nope").await.unwrap();
+        assert!(row.is_none());
     }
 
     // ---- User secret tests ----

@@ -451,6 +451,7 @@ mod tests {
         let session_id = SessionId::from_str(name).expect("valid session id");
         ActorRef::Authenticated {
             actor_id: ActorId::Session(session_id),
+            session_id: None,
         }
     }
 

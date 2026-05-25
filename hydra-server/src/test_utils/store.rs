@@ -312,6 +312,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_auth_token_by_hash(
+        &self,
+        _token_hash: &str,
+    ) -> Result<Option<crate::store::AuthTokenRow>, StoreError> {
+        fail()
+    }
+
     async fn get_user_secret(
         &self,
         _username: &Username,
@@ -600,7 +607,12 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_auth_token(&self, _actor_name: &str, _token_hash: &str) -> Result<(), StoreError> {
+    async fn add_auth_token(
+        &self,
+        _actor_name: &str,
+        _token_hash: &str,
+        _session_id: Option<&SessionId>,
+    ) -> Result<(), StoreError> {
         fail()
     }
 

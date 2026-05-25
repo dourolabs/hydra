@@ -1006,8 +1006,11 @@ impl StoreWithEvents {
         &self,
         actor_name: &str,
         token_hash: &str,
+        session_id: Option<&SessionId>,
     ) -> Result<(), StoreError> {
-        self.inner.add_auth_token(actor_name, token_hash).await
+        self.inner
+            .add_auth_token(actor_name, token_hash, session_id)
+            .await
     }
 
     // ---- User mutations (inherent, with actor) ----
@@ -1663,6 +1666,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_auth_token_hashes(actor_name).await
     }
 
+    async fn get_auth_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<crate::store::AuthTokenRow>, StoreError> {
+        self.inner.get_auth_token_by_hash(token_hash).await
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
@@ -2255,6 +2265,7 @@ mod tests {
                 issue,
                 ActorRef::Authenticated {
                     actor_id: ActorId::Username(Username::from("testuser").into()),
+                    session_id: None,
                 },
             )
             .await
@@ -2266,7 +2277,8 @@ mod tests {
                 assert_eq!(
                     *payload.actor(),
                     ActorRef::Authenticated {
-                        actor_id: ActorId::Username(Username::from("testuser").into())
+                        actor_id: ActorId::Username(Username::from("testuser").into()),
+                        session_id: None,
                     },
                     "actor should be carried through the event payload"
                 );

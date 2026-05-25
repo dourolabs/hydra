@@ -147,7 +147,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         let actor_ref = ctx.actor();
         let actor_name = actor_ref.display_name();
         let actor_id = match actor_ref {
-            ActorRef::Authenticated { actor_id } => actor_id.clone(),
+            ActorRef::Authenticated { actor_id, .. } => actor_id.clone(),
             ActorRef::System { worker_name, .. } => {
                 warn!(
                     patch_id = %patch_id,

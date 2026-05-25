@@ -260,6 +260,7 @@ mod tests {
 
         let actor = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
+            session_id: None,
         };
 
         let versions = vec![

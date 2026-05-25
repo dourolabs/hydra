@@ -22,8 +22,8 @@ use crate::{
         users::{User, Username},
     },
     store::{
-        ConversationEventSummary, ReadOnlyStore, SessionEvent, SessionEventSummary, Store,
-        StoreError, TaskStatusLog,
+        AuthTokenRow, ConversationEventSummary, ReadOnlyStore, SessionEvent, SessionEventSummary,
+        Store, StoreError, TaskStatusLog,
     },
 };
 use anyhow::{Context, Result};
@@ -1156,6 +1156,7 @@ impl PostgresStoreV2 {
             auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            session_id: None,
         })
     }
 
@@ -3559,6 +3560,33 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(rows)
     }
 
+    async fn get_auth_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<AuthTokenRow>, StoreError> {
+        let sql = format!(
+            "SELECT actor_name, session_id FROM {TABLE_AUTH_TOKENS} WHERE token_hash = $1 LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let Some((actor_name, session_id)) = row else {
+            return Ok(None);
+        };
+        let session_id = match session_id {
+            Some(s) => Some(SessionId::from_str(&s).map_err(|e| {
+                StoreError::Internal(format!("invalid session_id in auth_tokens: {e}"))
+            })?),
+            None => None,
+        };
+        Ok(Some(AuthTokenRow {
+            actor_name,
+            session_id,
+        }))
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
@@ -4834,15 +4862,21 @@ impl Store for PostgresStoreV2 {
 
     // ---- Auth token mutations ----
 
-    async fn add_auth_token(&self, actor_name: &str, token_hash: &str) -> Result<(), StoreError> {
+    async fn add_auth_token(
+        &self,
+        actor_name: &str,
+        token_hash: &str,
+        session_id: Option<&SessionId>,
+    ) -> Result<(), StoreError> {
         let sql = format!(
-            "INSERT INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash) \
-             VALUES ($1, $2) \
+            "INSERT INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, session_id) \
+             VALUES ($1, $2, $3) \
              ON CONFLICT DO NOTHING"
         );
         sqlx::query(&sql)
             .bind(actor_name)
             .bind(token_hash)
+            .bind(session_id.map(|s| s.to_string()))
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -7218,19 +7252,28 @@ mod tests {
         assert!(hashes.is_empty());
 
         // ADD — two tokens for alice
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
-        store.add_auth_token("u-alice", "hash2").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash2", None)
+            .await
+            .unwrap();
 
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
 
         // ADD — duplicate insert is idempotent
-        store.add_auth_token("u-alice", "hash1").await.unwrap();
+        store
+            .add_auth_token("u-alice", "hash1", None)
+            .await
+            .unwrap();
         let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
 
         // ADD — token for a different actor
-        store.add_auth_token("u-bob", "hash3").await.unwrap();
+        store.add_auth_token("u-bob", "hash3", None).await.unwrap();
         let bob_hashes = store.get_auth_token_hashes("u-bob").await.unwrap();
         assert_eq!(bob_hashes, vec!["hash3".to_string()]);
 
@@ -7248,6 +7291,42 @@ mod tests {
             .delete_auth_tokens_for_actor("u-nobody")
             .await
             .unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn auth_token_session_id_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let sid = SessionId::new();
+
+        // Insert one token with a session_id and one without.
+        store
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .await
+            .unwrap();
+        store
+            .add_auth_token("u-alice", "hash-user", None)
+            .await
+            .unwrap();
+
+        let row = store
+            .get_auth_token_by_hash("hash-sess")
+            .await
+            .unwrap()
+            .expect("session-spawned token should be found");
+        assert_eq!(row.actor_name, "agents/swe");
+        assert_eq!(row.session_id, Some(sid));
+
+        let row = store
+            .get_auth_token_by_hash("hash-user")
+            .await
+            .unwrap()
+            .expect("user-login token should be found");
+        assert_eq!(row.actor_name, "u-alice");
+        assert_eq!(row.session_id, None);
+
+        let missing = store.get_auth_token_by_hash("nope").await.unwrap();
+        assert!(missing.is_none());
     }
 
     #[sqlx::test(migrations = "./migrations")]
