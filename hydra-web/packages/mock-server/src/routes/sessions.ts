@@ -5,7 +5,6 @@ import { generateId } from "../id.js";
 import { DEV_USERNAME } from "../auth.js";
 import type {
   Session,
-  SessionMode,
   CreateSessionRequest,
   CreateSessionResponse,
   SessionEvent,
@@ -19,6 +18,8 @@ import type {
   SetSessionStatusResponse,
   WorkerContext,
   Status,
+  BundleSpec,
+  MountItem,
 } from "@hydra/api";
 
 // `Session` lost its top-level `prompt` / `interactive` / `model` fields in
@@ -49,14 +50,26 @@ export function conversationIdOf(session: Session): string | null {
   return legacy.interactive?.conversation_id ?? null;
 }
 
-function modeFromCreateRequest(body: CreateSessionRequest): SessionMode {
-  if (body.interactive) {
-    return {
-      type: "interactive",
-      conversation_id: body.conversation_id ?? generateId("conversation"),
-    };
+function bundleSpecFromMountSpec(
+  mountSpec: CreateSessionRequest["mount_spec"],
+): BundleSpec {
+  for (const mount of mountSpec.mounts) {
+    if (mount.type === "bundle") {
+      const bundle = mount.bundle;
+      if (bundle.type === "git_repository") {
+        return { type: "git_repository", url: bundle.url, rev: bundle.rev };
+      }
+      return { type: "none" };
+    }
+    if (mount.type === "build_cache") {
+      return {
+        type: "service_repository",
+        name: mount.service_repo_name,
+        rev: null,
+      };
+    }
   }
-  return { type: "headless", prompt: body.prompt };
+  return { type: "none" };
 }
 
 const COLLECTION = "sessions";
@@ -207,33 +220,34 @@ export function createSessionRoutes(store: Store): Hono {
     const body = await c.req.json<CreateSessionRequest>();
     const id = generateId("session");
     const now = new Date().toISOString();
+    const mountSpec =
+      body.mount_spec.mounts.length === 0
+        ? {
+            working_dir: "repo",
+            mounts: [
+              { type: "bundle", target: "repo", bundle: { type: "none" } },
+              { type: "documents", target: "documents" },
+            ] as MountItem[],
+          }
+        : body.mount_spec;
     const task: Session = {
-      mode: modeFromCreateRequest(body),
-      agent_config: {},
-      mount_spec: {
-        working_dir: "repo",
-        mounts: [
-          {
-            type: "bundle",
-            target: "repo",
-            bundle:
-              body.context.type === "git_repository"
-                ? { type: "git_repository", url: body.context.url, rev: body.context.rev }
-                : { type: "none" },
-          },
-          { type: "documents", target: "documents" },
-        ],
-      },
-      context: body.context,
-      spawned_from: body.issue_id,
+      mode: body.mode,
+      agent_config: body.agent_config,
+      mount_spec: mountSpec,
+      context: bundleSpecFromMountSpec(mountSpec),
+      spawned_from: body.spawned_from,
+      resumed_from: body.resumed_from,
       creator: DEV_USERNAME,
       image: body.image,
-      env_vars: body.variables,
+      env_vars: body.env_vars,
+      cpu_limit: body.cpu_limit,
+      memory_limit: body.memory_limit,
+      secrets: body.secrets,
       status: "pending" as Status,
       creation_time: now,
     };
     store.create<Session>(COLLECTION, id, task, SSE_PREFIX);
-    const resp: CreateSessionResponse = { session_id: id };
+    const resp: CreateSessionResponse = { session_id: id, session: task };
     return c.json(resp, 201);
   });
 
