@@ -1246,10 +1246,8 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let mount_spec_json = serde_json::to_string(&super::dual_write_mount_spec_json(
-            id, session,
-        )?)
-        .map_err(|e| StoreError::Internal(format!("failed to serialize mount_spec: {e}")))?;
+        let mount_spec_json = serde_json::to_string(&super::dual_write_mount_spec_json(session)?)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize mount_spec: {e}")))?;
         let agent_config_json =
             serde_json::to_string(&super::dual_write_agent_config_json(session)?).map_err(|e| {
                 StoreError::Internal(format!("failed to serialize agent_config: {e}"))

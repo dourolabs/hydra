@@ -738,7 +738,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let mount_spec_json = crate::store::dual_write_mount_spec_json(id, session)?;
+        let mount_spec_json = crate::store::dual_write_mount_spec_json(session)?;
         let agent_config_json = crate::store::dual_write_agent_config_json(session)?;
         let mode_json = crate::store::dual_write_mode_json(session)?;
         let resumed_from_str = session

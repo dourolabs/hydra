@@ -196,7 +196,6 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 /// per-item id to rewrite at write time. The deserializer tolerates the
 /// legacy field on old rows for read-side backward compat.
 pub(crate) fn dual_write_mount_spec_json(
-    _id: &SessionId,
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
     let spec = session.mount_spec.clone();
