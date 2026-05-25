@@ -36,6 +36,11 @@ pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned
 /// `ServiceRepository` can't be lowered without the resolver here, so it is
 /// substituted with `Bundle::None`; `routes/sessions/context.rs` re-runs the
 /// translation against the resolved bundle at WorkerContext fetch time.
+///
+/// PR-E: no longer called by `create_session` — kept alive for other
+/// callers (tests, `routes/sessions/context.rs`) and slated for deletion
+/// alongside `BundleSpec` in PR-F.
+#[allow(dead_code)]
 pub(crate) fn mount_spec_for_session(
     context: &BundleSpec,
 ) -> hydra_common::api::v1::sessions::MountSpec {
@@ -49,6 +54,57 @@ pub(crate) fn mount_spec_for_session(
         _ => Bundle::None,
     };
     crate::routes::sessions::mount_spec_from_create_request(bundle, None)
+}
+
+/// Derive the transitional `Session.context` carrier from a `MountSpec`.
+///
+/// Picks the first `MountItem::BuildCache` (yielding `ServiceRepository`) if
+/// present; otherwise inspects the first `MountItem::Bundle.bundle`. The
+/// `service_repo_name()` accessor on `Session` reads `Session.context`, and
+/// the resolver (`routes/sessions/context.rs`) consults that accessor when
+/// deciding whether to append a `BuildCache` mount. PR-F will delete
+/// `Session.context`, this helper, and the resolver re-lowering together.
+pub(crate) fn derive_bundle_spec_from_mount_spec(
+    mount_spec: &hydra_common::api::v1::sessions::MountSpec,
+) -> BundleSpec {
+    use hydra_common::api::v1::sessions::{Bundle, MountItem};
+
+    // Find the bundle rev (if any) on the first `Bundle` item for use as the
+    // ServiceRepository rev fallback.
+    let bundle_rev = mount_spec.mounts.iter().find_map(|m| match m {
+        MountItem::Bundle {
+            bundle: Bundle::GitRepository { rev, .. },
+            ..
+        } => Some(rev.clone()),
+        _ => None,
+    });
+
+    for mount in &mount_spec.mounts {
+        if let MountItem::BuildCache {
+            service_repo_name, ..
+        } = mount
+        {
+            return BundleSpec::ServiceRepository {
+                name: service_repo_name.clone(),
+                rev: bundle_rev,
+            };
+        }
+    }
+
+    for mount in &mount_spec.mounts {
+        if let MountItem::Bundle { bundle, .. } = mount {
+            return match bundle {
+                Bundle::None => BundleSpec::None,
+                Bundle::GitRepository { url, rev } => BundleSpec::GitRepository {
+                    url: url.clone(),
+                    rev: rev.clone(),
+                },
+                _ => BundleSpec::None,
+            };
+        }
+    }
+
+    BundleSpec::None
 }
 
 #[derive(Debug, Error)]
@@ -67,8 +123,6 @@ pub enum CreateSessionError {
         source: StoreError,
         conversation_id: ConversationId,
     },
-    #[error("issue_id and conversation_id are mutually exclusive on CreateSessionRequest")]
-    IssueAndConversationConflict,
     #[error("conversation references unknown agent '{name}'")]
     AgentNotFound { name: String },
     #[error("failed to resolve agent for conversation")]
@@ -93,8 +147,6 @@ pub enum CreateSessionError {
         #[source]
         source: StoreError,
     },
-    #[error("interactive sessions require a conversation_id")]
-    InteractiveRequiresConversation,
 }
 
 #[derive(Debug, Error)]
@@ -131,26 +183,41 @@ impl AppState {
         Ok(session_id)
     }
 
+    /// Create a session from the new (§2.2) request shape.
+    ///
+    /// Returns the assigned `SessionId` and the persisted domain `Session` so
+    /// HTTP callers can populate `CreateSessionResponse.session` without a
+    /// follow-up `GET /v1/sessions/:id` (§2.4).
     pub async fn create_session(
         &self,
         request: api::sessions::CreateSessionRequest,
         actor: ActorRef,
         creator: Username,
-    ) -> Result<SessionId, CreateSessionError> {
-        if request.issue_id.is_some() && request.conversation_id.is_some() {
-            return Err(CreateSessionError::IssueAndConversationConflict);
-        }
+    ) -> Result<(SessionId, Session), CreateSessionError> {
+        let api::sessions::CreateSessionRequest {
+            mode: req_mode,
+            agent_config: req_agent_config,
+            mount_spec: req_mount_spec,
+            image: req_image,
+            env_vars: mut req_env_vars,
+            cpu_limit: req_cpu_limit,
+            memory_limit: req_memory_limit,
+            secrets: req_secrets,
+            spawned_from,
+            resumed_from,
+            ..
+        } = request;
 
-        let mut env_vars = request.variables;
         let store = self.store.as_ref();
 
-        // Derive session settings from whichever of conversation/issue is linked.
-        // `create_conversation` persists the conversation before calling this method,
-        // so the lookup below succeeds when invoked from that path.
-        // For conversation-linked sessions, also resolve the conversation's agent
-        // so we can apply its prompt, secrets, and MCP config to the session.
-        let (derived_settings, resolved_agent) =
-            if let Some(conversation_id) = request.conversation_id.as_ref() {
+        // Source of session-level defaults: for Interactive sessions, the
+        // conversation; for Headless sessions, the `spawned_from` issue.
+        // `SessionMode` carries the conversation id on the `Interactive`
+        // variant, so the cross-field validation that lived here is gone.
+        let (derived_settings, resolved_agent) = match &req_mode {
+            api::sessions::SessionMode::Interactive {
+                conversation_id, ..
+            } => {
                 let conversation = store
                     .get_conversation(conversation_id, false)
                     .await
@@ -158,7 +225,23 @@ impl AppState {
                         source,
                         conversation_id: conversation_id.clone(),
                     })?;
-                let agent_name = conversation.item.agent_name.clone();
+                // §2.9: request agent_name wins over Conversation.agent_name
+                // when both are set. Warn-log on disagreement.
+                let agent_name = match (
+                    req_agent_config.agent_name.as_deref(),
+                    conversation.item.agent_name.as_deref(),
+                ) {
+                    (Some(req_name), Some(conv_name)) if req_name != conv_name => {
+                        warn!(
+                            request_agent = req_name,
+                            conversation_agent = conv_name,
+                            "request.agent_config.agent_name overrides Conversation.agent_name"
+                        );
+                        Some(req_name.to_string())
+                    }
+                    (Some(name), _) | (None, Some(name)) => Some(name.to_string()),
+                    (None, None) => None,
+                };
                 let agent = self
                     .resolve_conversation_agent(agent_name.as_deref())
                     .await
@@ -167,64 +250,74 @@ impl AppState {
                         other => CreateSessionError::AgentLookup { source: other },
                     })?;
                 (Some(conversation.item.session_settings), agent)
-            } else if let Some(issue_id) = request.issue_id.as_ref() {
-                let issue = store.get_issue(issue_id, false).await.map_err(|source| {
-                    CreateSessionError::IssueLookup {
-                        source,
-                        issue_id: issue_id.clone(),
-                    }
-                })?;
-                (Some(issue.item.session_settings), None)
-            } else {
-                (None, None)
-            };
+            }
+            _ => {
+                if let Some(issue_id) = spawned_from.as_ref() {
+                    let issue = store.get_issue(issue_id, false).await.map_err(|source| {
+                        CreateSessionError::IssueLookup {
+                            source,
+                            issue_id: issue_id.clone(),
+                        }
+                    })?;
+                    (Some(issue.item.session_settings), None)
+                } else {
+                    (None, None)
+                }
+            }
+        };
 
         let session_settings = derived_settings
             .map(|settings| self.apply_session_settings_defaults(settings))
             .filter(|settings| !SessionSettings::is_default(settings));
 
-        let mut context: BundleSpec = request.context.into();
-        let image = session_settings
-            .as_ref()
-            .and_then(|settings| settings.image.clone())
-            .or(request.image);
-        let model = session_settings
-            .as_ref()
-            .and_then(|settings| settings.model.clone());
-        let cpu_limit = session_settings
-            .as_ref()
-            .and_then(|settings| settings.cpu_limit.clone());
-        let memory_limit = session_settings
-            .as_ref()
-            .and_then(|settings| settings.memory_limit.clone());
-        let secrets = session_settings
-            .as_ref()
-            .and_then(|settings| settings.secrets.clone());
+        // Apply settings as DEFAULTS — the request always wins.
+        let image = req_image.or_else(|| session_settings.as_ref().and_then(|s| s.image.clone()));
+        let cpu_limit =
+            req_cpu_limit.or_else(|| session_settings.as_ref().and_then(|s| s.cpu_limit.clone()));
+        let memory_limit = req_memory_limit.or_else(|| {
+            session_settings
+                .as_ref()
+                .and_then(|s| s.memory_limit.clone())
+        });
+        let mut secrets =
+            req_secrets.or_else(|| session_settings.as_ref().and_then(|s| s.secrets.clone()));
+        let model = req_agent_config
+            .model
+            .clone()
+            .or_else(|| session_settings.as_ref().and_then(|s| s.model.clone()));
 
-        // If a conversation agent was resolved, apply its prompt, MCP config,
-        // secrets, and AGENT_NAME env var. Mirrors `agent_queue.rs::build_task`.
-        let mut prompt = request.prompt;
-        let mut mcp_config = None;
-        let mut secrets = secrets;
+        // Pre-resolved fields on `agent_config` win over filesystem resolution.
+        let mut system_prompt = req_agent_config.system_prompt.clone();
+        let mut mcp_config = req_agent_config.mcp_config.clone();
+        let mut agent_name = req_agent_config.agent_name.clone();
+
         if let Some(agent) = resolved_agent.as_ref() {
-            prompt = self
-                .resolve_agent_prompt(&agent.prompt_path)
-                .await
-                .map_err(|source| CreateSessionError::AgentPromptResolution {
-                    path: agent.prompt_path.clone(),
-                    source,
-                })?;
+            agent_name = agent_name.or_else(|| Some(agent.name.clone()));
 
-            if let Some(path) = agent.mcp_config_path.as_deref() {
-                mcp_config = self
-                    .resolve_agent_mcp_config(path)
-                    .await
-                    .map_err(|source| CreateSessionError::AgentMcpConfigResolution {
-                        path: path.to_string(),
-                        source,
-                    })?;
+            if system_prompt.is_none() {
+                system_prompt = Some(
+                    self.resolve_agent_prompt(&agent.prompt_path)
+                        .await
+                        .map_err(|source| CreateSessionError::AgentPromptResolution {
+                            path: agent.prompt_path.clone(),
+                            source,
+                        })?,
+                );
             }
 
+            if mcp_config.is_none() {
+                if let Some(path) = agent.mcp_config_path.as_deref() {
+                    mcp_config = self
+                        .resolve_agent_mcp_config(path)
+                        .await
+                        .map_err(|source| CreateSessionError::AgentMcpConfigResolution {
+                            path: path.to_string(),
+                            source,
+                        })?;
+                }
+            }
+
+            // Merge agent-level secrets with whatever secrets resolved above.
             let merged_secrets = {
                 let mut seen = HashSet::new();
                 let mut merged = Vec::new();
@@ -241,83 +334,36 @@ impl AppState {
             };
             secrets = merged_secrets;
 
-            env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
+            req_env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
         }
 
-        if let Some(settings) = session_settings {
-            if let Some(remote_url) = settings.remote_url.clone() {
-                let rev = settings
-                    .branch
-                    .clone()
-                    .or_else(|| match &context {
-                        BundleSpec::GitRepository { rev, .. } => Some(rev.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "main".to_string());
-                context = BundleSpec::GitRepository {
-                    url: remote_url,
-                    rev,
-                };
-            } else if let Some(repo_name) = settings.repo_name.clone() {
-                context = BundleSpec::ServiceRepository {
-                    name: repo_name,
-                    rev: settings.branch.clone(),
-                };
-            } else if let (Some(branch), BundleSpec::GitRepository { url, .. }) =
-                (settings.branch.clone(), &context)
-            {
-                context = BundleSpec::GitRepository {
-                    url: url.clone(),
-                    rev: branch,
-                };
-            }
-        }
+        // Compute the final mount_spec. The request wins when non-empty;
+        // session_settings defaults only fill in an empty request mount_spec.
+        let mount_spec = if !req_mount_spec.is_empty() {
+            req_mount_spec
+        } else if let Some(settings) = session_settings.as_ref() {
+            self.mount_spec_from_session_settings(settings).await?
+        } else {
+            req_mount_spec
+        };
 
-        let mode = if request.interactive {
-            // `SessionMode::Interactive` requires a `conversation_id`. The
-            // legacy flat `CreateSessionRequest` shape can't express that
-            // constraint at compile time, so the cross-field check stays
-            // here. Matches the historical worker-start rejection.
-            let conv_id = request
-                .conversation_id
-                .clone()
-                .ok_or(CreateSessionError::InteractiveRequiresConversation)?;
-            SessionMode::Interactive {
-                conversation_id: conv_id,
-                idle_timeout_secs: None,
-                conversation_resume_from: None,
-            }
-        } else {
-            SessionMode::Headless {
-                prompt: prompt.clone(),
-            }
-        };
-        let mount_spec = mount_spec_for_session(&context);
-        // For interactive sessions, the agent prompt lives in
-        // `agent_config.system_prompt` because `SessionMode::Interactive`
-        // doesn't carry a `prompt` field. Headless sessions carry the same
-        // string in `mode.Headless.prompt`. Either way, the WorkerContext
-        // surfaces a single `prompt` string to the worker (see
-        // `routes/sessions/context::get_session_context`).
-        let system_prompt = if matches!(mode, SessionMode::Interactive { .. }) {
-            Some(prompt.clone())
-        } else {
-            None
-        };
-        let agent_config = AgentConfig::new(
-            resolved_agent.as_ref().map(|a| a.name.clone()),
-            model,
-            system_prompt,
-            mcp_config,
-        );
+        // Derive the transitional `Session.context` carrier from `mount_spec`
+        // for the resolver (`routes/sessions/context.rs` still consults
+        // `session.service_repo_name()`). PR-F deletes this field, this
+        // carrier, and `mount_spec_for_session` together.
+        let context = derive_bundle_spec_from_mount_spec(&mount_spec);
+
+        let agent_config = AgentConfig::new(agent_name, model, system_prompt, mcp_config);
+        let mode: SessionMode = req_mode.into();
+
         let mut session = Session::new(
             creator,
-            request.issue_id.clone(),
-            None,
+            spawned_from,
+            resumed_from,
             agent_config,
             mount_spec,
             image,
-            env_vars,
+            req_env_vars,
             cpu_limit,
             memory_limit,
             secrets,
@@ -326,22 +372,85 @@ impl AppState {
             None,
             None,
         );
-        // Preserve the BundleSpec (including ServiceRepository) so the
-        // resolver can lower it to a concrete GitRepository URL at fetch
-        // time. The new `mount_spec` only encodes lowered `Bundle` variants,
-        // so this transitional field is the only carrier for
-        // ServiceRepository linkage until PR-3.
         session.context = context;
 
         self.resolve_task(&session).await?;
 
+        let creation_time = Utc::now();
         let (session_id, _version) = self
             .store
-            .add_session_with_actor(session, Utc::now(), actor)
+            .add_session_with_actor(session.clone(), creation_time, actor)
             .await
             .map_err(|source| CreateSessionError::Store { source })?;
 
-        Ok(session_id)
+        // Populate the assigned creation_time so the returned `Session`
+        // matches what the store now holds — saves callers a follow-up
+        // `get_session` and lets the route response carry the canonical row.
+        session.creation_time = Some(creation_time);
+
+        Ok((session_id, session))
+    }
+
+    /// Build a `MountSpec` from session-level defaults (`remote_url` /
+    /// `repo_name` / `branch`). Returns the empty default when no source
+    /// is configured — the caller is responsible for falling back to the
+    /// request's `mount_spec` in that case.
+    async fn mount_spec_from_session_settings(
+        &self,
+        settings: &SessionSettings,
+    ) -> Result<api::sessions::MountSpec, CreateSessionError> {
+        use crate::routes::sessions::mount_spec_from_create_request;
+        use hydra_common::api::v1::sessions::Bundle;
+
+        let (bundle, service_repo_name) = if let Some(remote_url) = settings.remote_url.clone() {
+            let rev = settings
+                .branch
+                .clone()
+                .unwrap_or_else(|| "main".to_string());
+            let bundle = Bundle::GitRepository {
+                url: remote_url,
+                rev,
+            };
+            (bundle, settings.repo_name.clone())
+        } else if let Some(repo_name) = settings.repo_name.clone() {
+            // Resolve the service repo to a concrete URL/branch via the
+            // repository store. `ServiceRepository` is the only path that
+            // needs the resolver; the bundle on the row is fully lowered.
+            let repository = self
+                .repository_from_store(&repo_name)
+                .await
+                .map_err(|source| match source {
+                    StoreError::RepositoryNotFound(_) => {
+                        CreateSessionError::TaskResolution(TaskResolutionError::Bundle(
+                            crate::app::BundleResolutionError::UnknownRepository(repo_name.clone()),
+                        ))
+                    }
+                    other => CreateSessionError::TaskResolution(TaskResolutionError::Bundle(
+                        crate::app::BundleResolutionError::RepositoryLookup {
+                            repo_name: repo_name.clone(),
+                            source: other,
+                        },
+                    )),
+                })?;
+            let rev = settings
+                .branch
+                .clone()
+                .or_else(|| repository.default_branch.clone())
+                .unwrap_or_else(|| "main".to_string());
+            let bundle = Bundle::GitRepository {
+                url: repository.remote_url.clone(),
+                rev,
+            };
+            (bundle, Some(repo_name))
+        } else {
+            return Ok(api::sessions::MountSpec::default());
+        };
+
+        let build_cache = match (service_repo_name, self.config.build_cache.to_context()) {
+            (Some(name), Some(ctx)) => Some((name, ctx)),
+            _ => None,
+        };
+        Ok(mount_spec_from_create_request(bundle, build_cache))
     }
 
     pub(crate) fn apply_session_settings_defaults(
@@ -1435,36 +1544,43 @@ mod tests {
     #[tokio::test]
     async fn create_session_passes_interactive_and_conversation_id() {
         use crate::domain::conversations::{Conversation, ConversationStatus};
-        use hydra_common::api::v1::sessions::CreateSessionRequest;
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, CreateSessionRequest, MountSpec, SessionMode,
+        };
 
         let state = state_with_default_model("default-model");
 
-        // Non-interactive session (no issue/conversation): interactive=false, conversation_id=None
-        let request = CreateSessionRequest::new(
-            "do stuff".to_string(),
-            None,
-            hydra_common::api::v1::sessions::BundleSpec::None,
-            std::collections::HashMap::new(),
-            None,
-            None,
-            false,
-        );
-        let session_id = state
+        // Headless session — no conversation lookup, no spawned_from.
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless {
+                prompt: "do stuff".to_string(),
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
             .await
             .unwrap();
         let session = state.get_session(&session_id).await.unwrap();
         assert!(
             !session.is_interactive(),
-            "non-conversation session should not be interactive"
+            "headless session should not be interactive"
         );
         assert_eq!(
             session.conversation_id(),
             None,
-            "non-conversation session should have no conversation_id"
+            "headless session should have no conversation_id"
         );
 
-        // Interactive session (conversation-based): conversation_id is set on request.
+        // Interactive session — conversation_id lives on the SessionMode.
         let (conv_id, _) = state
             .store
             .add_conversation_with_actor(
@@ -1480,16 +1596,23 @@ mod tests {
             )
             .await
             .unwrap();
-        let request = CreateSessionRequest::new(
-            "hello".to_string(),
-            None,
-            hydra_common::api::v1::sessions::BundleSpec::None,
-            std::collections::HashMap::new(),
-            None,
-            Some(conv_id.clone()),
-            true,
-        );
-        let session_id = state
+        let request = CreateSessionRequest {
+            mode: SessionMode::Interactive {
+                conversation_id: conv_id.clone(),
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
             .await
             .unwrap();
@@ -1506,38 +1629,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_session_rejects_issue_and_conversation_together() {
-        use crate::app::CreateSessionError;
-        use hydra_common::{ConversationId, IssueId, api::v1::sessions::CreateSessionRequest};
-
-        let state = state_with_default_model("default-model");
-        let request = CreateSessionRequest::new(
-            "do stuff".to_string(),
-            None,
-            hydra_common::api::v1::sessions::BundleSpec::None,
-            std::collections::HashMap::new(),
-            Some(IssueId::new()),
-            Some(ConversationId::new()),
-            false,
-        );
-
-        let err = state
-            .create_session(request, ActorRef::test(), Username::from("creator"))
-            .await
-            .expect_err("issue_id + conversation_id should be rejected");
-        assert!(
-            matches!(err, CreateSessionError::IssueAndConversationConflict),
-            "expected IssueAndConversationConflict, got {err:?}"
-        );
-    }
-
-    #[tokio::test]
     async fn create_session_derives_settings_from_linked_conversation() {
         use crate::domain::{
             conversations::{Conversation, ConversationStatus},
             issues::SessionSettings,
         };
-        use hydra_common::api::v1::sessions::CreateSessionRequest;
+        use hydra_common::api::v1::sessions::{
+            AgentConfig, CreateSessionRequest, MountSpec, SessionMode,
+        };
 
         let state = state_with_default_model("default-model");
         let settings = SessionSettings {
@@ -1560,16 +1659,23 @@ mod tests {
             .await
             .unwrap();
 
-        let request = CreateSessionRequest::new(
-            "hello".to_string(),
-            None,
-            hydra_common::api::v1::sessions::BundleSpec::None,
-            std::collections::HashMap::new(),
-            None,
-            Some(conv_id),
-            true,
-        );
-        let session_id = state
+        let request = CreateSessionRequest {
+            mode: SessionMode::Interactive {
+                conversation_id: conv_id,
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
             .await
             .unwrap();

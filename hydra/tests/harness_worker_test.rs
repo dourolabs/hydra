@@ -21,7 +21,7 @@ use hydra::client::HydraClientInterface;
 use hydra::command::output::{CommandContext, ResolvedOutputFormat};
 #[cfg(unix)]
 use hydra_common::{
-    api::v1::sessions::{BundleSpec, CreateSessionRequest},
+    api::v1::sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode},
     issues::{IssueStatus, IssueType, SessionSettings},
 };
 #[cfg(unix)]
@@ -208,17 +208,27 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
     // Session: interactive=true triggers the interactive branch in
     // worker_run; OPENAI_API_KEY=test satisfies Codex::new's env check;
     // BundleSpec::None keeps mounts minimal (no clone, no build cache).
-    let mut variables = HashMap::new();
-    variables.insert("OPENAI_API_KEY".to_string(), "test".to_string());
-    let request = CreateSessionRequest::new(
-        "interactive Codex guard test".to_string(),
-        None,
-        BundleSpec::None,
-        variables,
-        Some(issue_id),
-        None,
-        true,
-    );
+    let mut env_vars = HashMap::new();
+    env_vars.insert("OPENAI_API_KEY".to_string(), "test".to_string());
+    // Pre-PR-E this test exercised `interactive=true` without a
+    // `conversation_id`, which is no longer representable. The `#[ignore]`
+    // attribute above already keeps the test out of the regular suite; this
+    // stub keeps it type-correct for the day the Codex+interactive path is
+    // re-grounded in `SessionMode` (PR-3 follow-up).
+    let request = CreateSessionRequest {
+        mode: SessionMode::Headless {
+            prompt: "interactive Codex guard test".to_string(),
+        },
+        agent_config: AgentConfig::default(),
+        mount_spec: MountSpec::default(),
+        image: None,
+        env_vars,
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: Some(issue_id),
+        resumed_from: None,
+    };
     let session_id = user.client().create_session(&request).await?.session_id;
 
     let inner: Arc<dyn HydraClientInterface> = Arc::new(user.client().clone());

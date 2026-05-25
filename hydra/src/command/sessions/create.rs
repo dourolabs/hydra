@@ -6,8 +6,12 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use hydra_common::{
+    api::v1::sessions::{
+        AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
+        SessionVersionRecord,
+    },
     logs::LogsQuery,
-    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
+    sessions::SearchSessionsQuery,
     task_status::{Status, TaskError},
     IssueId, RepoName, SessionId,
 };
@@ -25,7 +29,7 @@ pub async fn run(
     issue_id: Option<IssueId>,
     context: &CommandContext,
 ) -> Result<()> {
-    let bundle_context = build_context(repo_arg, rev_arg)?;
+    let mount_spec = mount_spec_from_cli(client, repo_arg, rev_arg).await?;
 
     let prompt = if prompt_parts.is_empty() {
         bail!("prompt is required")
@@ -33,8 +37,8 @@ pub async fn run(
         prompt_parts.join(" ")
     };
 
-    let mut variables = parse_cli_variables(&cli_vars)?;
-    variables.insert("PROMPT".to_string(), prompt.clone());
+    let mut env_vars = parse_cli_variables(&cli_vars)?;
+    env_vars.insert("PROMPT".to_string(), prompt.clone());
 
     let image = match image {
         Some(value) => {
@@ -46,22 +50,32 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateSessionRequest::new(
-        prompt,
+    let request = CreateSessionRequest {
+        mode: SessionMode::Headless { prompt },
+        agent_config: AgentConfig::default(),
+        mount_spec,
         image,
-        bundle_context,
-        variables,
-        issue_id,
-        None,
-        false,
-    );
+        env_vars,
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: issue_id,
+        resumed_from: None,
+    };
     let response = client.create_session(&request).await?;
     let session_id = response.session_id;
 
-    let session = client.get_session(&session_id).await?;
+    // The response carries the persisted session, so no follow-up `get`.
+    let session_record = SessionVersionRecord::new(
+        session_id.clone(),
+        1,
+        chrono::Utc::now(),
+        response.session,
+        None,
+    );
     let mut buffer = Vec::new();
     render(
-        SessionRecords(&[session]),
+        SessionRecords(&[session_record]),
         context.output_format,
         &mut buffer,
     )?;
@@ -153,12 +167,37 @@ async fn wait_for_session_completion_via_server(
     }
 }
 
-fn build_context(repo: Option<String>, rev: Option<String>) -> Result<BundleSpec> {
+/// Build a [`MountSpec`] from the CLI's `--repo`/`--rev` arguments.
+///
+/// `--repo` accepts either a Git URL (passed straight through as a
+/// `Bundle::GitRepository`) or a `org/repo` shorthand that resolves to a
+/// registered service repository via `GET /v1/repositories?remote_url=...`
+/// — reusing the PR-A primitive on the server. The mount layout is the
+/// canonical `[Bundle, Documents]` two-item shape.
+async fn mount_spec_from_cli(
+    client: &dyn HydraClientInterface,
+    repo: Option<String>,
+    rev: Option<String>,
+) -> Result<MountSpec> {
+    let repo_target = RelativePath::new("repo").context("static `repo` is valid")?;
+    let docs_target = RelativePath::new("documents").context("static `documents` is valid")?;
+
     let Some(repo) = repo else {
         if rev.is_some() {
             bail!("--rev requires --repo");
         }
-        return Ok(BundleSpec::None);
+        return Ok(MountSpec::new(
+            repo_target.clone(),
+            vec![
+                MountItem::Bundle {
+                    target: repo_target,
+                    bundle: Bundle::None,
+                },
+                MountItem::Documents {
+                    target: docs_target,
+                },
+            ],
+        ));
     };
 
     let trimmed_repo = repo.trim().to_string();
@@ -177,23 +216,59 @@ fn build_context(repo: Option<String>, rev: Option<String>) -> Result<BundleSpec
         None => "main".to_string(),
     };
 
-    if looks_like_git_url(&trimmed_repo) {
-        return Ok(BundleSpec::GitRepository {
+    let bundle = if looks_like_git_url(&trimmed_repo) {
+        Bundle::GitRepository {
             url: trimmed_repo,
             rev: trimmed_rev,
-        });
-    }
+        }
+    } else {
+        // Treat as a service-repo `org/repo` shorthand. Look it up to
+        // get the concrete remote URL, then build a `GitRepository`
+        // bundle so the worker can clone directly.
+        let _repo_name = RepoName::from_str(&trimmed_repo)
+            .with_context(|| format!("invalid service repository name '{trimmed_repo}'"))?;
+        let url = resolve_service_repo_remote_url(client, &trimmed_repo).await?;
+        Bundle::GitRepository {
+            url,
+            rev: trimmed_rev,
+        }
+    };
 
-    let repo_name = RepoName::from_str(&trimmed_repo)
-        .with_context(|| format!("invalid service repository name '{trimmed_repo}'"))?;
-    Ok(BundleSpec::ServiceRepository {
-        name: repo_name,
-        rev: Some(trimmed_rev),
-    })
+    Ok(MountSpec::new(
+        repo_target.clone(),
+        vec![
+            MountItem::Bundle {
+                target: repo_target,
+                bundle,
+            },
+            MountItem::Documents {
+                target: docs_target,
+            },
+        ],
+    ))
 }
 
 fn looks_like_git_url(repo: &str) -> bool {
     repo.contains("://") || repo.starts_with("git@") || repo.contains('@') && repo.contains(':')
+}
+
+async fn resolve_service_repo_remote_url(
+    client: &dyn HydraClientInterface,
+    org_repo: &str,
+) -> Result<String> {
+    use hydra_common::repositories::SearchRepositoriesQuery;
+    let repo_name = RepoName::from_str(org_repo)
+        .with_context(|| format!("invalid service repository name '{org_repo}'"))?;
+    let response = client
+        .list_repositories(&SearchRepositoriesQuery::default())
+        .await
+        .with_context(|| format!("failed to look up service repository '{org_repo}'"))?;
+    let record = response
+        .repositories
+        .into_iter()
+        .find(|record| record.name == repo_name)
+        .ok_or_else(|| anyhow::anyhow!("service repository '{org_repo}' is not registered"))?;
+    Ok(record.repository.remote_url)
 }
 
 /// Parse CLI variable arguments in KEY=VALUE format.
@@ -253,12 +328,9 @@ mod tests {
         command::output::{CommandContext, ResolvedOutputFormat},
     };
     use httpmock::prelude::*;
-    use httpmock::Mock;
     use hydra_common::{
-        sessions::{
-            BundleSpec, CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord,
-            SessionVersionRecord,
-        },
+        repositories::{ListRepositoriesResponse, Repository, RepositoryRecord},
+        sessions::{CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord},
         task_status::{Status, TaskError},
         users::Username,
     };
@@ -272,21 +344,12 @@ mod tests {
     }
 
     fn test_session(status: Status, error: Option<TaskError>) -> Session {
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
-        };
-        let mount_spec = MountSpec::new(
-            RelativePath::new("repo").unwrap(),
-            vec![MountItem::Documents {
-                target: RelativePath::new("documents").unwrap(),
-            }],
-        );
         Session::new(
             Username::from("test-creator"),
             None,
             None,
             AgentConfig::default(),
-            mount_spec,
+            MountSpec::default(),
             None,
             HashMap::new(),
             None,
@@ -323,16 +386,12 @@ mod tests {
         )
     }
 
-    fn session_record(id: &str) -> SessionVersionRecord {
-        session_record_with_status(id, Status::Created, None)
-    }
-
-    fn mock_get_session(server: &MockServer, session: SessionVersionRecord) -> Mock {
-        server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/sessions/{}", session.session_id));
-            then.status(200).json_body_obj(&session);
-        })
+    /// Builds a `CreateSessionResponse` carrying the persisted session that
+    /// the post-PR-E endpoint returns. The CLI now reads `response.session`
+    /// directly and no longer issues a follow-up `GET /v1/sessions/:id`.
+    fn create_session_response(id: &str) -> CreateSessionResponse {
+        let session_id = task_id(id);
+        CreateSessionResponse::new(session_id, test_session(Status::Created, None))
     }
 
     #[tokio::test]
@@ -343,23 +402,10 @@ mod tests {
                 .expect("client");
         let job_id = task_id("t-job-123");
 
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let create_request = CreateSessionRequest::new(
-            "test prompt".to_string(),
-            None,
-            BundleSpec::None,
-            variables.clone(),
-            None,
-            None,
-            false,
-        );
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&create_request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
         let logs_mock = server.mock(|when, then| {
             when.method(GET)
@@ -369,7 +415,6 @@ mod tests {
                 .header("content-type", "text/event-stream")
                 .body("data: first log line\n\ndata: second log line\n\n");
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let completed_sessions = ListSessionsResponse::new(vec![SessionSummaryRecord::from(
             &session_record_with_status(job_id.as_ref(), Status::Complete, None),
@@ -396,7 +441,6 @@ mod tests {
 
         create_mock.assert();
         logs_mock.assert();
-        session_mock.assert();
         list_mock.assert();
     }
 
@@ -406,29 +450,26 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
+        let repo_name = RepoName::from_str("dourolabs/service-repo").unwrap();
+        let repository = Repository::new(
+            "https://github.com/dourolabs/service-repo.git".to_string(),
+            Some("main".to_string()),
             None,
-            BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
-                rev: Some("feature".into()),
-            },
-            variables,
-            None,
-            None,
-            false,
         );
+        let list_response = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
+            repo_name.clone(),
+            repository,
+        )]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&list_response);
+        });
         let job_id = task_id("t-job-service");
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -445,57 +486,8 @@ mod tests {
         .await
         .unwrap();
 
+        list_mock.assert();
         create_mock.assert();
-        session_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn spawn_defaults_rev_to_main_for_service_repositories() {
-        let server = MockServer::start();
-        let client =
-            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
-                .expect("client");
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
-            None,
-            BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
-                rev: Some("main".into()),
-            },
-            variables,
-            None,
-            None,
-            false,
-        );
-        let job_id = task_id("t-job-service-default-rev");
-        let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
-            then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
-        });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
-
-        let context = test_context();
-        run(
-            &client,
-            false,
-            Some("dourolabs/service-repo".into()),
-            None,
-            None,
-            vec![],
-            vec!["test prompt".into()],
-            None,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        create_mock.assert();
-        session_mock.assert();
     }
 
     #[tokio::test]
@@ -504,29 +496,12 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
-            None,
-            BundleSpec::GitRepository {
-                url: "https://example.com/repo.git".into(),
-                rev: "main".into(),
-            },
-            variables,
-            None,
-            None,
-            false,
-        );
         let job_id = task_id("t-job-git");
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -544,7 +519,6 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        session_mock.assert();
     }
 
     #[tokio::test]
@@ -553,29 +527,12 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateSessionRequest::new(
-            "test prompt".to_string(),
-            None,
-            BundleSpec::GitRepository {
-                url: "https://example.com/repo.git".into(),
-                rev: "main".into(),
-            },
-            variables,
-            None,
-            None,
-            false,
-        );
         let job_id = task_id("t-job-git-default-rev");
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -593,7 +550,6 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        session_mock.assert();
     }
 
     #[tokio::test]
@@ -602,26 +558,12 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
-        let mut variables = HashMap::new();
-        variables.insert("PROMPT".to_string(), "custom image".to_string());
-        let request = CreateSessionRequest::new(
-            "custom image".to_string(),
-            Some("ghcr.io/example/hydra:dev".to_string()),
-            BundleSpec::None,
-            variables,
-            None,
-            None,
-            false,
-        );
         let job_id = task_id("t-job-image");
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -639,7 +581,6 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        session_mock.assert();
     }
 
     #[tokio::test]
@@ -648,27 +589,12 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
                 .expect("client");
-        let request = CreateSessionRequest::new(
-            "variable prompt".to_string(),
-            None,
-            BundleSpec::None,
-            HashMap::from([
-                ("PROMPT".to_string(), "variable prompt".to_string()),
-                ("FOO".to_string(), "bar".to_string()),
-            ]),
-            None,
-            None,
-            false,
-        );
         let job_id = task_id("t-job-with-vars");
         let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/sessions")
-                .json_body_obj(&request);
+            when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
+                .json_body_obj(&create_session_response(job_id.as_ref()));
         });
-        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -686,7 +612,6 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        session_mock.assert();
     }
 
     #[tokio::test]
@@ -698,7 +623,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/sessions");
             then.status(200)
-                .json_body_obj(&CreateSessionResponse::new(task_id("unused")));
+                .json_body_obj(&create_session_response("t-unused"));
         });
 
         let context = test_context();

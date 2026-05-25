@@ -7,7 +7,7 @@ use crate::domain::conversations::{Conversation, ConversationEvent, Conversation
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
-use hydra_common::api::v1::sessions::{BundleSpec, CreateSessionRequest};
+use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode};
 use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
@@ -169,17 +169,17 @@ async fn spawn_session(
         }
     };
 
-    let agent_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
-        Ok(prompt) => prompt,
-        Err(err) => {
-            return Err(AutomationError::Other(anyhow::anyhow!(
-                "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
-                 {conversation_id} (prompt_path='{}'): {err}",
-                agent.name,
-                agent.prompt_path
-            )));
-        }
-    };
+    // Used only to surface failures clearly; `create_session` resolves the
+    // agent prompt itself for Interactive sessions when needed (the
+    // conversation lookup path), so we just confirm the prompt is reachable.
+    if let Err(err) = ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
+        return Err(AutomationError::Other(anyhow::anyhow!(
+            "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
+             {conversation_id} (prompt_path='{}'): {err}",
+            agent.name,
+            agent.prompt_path
+        )));
+    }
 
     let actor = ActorRef::Automation {
         automation_name: AUTOMATION_NAME.into(),
@@ -192,22 +192,29 @@ async fn spawn_session(
         conversation_id.to_string(),
     );
 
-    let request = CreateSessionRequest::new(
-        agent_prompt,
-        None,
-        BundleSpec::None,
+    let request = CreateSessionRequest {
+        mode: SessionMode::Interactive {
+            conversation_id: conversation_id.clone(),
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
+        },
+        agent_config: AgentConfig::default(),
+        mount_spec: MountSpec::default(),
+        image: None,
         env_vars,
-        None,
-        Some(conversation_id.clone()),
-        true,
-    );
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: None,
+    };
 
     let session_id = match ctx
         .app_state
         .create_session(request, actor.clone(), conversation.creator.clone())
         .await
     {
-        Ok(id) => id,
+        Ok((id, _session)) => id,
         Err(err) => {
             return Err(AutomationError::Other(anyhow::anyhow!(
                 "[{AUTOMATION_NAME}] failed to create session for conversation \
