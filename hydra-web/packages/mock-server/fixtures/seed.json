@@ -2342,12 +2342,35 @@
     "acme/web-app": {
       "remote_url": "https://github.com/acme/web-app.git",
       "default_branch": "main",
-      "default_image": "node:20-slim"
+      "default_image": "node:20-slim",
+      "merge_policy": {
+        "reviewers": [
+          {
+            "any_of": ["reviewer"]
+          }
+        ]
+      }
     },
     "acme/api-gateway": {
       "remote_url": "https://github.com/acme/api-gateway.git",
       "default_branch": "main",
-      "default_image": "node:20-slim"
+      "default_image": "node:20-slim",
+      "merge_policy": {
+        "reviewers": [
+          {
+            "label": "code-review",
+            "any_of": ["reviewer", "carol"],
+            "count": 2
+          },
+          {
+            "label": "human-signoff",
+            "any_of": ["alice", "bob"]
+          }
+        ],
+        "mergers": {
+          "any_of": ["@patch.author", "alice"]
+        }
+      }
     }
   },
   "agents": {

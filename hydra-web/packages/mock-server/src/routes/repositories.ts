@@ -35,6 +35,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       default_branch: body.default_branch,
       default_image: body.default_image,
       deleted: body.deleted,
+      merge_policy: body.merge_policy,
     };
     store.create<Repository>(COLLECTION, body.name, repo, null);
     const record: RepositoryRecord = { name: body.name, repository: repo };
@@ -57,6 +58,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       default_branch: body.default_branch,
       default_image: body.default_image,
       deleted: body.deleted,
+      merge_policy: body.merge_policy,
     };
     store.update<Repository>(COLLECTION, name, updated, null);
     const record: RepositoryRecord = { name, repository: updated };

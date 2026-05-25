@@ -12,6 +12,7 @@ import { useToast } from "../toast/useToast";
 import { RepositoryRailRow } from "../related/RailRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";
 import { RepositoryEditModal } from "./RepositoryEditModal";
+import { MergePolicySummary } from "./MergePolicySummary";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import styles from "./RepositoriesSection.module.css";
 
@@ -66,6 +67,12 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
               data-testid={`repositories-list-row-${repo.name}`}
             >
               <RepositoryRailRow record={repo} />
+              <div className={styles.mobilePolicy}>
+                <MergePolicySummary
+                  policy={repo.repository.merge_policy}
+                  repoName={repo.name}
+                />
+              </div>
               <div className={styles.mobileActions}>
                 <Button
                   variant="ghost"
@@ -98,6 +105,7 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                 <th className={styles.colRemote}>Remote URL</th>
                 <th className={styles.colBranch}>Default branch</th>
                 <th className={styles.colImage}>Image</th>
+                <th className={styles.colPolicy}>Merge policy</th>
                 <th className={styles.colActions} aria-label="Actions" />
               </tr>
             </thead>
@@ -131,6 +139,12 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                       ) : (
                         <span className={styles.dash}>—</span>
                       )}
+                    </td>
+                    <td className={styles.colPolicy}>
+                      <MergePolicySummary
+                        policy={repo.repository.merge_policy}
+                        repoName={repo.name}
+                      />
                     </td>
                     <td className={styles.colActions}>
                       <div className={styles.rowActions}>
