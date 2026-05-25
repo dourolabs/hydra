@@ -177,3 +177,115 @@ describe("ChatInput draft persistence", () => {
     expect(window.localStorage.getItem(conversationDraftKey("c-2"))).toBe("updated two");
   });
 });
+
+// jsdom does not provide a PointerEvent class, and RTL's `fireEvent.pointerXxx`
+// helpers fall back to a generic Event without `clientY`/`button`. Wrap a
+// native MouseEvent with the matching type name in `fireEvent` so React's
+// onPointerDown (and the window pointermove/pointerup listeners installed
+// by ChatInput) fire with usable coordinates, while still benefiting from
+// RTL's automatic act() wrapping for state flushing.
+function firePointer(target: Element | Window, type: string, init: MouseEventInit = {}) {
+  fireEvent(target, new MouseEvent(type, { bubbles: true, cancelable: true, ...init }));
+}
+
+describe("ChatInput resize handle", () => {
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("renders a resize handle on the top edge of the textarea", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const handle = screen.getByTestId("chat-input-resize-handle");
+    expect(handle).toBeTruthy();
+    expect(handle.getAttribute("role")).toBe("separator");
+    expect(handle.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("renders the textarea with a class that opts out of the default browser resizer", () => {
+    // The CSS module proxy returns the export name as the class name, so
+    // the textarea's class is `textarea`. The matching rule in
+    // ChatInput.module.css sets `resize: none`, which removes the default
+    // bottom-right grip from the underlying <textarea>.
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    expect(getTextarea().className).toContain("textarea");
+  });
+
+  it("dragging the handle upward grows the textarea height", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const textarea = getTextarea();
+    const handle = screen.getByTestId("chat-input-resize-handle");
+
+    // jsdom reports 0 for offsetHeight; stub it so the drag math has a
+    // realistic starting point. 100px is between the 56px min and 480px max.
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, value: 100 });
+
+    firePointer(handle, "pointerdown", { button: 0, clientY: 200 });
+    // Drag pointer up by 60px → textarea grows by 60px → 160px.
+    firePointer(window, "pointermove", { clientY: 140 });
+    firePointer(window, "pointerup");
+
+    expect(textarea.style.height).toBe("160px");
+  });
+
+  it("dragging the handle downward shrinks the textarea height", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const textarea = getTextarea();
+    const handle = screen.getByTestId("chat-input-resize-handle");
+
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, value: 200 });
+
+    firePointer(handle, "pointerdown", { button: 0, clientY: 100 });
+    // Drag pointer down by 50px → textarea shrinks by 50px → 150px.
+    firePointer(window, "pointermove", { clientY: 150 });
+    firePointer(window, "pointerup");
+
+    expect(textarea.style.height).toBe("150px");
+  });
+
+  it("clamps the textarea height to the minimum on aggressive downward drags", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const textarea = getTextarea();
+    const handle = screen.getByTestId("chat-input-resize-handle");
+
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, value: 100 });
+
+    firePointer(handle, "pointerdown", { button: 0, clientY: 100 });
+    firePointer(window, "pointermove", { clientY: 1000 });
+    firePointer(window, "pointerup");
+
+    expect(textarea.style.height).toBe("56px");
+  });
+
+  it("clamps the textarea height to the maximum on aggressive upward drags", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const textarea = getTextarea();
+    const handle = screen.getByTestId("chat-input-resize-handle");
+
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, value: 100 });
+
+    firePointer(handle, "pointerdown", { button: 0, clientY: 1000 });
+    firePointer(window, "pointermove", { clientY: 0 });
+    firePointer(window, "pointerup");
+
+    expect(textarea.style.height).toBe("480px");
+  });
+
+  it("ignores pointer moves after the drag is released", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    const textarea = getTextarea();
+    const handle = screen.getByTestId("chat-input-resize-handle");
+
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, value: 100 });
+
+    firePointer(handle, "pointerdown", { button: 0, clientY: 200 });
+    firePointer(window, "pointermove", { clientY: 150 });
+    firePointer(window, "pointerup");
+    const heightAfterRelease = textarea.style.height;
+
+    // Subsequent stray moves should not affect the height anymore.
+    firePointer(window, "pointermove", { clientY: 0 });
+    expect(textarea.style.height).toBe(heightAfterRelease);
+  });
+});
