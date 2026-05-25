@@ -244,14 +244,20 @@ async fn handle_relay_socket(
 /// for resume) that needs the entire conversation history to rebuild context.
 /// The `resume_from_event_index` field is ignored — see the resume design in
 /// `hydra/src/worker/interactive.rs` for how the worker reconstructs context
-/// from the replayed events. We also include any persisted `session_state` so
-/// the worker can attempt the primary transcript-based resume; if missing or
-/// malformed, the worker falls back to the primer-from-events path.
+/// from the replayed events.
 ///
-/// For `Reconnecting` connections, we keep the skip behavior. That path is a
-/// mid-session WebSocket reconnect where the same worker process is still
-/// alive and only needs the deltas it missed. `session_state` is not relevant
-/// there and is omitted.
+/// For `Reconnecting` connections we skip events the worker has already seen;
+/// that path is a mid-session WebSocket reconnect where the same worker
+/// process is still alive and only needs the deltas it missed.
+///
+/// Note: the persisted `session_state` blob is intentionally NOT included in
+/// the catch-up. The worker's transcript-based resume path was removed
+/// (predecessor blob is no longer read on resume), and shipping it caused the
+/// catch-up text frame to exceed the WebSocket 16 MiB cap on long
+/// conversations, killing every resume attempt silently (see i-xwmoxzhe). The
+/// upload path (`WorkerMessage::SessionStateUpload` + store) is preserved
+/// untouched so we can revisit catch-up-side delivery later without
+/// reimplementing the writer.
 async fn build_catch_up(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
@@ -276,46 +282,23 @@ async fn build_catch_up(
         }
     }
 
-    let (skip_count, include_session_state) = match worker_connect {
-        WorkerConnect::Fresh { .. } => (0, true),
+    let skip_count = match worker_connect {
+        WorkerConnect::Fresh { .. } => 0,
         WorkerConnect::Reconnecting {
             last_received_event_index,
-        } => (last_received_event_index + 1, false),
+        } => last_received_event_index + 1,
     };
 
     let events: Vec<SessionEvent> = all_events.into_iter().skip(skip_count).collect();
 
-    // Per Phase E of the sessions-orthogonality redesign, session_state is keyed
-    // on the session that produced it. For a fresh resume the producing session
-    // is `resumed_from` (the predecessor); a same-session reconnect after a
-    // worker crash reads back its own latest upload.
-    let session_state = if include_session_state {
-        let store = state.store();
-        match store.get_session_state(session_id).await? {
-            Some(blob) => Some(blob),
-            None => match state.get_latest_session(session_id).await?.resumed_from {
-                Some(prev) => store.get_session_state(&prev).await?,
-                None => None,
-            },
-        }
-    } else {
-        None
-    };
-
-    let session_state_bytes = session_state.as_ref().map(|b| b.len());
     info!(
         %conversation_id,
         %session_id,
         events = events.len(),
-        include_session_state,
-        session_state_bytes = ?session_state_bytes,
         "build_catch_up"
     );
 
-    Ok(WorkerCatchUp {
-        events,
-        session_state,
-    })
+    Ok(WorkerCatchUp { events })
 }
 
 /// Handle a session event sent by the worker.

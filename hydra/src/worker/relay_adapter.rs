@@ -144,25 +144,20 @@ async fn run_pump(
         other => return Err(anyhow!("expected CatchUp message, got {other:?}")),
     };
 
-    let session_state_bytes = catch_up.session_state.as_ref().map(|b| b.len());
     info!(
         %session_id,
         events = catch_up.events.len(),
-        session_state_bytes = ?session_state_bytes,
         "catch_up_received"
     );
 
-    // We previously attempted a "primary" `claude --resume <UUID>` path that
-    // wrote `catch_up.session_state`'s transcript bytes to disk and spawned
-    // claude with `--resume`. In practice that path produced no assistant reply
-    // for the trailing user message in the cross-container chat-close/resume
-    // scenario (see issue i-tayyxxxf): claude was spawned but never responded.
-    // Falling back to the primer-merge path — building a `<prior-conversation>`
-    // block from the catch-up events and merging it with the trailing user
-    // message into a single stdin input — is reliable, so we now take that
-    // path unconditionally. The suspend-side `SessionStateUpload` mechanism is
-    // left intact so the wire envelope continues to round-trip cleanly; the
-    // bytes are simply ignored on the resume side now.
+    // Catch-up no longer carries session_state (see i-xwmoxzhe — shipping it
+    // pushed long conversations' catch-up frames past the WebSocket 16 MiB
+    // cap and silently killed every resume). The worker hasn't read those
+    // bytes since the transcript-based `claude --resume <UUID>` path was
+    // removed; we rebuild context from `catch_up.events` via the
+    // primer-merge path below. The suspend-side `SessionStateUpload` upload
+    // is unchanged so we can revive catch-up-side delivery later without
+    // re-implementing the writer.
     let _ = initial_resume_tx.send(None);
 
     let mut prompt_prepend = PromptPrepend::new(prompt, &catch_up.events);
