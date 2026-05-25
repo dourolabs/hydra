@@ -81,12 +81,10 @@ Adds a timestamped review entry to the patch. Include `--approve` to mark it as 
 hydra patches update <PATCH_ID> \
   [--title "New title"] \
   [--description "More details"] \
-  [--status Open|ChangesRequested|Merged] \
-  [--service-repo dourolabs/hydra] \
-  [--remote origin]
+  [--status Open|ChangesRequested|Merged]
 ```
 
-Requires at least one field. Use this to reflect review outcomes or edit metadata before landing the patch. `--service-repo` and `--remote` mirror `create` for symmetry.
+Requires at least one field. Use this to reflect review outcomes or edit metadata before landing the patch. The patch's service repository is fixed at creation time and cannot be changed via `update`.
 
 ### Merge queue
 

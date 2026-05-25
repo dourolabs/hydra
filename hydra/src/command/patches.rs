@@ -173,14 +173,6 @@ pub enum PatchesCommand {
         )]
         issue_id: Option<IssueId>,
 
-        /// Override the service repository for the patch (e.g., dourolabs/hydra). When omitted, the repo is discovered from the configured git remote.
-        #[arg(long = "service-repo", value_name = "ORG/REPO")]
-        service_repo: Option<RepoName>,
-
-        /// Git remote to read the remote URL from when discovering the service repository (defaults to origin).
-        #[arg(long = "remote", value_name = "NAME", default_value = "origin")]
-        remote: String,
-
         /// Base ref for computing the commit range (defaults to origin/main).
         #[arg(long = "base-ref", value_name = "BASE_REF")]
         base_ref: Option<String>,
@@ -306,8 +298,6 @@ pub async fn run(
             status,
             force,
             issue_id,
-            service_repo: _service_repo,
-            remote: _remote,
             base_ref,
         } => {
             let base_ref = resolve_base_ref(client, base_ref, issue_id.as_ref()).await?;
@@ -1917,18 +1907,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_errors_when_not_in_git_repo() -> Result<()> {
-        // Use a temp dir that is NOT a git repo and pass `repo_root=None` so
-        // the resolver discovers from pwd. We change pwd to the temp dir for
-        // the duration of the test; this also exercises the
-        // "git_repository_root" failure path in create_patch.
+    async fn resolve_patch_service_repo_errors_when_not_in_git_repo() -> Result<()> {
+        // Call the resolver directly with a temp dir that is NOT a git repo to
+        // exercise the libgit2 discovery failure path independently of the
+        // rest of create_patch's preflight.
         let tempdir = tempfile::tempdir()?;
         let server = MockServer::start();
         let client = hydra_client(&server);
 
-        // The resolver is what we want to exercise here, so call it directly
-        // to keep the test independent of create_patch's other preflight
-        // (which itself fails first if pwd is not a git repo).
         let error = resolve_patch_service_repo(&client, None, tempdir.path(), "origin")
             .await
             .unwrap_err()
