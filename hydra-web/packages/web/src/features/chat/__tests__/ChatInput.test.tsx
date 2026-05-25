@@ -22,6 +22,12 @@ vi.mock("../ChatInput.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+const isMobileMock = vi.fn<() => boolean>(() => false);
+vi.mock("../../../hooks/useIsMobile", () => ({
+  useIsMobile: () => isMobileMock(),
+  MOBILE_MEDIA_QUERY: "(max-width: 768px)",
+}));
+
 const { ChatInput } = await import("../ChatInput");
 const { conversationDraftKey } = await import("../useConversationDraft");
 
@@ -32,12 +38,14 @@ function getTextarea(): HTMLTextAreaElement {
 describe("ChatInput keyboard shortcuts", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    isMobileMock.mockReturnValue(false);
   });
 
   afterEach(() => {
     cleanup();
     window.localStorage.clear();
     vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
   });
 
   it("plain Enter triggers onSend with the trimmed typed value", () => {
@@ -116,6 +124,47 @@ describe("ChatInput keyboard shortcuts", () => {
 
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith("hi there");
+  });
+});
+
+describe("ChatInput on mobile", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    isMobileMock.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
+  });
+
+  it("plain Enter does NOT call onSend on mobile", () => {
+    const onSend = vi.fn();
+    render(<ChatInput conversationId="c-1" onSend={onSend} />);
+    const textarea = getTextarea();
+
+    fireEvent.change(textarea, { target: { value: "hello world" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("Send button still works on mobile", () => {
+    const onSend = vi.fn();
+    render(<ChatInput conversationId="c-1" onSend={onSend} />);
+    const textarea = getTextarea();
+
+    fireEvent.change(textarea, { target: { value: "hi" } });
+    fireEvent.click(screen.getByText("Send"));
+
+    expect(onSend).toHaveBeenCalledWith("hi");
+  });
+
+  it("does not render the Enter-to-send hint on mobile", () => {
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    expect(screen.queryByText(/for newline/)).toBeNull();
   });
 });
 

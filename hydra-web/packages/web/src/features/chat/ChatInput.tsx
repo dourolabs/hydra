@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Button, Kbd } from "@hydra/ui";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConversationDraft } from "./useConversationDraft";
 import styles from "./ChatInput.module.css";
 
@@ -32,6 +33,7 @@ export function ChatInput({
   const isDisabled = disabled;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [height, setHeight] = useState<number | null>(null);
+  const isMobile = useIsMobile();
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -42,12 +44,15 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // On mobile, let Enter insert a newline (use the Send button instead).
+      // The soft keyboard's Return key would otherwise submit unexpectedly.
+      if (isMobile) return;
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         handleSend();
       }
     },
-    [handleSend],
+    [handleSend, isMobile],
   );
 
   const handleResizePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -104,10 +109,12 @@ export function ChatInput({
           />
         </div>
         <div className={styles.actions}>
-          <span className={styles.hint}>
-            <Kbd>↵</Kbd> to send · <Kbd>⇧</Kbd>
-            <Kbd>↵</Kbd> for newline
-          </span>
+          {!isMobile && (
+            <span className={styles.hint}>
+              <Kbd>↵</Kbd> to send · <Kbd>⇧</Kbd>
+              <Kbd>↵</Kbd> for newline
+            </span>
+          )}
           <span className={styles.actionsSpacer} />
           {onEndChat && (
             <Button variant="secondary" size="sm" onClick={onEndChat} disabled={endChatDisabled}>

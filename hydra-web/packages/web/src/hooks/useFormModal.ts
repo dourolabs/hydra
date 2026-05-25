@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseMutationResult } from "@tanstack/react-query";
 import { useToast } from "../features/toast/useToast";
+import { useIsMobile } from "./useIsMobile";
 
 interface UseFormModalOptions<TInput, TOutput, TContext> {
   mutationFn: (input: TInput) => Promise<TOutput>;
@@ -29,6 +30,7 @@ export function useFormModal<TInput, TOutput, TContext = unknown>({
 }: UseFormModalOptions<TInput, TOutput, TContext>): UseFormModalResult<TInput, TOutput, TContext> {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
 
   const mutation = useMutation<TOutput, Error, TInput, TContext>({
     mutationFn,
@@ -71,12 +73,13 @@ export function useFormModal<TInput, TOutput, TContext = unknown>({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, submitFn: () => void) => {
+      if (isMobile) return;
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         submitFn();
       }
     },
-    [],
+    [isMobile],
   );
 
   return {
