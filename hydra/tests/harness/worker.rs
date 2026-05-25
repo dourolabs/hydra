@@ -347,6 +347,7 @@ async fn drive_worker_lifecycle(
             dest.join(docs_target).to_string_lossy().into_owned(),
         );
     }
+    let issue_branch_id = variables.get(ENV_HYDRA_ISSUE_ID).cloned();
     let (repo_path, mounts) = match mounts::spec::instantiate(
         &mount_spec,
         mounts::spec::InstantiateInputs {
@@ -354,6 +355,8 @@ async fn drive_worker_lifecycle(
             worker_home_dir: worker_home_dir.clone(),
             dest: &dest,
             client: Arc::clone(&client),
+            session_id: job_id.clone(),
+            issue_branch_id,
         },
     ) {
         Ok(mounts::spec::InstantiatedMounts {

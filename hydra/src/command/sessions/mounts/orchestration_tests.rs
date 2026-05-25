@@ -286,8 +286,6 @@ mod mount_spec_e2e {
                 MountItem::Bundle {
                     target: repo_target,
                     bundle: Bundle::None,
-                    session_id: task_id("t-bm-e2e-none"),
-                    issue_branch_id: None,
                 },
                 MountItem::Documents {
                     target: RelativePath::new("documents").expect("static `documents` is valid"),
@@ -302,6 +300,8 @@ mod mount_spec_e2e {
                 worker_home_dir: None,
                 dest: &dest,
                 client,
+                session_id: task_id("t-bm-e2e-none"),
+                issue_branch_id: None,
             },
         )
         .expect("instantiate");

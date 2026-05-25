@@ -7156,22 +7156,6 @@ mod tests {
 
     // ---- Task tests ----
 
-    /// Rewrite any in-memory mount_spec placeholder session_ids on
-    /// `expected` to match a row's persisted id. Mirrors the dual-write
-    /// rewrite in `dual_write_mount_spec_json`, so round-trip equality
-    /// checks (`expected == fetched.item`) still hold for sessions that
-    /// were constructed with placeholder ids before insertion.
-    fn rewrite_mount_spec_session_ids(expected: &mut Session, sid: &SessionId) {
-        use hydra_common::api::v1::sessions::MountItem;
-        for item in expected.mount_spec.mounts.iter_mut() {
-            match item {
-                MountItem::Bundle { session_id, .. } => *session_id = sid.clone(),
-                MountItem::BuildCache { session_id, .. } => *session_id = sid.clone(),
-                _ => {}
-            }
-        }
-    }
-
     #[tokio::test]
     async fn task_add_and_get() {
         let store = create_test_store().await;
@@ -7188,7 +7172,6 @@ mod tests {
         // add_task sets creation_time on the stored task
         let mut expected = task.clone();
         expected.creation_time = Some(now);
-        rewrite_mount_spec_session_ids(&mut expected, &task_id);
         assert_versioned(&fetched, &expected, 1);
         assert_eq!(fetched.item.status, Status::Created);
     }
@@ -7218,8 +7201,7 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_session(&task_id, false).await.unwrap();
-        let mut expected = updated.clone();
-        rewrite_mount_spec_session_ids(&mut expected, &task_id);
+        let expected = updated.clone();
         assert_versioned(&fetched, &expected, 2);
     }
 
@@ -7655,11 +7637,9 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_session(&task_id, false).await.unwrap();
-        // add_task sets creation_time on the stored task; rewrite the
-        // placeholder mount_spec session_ids to match the persisted row.
+        // add_task sets creation_time on the stored task.
         let mut expected = task.clone();
         expected.creation_time = Some(now);
-        rewrite_mount_spec_session_ids(&mut expected, &task_id);
         assert_eq!(fetched.item, expected, "Task must round-trip all fields");
     }
 
@@ -10905,7 +10885,8 @@ mod tests {
         );
         assert_eq!(mounts[0]["type"], "bundle");
         assert_eq!(mounts[0]["target"], "repo");
-        assert_eq!(mounts[0]["session_id"], sid.as_ref());
+        // PR-D: `session_id` no longer rides on `MountItem::Bundle`.
+        assert!(mounts[0].get("session_id").is_none_or(|v| v.is_null()));
         assert_eq!(mounts[0]["bundle"]["type"], "none");
         assert_eq!(mounts[1]["type"], "documents");
         assert_eq!(mounts[1]["target"], "documents");
@@ -10960,7 +10941,6 @@ mod tests {
         };
         let store = create_test_store().await;
         let mut session = spawn_task();
-        let session_id_placeholder = SessionId::new();
         session.mount_spec = ApiMountSpec::new(
             RelativePath::new("repo").unwrap(),
             vec![
@@ -10970,8 +10950,6 @@ mod tests {
                         url: "https://github.com/example/repo".to_string(),
                         rev: "main".to_string(),
                     },
-                    session_id: session_id_placeholder,
-                    issue_branch_id: None,
                 },
                 MountItem::Documents {
                     target: RelativePath::new("documents").unwrap(),

@@ -8,7 +8,10 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use hydra_common::sessions::{MountItem, MountSpec, RelativePath};
+use hydra_common::{
+    sessions::{MountItem, MountSpec, RelativePath},
+    SessionId,
+};
 
 use crate::client::HydraClientInterface;
 
@@ -19,14 +22,17 @@ use super::Mount;
 
 /// Runtime inputs `instantiate` needs that cannot come from the spec itself.
 ///
-/// `session_id` and `issue_branch_id` are deliberately **not** in this struct
-/// — they ride on the corresponding [`MountItem`] variants so the server can
-/// stamp them at spec construction time.
+/// `session_id` and `issue_branch_id` live here (not on [`MountItem`]) so
+/// `MountSpec` stays a pure intent the server can build without knowing the
+/// per-run session identity — the worker stamps these from its own
+/// `WorkerContext` at instantiation time.
 pub struct InstantiateInputs<'a> {
     pub github_token: Option<String>,
     pub worker_home_dir: Option<PathBuf>,
     pub dest: &'a Path,
     pub client: Arc<dyn HydraClientInterface>,
+    pub session_id: SessionId,
+    pub issue_branch_id: Option<String>,
 }
 
 /// Result of [`instantiate`]: the agent's CWD plus the ordered list of mounts
@@ -80,19 +86,14 @@ pub fn instantiate(
     let mut mounts: Vec<Box<dyn Mount>> = Vec::with_capacity(spec.mounts.len());
     for item in &spec.mounts {
         match item {
-            MountItem::Bundle {
-                target,
-                bundle,
-                session_id,
-                issue_branch_id,
-            } => {
+            MountItem::Bundle { target, bundle } => {
                 let repo_path = resolve_under_dest(inputs.dest, target)?;
                 let mount = bundle_mount(
                     bundle,
                     repo_path,
                     inputs.github_token.clone(),
-                    session_id.clone(),
-                    issue_branch_id.clone(),
+                    inputs.session_id.clone(),
+                    inputs.issue_branch_id.clone(),
                 )
                 .map_err(|err| MountSpecError::Validation(err.to_string()))?;
                 mounts.push(Box::new(mount));
@@ -101,7 +102,6 @@ pub fn instantiate(
                 repo_target,
                 service_repo_name,
                 context,
-                session_id: _,
             } => {
                 let repo_path = resolve_under_dest(inputs.dest, repo_target)?;
                 mounts.push(Box::new(BuildCacheMount::new(
@@ -238,14 +238,11 @@ mod tests {
                 MountItem::Bundle {
                     target: rel("repo"),
                     bundle,
-                    session_id: job.clone(),
-                    issue_branch_id: Some("i-spec-3".to_string()),
                 },
                 MountItem::BuildCache {
                     repo_target: rel("repo"),
                     service_repo_name: repo_name,
                     context: cache_ctx,
-                    session_id: job,
                 },
                 MountItem::Documents {
                     target: rel("documents"),
@@ -260,6 +257,8 @@ mod tests {
                 worker_home_dir: Some(PathBuf::from("/tmp/worker-home")),
                 dest: &dest,
                 client: dummy_client(),
+                session_id: job.clone(),
+                issue_branch_id: Some("i-spec-3".to_string()),
             },
         )
         .expect("instantiate");
@@ -289,8 +288,6 @@ mod tests {
                 MountItem::Bundle {
                     target: rel("repo"),
                     bundle: dummy_bundle(),
-                    session_id: job,
-                    issue_branch_id: None,
                 },
                 MountItem::Documents {
                     target: rel("documents"),
@@ -305,6 +302,8 @@ mod tests {
                 worker_home_dir: None,
                 dest: &dest,
                 client: dummy_client(),
+                session_id: job,
+                issue_branch_id: None,
             },
         )
         .expect("instantiate");
@@ -332,8 +331,6 @@ mod tests {
                 MountItem::Bundle {
                     target: rel("repo"),
                     bundle: dummy_bundle(),
-                    session_id: job,
-                    issue_branch_id: None,
                 },
                 MountItem::Unknown,
                 MountItem::Documents {
@@ -349,6 +346,8 @@ mod tests {
                 worker_home_dir: None,
                 dest: &dest,
                 client: dummy_client(),
+                session_id: job,
+                issue_branch_id: None,
             },
         );
         match result {
@@ -379,15 +378,12 @@ mod tests {
 
     #[test]
     fn find_documents_dir_returns_first_documents_target() {
-        let job = task_id("t-find-docs");
         let spec = MountSpec::new(
             rel("repo"),
             vec![
                 MountItem::Bundle {
                     target: rel("repo"),
                     bundle: dummy_bundle(),
-                    session_id: job,
-                    issue_branch_id: None,
                 },
                 MountItem::Documents {
                     target: rel("documents"),
@@ -400,14 +396,11 @@ mod tests {
 
     #[test]
     fn find_documents_dir_none_when_absent() {
-        let job = task_id("t-find-no-docs");
         let spec = MountSpec::new(
             rel("repo"),
             vec![MountItem::Bundle {
                 target: rel("repo"),
                 bundle: dummy_bundle(),
-                session_id: job,
-                issue_branch_id: None,
             }],
         );
         assert!(find_documents_dir(&spec).is_none());
@@ -424,8 +417,6 @@ mod tests {
             vec![MountItem::Bundle {
                 target: rel("repo"),
                 bundle: Bundle::Unknown,
-                session_id: job,
-                issue_branch_id: None,
             }],
         );
 
@@ -436,6 +427,8 @@ mod tests {
                 worker_home_dir: None,
                 dest: &dest,
                 client: dummy_client(),
+                session_id: job,
+                issue_branch_id: None,
             },
         );
         match result {

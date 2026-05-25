@@ -190,28 +190,16 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
 /// directly to the worker (the route layer rebuilds it from the resolved
 /// bundle), so the typed `MountItem::Unknown` fallback only matters here
 /// for the read side, which uses the raw JSON.
+///
+/// PR-D made `MountSpec` session-id-free: `MountItem::Bundle` and
+/// `MountItem::BuildCache` no longer carry a `session_id`, so there is no
+/// per-item id to rewrite at write time. The deserializer tolerates the
+/// legacy field on old rows for read-side backward compat.
 pub(crate) fn dual_write_mount_spec_json(
-    id: &SessionId,
+    _id: &SessionId,
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
-    use hydra_common::api::v1::sessions::MountItem;
-    // Rewrite any placeholder session_id references inside the mount spec
-    // to match the row's actual id. Sessions constructed in-memory before
-    // they hit the store carry placeholder ids (see
-    // `app/sessions::mount_spec_for_session`); the persisted JSON must
-    // resolve to the row.
-    let mut spec = session.mount_spec.clone();
-    for item in spec.mounts.iter_mut() {
-        match item {
-            MountItem::Bundle { session_id, .. } => {
-                *session_id = id.clone();
-            }
-            MountItem::BuildCache { session_id, .. } => {
-                *session_id = id.clone();
-            }
-            _ => {}
-        }
-    }
+    let spec = session.mount_spec.clone();
     let mut value = serde_json::to_value(&spec).map_err(|e| {
         StoreError::Internal(format!(
             "failed to serialize mount_spec for dual-write: {e}"

@@ -140,8 +140,6 @@ async fn three_item_mount_spec_runs_full_lifecycle() -> Result<()> {
                     url: remote.remote_path.clone(),
                     rev: "main".to_string(),
                 },
-                session_id: session_id.clone(),
-                issue_branch_id: None,
             },
             MountItem::BuildCache {
                 repo_target: rel("repo"),
@@ -152,7 +150,6 @@ async fn three_item_mount_spec_runs_full_lifecycle() -> Result<()> {
                     },
                     settings: BuildCacheSettings::default(),
                 },
-                session_id: session_id.clone(),
             },
             MountItem::Documents {
                 target: rel("documents"),
@@ -170,6 +167,8 @@ async fn three_item_mount_spec_runs_full_lifecycle() -> Result<()> {
             worker_home_dir: Some(worker_home_dir.path().to_path_buf()),
             dest: dest.path(),
             client: Arc::clone(&client),
+            session_id: session_id.clone(),
+            issue_branch_id: None,
         },
     )
     .expect("instantiate");
@@ -257,8 +256,6 @@ async fn unknown_mount_item_is_fatal() {
             MountItem::Bundle {
                 target: rel("repo"),
                 bundle: Bundle::None,
-                session_id,
-                issue_branch_id: None,
             },
             MountItem::Unknown,
             MountItem::Documents {
@@ -274,6 +271,8 @@ async fn unknown_mount_item_is_fatal() {
             worker_home_dir: None,
             dest: dest.path(),
             client,
+            session_id,
+            issue_branch_id: None,
         },
     );
 
@@ -306,8 +305,6 @@ async fn two_item_spec_with_bundle_none_runs_lifecycle() -> Result<()> {
             MountItem::Bundle {
                 target: rel("repo"),
                 bundle: Bundle::None,
-                session_id,
-                issue_branch_id: None,
             },
             MountItem::Documents {
                 target: rel("documents"),
@@ -322,6 +319,8 @@ async fn two_item_spec_with_bundle_none_runs_lifecycle() -> Result<()> {
             worker_home_dir: None,
             dest: dest.path(),
             client,
+            session_id,
+            issue_branch_id: None,
         },
     )
     .expect("instantiate");

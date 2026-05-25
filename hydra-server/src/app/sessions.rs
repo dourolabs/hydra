@@ -39,7 +39,6 @@ pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned
 pub(crate) fn mount_spec_for_session(
     context: &BundleSpec,
 ) -> hydra_common::api::v1::sessions::MountSpec {
-    use hydra_common::SessionId;
     use hydra_common::api::v1::sessions::Bundle;
     let bundle = match context {
         BundleSpec::None => Bundle::None,
@@ -49,11 +48,7 @@ pub(crate) fn mount_spec_for_session(
         },
         _ => Bundle::None,
     };
-    // The session id is set after the store assigns it; we use a placeholder
-    // here. The dual-write path persists the row's actual id into the
-    // `mount_spec` JSON when the row is inserted (the `bundle` item carries
-    // the same id as the row, per the legacy backfill rule).
-    crate::routes::sessions::mount_spec_from_create_request(bundle, SessionId::new(), None, None)
+    crate::routes::sessions::mount_spec_from_create_request(bundle, None)
 }
 
 #[derive(Debug, Error)]

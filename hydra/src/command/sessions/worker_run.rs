@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
-    constants::ENV_HYDRA_DOCUMENTS_DIR,
+    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{InteractiveOptions, SessionMode, WorkerContext},
     SessionId,
@@ -124,6 +124,7 @@ pub async fn run(
         );
     }
 
+    let issue_branch_id = execution_env.get(ENV_HYDRA_ISSUE_ID).cloned();
     let mounts::spec::InstantiatedMounts {
         working_dir: repo_path,
         mounts,
@@ -134,6 +135,8 @@ pub async fn run(
             worker_home_dir: worker_home_dir.clone(),
             dest: &dest,
             client: Arc::clone(&client),
+            session_id: job.clone(),
+            issue_branch_id,
         },
     )
     .map_err(|err| anyhow!("failed to instantiate MountSpec: {err}"))?;
