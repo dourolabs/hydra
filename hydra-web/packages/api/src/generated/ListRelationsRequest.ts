@@ -16,6 +16,11 @@ export type ListRelationsRequest = {
    */
   target_ids?: string | null;
   object_id?: HydraId | null;
+  /**
+   * Comma-separated list of object IDs (mutually exclusive with `object_id`,
+   * `source_id`/`source_ids`, and `target_id`/`target_ids`).
+   */
+  object_ids?: string | null;
   rel_type?: string | null;
   transitive?: boolean | null;
 };
