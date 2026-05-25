@@ -236,31 +236,6 @@ pub struct WorkerCatchUp {
     /// in session creation-time order). The worker uses this to seed its
     /// primer / context on a fresh start.
     pub events: Vec<SessionEvent>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "optional_bytes"
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "number[] | null"))]
-    pub session_state: Option<Vec<u8>>,
-}
-
-mod optional_bytes {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.as_ref().map(|v| v.as_slice()).serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<Vec<u8>>::deserialize(deserializer)
-    }
 }
 
 /// Messages sent from the worker to the server over the relay WebSocket.
@@ -403,23 +378,24 @@ mod tests {
                 content: "test".to_string(),
                 timestamp: Utc::now(),
             }],
-            session_state: Some(vec![1, 2, 3]),
         };
         let json = serde_json::to_string(&catch_up).unwrap();
         let deserialized: WorkerCatchUp = serde_json::from_str(&json).unwrap();
         assert_eq!(catch_up, deserialized);
+        assert!(
+            !json.contains("session_state"),
+            "session_state must never appear on the wire — it caused giant catch-up \
+             frames to exceed the WebSocket size limit (see i-xwmoxzhe); got {json}"
+        );
     }
 
     #[test]
-    fn worker_catch_up_without_session_state() {
-        let catch_up = WorkerCatchUp {
-            events: vec![],
-            session_state: None,
-        };
-        let json = serde_json::to_string(&catch_up).unwrap();
-        assert!(!json.contains("session_state"));
-        let deserialized: WorkerCatchUp = serde_json::from_str(&json).unwrap();
-        assert_eq!(catch_up, deserialized);
+    fn worker_catch_up_tolerates_legacy_session_state_field() {
+        // Older servers may still ship `session_state` in the catch-up payload.
+        // The new worker ignores it; deserialization must not fail.
+        let json = r#"{"events":[],"session_state":[1,2,3]}"#;
+        let catch_up: WorkerCatchUp = serde_json::from_str(json).unwrap();
+        assert!(catch_up.events.is_empty());
     }
 
     #[test]
@@ -514,7 +490,6 @@ mod tests {
                 content: "hi".to_string(),
                 timestamp: Utc::now(),
             }],
-            session_state: None,
         });
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();

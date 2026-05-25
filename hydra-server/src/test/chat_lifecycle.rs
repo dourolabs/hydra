@@ -226,6 +226,17 @@ async fn worker_handshake(
     ws: &mut WsStream,
     connect: WorkerConnect,
 ) -> anyhow::Result<WorkerCatchUp> {
+    let text = worker_handshake_raw(ws, connect).await?;
+    match serde_json::from_str::<ServerMessage>(&text)? {
+        ServerMessage::CatchUp(cu) => Ok(cu),
+        other => anyhow::bail!("expected CatchUp, got {other:?}"),
+    }
+}
+
+/// Variant of [`worker_handshake`] that returns the raw catch-up JSON text
+/// instead of parsing it. Useful when a test needs to inspect the wire
+/// representation (e.g. to assert a field is not present at all).
+async fn worker_handshake_raw(ws: &mut WsStream, connect: WorkerConnect) -> anyhow::Result<String> {
     let connect_json = serde_json::to_string(&connect)?;
     ws.send(tungstenite::Message::Text(connect_json)).await?;
 
@@ -233,13 +244,9 @@ async fn worker_handshake(
         .next()
         .await
         .ok_or_else(|| anyhow::anyhow!("ws closed before catch-up"))??;
-    let text = match msg {
-        tungstenite::Message::Text(t) => t,
+    match msg {
+        tungstenite::Message::Text(t) => Ok(t),
         other => anyhow::bail!("expected text catch-up, got {other:?}"),
-    };
-    match serde_json::from_str::<ServerMessage>(&text)? {
-        ServerMessage::CatchUp(cu) => Ok(cu),
-        other => anyhow::bail!("expected CatchUp, got {other:?}"),
     }
 }
 
@@ -390,7 +397,6 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
         1,
         "fresh worker should receive the initial user message in catch-up"
     );
-    assert!(catch_up.session_state.is_none());
 
     send_worker_message(
         &mut ws,
@@ -581,12 +587,6 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         },
     )
     .await?;
-    assert!(
-        catch_up.session_state.is_none(),
-        "the server no longer uses session_state; catch-up should report None, got {:?}",
-        catch_up.session_state
-    );
-
     // Expected sequence: UserMessage, AssistantMessage, Suspending, Resumed.
     assert_eq!(
         catch_up.events.len(),
@@ -1279,11 +1279,6 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     )
     .await?;
 
-    assert!(
-        catch_up.session_state.is_none(),
-        "no session_state was uploaded, so catch-up must report None"
-    );
-
     // Expected sequence: UserMessage("first user message"), AssistantMessage("first agent reply"), Closed, Resumed.
     assert_eq!(
         catch_up.events.len(),
@@ -1323,13 +1318,14 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
 }
 
 #[tokio::test]
-async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> anyhow::Result<()> {
-    // End-to-end smoke test for the transcript-based ("primary") resume
-    // path. Worker #1 uploads a structured `SessionStatePayload::V1` with a
-    // transcript blob; after /resume, worker #2's catch-up must carry the
-    // same bytes back so it can write the transcript to disk and invoke
-    // `claude --resume`. Verifies the wire envelope is preserved and the
-    // payload survives the store round-trip.
+async fn resume_after_session_state_upload_persists_but_omits_from_catch_up() -> anyhow::Result<()>
+{
+    // Regression test for i-xwmoxzhe: the catch-up payload must NEVER carry
+    // session_state, even when the predecessor uploaded one. Shipping it
+    // pushed long conversations' catch-up frames past the WebSocket 16 MiB
+    // cap and silently killed every resume attempt. The upload itself must
+    // still persist on the producing session so we can revive catch-up-side
+    // delivery later without re-implementing the writer.
     init_test_tracing();
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
@@ -1442,7 +1438,7 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     );
 
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
-    let catch_up = worker_handshake(
+    let catch_up_text = worker_handshake_raw(
         &mut ws2,
         WorkerConnect::Fresh {
             resume_from_event_index: new_session.mode.conversation_resume_from(),
@@ -1450,26 +1446,25 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
     )
     .await?;
 
-    let returned_bytes = catch_up
-        .session_state
-        .expect("server must return the persisted session_state for Fresh resume");
-    assert_eq!(
-        returned_bytes, payload_bytes,
-        "catch-up must echo the exact payload bytes the prior worker uploaded"
+    // The raw wire text must not even mention `session_state` — neither as a
+    // null nor as a populated field. Asserting on the JSON string (not just
+    // the typed struct) catches a regression where the server reintroduces
+    // the field on the wire even after the typed model drops it.
+    assert!(
+        !catch_up_text.contains("session_state"),
+        "catch-up wire payload must not contain session_state, got {catch_up_text}"
     );
 
-    // Sanity-check the bytes still parse as the original payload — i.e.
-    // nothing en-route mutated them.
-    let round_trip: SessionStatePayload = serde_json::from_slice(&returned_bytes)?;
-    match round_trip {
-        SessionStatePayload::V1 {
-            session_id,
-            transcript,
-        } => {
-            assert_eq!(session_id, "claude-session-uuid-1");
-            assert_eq!(transcript, Some(transcript_bytes));
-        }
-    }
+    // And the persisted upload survives untouched — the upload path itself
+    // is intentionally unchanged so we can revisit catch-up-side delivery
+    // later.
+    let still_stored = store.get_session_state(&initial_session_id).await?;
+    assert_eq!(
+        still_stored.as_deref(),
+        Some(payload_bytes.as_slice()),
+        "SessionStateUpload must remain persisted after resume — only the \
+         catch-up delivery was removed, not the upload"
+    );
 
     Ok(())
 }
@@ -1477,9 +1472,10 @@ async fn resume_after_session_state_upload_delivers_payload_in_catch_up() -> any
 #[tokio::test]
 async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Result<()> {
     // `Reconnecting` is a mid-session WS reconnect by the same live worker,
-    // not a fresh resume. session_state is irrelevant on this path and must
-    // be omitted so we don't waste bandwidth shipping the transcript to a
-    // worker that already has it in Claude's process memory.
+    // not a fresh resume. Even though the catch-up no longer ships
+    // session_state on any path (see i-xwmoxzhe), keep this case covered
+    // explicitly so a future regression that wires session_state back in for
+    // the Reconnecting branch is caught by tests.
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state, store.clone()).await?;
     let client = test_client();
@@ -1498,13 +1494,14 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
     let conversation_id = created.conversation_id.clone();
     let session_id = find_session_for_conversation(&store, &conversation_id).await;
 
-    // Persist some session_state so the Fresh path would otherwise return it.
+    // Persist some session_state so a regression that reintroduces the field
+    // on either handshake path would have non-empty bytes to ship.
     store
         .store_session_state(&session_id, b"opaque-bytes".to_vec(), &ActorRef::test())
         .await?;
 
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
-    let catch_up = worker_handshake(
+    let catch_up_text = worker_handshake_raw(
         &mut ws,
         WorkerConnect::Reconnecting {
             last_received_event_index: 0,
@@ -1512,9 +1509,8 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
     )
     .await?;
     assert!(
-        catch_up.session_state.is_none(),
-        "Reconnecting handshakes should not carry session_state, got {:?}",
-        catch_up.session_state
+        !catch_up_text.contains("session_state"),
+        "Reconnecting catch-up must not contain session_state on the wire, got {catch_up_text}"
     );
 
     Ok(())

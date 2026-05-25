@@ -8,5 +8,4 @@ export type WorkerCatchUp = {
    * primer / context on a fresh start.
    */
   events: Array<SessionEvent>;
-  session_state?: number[] | null;
 };
