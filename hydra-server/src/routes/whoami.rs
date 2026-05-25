@@ -27,6 +27,17 @@ pub async fn whoami(
             creator: actor.creator.clone(),
         },
         ActorId::Service(service_name) => ActorIdentity::Service { service_name },
+        // Phase-1 ActorId additions (User/Agent/Adhoc/External/Legacy)
+        // are not constructed by any hydra-server call site yet — Phases
+        // 2–6 of `/designs/actor-system-overhaul.md` migrate handlers
+        // one variant at a time. Until then, an authenticated token
+        // backed by one of these new variants would indicate a
+        // protocol-level bug.
+        other => {
+            return Err(ApiError::internal(format!(
+                "phase-1 invariant violated: authenticated actor has unsupported variant {other:?}"
+            )));
+        }
     };
 
     info!("whoami completed");

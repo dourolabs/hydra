@@ -199,6 +199,22 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     })?;
                 actor.item.creator
             }
+            // Phase-1 ActorId additions (User/Agent/Adhoc/External/Legacy)
+            // are not yet constructed by any hydra-server call site —
+            // Phases 2–6 of `/designs/actor-system-overhaul.md` route
+            // these through. Until then, treat as unsupported.
+            ActorId::User(_)
+            | ActorId::Agent(_)
+            | ActorId::Adhoc(_)
+            | ActorId::External { .. }
+            | ActorId::Legacy(_) => {
+                warn!(
+                    patch_id = %patch_id,
+                    actor_id = %actor_id,
+                    "github_pr_sync: phase-1 ActorId variant not yet supported, skipping"
+                );
+                return Ok(());
+            }
         };
 
         let token = get_github_token_for_user(ctx.app_state, &creator)

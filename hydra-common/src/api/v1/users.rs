@@ -9,9 +9,56 @@ use std::fmt;
 #[non_exhaustive]
 pub struct Username(String);
 
+/// Validation failure for [`Username::try_new`].
+///
+/// Introduced in the actor-system overhaul (`/designs/actor-system-overhaul.md`,
+/// §3.1) as the foundation for typed actor identities. The bare
+/// `From<String>` / `From<&str>` conversions remain unchecked for
+/// backwards compatibility with pre-migration callers; new code should
+/// prefer [`Username::try_new`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsernameError {
+    Empty,
+    ContainsWhitespace,
+    ContainsSlash,
+}
+
+impl fmt::Display for UsernameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UsernameError::Empty => f.write_str("username must not be empty"),
+            UsernameError::ContainsWhitespace => {
+                f.write_str("username must not contain whitespace")
+            }
+            UsernameError::ContainsSlash => f.write_str("username must not contain '/'"),
+        }
+    }
+}
+
+impl std::error::Error for UsernameError {}
+
 impl Username {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Validating constructor: rejects empty strings, whitespace, and
+    /// `/`. The unchecked [`From<String>`] / [`From<&str>`] conversions
+    /// remain available for legacy call sites; this is the validation
+    /// entry point preferred by new code (see
+    /// `/designs/actor-system-overhaul.md` §3.1).
+    pub fn try_new(value: impl Into<String>) -> Result<Self, UsernameError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(UsernameError::Empty);
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(UsernameError::ContainsWhitespace);
+        }
+        if value.contains('/') {
+            return Err(UsernameError::ContainsSlash);
+        }
+        Ok(Self(value))
     }
 }
 
@@ -115,5 +162,41 @@ pub struct SearchUsersQuery {
 impl SearchUsersQuery {
     pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
         Self { q, include_deleted }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_accepts_well_formed_username() {
+        let u = Username::try_new("alice").unwrap();
+        assert_eq!(u.as_str(), "alice");
+    }
+
+    #[test]
+    fn try_new_rejects_empty() {
+        assert_eq!(Username::try_new(""), Err(UsernameError::Empty));
+    }
+
+    #[test]
+    fn try_new_rejects_whitespace() {
+        assert_eq!(
+            Username::try_new("al ice"),
+            Err(UsernameError::ContainsWhitespace)
+        );
+        assert_eq!(
+            Username::try_new("\talice"),
+            Err(UsernameError::ContainsWhitespace)
+        );
+    }
+
+    #[test]
+    fn try_new_rejects_slash() {
+        assert_eq!(
+            Username::try_new("users/alice"),
+            Err(UsernameError::ContainsSlash)
+        );
     }
 }
