@@ -224,14 +224,23 @@ describe("Sessions", () => {
   });
 
   const sessionPayload: CreateSessionRequest = {
-    prompt: "Contract test session prompt",
-    context: {
-      type: "git_repository",
-      url: "https://github.com/test/repo.git",
-      rev: "main",
+    mode: { type: "headless", prompt: "Contract test session prompt" },
+    agent_config: {},
+    mount_spec: {
+      working_dir: "repo",
+      mounts: [
+        {
+          type: "bundle",
+          target: "repo",
+          bundle: {
+            type: "git_repository",
+            url: "https://github.com/test/repo.git",
+            rev: "main",
+          },
+        },
+        { type: "documents", target: "documents" },
+      ],
     },
-    issue_id: null,
-    interactive: false,
   };
 
   it("round-trip: create → get → list → versions → kill", async () => {

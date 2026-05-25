@@ -109,10 +109,14 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    let job_record_body_for_create = job_record_body.clone();
     server.mock(move |when, then| {
         when.method(POST).path("/v1/sessions");
-        then.status(200)
-            .json_body(json!({"job_id": job_id_for_create.clone(), "unexpected": "field"}));
+        then.status(200).json_body(json!({
+            "session_id": job_id_for_create.clone(),
+            "session": job_record_body_for_create["task"].clone(),
+            "unexpected": "field"
+        }));
     });
 
     server.mock(move |when, then| {
@@ -376,15 +380,23 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(login_token, "login-token");
 
     // Job endpoints
-    let create_session_request = CreateSessionRequest::new(
-        "test prompt".to_string(),
-        None,
-        BundleSpec::None,
-        HashMap::new(),
-        None,
-        None,
-        false,
-    );
+    use hydra_common::api::v1::sessions::{
+        AgentConfig as ApiAgentConfig, MountSpec as ApiMountSpec, SessionMode as ApiSessionMode,
+    };
+    let create_session_request = CreateSessionRequest {
+        mode: ApiSessionMode::Headless {
+            prompt: "test prompt".to_string(),
+        },
+        agent_config: ApiAgentConfig::default(),
+        mount_spec: ApiMountSpec::default(),
+        image: None,
+        env_vars: HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: None,
+    };
     let created_session = client.create_session(&create_session_request).await?;
     assert_eq!(created_session.session_id, job_id);
 

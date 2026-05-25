@@ -301,43 +301,26 @@ fn default_status() -> Status {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
 pub struct CreateSessionRequest {
-    pub prompt: String,
+    pub mode: SessionMode,
+    #[serde(default)]
+    pub agent_config: AgentConfig,
+    #[serde(default)]
+    pub mount_spec: MountSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
-    #[serde(default)]
-    pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub variables: HashMap<String, String>,
+    pub env_vars: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issue_id: Option<IssueId>,
+    pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_id: Option<ConversationId>,
-    #[serde(default)]
-    pub interactive: bool,
-}
-
-impl CreateSessionRequest {
-    pub fn new(
-        prompt: String,
-        image: Option<String>,
-        context: BundleSpec,
-        variables: HashMap<String, String>,
-        issue_id: Option<IssueId>,
-        conversation_id: Option<ConversationId>,
-        interactive: bool,
-    ) -> Self {
-        Self {
-            prompt,
-            image,
-            context,
-            variables,
-            issue_id,
-            conversation_id,
-            interactive,
-        }
-    }
+    pub memory_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<SessionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -564,6 +547,22 @@ impl MountSpec {
             mounts,
         }
     }
+
+    /// `true` when the spec carries no mounts. Used by the server-side
+    /// `CreateSession` handler to decide whether to apply
+    /// `session_settings`-derived defaults from a `spawned_from` issue.
+    pub fn is_empty(&self) -> bool {
+        self.mounts.is_empty()
+    }
+}
+
+impl Default for MountSpec {
+    fn default() -> Self {
+        Self {
+            working_dir: RelativePath::new("repo").expect("static `repo` is valid"),
+            mounts: Vec::new(),
+        }
+    }
 }
 
 /// One mount's worth of server-supplied configuration.
@@ -708,13 +707,18 @@ impl WorkerContext {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateSessionResponse {
-    #[serde(alias = "job_id")]
     pub session_id: SessionId,
+    /// Fully-lowered persisted session. Lets callers skip a follow-up
+    /// `GET /v1/sessions/:id`.
+    pub session: Session,
 }
 
 impl CreateSessionResponse {
-    pub fn new(session_id: SessionId) -> Self {
-        Self { session_id }
+    pub fn new(session_id: SessionId, session: Session) -> Self {
+        Self {
+            session_id,
+            session,
+        }
     }
 }
 
@@ -1511,42 +1515,60 @@ mod tests {
     }
 
     #[test]
-    fn create_session_request_round_trips_conversation_id() {
+    fn create_session_request_round_trips_interactive_mode() {
         let conv_id = crate::ConversationId::new();
-        let request = CreateSessionRequest::new(
-            "prompt".to_string(),
-            None,
-            BundleSpec::None,
-            HashMap::new(),
-            None,
-            Some(conv_id.clone()),
-            true,
-        );
+        let request = CreateSessionRequest {
+            mode: SessionMode::Interactive {
+                conversation_id: conv_id.clone(),
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
 
         let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(
-            json.get("conversation_id").and_then(|v| v.as_str()),
-            Some(conv_id.as_ref())
-        );
+        assert_eq!(json["mode"]["type"], "interactive");
+        assert_eq!(json["mode"]["conversation_id"], conv_id.as_ref());
 
         let deserialized: CreateSessionRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.conversation_id, Some(conv_id));
+        assert_eq!(
+            deserialized.mode.conversation_id(),
+            Some(&conv_id),
+            "conversation_id should round-trip through SessionMode::Interactive"
+        );
     }
 
     #[test]
-    fn create_session_request_omits_conversation_id_when_none() {
-        let request = CreateSessionRequest::new(
-            "prompt".to_string(),
-            None,
-            BundleSpec::None,
-            HashMap::new(),
-            None,
-            None,
-            false,
-        );
+    fn create_session_request_round_trips_headless_mode() {
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless {
+                prompt: "do stuff".to_string(),
+            },
+            agent_config: AgentConfig::default(),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
 
         let json = serde_json::to_value(&request).unwrap();
-        assert!(json.get("conversation_id").is_none());
+        assert_eq!(json["mode"]["type"], "headless");
+        assert_eq!(json["mode"]["prompt"], "do stuff");
+        // Optional/empty fields are omitted on the wire.
+        assert!(json.get("spawned_from").is_none());
+        assert!(json.get("resumed_from").is_none());
     }
 
     #[test]

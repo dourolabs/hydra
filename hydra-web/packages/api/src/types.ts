@@ -86,6 +86,8 @@ export type { LoginRequest } from "./generated/LoginRequest";
 export type { LoginResponse } from "./generated/LoginResponse";
 export type { LogsQuery } from "./generated/LogsQuery";
 export type { MergeQueue } from "./generated/MergeQueue";
+export type { MountItem } from "./generated/MountItem";
+export type { MountSpec } from "./generated/MountSpec";
 export type { HydraId } from "./generated/HydraId";
 export type { PathChildDocumentRef } from "./generated/PathChildDocumentRef";
 export type { PathChildEntry } from "./generated/PathChildEntry";

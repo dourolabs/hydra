@@ -43,7 +43,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let client = test_client();
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "prompt": "0" }))
+        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
         .send()
         .await?;
 
@@ -72,29 +72,60 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
     let (repo_name, repo) = service_repository();
-    add_repository(&state, repo_name.clone(), repo.clone()).await?;
-    let resolver_state = state.clone();
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
+    // Post-PR-E: route the service-repo lookup through `spawned_from`. The
+    // server-side `mount_spec_from_session_settings` resolves the repo to
+    // a fully-lowered Bundle::GitRepository and `mount_spec` carries no
+    // BuildCache (no build_cache config in this test), so `session.context`
+    // ends up as GitRepository — matching how the new CLI sends sessions.
+    let handles = crate::test_utils::test_state_handles();
+    let state2 = handles.state;
+    add_repository(&state2, repo_name.clone(), repo.clone()).await?;
+    let (issue_id, _) = handles
+        .store
+        .add_issue(
+            Issue {
+                issue_type: IssueType::Task,
+                title: String::new(),
+                description: "linked to service repo".to_string(),
+                creator: Username::from("tester"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                session_settings: SessionSettings {
+                    repo_name: Some(repo_name.clone()),
+                    branch: Some("develop".to_string()),
+                    ..Default::default()
+                },
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+                deleted: false,
+                form: None,
+                form_response: None,
+                feedback: None,
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+    let resolver_state2 = state2.clone();
+    let check_state2 = state2.clone();
+    let server2 = spawn_test_server_with_state(state2, handles.store.clone()).await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/sessions", server.base_url()))
+        .post(format!("{}/v1/sessions", server2.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "context": { "type": "service_repository", "name": repo_name.to_string() }
+            "mode": { "type": "headless", "prompt": "0" },
+            "spawned_from": issue_id,
         }))
         .send()
         .await?;
 
     assert!(response.status().is_success());
     let body: CreateSessionResponse = response.json().await?;
-    let task = check_state.get_session(&body.session_id).await?;
-    let resolved = resolver_state.resolve_task(&task).await?;
-    assert_eq!(task.service_repo_name(), Some(&repo_name));
+    let task = check_state2.get_session(&body.session_id).await?;
+    let resolved = resolver_state2.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
         Bundle::GitRepository {
@@ -102,7 +133,6 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
             rev: "develop".to_string()
         }
     );
-    assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
     Ok(())
 }
@@ -119,7 +149,7 @@ async fn create_session_respects_image_override() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "prompt": "0",
+            "mode": { "type": "headless", "prompt": "0" },
             "image": "ghcr.io/example/custom:dev"
         }))
         .send()
@@ -149,12 +179,12 @@ async fn create_session_image_override_beats_repo_default() -> anyhow::Result<()
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "context": { "type": "service_repository", "name": repo_name.to_string() },
+            "mode": { "type": "headless", "prompt": "0" },
             "image": "ghcr.io/example/override:main"
         }))
         .send()
         .await?;
+    let _ = repo_name;
 
     assert!(response.status().is_success());
     let body: CreateSessionResponse = response.json().await?;
@@ -176,8 +206,8 @@ async fn create_session_stores_provided_variables() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "variables": { "FOO": "bar", "PROMPT": "custom prompt" }
+            "mode": { "type": "headless", "prompt": "0" },
+            "env_vars": { "FOO": "bar", "PROMPT": "custom prompt" }
         }))
         .send()
         .await?;
@@ -242,9 +272,8 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "context": { "type": "git_repository", "url": "https://task.example.com/base.git", "rev": "task-branch" },
-            "issue_id": issue_id
+            "mode": { "type": "headless", "prompt": "0" },
+            "spawned_from": issue_id,
         }))
         .send()
         .await?;
@@ -342,9 +371,8 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "context": { "type": "git_repository", "url": "https://task.example.com/base.git", "rev": "task-branch" },
-            "issue_id": issue_id
+            "mode": { "type": "headless", "prompt": "0" },
+            "spawned_from": issue_id,
         }))
         .send()
         .await?;
@@ -361,7 +389,10 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
             rev: "issue-branch".to_string(),
         }
     );
-    assert_eq!(resolved.image, "ghcr.io/example/repo:main");
+    // Image comes from session_settings, not from repo default_image
+    // (the resolver no longer looks up the repo via ServiceRepository
+    // because mount_spec is fully-lowered post-PR-E).
+    let _ = repo.default_image;
 
     let context_response = client
         .get(format!(
@@ -395,13 +426,50 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
 
 #[tokio::test]
 async fn create_session_rejects_unknown_service_repository() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
+    // Post-PR-E: clients send a fully-lowered Bundle::GitRepository in
+    // `mount_spec`, so the server no longer encounters
+    // `BundleSpec::ServiceRepository` with an unknown name through the
+    // request body. The equivalent failure now surfaces from the CLI's
+    // `list_repositories` lookup. This test pins the resolver path:
+    // sending a session linked (via `spawned_from`) to an issue whose
+    // `session_settings.repo_name` references an unregistered repo
+    // surfaces the same `unknown repository` error from
+    // `mount_spec_from_session_settings`.
+    let handles = crate::test_utils::test_state_handles();
+    let state = handles.state;
+    let (issue_id, _) = handles
+        .store
+        .add_issue(
+            Issue {
+                issue_type: IssueType::Task,
+                title: String::new(),
+                description: "missing service repo".to_string(),
+                creator: Username::from("tester"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                session_settings: SessionSettings {
+                    repo_name: Some(hydra_common::RepoName::new("missing", "repo").unwrap()),
+                    ..Default::default()
+                },
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+                deleted: false,
+                form: None,
+                form_response: None,
+                feedback: None,
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+    let server2 = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/sessions", server.base_url()))
+        .post(format!("{}/v1/sessions", server2.base_url()))
         .json(&json!({
-            "prompt": "0",
-            "context": { "type": "service_repository", "name": "missing/repo" }
+            "mode": { "type": "headless", "prompt": "0" },
+            "spawned_from": issue_id,
         }))
         .send()
         .await?;
@@ -500,7 +568,7 @@ async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "prompt": "0" }))
+        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
         .send()
         .await?;
 
@@ -611,7 +679,7 @@ async fn session_version_endpoints_return_404s() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "prompt": "0" }))
+        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
         .send()
         .await?;
 

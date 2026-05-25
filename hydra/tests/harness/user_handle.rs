@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
+    api::v1::sessions::{
+        AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
+    },
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
         ListIssuesResponse, SearchIssuesQuery, SessionSettings, UpsertIssueRequest,
@@ -12,13 +15,56 @@ use hydra_common::{
         GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
         UpsertPatchRequest,
     },
-    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
+    sessions::SearchSessionsQuery,
     users::Username,
     IssueId, PatchId, RepoName, SessionId,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::process::Command;
+
+/// Build a `CreateSessionRequest` from a service-repo URL and prompt.
+///
+/// The post-PR-E request carries a fully-lowered `MountSpec` rather than the
+/// old `BundleSpec::ServiceRepository`. Callers resolve the URL via
+/// `list_repositories` and pass it here so the worker can clone directly.
+fn create_session_request_with_repo_url(
+    repo_url: String,
+    prompt: &str,
+    issue_id: Option<IssueId>,
+) -> CreateSessionRequest {
+    let repo_target = RelativePath::new("repo").expect("static `repo` is valid");
+    let docs_target = RelativePath::new("documents").expect("static `documents` is valid");
+    let mount_spec = MountSpec::new(
+        repo_target.clone(),
+        vec![
+            MountItem::Bundle {
+                target: repo_target,
+                bundle: Bundle::GitRepository {
+                    url: repo_url,
+                    rev: "main".to_string(),
+                },
+            },
+            MountItem::Documents {
+                target: docs_target,
+            },
+        ],
+    );
+    CreateSessionRequest {
+        mode: SessionMode::Headless {
+            prompt: prompt.to_string(),
+        },
+        agent_config: AgentConfig::default(),
+        mount_spec,
+        image: None,
+        env_vars: HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: issue_id,
+        resumed_from: None,
+    }
+}
 
 /// Output captured from a CLI subprocess invocation.
 #[derive(Debug, Clone)]
@@ -362,18 +408,8 @@ impl UserHandle {
     /// Create a session for the given repo with the given prompt.
     /// Returns the new session's task ID.
     pub async fn create_session(&self, repo: &RepoName, prompt: &str) -> Result<SessionId> {
-        let request = CreateSessionRequest::new(
-            prompt.to_string(),
-            None,
-            BundleSpec::ServiceRepository {
-                name: repo.clone(),
-                rev: None,
-            },
-            HashMap::new(),
-            None,
-            None,
-            false,
-        );
+        let repo_url = self.resolve_repo_url(repo).await?;
+        let request = create_session_request_with_repo_url(repo_url, prompt, None);
         let response = self
             .client
             .create_session(&request)
@@ -393,24 +429,32 @@ impl UserHandle {
         prompt: &str,
         issue_id: &IssueId,
     ) -> Result<SessionId> {
-        let request = CreateSessionRequest::new(
-            prompt.to_string(),
-            None,
-            BundleSpec::ServiceRepository {
-                name: repo.clone(),
-                rev: None,
-            },
-            HashMap::new(),
-            Some(issue_id.clone()),
-            None,
-            false,
-        );
+        let repo_url = self.resolve_repo_url(repo).await?;
+        let request =
+            create_session_request_with_repo_url(repo_url, prompt, Some(issue_id.clone()));
         let response = self
             .client
             .create_session(&request)
             .await
             .context("UserHandle::create_session_for_issue failed")?;
         Ok(response.session_id)
+    }
+
+    async fn resolve_repo_url(&self, repo: &RepoName) -> Result<String> {
+        use hydra_common::repositories::SearchRepositoriesQuery;
+        let response = self
+            .client
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .context("UserHandle::resolve_repo_url failed to list repositories")?;
+        let record = response
+            .repositories
+            .into_iter()
+            .find(|record| record.name == *repo)
+            .ok_or_else(|| {
+                anyhow::anyhow!("service repository '{repo}' not registered with the test harness")
+            })?;
+        Ok(record.repository.remote_url)
     }
 
     // ── CLI operations ───────────────────────────────────────────────

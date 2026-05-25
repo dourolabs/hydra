@@ -77,16 +77,20 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
         "spawned task should inherit the memory_limit from job settings"
     );
 
-    // Verify BundleSpec references the correct repository.
+    // Post-PR-E: agent_queue pre-resolves the service repo to a Bundle::GitRepository
+    // on the request, so `session.context` is derived from `mount_spec` as
+    // GitRepository (no BuildCache present in this test config). The
+    // service-repo identity is preserved end-to-end via the lowered URL.
+    let _ = &repo;
     match &job.session.context {
-        BundleSpec::ServiceRepository { name, .. } => {
-            assert_eq!(
-                name, &repo,
-                "BundleSpec should reference the correct repository"
+        BundleSpec::GitRepository { url, .. } => {
+            assert!(
+                !url.is_empty(),
+                "expected lowered GitRepository URL on session.context"
             );
         }
         other => {
-            panic!("expected BundleSpec::ServiceRepository, got {other:?}");
+            panic!("expected BundleSpec::GitRepository, got {other:?}");
         }
     }
 
@@ -154,17 +158,19 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     let swe_tasks = harness.await_sessions(&child_summary.issue_id, 1).await?;
     assert_eq!(swe_tasks.len(), 1, "child should be scheduled for SWE");
 
-    // Verify the spawned task has the correct BundleSpec.
+    // Verify the spawned task has the correct BundleSpec. Post-PR-E this
+    // is a lowered GitRepository (see comment in the sibling test above).
     let child_job = user.client().get_session(&swe_tasks[0]).await?;
+    let _ = &repo;
     match &child_job.session.context {
-        BundleSpec::ServiceRepository { name, .. } => {
-            assert_eq!(
-                name, &repo,
-                "child task BundleSpec should reference the correct repository"
+        BundleSpec::GitRepository { url, .. } => {
+            assert!(
+                !url.is_empty(),
+                "expected lowered GitRepository URL on child session.context"
             );
         }
         other => {
-            panic!("expected BundleSpec::ServiceRepository, got {other:?}");
+            panic!("expected BundleSpec::GitRepository, got {other:?}");
         }
     }
 

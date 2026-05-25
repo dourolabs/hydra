@@ -2,20 +2,23 @@
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
+#[cfg(test)]
+use crate::store::Session;
 use crate::{
     app::AppState,
     domain::{
+        actors::ActorRef,
         issues::{Issue, IssueDependencyType, IssueStatus},
-        sessions::BundleSpec,
     },
-    store::{Session, Status, StoreError},
+    store::{Status, StoreError},
 };
 use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
+use hydra_common::api::v1 as api;
 use hydra_common::api::v1::sessions::McpConfig;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
-use hydra_common::{IssueId, VersionNumber};
+use hydra_common::{IssueId, SessionId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -30,8 +33,11 @@ pub const AGENT_NAME_ENV_VAR: &str = "HYDRA_AGENT_NAME";
 
 /// Result of attempting to spawn a session for an issue.
 pub(crate) enum SpawnResult {
-    /// A session was built and is ready to be added.
-    Spawned(Box<Session>),
+    /// A session was created in the store. The id is returned so the outer
+    /// automation loop can log it / decrement remaining capacity / etc.
+    /// (PR-E §2.5: `build_task` no longer just builds a `Session` — it goes
+    /// through `AppState::create_session`, which persists the row.)
+    Spawned(SessionId),
     /// The issue was skipped (not eligible for spawning).
     Skipped,
     /// The spawn attempt retry cap has been exhausted for this issue.
@@ -40,10 +46,10 @@ pub(crate) enum SpawnResult {
 
 #[cfg(test)]
 impl SpawnResult {
-    /// Returns the spawned session, or `None` if the result is not `Spawned`.
-    fn into_session(self) -> Option<Session> {
+    /// Returns the spawned session id, or `None` if the result is not `Spawned`.
+    fn into_session_id(self) -> Option<SessionId> {
         match self {
-            SpawnResult::Spawned(session) => Some(*session),
+            SpawnResult::Spawned(id) => Some(id),
             _ => None,
         }
     }
@@ -82,40 +88,17 @@ impl AgentQueue {
         issue: &Issue,
         prompt: &str,
         mcp_config: Option<McpConfig>,
-    ) -> anyhow::Result<Option<Session>> {
+    ) -> anyhow::Result<Option<SessionId>> {
         let session_settings =
             state.apply_session_settings_defaults(issue.session_settings.clone());
-        let bundle = match (
-            session_settings.remote_url.as_ref(),
-            session_settings.repo_name.as_ref(),
-        ) {
-            (Some(remote_url), _) if !remote_url.trim().is_empty() => {
-                let rev = session_settings
-                    .branch
-                    .clone()
-                    .unwrap_or_else(|| "main".to_string());
-                BundleSpec::GitRepository {
-                    url: remote_url.trim().to_string(),
-                    rev,
-                }
-            }
-            (_, Some(repo_name)) => {
-                let repository = state
-                    .repository_from_store(repo_name)
-                    .await
-                    .context("failed to load repository for issue task")?;
-                let rev = session_settings
-                    .branch
-                    .clone()
-                    .or_else(|| repository.default_branch.clone());
 
-                BundleSpec::ServiceRepository {
-                    name: repo_name.clone(),
-                    rev,
-                }
-            }
-            _ => BundleSpec::None,
-        };
+        // Pre-resolve the mount_spec via `mount_spec_from_create_request`. The
+        // server-side `create_session` defaulting from `session_settings` is
+        // bypassed because we send a non-empty `mount_spec` on the request.
+        let mount_spec = self
+            .resolve_mount_spec(state, &session_settings)
+            .await
+            .context("failed to resolve mount_spec for issue task")?;
 
         let image = session_settings
             .image
@@ -149,33 +132,89 @@ impl AgentQueue {
             }
         };
 
-        let mount_spec = crate::app::sessions::mount_spec_for_session(&bundle);
-        let agent_config = crate::domain::sessions::AgentConfig::new(
-            Some(self.agent.name.clone()),
-            session_settings.model.clone(),
-            None,
-            mcp_config,
-        );
-        let mut session = Session::new(
-            issue.creator.clone(),
-            Some(issue_id.clone()),
-            None,
-            agent_config,
+        let request = api::sessions::CreateSessionRequest {
+            mode: api::sessions::SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
+            agent_config: api::sessions::AgentConfig::new(
+                Some(self.agent.name.clone()),
+                session_settings.model.clone(),
+                Some(prompt.to_string()),
+                mcp_config,
+            ),
             mount_spec,
             image,
             env_vars,
-            session_settings.cpu_limit.clone(),
-            session_settings.memory_limit.clone(),
-            merged_secrets,
-            crate::domain::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
-            Status::Created,
-            None,
-            None,
-        );
-        session.context = bundle;
-        Ok(Some(session))
+            cpu_limit: session_settings.cpu_limit.clone(),
+            memory_limit: session_settings.memory_limit.clone(),
+            secrets: merged_secrets,
+            spawned_from: Some(issue_id.clone()),
+            resumed_from: None,
+        };
+
+        let system_actor = ActorRef::System {
+            worker_name: "agent_queue".into(),
+            on_behalf_of: None,
+        };
+        let (session_id, _session) = state
+            .create_session(request, system_actor, issue.creator.clone())
+            .await
+            .context("failed to create session via AppState::create_session")?;
+
+        Ok(Some(session_id))
+    }
+
+    /// Lower the issue's `session_settings` into a `MountSpec` directly so
+    /// the server-side `create_session` defaulting path doesn't need to
+    /// re-do this work. Mirrors `AppState::mount_spec_from_session_settings`
+    /// behavior for the `remote_url` / `repo_name` cases.
+    async fn resolve_mount_spec(
+        &self,
+        state: &AppState,
+        session_settings: &crate::domain::issues::SessionSettings,
+    ) -> anyhow::Result<api::sessions::MountSpec> {
+        use crate::routes::sessions::mount_spec_from_create_request;
+        use hydra_common::api::v1::sessions::Bundle;
+
+        let (bundle, service_repo_name) = match (
+            session_settings.remote_url.as_ref(),
+            session_settings.repo_name.as_ref(),
+        ) {
+            (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
+                let rev = session_settings
+                    .branch
+                    .clone()
+                    .unwrap_or_else(|| "main".to_string());
+                let bundle = Bundle::GitRepository {
+                    url: remote_url.trim().to_string(),
+                    rev,
+                };
+                (bundle, repo_name.cloned())
+            }
+            (_, Some(repo_name)) => {
+                let repository = state
+                    .repository_from_store(repo_name)
+                    .await
+                    .context("failed to load repository for issue task")?;
+                let rev = session_settings
+                    .branch
+                    .clone()
+                    .or_else(|| repository.default_branch.clone())
+                    .unwrap_or_else(|| "main".to_string());
+                let bundle = Bundle::GitRepository {
+                    url: repository.remote_url.clone(),
+                    rev,
+                };
+                (bundle, Some(repo_name.clone()))
+            }
+            _ => return Ok(api::sessions::MountSpec::default()),
+        };
+
+        let build_cache = match (service_repo_name, state.config.build_cache.to_context()) {
+            (Some(name), Some(ctx)) => Some((name, ctx)),
+            _ => None,
+        };
+        Ok(mount_spec_from_create_request(bundle, build_cache))
     }
 
     async fn register_spawn_attempt(
@@ -320,14 +359,11 @@ impl AgentQueue {
             .context("MCP config cache unexpectedly empty after fetch")?
             .clone();
 
-        let maybe_task = self
-            .build_task(state, issue_id, issue, prompt, mcp_config)
-            .await?;
-        let Some(task) = maybe_task else {
-            return Ok(SpawnResult::Skipped);
-        };
-
-        // Spawn attempt tracking.
+        // Spawn attempt tracking is checked BEFORE creating the session so
+        // an exhausted issue doesn't accumulate orphan rows. (Previously the
+        // session was built first; with `build_task` now persisting through
+        // `create_session`, we have to flip the order or risk a row per
+        // retry-exhausted attempt.)
         let max_tries = self.max_tries_for_issue(issue);
         let children_snapshot = {
             let child_ids = state.get_issue_children(issue_id).await.unwrap_or_default();
@@ -355,7 +391,14 @@ impl AgentQueue {
             });
         }
 
-        Ok(SpawnResult::Spawned(Box::new(task)))
+        let maybe_session_id = self
+            .build_task(state, issue_id, issue, prompt, mcp_config)
+            .await?;
+        let Some(session_id) = maybe_session_id else {
+            return Ok(SpawnResult::Skipped);
+        };
+
+        Ok(SpawnResult::Spawned(session_id))
     }
 }
 
@@ -537,12 +580,8 @@ mod tests {
 
     async fn record_completed_task(
         handles: &TestStateHandles,
-        session: Session,
+        task_id: SessionId,
     ) -> anyhow::Result<()> {
-        let (task_id, _) = handles
-            .store
-            .add_session(session, Utc::now(), &ActorRef::test())
-            .await?;
         handles
             .state
             .transition_task_to_pending(&task_id, ActorRef::test())
@@ -699,10 +738,10 @@ mod tests {
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issues = handles.state.list_issues().await?;
 
-        let mut tasks = Vec::new();
+        let mut session_ids = Vec::new();
         let mut cached_prompt: Option<String> = None;
         for (issue_id, versioned_issue) in &issues {
-            if let Ok(SpawnResult::Spawned(session)) = queue
+            if let Ok(SpawnResult::Spawned(id)) = queue
                 .spawn_for_issue(
                     &handles.state,
                     issue_id,
@@ -713,15 +752,16 @@ mod tests {
                 )
                 .await
             {
-                tasks.push(*session);
+                session_ids.push(id);
             }
         }
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(session_ids.len(), 2);
 
         let mut issue_ids = HashSet::new();
         let mut spawned_from_issue_ids = HashSet::new();
-        let default_branch = "main".to_string();
-        for task in tasks {
+        let _ = repo_name.clone();
+        for id in session_ids {
+            let task = handles.state.get_session(&id).await?;
             let Session {
                 mode,
                 spawned_from,
@@ -730,14 +770,6 @@ mod tests {
             } = task;
 
             assert_eq!(mode.prompt_for_legacy_wire(), "Fix the issue");
-            // The mount_spec backfill embeds the bundle in the first
-            // MountItem::Bundle; recover it via the canonical helper so this
-            // test stays in lockstep with the dual-write logic.
-            // (ServiceRepository is preserved on-the-wire by the migration
-            // backfill, but the in-memory mount_spec uses Bundle::None — see
-            // `app/sessions.rs::mount_spec_for_session`.)
-            let _ = repo_name.clone();
-            let _ = default_branch.clone();
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -870,7 +902,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let updated_patch = handles.store.get_patch(&patch_id, false).await?;
         let mut updated_patch = updated_patch.item;
@@ -984,7 +1016,8 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        let session = result.into_session().unwrap();
+        let session_id = result.into_session_id().unwrap();
+        let session = handles.state.get_session(&session_id).await?;
         assert_eq!(session.context, BundleSpec::None);
         assert_eq!(
             session
@@ -1250,14 +1283,31 @@ mod tests {
             .await?;
         assert!(result2.is_spawned());
 
-        let session2 = result2.into_session().unwrap();
+        let session2 = handles
+            .state
+            .get_session(&result2.into_session_id().unwrap())
+            .await?;
+        // PR-E: `session.context` is now derived from `mount_spec` (no
+        // build_cache in this test → resolves to GitRepository, not
+        // ServiceRepository). The service-repo identity moves to the
+        // resolved bundle URL, which mirrors how the server stamps the
+        // bundle when the resolver runs.
+        let expected_url = "https://github.com/dourolabs/hydra.git";
         let has_repo_task = matches!(
             session2.context,
-            BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
+            BundleSpec::GitRepository { ref url, .. } if url == expected_url
         );
-        assert!(has_repo_task, "expected a task with ServiceRepository");
+        let _ = repo_name;
+        assert!(
+            has_repo_task,
+            "expected a task with the resolved service-repo URL, got {:?}",
+            session2.context
+        );
 
-        let session1 = result1.into_session().unwrap();
+        let session1 = handles
+            .state
+            .get_session(&result1.into_session_id().unwrap())
+            .await?;
         let has_no_repo_task = matches!(session1.context, BundleSpec::None);
         assert!(
             has_no_repo_task,
@@ -1321,7 +1371,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1496,10 +1546,12 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
+        let spawned_session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
         assert_eq!(
-            result
-                .into_session()
-                .unwrap()
+            spawned_session
                 .env_vars
                 .get(ISSUE_ID_ENV_VAR)
                 .map(String::as_str),
@@ -1543,7 +1595,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1559,7 +1611,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1613,6 +1665,11 @@ mod tests {
             )
             .await?;
         assert!(first_run.is_spawned());
+        // Transition the spawned session to terminal so the
+        // `has_active_session` guard doesn't block the next iteration. PR-E
+        // moved storage inside `build_task`, so sessions accumulate in the
+        // store between spawn calls and need to be drained here.
+        record_completed_task(&handles, first_run.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
@@ -1690,7 +1747,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         // Second attempt should be blocked (max_tries=1 reached).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -1742,10 +1799,12 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
+        let spawned_session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
         assert_eq!(
-            result
-                .into_session()
-                .unwrap()
+            spawned_session
                 .env_vars
                 .get(ISSUE_ID_ENV_VAR)
                 .map(String::as_str),
@@ -1809,7 +1868,7 @@ mod tests {
             )
             .await?;
         assert!(parent_result.is_spawned());
-        record_completed_task(&handles, parent_result.into_session().unwrap()).await?;
+        record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
@@ -1823,7 +1882,7 @@ mod tests {
             )
             .await?;
         assert!(child_result.is_spawned());
-        record_completed_task(&handles, child_result.into_session().unwrap()).await?;
+        record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
 
         // Further attempts should be blocked for both.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -1938,7 +1997,7 @@ mod tests {
             )
             .await?;
         assert!(parent_result.is_spawned());
-        record_completed_task(&handles, parent_result.into_session().unwrap()).await?;
+        record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
@@ -1952,7 +2011,7 @@ mod tests {
             )
             .await?;
         assert!(child_result.is_spawned());
-        record_completed_task(&handles, child_result.into_session().unwrap()).await?;
+        record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
 
         // No changes to children — counter should NOT reset, so no tasks spawn.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -2127,13 +2186,17 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        let session = result.into_session().unwrap();
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
 
         let resolved = handles.state.resolve_task(&session).await?;
         // ServiceRepository round-trips through resolved_task → resolver →
-        // GitRepository. The in-memory `session.mount_spec` bundle is None
-        // (re-resolved at fetch time), but `resolved.context.bundle` carries
-        // the lowered url.
+        // GitRepository. The persisted `session.mount_spec` already carries
+        // a fully-lowered url because agent_queue pre-resolves the mount_spec
+        // before calling `create_session`; `resolved.context.bundle` then
+        // mirrors that.
         let _ = repo_name.clone();
         assert_eq!(
             resolved.context.bundle,
@@ -2209,7 +2272,10 @@ mod tests {
             .await?;
         assert!(result.is_spawned());
 
-        let session = result.into_session().unwrap();
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
         assert_eq!(session.secrets, Some(secrets));
 
         Ok(())
@@ -2269,7 +2335,10 @@ mod tests {
             .await?;
         assert!(result.is_spawned());
 
-        let session = result.into_session().unwrap();
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
         assert!(session.secrets.is_none());
 
         Ok(())
@@ -2314,7 +2383,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         // Second iteration: new AgentQueue with same shared state.
         let mut queue2 = queue_with_attempts("agent-a", attempts.clone());
@@ -2335,7 +2404,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned());
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         // Third iteration: new AgentQueue, same shared state.
         let mut queue3 = queue_with_attempts("agent-a", attempts);
@@ -2402,7 +2471,10 @@ mod tests {
             .await?;
         assert!(result.is_spawned());
 
-        let session = result.into_session().unwrap();
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
         // Agent secrets come first, then issue secrets, deduplicated.
         assert_eq!(
             session.secrets,
@@ -2451,10 +2523,11 @@ mod tests {
             .await?;
         assert!(result.is_spawned());
 
-        assert_eq!(
-            result.into_session().unwrap().secrets,
-            Some(vec!["AGENT_SECRET".to_string()])
-        );
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
+        assert_eq!(session.secrets, Some(vec!["AGENT_SECRET".to_string()]));
 
         Ok(())
     }
@@ -2493,7 +2566,11 @@ mod tests {
             .await?;
         assert!(result.is_spawned());
 
-        assert_eq!(result.into_session().unwrap().secrets, None);
+        let session = handles
+            .state
+            .get_session(&result.into_session_id().unwrap())
+            .await?;
+        assert_eq!(session.secrets, None);
 
         Ok(())
     }
@@ -2570,7 +2647,8 @@ mod tests {
             )
             .await?;
 
-        let session = result.into_session().expect("should spawn a session");
+        let session_id = result.into_session_id().expect("should spawn a session");
+        let session = handles.state.get_session(&session_id).await?;
         let mcp_config = session
             .agent_config
             .mcp_config
@@ -2615,7 +2693,8 @@ mod tests {
             )
             .await?;
 
-        let session = result.into_session().expect("should spawn a session");
+        let session_id = result.into_session_id().expect("should spawn a session");
+        let session = handles.state.get_session(&session_id).await?;
         assert!(session.agent_config.mcp_config.is_none());
 
         Ok(())
@@ -2657,7 +2736,8 @@ mod tests {
             )
             .await?;
 
-        let session = result.into_session().expect("should spawn a session");
+        let session_id = result.into_session_id().expect("should spawn a session");
+        let session = handles.state.get_session(&session_id).await?;
         assert!(
             session.agent_config.mcp_config.is_none(),
             "mcp_config should be None when document is missing"
@@ -2907,7 +2987,7 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned(), "first attempt should succeed");
-        record_completed_task(&handles, result.into_session().unwrap()).await?;
+        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         // Second attempt with same feedback should be blocked (max_tries=1).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
@@ -2948,6 +3028,181 @@ mod tests {
             )
             .await?;
         assert!(result.is_spawned(), "new feedback should reset attempts");
+
+        Ok(())
+    }
+
+    /// Regression for §2.5: agent_queue spawns must go through
+    /// `AppState::create_session` so the persisted `Session` matches the
+    /// shape produced by `POST /v1/sessions`. Build structurally-equivalent
+    /// inputs through both paths and assert the resulting rows are
+    /// indistinguishable modulo per-row metadata (`creation_time`, `id`,
+    /// `actor`). A future regression that re-introduces the direct-construct
+    /// bypass will diverge on `mount_spec` / `agent_config` / `mode` and
+    /// trip this test.
+    #[tokio::test]
+    async fn agent_queue_and_http_paths_produce_structurally_identical_sessions()
+    -> anyhow::Result<()> {
+        use hydra_common::api::v1 as api;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let prompt = "Fix the issue";
+
+        // Path A — through agent_queue::spawn_for_issue.
+        let (issue_id_a, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Parity test (agent_queue path)",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item_a = handles.store.get_issue(&issue_id_a, false).await?.item;
+        let mut cached_prompt: Option<String> = None;
+        let result_a = queue
+            .spawn_for_issue(
+                &handles.state,
+                &issue_id_a,
+                &issue_item_a,
+                &task_state,
+                &mut cached_prompt,
+                &mut None,
+            )
+            .await?;
+        let session_id_a = result_a
+            .into_session_id()
+            .expect("agent_queue path should spawn");
+        let session_a = handles.state.get_session(&session_id_a).await?;
+
+        // Path B — through AppState::create_session, building the same
+        // CreateSessionRequest agent_queue builds (pre-resolved bundle,
+        // env_vars, secrets, etc.).
+        let (issue_id_b, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Parity test (HTTP path)",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let issue_b = handles.store.get_issue(&issue_id_b, false).await?.item;
+        let session_settings_b = handles
+            .state
+            .apply_session_settings_defaults(issue_b.session_settings.clone());
+        let repository = handles
+            .state
+            .repository_from_store(&repo_name)
+            .await
+            .expect("registered repo");
+        let rev = repository
+            .default_branch
+            .clone()
+            .unwrap_or_else(|| "main".to_string());
+        let bundle = api::sessions::Bundle::GitRepository {
+            url: repository.remote_url.clone(),
+            rev,
+        };
+        let build_cache = handles
+            .state
+            .config
+            .build_cache
+            .to_context()
+            .map(|ctx| (repo_name.clone(), ctx));
+        let mount_spec =
+            crate::routes::sessions::mount_spec_from_create_request(bundle, build_cache);
+
+        let mut env_vars_b = HashMap::new();
+        env_vars_b.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id_b.to_string());
+        env_vars_b.insert(AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string());
+        let request_b = api::sessions::CreateSessionRequest {
+            mode: api::sessions::SessionMode::Headless {
+                prompt: prompt.to_string(),
+            },
+            agent_config: api::sessions::AgentConfig::new(
+                Some("agent-a".to_string()),
+                session_settings_b.model.clone(),
+                Some(prompt.to_string()),
+                None,
+            ),
+            mount_spec,
+            image: session_settings_b.image.clone(),
+            env_vars: env_vars_b,
+            cpu_limit: session_settings_b.cpu_limit.clone(),
+            memory_limit: session_settings_b.memory_limit.clone(),
+            secrets: None,
+            spawned_from: Some(issue_id_b.clone()),
+            resumed_from: None,
+        };
+        let system_actor = ActorRef::System {
+            worker_name: "parity_test".into(),
+            on_behalf_of: None,
+        };
+        let (session_id_b, _) = handles
+            .state
+            .create_session(request_b, system_actor, issue_b.creator.clone())
+            .await
+            .expect("HTTP path create_session succeeds");
+        let session_b = handles.state.get_session(&session_id_b).await?;
+
+        // Structural identity — ignore per-row metadata (`creation_time`,
+        // `start_time`, `end_time`, the assigned id, and `spawned_from`
+        // which trivially differs because the issues are distinct).
+        assert_eq!(
+            session_a.mount_spec, session_b.mount_spec,
+            "mount_spec must match across paths"
+        );
+        assert_eq!(
+            session_a.agent_config, session_b.agent_config,
+            "agent_config must match across paths"
+        );
+        assert_eq!(
+            session_a.mode, session_b.mode,
+            "mode must match across paths"
+        );
+        assert_eq!(
+            session_a.image, session_b.image,
+            "image must match across paths"
+        );
+        assert_eq!(
+            session_a.cpu_limit, session_b.cpu_limit,
+            "cpu_limit must match across paths"
+        );
+        assert_eq!(
+            session_a.memory_limit, session_b.memory_limit,
+            "memory_limit must match across paths"
+        );
+        assert_eq!(
+            session_a.secrets, session_b.secrets,
+            "secrets must match across paths"
+        );
+        assert_eq!(
+            session_a.status, session_b.status,
+            "status must match across paths (default Created)"
+        );
+        // The transitional `context` carrier is derived from `mount_spec`
+        // identically on both paths.
+        assert_eq!(
+            session_a.context, session_b.context,
+            "context (transitional) must match across paths"
+        );
+        // Both paths inject the standard agent_queue env_vars.
+        assert_eq!(
+            session_a.env_vars.get(AGENT_NAME_ENV_VAR),
+            session_b.env_vars.get(AGENT_NAME_ENV_VAR),
+            "AGENT_NAME env_var must match"
+        );
 
         Ok(())
     }

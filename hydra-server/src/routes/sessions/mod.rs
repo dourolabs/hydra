@@ -32,7 +32,7 @@ pub async fn create_session(
     Json(payload): Json<v1::sessions::CreateSessionRequest>,
 ) -> Result<Json<v1::sessions::CreateSessionResponse>, ApiError> {
     info!("create_session invoked");
-    let session_id = state
+    let (session_id, session) = state
         .create_session(payload, ActorRef::from(&actor), actor.creator.clone())
         .await
         .map_err(|err| match err {
@@ -68,12 +68,6 @@ pub async fn create_session(
                     ))
                 }
             },
-            err @ CreateSessionError::IssueAndConversationConflict => {
-                ApiError::bad_request(err.to_string())
-            }
-            err @ CreateSessionError::InteractiveRequiresConversation => {
-                ApiError::bad_request(err.to_string())
-            }
             err @ CreateSessionError::AgentNotFound { .. } => {
                 ApiError::bad_request(err.to_string())
             }
@@ -104,7 +98,10 @@ pub async fn create_session(
         "task stored, will be started by background thread"
     );
 
-    Ok(Json(v1::sessions::CreateSessionResponse::new(session_id)))
+    Ok(Json(v1::sessions::CreateSessionResponse::new(
+        session_id,
+        session.into(),
+    )))
 }
 
 pub async fn list_sessions(

@@ -143,31 +143,18 @@ impl Automation for SpawnSessionsAutomation {
                     )
                     .await
                 {
-                    Ok(SpawnResult::Spawned(task)) => {
-                        match ctx
-                            .app_state
-                            .add_session(*task, chrono::Utc::now(), actor.clone())
-                            .await
-                        {
-                            Ok(session_id) => {
-                                remaining_capacity -= 1;
-                                tracing::info!(
-                                    automation = AUTOMATION_NAME,
-                                    agent = queue.agent.name,
-                                    session_id = %session_id,
-                                    event = ?ctx.event.summary(),
-                                    "spawned session"
-                                );
-                            }
-                            Err(err) => {
-                                tracing::warn!(
-                                    automation = AUTOMATION_NAME,
-                                    agent = queue.agent.name,
-                                    error = %err,
-                                    "failed to add spawned session"
-                                );
-                            }
-                        }
+                    Ok(SpawnResult::Spawned(session_id)) => {
+                        // `build_task` now persists through
+                        // `AppState::create_session`, so we just decrement
+                        // capacity and log the assigned id.
+                        remaining_capacity -= 1;
+                        tracing::info!(
+                            automation = AUTOMATION_NAME,
+                            agent = queue.agent.name,
+                            session_id = %session_id,
+                            event = ?ctx.event.summary(),
+                            "spawned session"
+                        );
                     }
                     Ok(SpawnResult::RetriesExhausted {
                         issue_id: exhausted_issue_id,
