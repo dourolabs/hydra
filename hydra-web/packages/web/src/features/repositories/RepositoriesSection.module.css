@@ -51,7 +51,7 @@
 
 /* Columns */
 .colName {
-  width: 220px;
+  width: 200px;
 }
 
 .colRemote {
@@ -60,11 +60,24 @@
 }
 
 .colBranch {
-  width: 130px;
+  width: 120px;
 }
 
 .colImage {
-  width: 220px;
+  width: 180px;
+}
+
+.colPolicy {
+  width: 260px;
+}
+
+.table tbody td.colPolicy {
+  white-space: normal;
+  overflow: visible;
+  vertical-align: top;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  height: auto;
 }
 
 .colActions {
@@ -188,4 +201,8 @@
   display: flex;
   justify-content: flex-end;
   gap: 4px;
+}
+
+.mobilePolicy {
+  padding: 0 var(--pad-x);
 }

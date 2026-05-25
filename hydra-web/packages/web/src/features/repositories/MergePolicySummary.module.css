@@ -1,0 +1,76 @@
+.policy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  white-space: normal;
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
+.block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+}
+
+.label {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+}
+
+.groupLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.principals {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.principal {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-0);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.meta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.unset {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.dash {
+  color: var(--fg-3);
+}
