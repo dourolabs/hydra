@@ -33,7 +33,34 @@ use std::str::FromStr;
 ///   rows aren't corrupted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
+// ActorId has a hand-rolled serde impl (below) that mixes
+// externally-tagged legacy variants with internally-tagged
+// (`kind`-keyed) Phase-1 variants and a bare-string Legacy fallback.
+// ts-rs only knows how to emit a uniform externally-tagged union, so
+// we override the TS body to match the actual wire form. The
+// referenced newtypes (`Username`, `AgentName`, `SessionId`,
+// `IssueId`, `ExternalSystem`) are all `type X = string;` aliases
+// today, so plain `string` is the accurate TS shape — keeping them
+// as named imports isn't possible because ts-rs zeroes out the
+// dependency set whenever `type =` is used. The Rust serde tests in
+// this file pin the wire form on the Rust side; the matching TS-side
+// fixture test lives in `hydra-web/packages/web/src/utils/actors.test.ts`.
+#[cfg_attr(
+    feature = "ts",
+    ts(
+        export,
+        type = "\
+| { Username: string } \
+| { Session: string } \
+| { Issue: string } \
+| { Service: string } \
+| { kind: \"user\"; name: string } \
+| { kind: \"agent\"; name: string } \
+| { kind: \"adhoc\"; session_id: string } \
+| { kind: \"external\"; system: string; username: string } \
+| string"
+    )
+)]
 pub enum ActorId {
     // Existing variants — kept until the release-gated cleanup PR.
     Username(Username),
