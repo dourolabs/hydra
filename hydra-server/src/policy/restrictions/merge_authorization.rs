@@ -314,6 +314,15 @@ async fn actor_username(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<S
             .ok()
             .map(|i| i.item.creator.as_str().to_string()),
         ActorId::Service(_) => None,
+        // Phase-1 ActorId additions are not yet produced by any hydra-server
+        // call site; the merger-authorization resolver doesn't know how to
+        // map them yet (Phase 6 of `/designs/actor-system-overhaul.md`
+        // updates this resolver). Treat them as "not in mergers" for now.
+        ActorId::User(_)
+        | ActorId::Agent(_)
+        | ActorId::Adhoc(_)
+        | ActorId::External { .. }
+        | ActorId::Legacy(_) => None,
     }
 }
 

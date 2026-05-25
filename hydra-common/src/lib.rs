@@ -11,6 +11,7 @@ pub mod github;
 pub mod graph;
 pub mod ids;
 pub mod models;
+pub mod principal;
 pub mod repo_name;
 pub mod review_utils;
 pub mod rgb;
@@ -37,6 +38,7 @@ pub use ids::{
     random_len_for_count,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
+pub use principal::{ExternalSystem, ExternalSystemError, Principal, PrincipalParseError};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
     CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse, Repository,
@@ -86,6 +88,13 @@ mod ts_export {
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");
         crate::ActorRef::export_all(&cfg).expect("ActorRef");
+        crate::ExternalSystem::export_all(&cfg).expect("ExternalSystem");
+        // Exported as `ActorPrincipal.ts` in Phase 1 to avoid a TS-file
+        // collision with `repositories::Principal` (which currently
+        // owns `Principal.ts`). Phase 5/6 of
+        // `/designs/actor-system-overhaul.md` unifies the two types and
+        // the rename can be removed then.
+        crate::principal::Principal::export_all(&cfg).expect("ActorPrincipal");
         crate::Versioned::<()>::export_all(&cfg).expect("Versioned");
 
         // Activity log
@@ -105,6 +114,7 @@ mod ts_export {
         crate::BuildCacheContext::export_all(&cfg).expect("BuildCacheContext");
 
         // API v1: agents
+        crate::agents::AgentName::export_all(&cfg).expect("AgentName");
         crate::agents::AgentRecord::export_all(&cfg).expect("AgentRecord");
         crate::agents::UpsertAgentRequest::export_all(&cfg).expect("UpsertAgentRequest");
         crate::agents::AgentResponse::export_all(&cfg).expect("AgentResponse");

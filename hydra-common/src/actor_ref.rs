@@ -1,27 +1,95 @@
+use crate::api::v1::agents::AgentName;
 use crate::api::v1::users::Username;
 use crate::ids::{IssueId, SessionId};
+use crate::principal::ExternalSystem;
 use crate::whoami::ActorIdentity;
-use serde::{Deserialize, Serialize};
+use serde::de::{Error as DeError, MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Typed identifier for the principal that performed an operation.
+///
+/// Phase 1 of the actor-system overhaul
+/// (`/designs/actor-system-overhaul.md`, §3.1) introduces five new
+/// variants (`User`, `Agent`, `Adhoc`, `External`, `Legacy`) alongside
+/// the existing four (`Username`, `Session`, `Issue`, `Service`). Call
+/// sites flip over to the new variants incrementally in Phases 2–6;
+/// the old variants are removed in a release-gated cleanup PR (§11
+/// row 7) after a soak window with zero `Legacy` deserializations.
+///
+/// Variants:
+/// - **`User(Username)`** — replaces `Username` once call sites migrate.
+/// - **`Agent(AgentName)`** — first-class named agent (e.g. `pm`, `swe`).
+/// - **`Adhoc(SessionId)`** — a session created outside the agent
+///   system. Canonical path is `adhoc/<session-id>` (clarification C2
+///   in the design — *not* `sessions/`).
+/// - **`External { system, username }`** — an identity that lives in an
+///   external system (e.g. GitHub) and has no corresponding Hydra user.
+/// - **`Legacy(String)`** — read-only deserialization catch-all for
+///   pre-migration `actor_ref` blobs. New writes must not produce this
+///   variant; it round-trips losslessly as a raw string so unmigrated
+///   rows aren't corrupted.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorId {
+    // Existing variants — kept until the release-gated cleanup PR.
     Username(Username),
     Session(SessionId),
     Issue(IssueId),
     Service(String),
+    // Phase-1 additions — see module-level docs above.
+    User(Username),
+    Agent(AgentName),
+    Adhoc(SessionId),
+    External {
+        system: ExternalSystem,
+        username: String,
+    },
+    /// Read-only fallback for pre-migration data. Never produced by new
+    /// writes — any `ActorId::new_*`-style helper added in later phases
+    /// must `debug_assert!(!matches!(_, ActorId::Legacy(_)))`.
+    Legacy(String),
+}
+
+/// Display name for an [`ActorId`] used by [`ActorRef::display_name`].
+///
+/// Existing variants keep the same bare/prefixed format they've always
+/// rendered with; new variants use their canonical path form.
+fn actor_id_display_name(actor_id: &ActorId) -> String {
+    match actor_id {
+        ActorId::Username(username) => username.to_string(),
+        ActorId::Session(session_id) => session_id.to_string(),
+        ActorId::Issue(issue_id) => issue_id.to_string(),
+        ActorId::Service(name) => format!("svc-{name}"),
+        ActorId::User(u) => u.as_str().to_string(),
+        ActorId::Agent(a) => a.as_str().to_string(),
+        ActorId::Adhoc(s) => s.to_string(),
+        ActorId::External { system, username } => {
+            format!("external/{}/{}", system.as_str(), username)
+        }
+        ActorId::Legacy(raw) => raw.clone(),
+    }
 }
 
 impl fmt::Display for ActorId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // Existing prefixed shorthand — unchanged.
             ActorId::Username(username) => write!(f, "u-{username}"),
             ActorId::Session(session_id) => write!(f, "w-{session_id}"),
             ActorId::Issue(issue_id) => write!(f, "a-{issue_id}"),
             ActorId::Service(name) => write!(f, "svc-{name}"),
+            // New variants — canonical path form per design §3.3.
+            ActorId::User(u) => write!(f, "users/{}", u.as_str()),
+            ActorId::Agent(a) => write!(f, "agents/{}", a.as_str()),
+            ActorId::Adhoc(s) => write!(f, "adhoc/{s}"),
+            ActorId::External { system, username } => {
+                write!(f, "external/{}/{}", system.as_str(), username)
+            }
+            ActorId::Legacy(raw) => f.write_str(raw),
         }
     }
 }
@@ -50,23 +118,13 @@ impl ActorRef {
     /// Human-readable display name for this actor reference.
     pub fn display_name(&self) -> String {
         match self {
-            ActorRef::Authenticated { actor_id } => match actor_id {
-                ActorId::Username(username) => username.to_string(),
-                ActorId::Session(session_id) => session_id.to_string(),
-                ActorId::Issue(issue_id) => issue_id.to_string(),
-                ActorId::Service(name) => format!("svc-{name}"),
-            },
+            ActorRef::Authenticated { actor_id } => actor_id_display_name(actor_id),
             ActorRef::System {
                 worker_name,
                 on_behalf_of,
             } => {
                 if let Some(behalf) = on_behalf_of {
-                    let behalf_name = match behalf {
-                        ActorId::Username(username) => username.to_string(),
-                        ActorId::Session(session_id) => session_id.to_string(),
-                        ActorId::Issue(issue_id) => issue_id.to_string(),
-                        ActorId::Service(name) => format!("svc-{name}"),
-                    };
+                    let behalf_name = actor_id_display_name(behalf);
                     format!("{worker_name} (on behalf of {behalf_name})")
                 } else {
                     worker_name.clone()
@@ -116,15 +174,18 @@ impl ActorRef {
 
 /// Parse a user-facing shorthand string into an `ActorId`.
 ///
-/// Shorthand rules:
-/// - Strings starting with `"i-"` are parsed as [`IssueId`] → `ActorId::Issue`
-/// - Strings starting with `"s-"` are parsed as [`SessionId`] → `ActorId::Session`
-/// - Everything else is treated as a username → `ActorId::Username`
+/// Recognised forms, in priority order:
+/// - Canonical Phase-1 path forms (design §3.3):
+///   `users/<x>`, `agents/<x>`, `adhoc/<x>`, `external/<sys>/<x>`.
+/// - Existing shorthand kept for back-compat with the pre-Phase-1
+///   CLI / wire surface: `i-…` → `Issue`, `s-…` → `Session`,
+///   `svc-…` → `Service`, anything else → `Username`.
 ///
-/// **Note:** This `FromStr` deliberately does NOT round-trip with [`Display`],
-/// which uses the canonical prefixed format (`u-`, `a-`, `w-`). This `FromStr`
-/// is for *user-facing CLI shorthand*, while `Display` is for the *wire/canonical
-/// format*. Use [`parse_actor_name`] to parse the canonical format.
+/// **Note:** this `FromStr` deliberately does NOT round-trip with
+/// [`Display`] for the existing variants — `Display` uses the canonical
+/// prefixed format (`u-`, `a-`, `w-`) while this `FromStr` consumes the
+/// shorthand input form. Use [`parse_actor_name`] to parse the
+/// canonical prefixed-`Display` format.
 impl FromStr for ActorId {
     type Err = String;
 
@@ -134,6 +195,40 @@ impl FromStr for ActorId {
             return Err("actor ID must not be empty".to_string());
         }
 
+        // Phase-1 canonical path forms (design §3.3).
+        if let Some(name) = trimmed.strip_prefix("users/") {
+            let u = Username::try_new(name)
+                .map_err(|e| format!("invalid user path '{trimmed}': {e}"))?;
+            return Ok(ActorId::User(u));
+        }
+        if let Some(name) = trimmed.strip_prefix("agents/") {
+            let a = AgentName::try_new(name)
+                .map_err(|e| format!("invalid agent path '{trimmed}': {e}"))?;
+            return Ok(ActorId::Agent(a));
+        }
+        if let Some(sid_str) = trimmed.strip_prefix("adhoc/") {
+            let sid = SessionId::from_str(sid_str)
+                .map_err(|e| format!("invalid adhoc session id '{sid_str}': {e}"))?;
+            return Ok(ActorId::Adhoc(sid));
+        }
+        if let Some(rest) = trimmed.strip_prefix("external/") {
+            let (system, username) = rest.split_once('/').ok_or_else(|| {
+                format!("external actor must be 'external/<system>/<username>': {trimmed}")
+            })?;
+            let sys = ExternalSystem::try_new(system)
+                .map_err(|e| format!("invalid external system '{system}': {e}"))?;
+            if username.is_empty() {
+                return Err(format!(
+                    "external actor username must not be empty: {trimmed}"
+                ));
+            }
+            return Ok(ActorId::External {
+                system: sys,
+                username: username.to_string(),
+            });
+        }
+
+        // Existing pre-Phase-1 prefixed shorthand — kept until call sites migrate.
         if trimmed.starts_with("i-") {
             let issue_id = IssueId::from_str(trimmed)
                 .map_err(|e| format!("invalid issue ID '{trimmed}': {e}"))?;
@@ -175,7 +270,9 @@ impl TryFrom<ActorIdentity> for ActorId {
 /// Parse an actor name string (e.g. `u-alice` or `w-t-abcdef`) into an `ActorId`.
 ///
 /// Returns `None` if the name does not match a recognized prefix or is otherwise
-/// invalid.
+/// invalid. Only the pre-Phase-1 prefixed-shorthand forms are accepted here;
+/// the new canonical path forms (`users/<x>`, etc.) are parsed via
+/// [`ActorId::from_str`].
 pub fn parse_actor_name(name: &str) -> Option<ActorId> {
     if let Some(username) = name.strip_prefix("u-") {
         if username.is_empty() {
@@ -210,9 +307,240 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
     None
 }
 
+// -------------------------------------------------------------------------
+// Serde — bespoke impls.
+//
+// Wire format:
+// - Existing variants keep their externally-tagged form:
+//     {"Username": "alice"}, {"Session": "s-..."}, etc.
+//   This preserves backwards compatibility with on-disk JSON blobs and
+//   any TS consumers that still know that shape.
+// - New Phase-1 variants use an internally-tagged form per design §3.3:
+//     {"kind": "user",     "name":       "alice"}
+//     {"kind": "agent",    "name":       "swe"}
+//     {"kind": "adhoc",    "session_id": "s-..."}
+//     {"kind": "external", "system":     "github", "username": "jayantk"}
+// - `Legacy(raw)` round-trips as a bare string. Any payload the
+//   deserializer can't interpret (unknown `kind`, unknown
+//   externally-tagged variant, free string, …) lands in `Legacy(...)`
+//   so pre-migration rows survive a load → save cycle untouched.
+// -------------------------------------------------------------------------
+
+impl Serialize for ActorId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            ActorId::Username(u) => {
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Username", u.as_str())?;
+                m.end()
+            }
+            ActorId::Session(s) => {
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Session", &s.to_string())?;
+                m.end()
+            }
+            ActorId::Issue(i) => {
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Issue", &i.to_string())?;
+                m.end()
+            }
+            ActorId::Service(name) => {
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Service", name)?;
+                m.end()
+            }
+            ActorId::User(u) => {
+                let mut m = serializer.serialize_map(Some(2))?;
+                m.serialize_entry("kind", "user")?;
+                m.serialize_entry("name", u.as_str())?;
+                m.end()
+            }
+            ActorId::Agent(a) => {
+                let mut m = serializer.serialize_map(Some(2))?;
+                m.serialize_entry("kind", "agent")?;
+                m.serialize_entry("name", a.as_str())?;
+                m.end()
+            }
+            ActorId::Adhoc(s) => {
+                let mut m = serializer.serialize_map(Some(2))?;
+                m.serialize_entry("kind", "adhoc")?;
+                m.serialize_entry("session_id", &s.to_string())?;
+                m.end()
+            }
+            ActorId::External { system, username } => {
+                let mut m = serializer.serialize_map(Some(3))?;
+                m.serialize_entry("kind", "external")?;
+                m.serialize_entry("system", system.as_str())?;
+                m.serialize_entry("username", username)?;
+                m.end()
+            }
+            ActorId::Legacy(raw) => serializer.serialize_str(raw),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ActorId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ActorIdVisitor)
+    }
+}
+
+struct ActorIdVisitor;
+
+impl<'de> Visitor<'de> for ActorIdVisitor {
+    type Value = ActorId;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an ActorId map (typed `kind` form or legacy externally-tagged form), or a string (read-only Legacy fallback)")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: DeError,
+    {
+        Ok(ActorId::Legacy(v.to_string()))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: DeError,
+    {
+        Ok(ActorId::Legacy(v))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        // Collect every key/value entry up-front so we can route by the
+        // `kind` tag (new variants) or by single-entry shape (legacy
+        // externally-tagged variants) without committing to a particular
+        // ordering.
+        let mut entries: Vec<(String, serde_json::Value)> = Vec::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let value: serde_json::Value = map.next_value()?;
+            entries.push((key, value));
+        }
+
+        let lookup = |name: &str| -> Option<&serde_json::Value> {
+            entries.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+        };
+
+        // Internally-tagged Phase-1 form.
+        if let Some(kind_value) = lookup("kind") {
+            let kind = kind_value
+                .as_str()
+                .ok_or_else(|| A::Error::custom("'kind' must be a string"))?;
+            return parse_tagged(kind, &entries).map_err(A::Error::custom);
+        }
+
+        // Externally-tagged legacy form: exactly one entry, key = variant name.
+        if entries.len() == 1 {
+            let (tag, value) = &entries[0];
+            if let Some(parsed) = try_parse_legacy_external(tag, value).transpose() {
+                return parsed.map_err(A::Error::custom);
+            }
+        }
+
+        // Anything else: capture as Legacy(raw JSON).
+        Ok(ActorId::Legacy(entries_to_legacy_string(&entries)))
+    }
+}
+
+fn parse_tagged(kind: &str, entries: &[(String, serde_json::Value)]) -> Result<ActorId, String> {
+    let lookup = |name: &str| -> Option<&serde_json::Value> {
+        entries.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+    };
+    let str_field = |name: &'static str| -> Result<&str, String> {
+        let value = lookup(name).ok_or_else(|| format!("missing field '{name}'"))?;
+        value
+            .as_str()
+            .ok_or_else(|| format!("field '{name}' must be a string"))
+    };
+
+    match kind {
+        "user" => {
+            let name = str_field("name")?;
+            let u = Username::try_new(name).map_err(|e| e.to_string())?;
+            Ok(ActorId::User(u))
+        }
+        "agent" => {
+            let name = str_field("name")?;
+            let a = AgentName::try_new(name).map_err(|e| e.to_string())?;
+            Ok(ActorId::Agent(a))
+        }
+        "adhoc" => {
+            let sid_str = str_field("session_id")?;
+            let sid = SessionId::from_str(sid_str).map_err(|e| e.to_string())?;
+            Ok(ActorId::Adhoc(sid))
+        }
+        "external" => {
+            let system_str = str_field("system")?;
+            let username = str_field("username")?;
+            let sys = ExternalSystem::try_new(system_str).map_err(|e| e.to_string())?;
+            if username.is_empty() {
+                return Err("'username' must not be empty".to_string());
+            }
+            Ok(ActorId::External {
+                system: sys,
+                username: username.to_string(),
+            })
+        }
+        // Unknown kind: fall through to Legacy via the caller.
+        _ => Ok(ActorId::Legacy(entries_to_legacy_string(entries))),
+    }
+}
+
+fn try_parse_legacy_external(
+    tag: &str,
+    value: &serde_json::Value,
+) -> Result<Option<ActorId>, String> {
+    match tag {
+        "Username" => {
+            let s = value
+                .as_str()
+                .ok_or_else(|| "'Username' must be a string".to_string())?;
+            Ok(Some(ActorId::Username(Username::from(s))))
+        }
+        "Session" => {
+            let s = value
+                .as_str()
+                .ok_or_else(|| "'Session' must be a string".to_string())?;
+            let sid = SessionId::from_str(s).map_err(|e| e.to_string())?;
+            Ok(Some(ActorId::Session(sid)))
+        }
+        "Issue" => {
+            let s = value
+                .as_str()
+                .ok_or_else(|| "'Issue' must be a string".to_string())?;
+            let iid = IssueId::from_str(s).map_err(|e| e.to_string())?;
+            Ok(Some(ActorId::Issue(iid)))
+        }
+        "Service" => {
+            let s = value
+                .as_str()
+                .ok_or_else(|| "'Service' must be a string".to_string())?;
+            Ok(Some(ActorId::Service(s.to_string())))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn entries_to_legacy_string(entries: &[(String, serde_json::Value)]) -> String {
+    let map: serde_json::Map<String, serde_json::Value> = entries.iter().cloned().collect();
+    serde_json::Value::Object(map).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn actor_ref_serialization_round_trip_authenticated() {
@@ -590,5 +918,255 @@ mod tests {
             triggered_by: None,
         };
         assert_eq!(actor_ref.on_behalf_of(), None);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase-1 additions
+    // -----------------------------------------------------------------
+
+    fn alice_user() -> ActorId {
+        ActorId::User(Username::try_new("alice").unwrap())
+    }
+    fn swe_agent() -> ActorId {
+        ActorId::Agent(AgentName::try_new("swe").unwrap())
+    }
+    fn adhoc_session() -> ActorId {
+        ActorId::Adhoc(SessionId::from_str("s-abcdef").unwrap())
+    }
+    fn gh_external() -> ActorId {
+        ActorId::External {
+            system: ExternalSystem::try_new("github").unwrap(),
+            username: "jayantk".to_string(),
+        }
+    }
+
+    // --- Display for new variants ---
+
+    #[test]
+    fn actor_id_display_user_path_form() {
+        assert_eq!(alice_user().to_string(), "users/alice");
+    }
+
+    #[test]
+    fn actor_id_display_agent_path_form() {
+        assert_eq!(swe_agent().to_string(), "agents/swe");
+    }
+
+    #[test]
+    fn actor_id_display_adhoc_path_form() {
+        assert_eq!(adhoc_session().to_string(), "adhoc/s-abcdef");
+    }
+
+    #[test]
+    fn actor_id_display_external_path_form() {
+        assert_eq!(gh_external().to_string(), "external/github/jayantk");
+    }
+
+    #[test]
+    fn actor_id_display_legacy_round_trips_raw_string() {
+        let raw = "unknown-blob-format".to_string();
+        assert_eq!(ActorId::Legacy(raw.clone()).to_string(), raw);
+    }
+
+    // --- FromStr for new variants (NOT sessions/) ---
+
+    #[test]
+    fn actor_id_from_str_user_path() {
+        let id: ActorId = "users/alice".parse().unwrap();
+        assert_eq!(id, alice_user());
+    }
+
+    #[test]
+    fn actor_id_from_str_agent_path() {
+        let id: ActorId = "agents/swe".parse().unwrap();
+        assert_eq!(id, swe_agent());
+    }
+
+    #[test]
+    fn actor_id_from_str_adhoc_path_returns_adhoc_not_session() {
+        let id: ActorId = "adhoc/s-abcdef".parse().unwrap();
+        assert!(
+            matches!(id, ActorId::Adhoc(_)),
+            "adhoc/<x> must parse to ActorId::Adhoc, not Session"
+        );
+    }
+
+    #[test]
+    fn actor_id_from_str_does_not_recognize_sessions_path() {
+        // Clarification C2: the canonical path is adhoc/, NOT sessions/.
+        // "sessions/x" falls through to Username with a leading "sessions/"
+        // segment, which Username::from accepts as a free string today —
+        // but it must NOT parse as Session or Adhoc.
+        let id: ActorId = "sessions/x".parse().unwrap();
+        assert!(
+            !matches!(id, ActorId::Session(_) | ActorId::Adhoc(_)),
+            "sessions/<x> is NOT a recognised actor path (got: {id:?})"
+        );
+    }
+
+    #[test]
+    fn actor_id_from_str_external_path() {
+        let id: ActorId = "external/github/jayantk".parse().unwrap();
+        assert_eq!(id, gh_external());
+    }
+
+    #[test]
+    fn actor_id_from_str_external_missing_username_errors() {
+        assert!("external/github".parse::<ActorId>().is_err());
+        assert!("external/github/".parse::<ActorId>().is_err());
+    }
+
+    #[test]
+    fn actor_id_from_str_invalid_user_path_errors() {
+        assert!("users/".parse::<ActorId>().is_err());
+        assert!("users/has space".parse::<ActorId>().is_err());
+    }
+
+    // --- Serde for new variants ---
+
+    #[test]
+    fn actor_id_user_serde_round_trip() {
+        let id = alice_user();
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, json!({"kind": "user", "name": "alice"}));
+        let back: ActorId = serde_json::from_value(value).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn actor_id_agent_serde_round_trip() {
+        let id = swe_agent();
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, json!({"kind": "agent", "name": "swe"}));
+        let back: ActorId = serde_json::from_value(value).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn actor_id_adhoc_serde_round_trip() {
+        let id = adhoc_session();
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, json!({"kind": "adhoc", "session_id": "s-abcdef"}));
+        let back: ActorId = serde_json::from_value(value).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn actor_id_external_serde_round_trip() {
+        let id = gh_external();
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(
+            value,
+            json!({"kind": "external", "system": "github", "username": "jayantk"})
+        );
+        let back: ActorId = serde_json::from_value(value).unwrap();
+        assert_eq!(back, id);
+    }
+
+    // --- Legacy fallback ---
+
+    #[test]
+    fn actor_id_legacy_string_round_trip() {
+        let id = ActorId::Legacy("free-form-legacy-blob".to_string());
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, json!("free-form-legacy-blob"));
+        let back: ActorId = serde_json::from_value(value).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn actor_id_unknown_kind_falls_back_to_legacy() {
+        // Unknown tagged form — captured losslessly as Legacy(raw JSON).
+        let payload = json!({"kind": "robot", "name": "r2"});
+        let id: ActorId = serde_json::from_value(payload.clone()).unwrap();
+        let raw = match &id {
+            ActorId::Legacy(raw) => raw.clone(),
+            other => panic!("expected Legacy, got {other:?}"),
+        };
+        let reparsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reparsed, payload);
+    }
+
+    #[test]
+    fn actor_id_unknown_externally_tagged_falls_back_to_legacy() {
+        let payload = json!({"Spaceship": "enterprise"});
+        let id: ActorId = serde_json::from_value(payload.clone()).unwrap();
+        assert!(matches!(id, ActorId::Legacy(_)), "got {id:?}");
+    }
+
+    #[test]
+    fn actor_id_unknown_map_shape_falls_back_to_legacy() {
+        // Multiple keys but no `kind` — neither tagged nor single-entry external.
+        let payload = json!({"a": 1, "b": 2});
+        let id: ActorId = serde_json::from_value(payload).unwrap();
+        assert!(matches!(id, ActorId::Legacy(_)), "got {id:?}");
+    }
+
+    // --- Existing externally-tagged wire format still round-trips ---
+
+    #[test]
+    fn actor_id_legacy_external_username_still_deserializes() {
+        let payload = json!({"Username": "alice"});
+        let id: ActorId = serde_json::from_value(payload.clone()).unwrap();
+        assert_eq!(id, ActorId::Username(Username::from("alice")));
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, payload);
+    }
+
+    #[test]
+    fn actor_id_legacy_external_session_still_deserializes() {
+        let payload = json!({"Session": "s-abcdef"});
+        let id: ActorId = serde_json::from_value(payload.clone()).unwrap();
+        assert_eq!(
+            id,
+            ActorId::Session(SessionId::from_str("s-abcdef").unwrap())
+        );
+        let value = serde_json::to_value(&id).unwrap();
+        assert_eq!(value, payload);
+    }
+
+    // --- Distinctness of Username vs User: wire form picks the typed one ---
+
+    #[test]
+    fn user_and_username_variants_are_distinct() {
+        let typed = alice_user();
+        let legacy = ActorId::Username(Username::from("alice"));
+        assert_ne!(typed, legacy);
+    }
+
+    #[test]
+    fn typed_kind_form_deserializes_to_user_not_username() {
+        // The wire form `{"kind": "user", ...}` is unambiguous: it must
+        // produce ActorId::User, never ActorId::Username — the legacy
+        // externally-tagged form is `{"Username": ...}`.
+        let id: ActorId = serde_json::from_value(json!({"kind": "user", "name": "alice"})).unwrap();
+        assert_eq!(id, alice_user());
+        assert!(!matches!(id, ActorId::Username(_)));
+    }
+
+    // --- Display name for new variants ---
+
+    #[test]
+    fn actor_ref_display_name_user() {
+        let r = ActorRef::Authenticated {
+            actor_id: alice_user(),
+        };
+        assert_eq!(r.display_name(), "alice");
+    }
+
+    #[test]
+    fn actor_ref_display_name_agent() {
+        let r = ActorRef::Authenticated {
+            actor_id: swe_agent(),
+        };
+        assert_eq!(r.display_name(), "swe");
+    }
+
+    #[test]
+    fn actor_ref_display_name_external() {
+        let r = ActorRef::Authenticated {
+            actor_id: gh_external(),
+        };
+        assert_eq!(r.display_name(), "external/github/jayantk");
     }
 }
