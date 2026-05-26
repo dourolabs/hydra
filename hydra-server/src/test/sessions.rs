@@ -101,7 +101,6 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
                     branch: Some("develop".to_string()),
                     ..Default::default()
                 },
-                todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
@@ -258,7 +257,6 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
                 status: IssueStatus::Open,
                 assignee: None,
                 session_settings: session_settings.clone(),
-                todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
@@ -357,7 +355,6 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
                 status: IssueStatus::Open,
                 assignee: None,
                 session_settings: session_settings.clone(),
-                todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
@@ -455,7 +452,6 @@ async fn create_session_rejects_unknown_service_repository() -> anyhow::Result<(
                     repo_name: Some(hydra_common::RepoName::new("missing", "repo").unwrap()),
                     ..Default::default()
                 },
-                todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,

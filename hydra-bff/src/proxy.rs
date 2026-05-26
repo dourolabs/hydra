@@ -263,7 +263,6 @@ mod tests {
                 "creator": "test-creator",
                 "progress": "",
                 "status": "open",
-                "todo_list": [],
                 "dependencies": [],
                 "patches": []
             }

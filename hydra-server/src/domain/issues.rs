@@ -167,22 +167,6 @@ impl IssueDependency {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TodoItem {
-    pub description: String,
-    #[serde(default)]
-    pub is_done: bool,
-}
-
-impl TodoItem {
-    pub fn new(description: String, is_done: bool) -> Self {
-        Self {
-            description,
-            is_done,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Issue {
     #[serde(rename = "type")]
@@ -199,8 +183,6 @@ pub struct Issue {
     pub assignee: Option<Principal>,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub todo_list: Vec<TodoItem>,
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
@@ -226,7 +208,6 @@ impl Issue {
         status: IssueStatus,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
-        todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
         form: Option<Form>,
@@ -242,7 +223,6 @@ impl Issue {
             status,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
-            todo_list,
             dependencies,
             patches,
             deleted: false,
@@ -402,21 +382,6 @@ impl From<IssueDependency> for api::issues::IssueDependency {
     }
 }
 
-impl From<api::issues::TodoItem> for TodoItem {
-    fn from(value: api::issues::TodoItem) -> Self {
-        Self {
-            description: value.description,
-            is_done: value.is_done,
-        }
-    }
-}
-
-impl From<TodoItem> for api::issues::TodoItem {
-    fn from(value: TodoItem) -> Self {
-        api::issues::TodoItem::new(value.description, value.is_done)
-    }
-}
-
 impl From<api::issues::SessionSettings> for SessionSettings {
     fn from(value: api::issues::SessionSettings) -> Self {
         Self {
@@ -460,7 +425,6 @@ impl From<api::issues::Issue> for Issue {
             status: value.status.into(),
             assignee: value.assignee,
             session_settings: value.session_settings.into(),
-            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
             deleted: value.deleted,
@@ -482,7 +446,6 @@ impl From<Issue> for api::issues::Issue {
             value.status.into(),
             value.assignee,
             Some(value.session_settings.into()),
-            value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
@@ -528,10 +491,6 @@ mod tests {
             status: IssueStatus::Open,
             assignee: Some(bob.clone()),
             session_settings: session_settings.clone(),
-            todo_list: vec![TodoItem {
-                description: "todo".to_string(),
-                is_done: false,
-            }],
             dependencies: vec![IssueDependency {
                 dependency_type: IssueDependencyType::ChildOf,
                 issue_id: dependency_id,
@@ -557,7 +516,6 @@ mod tests {
         assert_eq!(decoded.progress, issue.progress);
         assert_eq!(decoded.issue_type, issue.issue_type);
         assert_eq!(decoded.description, issue.description);
-        assert_eq!(decoded.todo_list.len(), 1);
         assert_eq!(decoded.session_settings, session_settings);
     }
 

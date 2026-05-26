@@ -352,11 +352,6 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
                 .get("job_settings")
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
-            let todo_list = row
-                .payload
-                .get("todo_list")
-                .cloned()
-                .unwrap_or(Value::Array(vec![]));
             let dependencies = row
                 .payload
                 .get("dependencies")
@@ -379,8 +374,8 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_ISSUES}
                  (id, version_number, issue_type, description, creator, progress, status, assignee,
-                  assignee_principal, job_settings, todo_list, deleted, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                  assignee_principal, job_settings, deleted, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -393,7 +388,6 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(assignee)
             .bind(&assignee_principal_json)
             .bind(&job_settings)
-            .bind(&todo_list)
             .bind(deleted)
             .bind(row.created_at)
             .execute(pool)
@@ -1145,7 +1139,6 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             session_settings: Default::default(),
-            todo_list: vec![],
             dependencies: vec![],
             patches: vec![],
             form: None,

@@ -5,7 +5,6 @@ import type { IssueType } from "./IssueType";
 import type { LabelSummary } from "./LabelSummary";
 import type { PatchId } from "./PatchId";
 import type { Principal } from "./Principal";
-import type { TodoItem } from "./TodoItem";
 import type { Username } from "./Username";
 
 /**
@@ -25,7 +24,6 @@ export type IssueSummary = {
   progress: string;
   dependencies: Array<IssueDependency>;
   patches: Array<PatchId>;
-  todo_list?: Array<TodoItem>;
   deleted?: boolean;
   labels?: Array<LabelSummary>;
 };

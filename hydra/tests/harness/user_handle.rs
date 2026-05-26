@@ -143,7 +143,6 @@ impl UserHandle {
             None,
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             false,
             None,
             None,
@@ -169,7 +168,6 @@ impl UserHandle {
             IssueStatus::Open,
             None,
             None,
-            Vec::new(),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent.clone(),
@@ -355,7 +353,6 @@ impl UserHandle {
             job_settings,
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             false,
             None,
             None,
@@ -404,7 +401,6 @@ impl UserHandle {
                 }
             }),
             job_settings,
-            Vec::new(),
             dependencies,
             patches,
             false,

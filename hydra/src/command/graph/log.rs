@@ -463,7 +463,6 @@ mod tests {
             Some(SessionSettings::default()),
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             false,
             None,
             None,

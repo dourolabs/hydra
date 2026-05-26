@@ -467,7 +467,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         vec![],
         vec![],
-        vec![],
         false,
         None,
         None,
@@ -687,9 +686,6 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "progress": "blocked",
             "status": "on-hold",
             "assignee": {"kind": "agent", "name": "robot"},
-            "todo_list": [
-                { "description": "investigate", "is_done": true, "priority": 1 }
-            ],
             "dependencies": [
                 { "type": "relates-to", "issue_id": dependency_id }
             ],

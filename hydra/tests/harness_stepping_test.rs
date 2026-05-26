@@ -36,7 +36,6 @@ async fn create_spawnable_issue(
         Some(job_settings),
         Vec::new(),
         Vec::new(),
-        Vec::new(),
         false,
         None,
         None,

@@ -216,92 +216,6 @@ impl IssueDependency {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct TodoItem {
-    pub description: String,
-    #[serde(default)]
-    pub is_done: bool,
-}
-
-impl TodoItem {
-    pub fn new(description: String, is_done: bool) -> Self {
-        Self {
-            description,
-            is_done,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct TodoListResponse {
-    pub issue_id: IssueId,
-    #[serde(default)]
-    pub todo_list: Vec<TodoItem>,
-}
-
-impl TodoListResponse {
-    pub fn new(issue_id: IssueId, todo_list: Vec<TodoItem>) -> Self {
-        Self {
-            issue_id,
-            todo_list,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct AddTodoItemRequest {
-    pub description: String,
-    #[serde(default)]
-    pub is_done: bool,
-}
-
-impl AddTodoItemRequest {
-    pub fn new(description: String, is_done: bool) -> Self {
-        Self {
-            description,
-            is_done,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct ReplaceTodoListRequest {
-    #[serde(default)]
-    pub todo_list: Vec<TodoItem>,
-}
-
-impl ReplaceTodoListRequest {
-    pub fn new(todo_list: Vec<TodoItem>) -> Self {
-        Self { todo_list }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct SetTodoItemStatusRequest {
-    pub is_done: bool,
-}
-
-impl SetTodoItemStatusRequest {
-    pub fn new(is_done: bool) -> Self {
-        Self { is_done }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -325,8 +239,6 @@ pub struct Issue {
         skip_serializing_if = "SessionSettings::is_default"
     )]
     pub session_settings: SessionSettings,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub todo_list: Vec<TodoItem>,
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
@@ -352,7 +264,6 @@ impl Issue {
         status: IssueStatus,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
-        todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
         deleted: bool,
@@ -369,7 +280,6 @@ impl Issue {
             status,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
-            todo_list,
             dependencies,
             patches,
             deleted,
@@ -670,8 +580,6 @@ pub struct IssueSummary {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub todo_list: Vec<TodoItem>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -701,7 +609,6 @@ impl From<&Issue> for IssueSummary {
             progress,
             dependencies: issue.dependencies.clone(),
             patches: issue.patches.clone(),
-            todo_list: issue.todo_list.clone(),
             deleted: issue.deleted,
             labels: Vec::new(),
         }
@@ -1037,66 +944,6 @@ mod tests {
     }
 
     #[test]
-    fn issue_todo_list_defaults_when_missing() {
-        let raw = r#"{"type":"task","description":"write docs","creator":"alice"}"#;
-
-        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
-
-        assert!(issue.todo_list.is_empty());
-        assert_eq!(issue.status, IssueStatus::Open);
-        assert!(SessionSettings::is_default(&issue.session_settings));
-    }
-
-    #[test]
-    fn issue_todo_list_round_trips_in_order() {
-        let session_settings = SessionSettings {
-            repo_name: Some(RepoName::from_str("dourolabs/hydra").unwrap()),
-            remote_url: Some("https://github.com/dourolabs/hydra".to_string()),
-            image: Some("worker:latest".to_string()),
-            model: Some("gpt-4o".to_string()),
-            branch: Some("main".to_string()),
-            max_retries: Some(3),
-            cpu_limit: Some("500m".to_string()),
-            memory_limit: Some("1Gi".to_string()),
-            secrets: Some(vec!["my-secret".to_string()]),
-        };
-        let todos = vec![
-            TodoItem {
-                description: "first".to_string(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "second".to_string(),
-                is_done: true,
-            },
-        ];
-        let issue = Issue {
-            issue_type: IssueType::Task,
-            title: String::new(),
-            description: "with todos".to_string(),
-            creator: Username::from("author"),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            session_settings: session_settings.clone(),
-            todo_list: todos.clone(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-            deleted: false,
-            form: None,
-            form_response: None,
-            feedback: None,
-        };
-
-        let value = serde_json::to_value(&issue).expect("issue should serialize");
-        assert_eq!(value["todo_list"], json!(todos));
-
-        let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
-        assert_eq!(round_trip.todo_list, todos);
-        assert_eq!(round_trip.session_settings, session_settings);
-    }
-
-    #[test]
     fn issue_version_record_serializes_actor_when_present() {
         use crate::actor_ref::{ActorId, ActorRef};
 
@@ -1110,7 +957,6 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             session_settings: Default::default(),
-            todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
@@ -1144,7 +990,6 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             session_settings: Default::default(),
-            todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
@@ -1193,10 +1038,6 @@ mod tests {
                 repo_name: Some(RepoName::from_str("org/repo").unwrap()),
                 ..Default::default()
             },
-            todo_list: vec![TodoItem {
-                description: "do something".to_string(),
-                is_done: false,
-            }],
             dependencies: vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 issue_id("i-parent"),
@@ -1265,7 +1106,6 @@ mod tests {
         );
         assert_eq!(summary.dependencies.len(), 1);
         assert_eq!(summary.patches.len(), 1);
-        assert_eq!(summary.todo_list.len(), 1);
         assert!(!summary.deleted);
     }
 
@@ -1308,10 +1148,6 @@ mod tests {
                     repo_name: Some(RepoName::from_str("org/repo").unwrap()),
                     ..Default::default()
                 },
-                todo_list: vec![TodoItem {
-                    description: "reproduce".to_string(),
-                    is_done: false,
-                }],
                 dependencies: vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
                     issue_id("i-parent"),

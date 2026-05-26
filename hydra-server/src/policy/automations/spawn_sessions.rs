@@ -262,7 +262,6 @@ mod tests {
             }),
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -290,7 +289,6 @@ mod tests {
                 image: Some("agent-image".to_string()),
                 ..SessionSettings::default()
             }),
-            Vec::new(),
             Vec::new(),
             Vec::new(),
             None,
@@ -719,7 +717,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            Vec::new(),
             Vec::new(),
             Vec::new(),
             None,
