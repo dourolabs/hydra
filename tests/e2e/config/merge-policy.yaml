@@ -2,10 +2,10 @@
 #
 # Schema: see /designs/merge-time-constraints.md §4.2.
 #
-# Required reviewer: the `reviewer` agent must approve before merge.
+# Required reviewer: the `agents/reviewer` agent must approve before merge.
 # Mergers: omitted, so anyone may run `hydra patches merge` once the
 # reviewer-approval condition is satisfied.
 reviewers:
   - label: code-review
     any_of:
-      - reviewer
+      - agents/reviewer
