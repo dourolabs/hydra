@@ -18,25 +18,27 @@ edges, switch to `hydra graph search` and consume the node records.
 - `diff` — return added / removed / modified records over a time window.
 - `log` — stream a time-ordered event log of `created` / `updated` records.
 
-`search` consumes a positional pipe-grammar **query** (described below).
-`diff` and `log` still ride on the older selection-flag surface (the cutover
-is tracked under issues `i-` PRs 4 and 5); they will switch to the same
-query grammar in a follow-up.
+All three subcommands take a single positional **query** argument (the
+pipe-grammar DSL described below). `diff` and `log` additionally accept
+`--since` / `--until` for the time window; `log` accepts `--limit` to cap
+emitted events.
 
-## Query grammar (`search`)
+## Query grammar
 
-`hydra graph search` accepts one positional argument: the **query**. The
-shell-friendly convention is to single-quote the whole thing so `|`, `,`,
-and `=` are passed verbatim:
+The selection grammar is shared verbatim across `search`, `diff`, and
+`log`. The shell-friendly convention is to single-quote the whole thing so
+`|`, `,`, and `=` pass through to the parser unmolested:
 
-```
+```shell
 hydra graph search '<QUERY>'
+hydra graph diff   '<QUERY>' --since -7d
+hydra graph log    '<QUERY>' --since -7d --limit 50
 ```
 
-The grammar is a SOURCE followed by zero or more pipe-separated STAGEs that
-each transform the running vertex set:
+The grammar is a SOURCE followed by zero or more pipe-separated STAGEs
+that each transform the running vertex set:
 
-```
+```text
 QUERY     := SOURCE ('|' STAGE)*
 SOURCE    := ID (',' ID)*
 STAGE     := RELATION_STAGE | FILTER_STAGE
@@ -51,7 +53,7 @@ KIND      := issue | patch | document | conversation
 All five relation stages default to **inclusive**: `V | stage = V ∪
 traversal(V)` — the seed is preserved even when the traversal returns no
 rows. Add `exclusive` to drop the seed (matches the older flag surface's
-`--source`/`--target`/`--object` semantics).
+`--source` / `--target` / `--object` semantics).
 
 `scope` runs the existing 3-call expansion (descendants via `child-of`,
 then `has-patch` children of `V ∪ D`, then `has-document` children of
@@ -63,9 +65,14 @@ to the intersection of their kind lists.
 Parse errors quote the input with a caret and a Levenshtein-≤2 hint when
 possible (e.g. `kids` → `children`).
 
+The full reference — every stage's arg rules, every parse error with its
+hint, the full mapping table from the old flag surface, the per-stage
+HTTP-request shape, and shell-quoting examples — lives in
+[`graph-query.md`](graph-query.md).
+
 ### Worked examples
 
-```bash
+```shell
 # A single issue (bare-id fast path — no /v1/relations call).
 hydra graph search 'i-root'
 
@@ -88,30 +95,6 @@ hydra graph search 'i-root | neighbors rel=refers-to | parents rel=child-of'
 # Union of two scopes.
 hydra graph search 'i-root1, i-root2 | scope'
 ```
-
-## Selection flags (`diff` / `log`)
-
-`diff` and `log` still accept the legacy flag-mirror surface until their
-cutovers land. Pick the node set with **exactly one** selection mode:
-
-- `--source <ID>` — edges originating at `<ID>`. Combine with `--rel-type`
-  and `--transitive` to walk down a relation.
-- `--target <ID>` — edges pointing at `<ID>` (e.g. `--target i-root
-  --rel-type child-of --transitive` finds all descendants of `i-root`).
-- `--object <ID>` — edges where `<ID>` is the source **or** target.
-- `--scope <ID>` — convenience: `<ID>` plus all transitive child issues,
-  plus their attached patches and documents. Mutually exclusive with
-  `--source`/`--target`/`--object`. `refers-to` is intentionally **not**
-  fanned out.
-
-Filters that compose with the modes above:
-
-- `--rel-type <TYPE>` — restrict to one relation type (`child-of`,
-  `blocked-on`, `has-patch`, `has-document`, `refers-to`, ...).
-- `--transitive` — follow the edge type transitively. Requires `--source`
-  or `--target` plus `--rel-type`.
-- `--kind <KIND>` — post-filter the hydrated nodes to one or more kinds
-  (`issue`, `patch`, `document`, `conversation`). Repeatable.
 
 ## Common flags
 
@@ -141,12 +124,12 @@ of events emitted, most recent first.
 
 ## Examples (`diff` / `log`)
 
-```bash
+```shell
 # What changed in the i-root subtree over the last day, full record.
 hydra graph diff 'i-root | scope' --since -1d --verbosity 3
 
 # Last 50 created/updated events on i-root and its bundle.
-hydra graph log --since -7d --limit 50 --scope i-root
+hydra graph log 'i-root | scope' --since -7d --limit 50
 ```
 
 ## Output format
@@ -154,3 +137,15 @@ hydra graph log --since -7d --limit 50 --scope i-root
 `hydra graph` honors the global `--output-format` flag. Pretty output
 renders a table; `jsonl` emits one record per line (with `kind` and `id`
 fields plus the verbosity-projected view merged in).
+
+## See also
+
+- [`graph-query.md`](graph-query.md) — long-form reference for the query
+  DSL: every stage's args, every parse error, the mapping from the old
+  flag surface, and the per-stage HTTP request shape.
+- `/designs/hydra-graph-query-language.md` (document store) — design
+  rationale for the DSL and the migration plan.
+- `/designs/hydra-graph-cli.md` (document store) — historical design for
+  the broader `hydra graph` surface; the node-selection sections are
+  superseded by the query DSL design above, but the time-window /
+  verbosity / output-format sections remain in force.
