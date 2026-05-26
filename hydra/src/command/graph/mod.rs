@@ -1,10 +1,9 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
-//! Exposed subcommands: `search` (PR 3), `diff` (PR 4), and `log` (PR 5).
-//! `search` and `diff` consume the positional pipe-grammar query parsed in
-//! `hydra_common::graph::query` and walked by [`resolver`]; `log` still rides
-//! on the legacy flag-mirror surface in [`utils`] until PR 5 cuts it over.
-//! Per-kind hydration and version-history fetching live in [`dispatch`].
+//! Exposed subcommands: `search`, `diff`, and `log` all consume the
+//! positional pipe-grammar query parsed in `hydra_common::graph::query` and
+//! walked by [`resolver`]. Per-kind hydration and version-history fetching
+//! live in [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
@@ -17,7 +16,6 @@ use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::time::HydraTime;
-use hydra_common::HydraId;
 use std::str::FromStr;
 
 use crate::client::HydraClientInterface;
@@ -132,7 +130,24 @@ pub enum GraphCommand {
     },
     /// Stream a time-ordered event log of `created` / `updated` records for
     /// the matched nodes.
+    ///
+    /// Selection uses the pipe-form query DSL (see `hydra graph --help` for
+    /// syntax). Examples:
+    ///   hydra graph log 'i-abc123' --since -7d
+    ///   hydra graph log 'i-abc123 | scope' --since -7d --verbosity 2
+    ///   hydra graph log 'i-abc123 | scope | kind=patch' --since -7d --limit 10
     Log {
+        /// Pipe-form query selecting the node set to stream events for.
+        ///
+        /// Grammar: `<id>[,<id>...] [| <stage>]*`. Stages: `parents`,
+        /// `children`, `neighbors`, `ancestors`, `descendants`, `scope`,
+        /// `kind=<list>`. Relation stages accept `rel=<type>`, optional
+        /// `transitive`, optional `exclusive`. Inclusive-by-default: the
+        /// seed set is preserved through each relation stage unless
+        /// `exclusive` is specified.
+        #[arg(value_name = "QUERY")]
+        query: String,
+
         /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
         /// relative duration, or 'now'). Optional; when omitted, defaults to
         /// the Unix epoch (i.e. "from the beginning of time").
@@ -152,36 +167,6 @@ pub enum GraphCommand {
             allow_hyphen_values = true
         )]
         until: HydraTime,
-
-        /// Filter by source object ID.
-        #[arg(long, value_name = "ID")]
-        source: Option<HydraId>,
-
-        /// Filter by target object ID.
-        #[arg(long, value_name = "ID")]
-        target: Option<HydraId>,
-
-        /// Show all relations where this object is source or target.
-        #[arg(long, value_name = "ID")]
-        object: Option<HydraId>,
-
-        /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
-        #[arg(long, value_name = "TYPE")]
-        rel_type: Option<String>,
-
-        /// Follow transitive edges (requires --source or --target plus --rel-type).
-        #[arg(long)]
-        transitive: bool,
-
-        /// Convenience: include the issue plus all transitively-reachable
-        /// child issues plus all attached patches and documents. Mutually
-        /// exclusive with --source/--target/--object.
-        #[arg(long, value_name = "ID")]
-        scope: Option<HydraId>,
-
-        /// Post-filter the logged nodes to one or more kinds (repeatable).
-        #[arg(long = "kind", value_enum, value_name = "KIND")]
-        kinds: Vec<KindArg>,
 
         /// Verbosity level (1 = terse, 2 = intermediate, 3 = full).
         #[arg(long, value_name = "LEVEL", default_value = "1")]
@@ -276,15 +261,9 @@ pub async fn run(
             .await
         }
         GraphCommand::Log {
+            query,
             since,
             until,
-            source,
-            target,
-            object,
-            rel_type,
-            transitive,
-            scope,
-            kinds,
             verbosity,
             limit,
             max_nodes,
@@ -292,20 +271,12 @@ pub async fn run(
             log::run_log(
                 client,
                 log::LogParams {
+                    query,
                     since,
                     until,
+                    verbosity: verbosity.0,
                     limit,
-                    selection: utils::Selection {
-                        source,
-                        target,
-                        object,
-                        rel_type,
-                        transitive,
-                        scope,
-                        kinds,
-                        verbosity: verbosity.0,
-                        max_nodes,
-                    },
+                    max_nodes,
                 },
                 context,
             )
@@ -337,10 +308,11 @@ mod tests {
 
     #[test]
     fn log_default_since_is_unix_epoch() {
-        let cmd = parse_graph(&["log"]);
+        let cmd = parse_graph(&["log", "i-abcdef"]);
         match cmd {
-            GraphCommand::Log { since, .. } => {
+            GraphCommand::Log { since, query, .. } => {
                 assert_eq!(since.into_inner(), epoch());
+                assert_eq!(query, "i-abcdef");
             }
             other => panic!("expected Log, got {other:?}"),
         }
@@ -396,7 +368,7 @@ mod tests {
 
     #[test]
     fn log_default_limit_is_50() {
-        let cmd = parse_graph(&["log"]);
+        let cmd = parse_graph(&["log", "i-abcdef"]);
         match cmd {
             GraphCommand::Log { limit, .. } => assert_eq!(limit, 50),
             other => panic!("expected Log, got {other:?}"),
@@ -405,7 +377,7 @@ mod tests {
 
     #[test]
     fn log_explicit_since_overrides_default() {
-        let cmd = parse_graph(&["log", "--since", "2026-05-01T00:00:00Z"]);
+        let cmd = parse_graph(&["log", "i-abcdef", "--since", "2026-05-01T00:00:00Z"]);
         match cmd {
             GraphCommand::Log { since, .. } => {
                 let expected: DateTime<Utc> =
@@ -418,10 +390,36 @@ mod tests {
 
     #[test]
     fn log_explicit_limit_overrides_default() {
-        let cmd = parse_graph(&["log", "--limit", "200"]);
+        let cmd = parse_graph(&["log", "i-abcdef", "--limit", "200"]);
         match cmd {
             GraphCommand::Log { limit, .. } => assert_eq!(limit, 200),
             other => panic!("expected Log, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn log_accepts_pipe_grammar_query() {
+        let cmd = parse_graph(&["log", "i-abcdef | scope | kind=patch"]);
+        match cmd {
+            GraphCommand::Log { query, .. } => {
+                assert_eq!(query, "i-abcdef | scope | kind=patch");
+            }
+            other => panic!("expected Log, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_rejects_deleted_source_flag() {
+        let res = Cli::try_parse_from(["hydra", "graph", "log", "--source", "i-abcdef"]);
+        let err = match res {
+            Ok(_) => panic!("clap should reject --source after the cutover"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        // clap's "unexpected argument" or "unrecognized argument" error.
+        assert!(
+            msg.contains("--source") || msg.contains("unexpected"),
+            "expected clap to flag --source as unknown, got: {msg}",
+        );
     }
 }

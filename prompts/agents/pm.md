@@ -58,7 +58,7 @@ If the `feedback` field is populated, the user has submitted feedback on your pr
    `hydra issues update $HYDRA_ISSUE_ID --feedback ""`
 
 Required workflow:
-1) Check what changed since the last session: `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2`.
+1) Check what changed since the last session: `hydra graph log "$HYDRA_ISSUE_ID | scope" --since -7d --verbosity 2`.
    This streams object-level updates across your issue and its connected sub-graph over the last 7 days
    (e.g., child issue completions, failures, status transitions).
    - If there are entries, use them to determine which child issues need attention.

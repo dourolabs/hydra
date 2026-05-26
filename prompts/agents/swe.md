@@ -38,7 +38,7 @@ After gathering context, check the `feedback` field. If populated:
 4. Clear the field with `hydra issues update $HYDRA_ISSUE_ID --feedback ""`.
 
 ## Starting steps
-1. Run `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2` to see object-level
+1. Run `hydra graph log "$HYDRA_ISSUE_ID | scope" --since -7d --verbosity 2` to see object-level
    updates across your issue and its connected sub-graph over the last 7 days. Use targeted commands
    (`hydra issues get <id>`, `hydra patches list --id <id>`) for details. If the log is empty
    (first invocation), fall back to `hydra issues get $HYDRA_ISSUE_ID`.

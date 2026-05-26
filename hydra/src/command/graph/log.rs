@@ -1,11 +1,10 @@
 //! `hydra graph log` — implementation.
 //!
-//! Selects nodes via the legacy flag-mirror selection surface in
-//! [`crate::command::graph::utils`] (slated for cutover to the pipe-grammar
-//! query parser in PR 5), then for each node walks its version history and
-//! emits a `created` or `updated` event for every version whose timestamp
-//! falls in `(--since, --until]`. Events from all matched nodes are merged
-//! and sorted most-recent-first, then truncated to `--limit`.
+//! Selects nodes via the shared pipe-form DSL resolver, then for each node
+//! walks its version history and emits a `created` or `updated` event for
+//! every version whose timestamp falls in `(--since, --until]`. Events
+//! from all matched nodes are merged and sorted most-recent-first, then
+//! truncated to `--limit`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -17,6 +16,7 @@ use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
 use hydra_common::actor_ref::ActorRef;
+use hydra_common::graph::query::parse as parse_query;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::time::HydraTime;
 use hydra_common::versioning::VersionNumber;
@@ -26,18 +26,22 @@ use serde_json::Value;
 use crate::client::HydraClientInterface;
 use crate::command::graph::diff::{check_window, diff_json, write_view_fields, FieldChange};
 use crate::command::graph::dispatch::{fetch_versions, VersionedNode};
-use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
-use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
+use crate::command::graph::resolver::{resolve, Resolved};
+use crate::command::graph::DEFAULT_HYDRATION_CONCURRENCY;
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
 use crate::output_writer::write_stdout;
 
 /// Selection and rendering inputs for `hydra graph log`.
 #[derive(Debug, Clone)]
 pub struct LogParams {
+    /// Pipe-grammar query string. Parsed at the top of [`run_log`]; a parse
+    /// error exits with code 2 and the caret-quoted message.
+    pub query: String,
     pub since: HydraTime,
     pub until: HydraTime,
+    pub verbosity: VerbosityLevel,
     pub limit: usize,
-    pub selection: Selection,
+    pub max_nodes: usize,
 }
 
 /// One log event for a single node version.
@@ -90,28 +94,34 @@ pub async fn run_log(
         process::exit(2);
     }
 
-    if let Err(msg) = validate(&params.selection) {
-        eprintln!("error: {msg}");
-        process::exit(2);
-    }
+    let query = match parse_query(&params.query) {
+        Ok(q) => q,
+        Err(err) => {
+            eprintln!("{err}");
+            process::exit(2);
+        }
+    };
 
-    let node_ids = resolve_node_ids(client, &params.selection).await?;
-    if node_ids.len() > params.selection.max_nodes {
+    let Resolved {
+        node_ids,
+        kind_filters,
+    } = resolve(client, query.lower()).await?;
+    if node_ids.len() > params.max_nodes {
         eprintln!(
             "error: matched node set ({}) exceeds --max-nodes ({}); narrow your selection (use --max-nodes to raise)",
             node_ids.len(),
-            params.selection.max_nodes,
+            params.max_nodes,
         );
         process::exit(2);
     }
 
-    let filter = build_kind_filter(&params.selection.kinds);
+    let filter = build_kind_filter(&kind_filters);
     let mut events = collect_events(
         client,
         node_ids,
         params.since.into_inner(),
         params.until.into_inner(),
-        params.selection.verbosity,
+        params.verbosity,
         &filter,
     )
     .await?;
@@ -124,12 +134,24 @@ pub async fn run_log(
     Ok(())
 }
 
-fn build_kind_filter(kinds: &[KindArg]) -> Option<HashSet<ObjectKind>> {
-    if kinds.is_empty() {
-        None
-    } else {
-        Some(kinds.iter().map(|k| k.as_object_kind()).collect())
+/// Intersect the kind post-filter lists from the resolver into a single set.
+///
+/// Mirrors `diff::build_kind_filter`: each list in `kind_filters` comes from
+/// one `| kind=...` stage in the original query; their intersection mirrors
+/// the parser's "consecutive `Kind` stages collapse to one" lowering rule for
+/// the non-consecutive case. Returns `None` when no kind filter was specified
+/// (all hydrated nodes pass through unchanged).
+fn build_kind_filter(kind_filters: &[Vec<ObjectKind>]) -> Option<HashSet<ObjectKind>> {
+    if kind_filters.is_empty() {
+        return None;
     }
+    let mut iter = kind_filters.iter();
+    let first: HashSet<ObjectKind> = iter.next().expect("non-empty").iter().copied().collect();
+    let intersected = iter.fold(first, |acc, ks| {
+        let next: HashSet<ObjectKind> = ks.iter().copied().collect();
+        acc.intersection(&next).copied().collect()
+    });
+    Some(intersected)
 }
 
 /// Sort events most-recent-first; ties broken by id ascending for
@@ -160,12 +182,13 @@ async fn collect_events(
     verbosity: VerbosityLevel,
     kind_filter: &Option<HashSet<ObjectKind>>,
 ) -> Result<Vec<LogEvent>> {
-    // Drop ids whose kind is excluded by --kind before issuing any HTTP calls.
+    // Drop ids whose kind is excluded by the `kind=...` post-filter (or whose
+    // prefix doesn't map to a known kind at all) before issuing any HTTP calls.
     let ids: Vec<HydraId> = ids
         .into_iter()
         .filter(|id| match (kind_filter, ObjectKind::from_id(id)) {
             (Some(allow), Some(k)) => allow.contains(&k),
-            (None, _) => true,
+            (None, Some(_)) => true,
             (_, None) => false,
         })
         .collect();
