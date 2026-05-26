@@ -1091,7 +1091,7 @@ mergers:
     /// `run.sh`.
     #[test]
     fn load_merge_policy_file_parses_e2e_fixture() {
-        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::api::v1::agents::AgentName;
         use hydra_common::repositories::AssigneeRef;
         use hydra_common::Principal;
 
@@ -1104,8 +1104,8 @@ mergers:
         let group = &policy.reviewers[0];
         assert_eq!(
             group.any_of,
-            vec![AssigneeRef::Static(Principal::User {
-                name: ApiUsername::try_new("reviewer").unwrap(),
+            vec![AssigneeRef::Static(Principal::Agent {
+                name: AgentName::try_new("reviewer").unwrap(),
             })]
         );
         assert_eq!(group.count, 1);

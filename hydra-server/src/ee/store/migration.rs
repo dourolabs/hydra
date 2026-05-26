@@ -285,6 +285,19 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
     let mut offset = 0i64;
     let mut total_migrated = 0u64;
 
+    // Snapshot the set of known agent names once for the whole migration.
+    // The bare-name → Principal::Agent classification (Phase 4a fix)
+    // mirrors the SQL `CASE` in the in-tree migration: any legacy
+    // `assignee` string whose value matches an `agents.name` row is
+    // lifted to `Principal::Agent` rather than `Principal::User`.
+    let agent_names: std::collections::HashSet<String> =
+        sqlx::query_scalar::<_, String>("SELECT name FROM metis.agents")
+            .fetch_all(pool)
+            .await
+            .context("failed to load agents.name set for assignee_principal backfill")?
+            .into_iter()
+            .collect();
+
     loop {
         let rows = sqlx::query_as::<_, V1Row>(&format!(
             "SELECT id, version_number, payload, created_at
@@ -334,9 +347,15 @@ async fn migrate_issues_internal(pool: &PgStorePool) -> Result<u64> {
             let assignee = row.payload.get("assignee").and_then(|v| v.as_str());
             // Phase 4a + 4b: derive the typed `assignee_principal` for v2
             // using the shared heuristic on `hydra_common::Principal`. Same
-            // rule as the SQL `CASE` in the migration scripts.
-            let typed =
-                assignee.and_then(hydra_common::principal::Principal::parse_legacy_assignee);
+            // rule as the SQL `CASE` in the migration scripts — bare names
+            // that match a row in `metis.agents` are lifted to
+            // `Principal::Agent`, everything else to `Principal::User`.
+            let typed = assignee.and_then(|s| {
+                hydra_common::principal::Principal::parse_legacy_assignee_with_agents(
+                    s,
+                    &agent_names,
+                )
+            });
             let assignee_principal_json: Option<Value> = typed
                 .as_ref()
                 .map(serde_json::to_value)

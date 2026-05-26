@@ -10,12 +10,23 @@
 -- the SQL dialect can express cleanly:
 --   * `users/<x>`  with valid <x> -> {"kind":"user","name":"<x>"}
 --   * `agents/<x>` with valid <x> -> {"kind":"agent","name":"<x>"}
---   * bare `<x>` with valid <x>   -> {"kind":"user","name":"<x>"}
+--   * bare `<x>` that matches an `agents.name` row
+--                                -> {"kind":"agent","name":"<x>"}
+--   * other bare `<x>` with valid <x>
+--                                -> {"kind":"user","name":"<x>"}
 -- The `external/<sys>/<x>` case is left NULL by the migration — no
 -- real existing rows are expected to use that form yet, and the
 -- next-write dual-write path will populate it when an `external/...`
 -- assignee is rewritten. Anything else (whitespace, slashes in the
 -- wrong place, empty username segment) stays NULL.
+--
+-- The bare-name → agent classification is driven by the live
+-- `agents` table (case-sensitive `=`, both deleted and non-deleted
+-- agents — once an agent name, always an agent name for the purpose
+-- of legacy attribution). Historically users and agents have been
+-- conflated in `Issue.assignee` strings, so we split them out via
+-- this string match rather than blindly lifting every bare string to
+-- `Principal::User`.
 
 ALTER TABLE issues_v2 ADD COLUMN assignee_principal TEXT;
 
@@ -39,6 +50,15 @@ SET assignee_principal = CASE
              AND substr(assignee, 8) NOT LIKE '%' || char(10) || '%'
              AND substr(assignee, 8) NOT LIKE '%' || char(13) || '%'
             THEN json_object('kind', 'agent', 'name', substr(assignee, 8))
+        -- bare <name> matching a known agent
+        WHEN assignee != ''
+             AND assignee NOT LIKE '%/%'
+             AND assignee NOT LIKE '% %'
+             AND assignee NOT LIKE '%' || char(9) || '%'
+             AND assignee NOT LIKE '%' || char(10) || '%'
+             AND assignee NOT LIKE '%' || char(13) || '%'
+             AND EXISTS (SELECT 1 FROM agents WHERE agents.name = issues_v2.assignee)
+            THEN json_object('kind', 'agent', 'name', assignee)
         -- bare <username>
         WHEN assignee != ''
              AND assignee NOT LIKE '%/%'
