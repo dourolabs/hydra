@@ -47,7 +47,7 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/auth", createBffAuthRoutes());
 
 // Login endpoint does not require auth
-app.route("", createAuthRoutes());
+app.route("", createAuthRoutes(store));
 
 // BFF proxy rewrite: /api/v1/* -> /v1/* with cookie-to-Bearer conversion
 app.all("/api/v1/*", async (c) => {

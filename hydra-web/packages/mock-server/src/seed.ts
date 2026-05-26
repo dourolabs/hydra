@@ -12,6 +12,7 @@ import type {
   Conversation,
   ConversationEvent,
   SessionEvent,
+  UserSummary,
 } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 import { clearConversationEvents, setConversationEvents } from "./routes/conversations.js";
@@ -61,6 +62,7 @@ interface SeedData {
   documents: Record<string, Document>;
   repositories: Record<string, Repository>;
   agents: Record<string, AgentRecord>;
+  users?: Record<string, UserSummary>;
   labels?: Record<string, LabelData>;
   label_associations?: LabelAssociationSeed[];
   conversations?: Record<string, Conversation>;
@@ -173,6 +175,12 @@ export function loadSeedData(store: Store): void {
 
   for (const [id, agent] of Object.entries(seed.agents)) {
     store.create<AgentRecord>("agents", id, agent, null);
+  }
+
+  if (seed.users) {
+    for (const [id, user] of Object.entries(seed.users)) {
+      store.create<UserSummary>("users", id, user, null);
+    }
   }
 
   if (seed.labels) {

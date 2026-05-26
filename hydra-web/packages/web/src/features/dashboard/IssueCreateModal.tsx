@@ -23,10 +23,33 @@ type PickerKey = "type" | "assignee" | "repo" | "labels" | null;
 const ISSUE_TYPES: IssueType[] = ["task", "bug", "feature", "chore"];
 const LABEL_PILL_MAX_INLINE = 2;
 
+interface AssigneeView {
+  name: string;
+  kind: "agent" | "user";
+}
+
+function parseAssigneePath(
+  path: string,
+): { kind: "agent" | "user"; name: string } | null {
+  if (!path) return null;
+  if (path.startsWith("agents/")) {
+    return { kind: "agent", name: path.slice("agents/".length) };
+  }
+  if (path.startsWith("users/")) {
+    return { kind: "user", name: path.slice("users/".length) };
+  }
+  return null;
+}
+
+export interface AssigneeGroups {
+  agents: string[];
+  users: string[];
+}
+
 interface IssueCreateModalProps {
   open: boolean;
   onClose: () => void;
-  assignees: string[];
+  assignees: AssigneeGroups;
 }
 
 export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
@@ -47,6 +70,9 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "hydra:draft:issue-create-modal:issueType",
     "task",
   );
+  // Assignee is stored as a Principal path (`agents/<name>` / `users/<name>`)
+  // so the picker can derive both the display name and the wire `kind` without
+  // round-tripping through the two source lists.
   const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft(
     "hydra:draft:issue-create-modal:assignee",
     "",
@@ -123,7 +149,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
       description: string;
       creator: string;
       type: IssueType;
-      assignee?: string;
+      assignee?: { kind: "agent" | "user"; name: string };
       repoName?: string;
       labelNames?: string[];
     },
@@ -140,11 +166,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           status: "open",
           dependencies: [],
           patches: [],
-          // Phase 4b: assignee is a typed `Principal`. The picker
-          // surfaces agent names today, so wire as `Principal::Agent`.
-          ...(params.assignee && {
-            assignee: { kind: "agent", name: params.assignee } as const,
-          }),
+          ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && {
             session_settings: { repo_name: params.repoName },
           }),
@@ -166,12 +188,13 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   const handleSubmit = useCallback(() => {
     const desc = description.trim();
     if (!desc) return;
+    const assigneePrincipal = parseAssigneePath(assignee);
     mutation.mutate({
       title: title.trim(),
       description: desc,
       creator: currentUsername,
       type: issueType,
-      ...(assignee && { assignee }),
+      ...(assigneePrincipal && { assignee: assigneePrincipal }),
       ...(repoName && { repoName }),
       ...(labelNames.length > 0 && { labelNames }),
     });
@@ -206,6 +229,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     for (const l of labels ?? []) map.set(l.name, l.color);
     return map;
   }, [labels]);
+
+  const assigneeView: AssigneeView | null = useMemo(() => {
+    const parsed = parseAssigneePath(assignee);
+    return parsed ? { name: parsed.name, kind: parsed.kind } : null;
+  }, [assignee]);
 
   const toggleLabel = useCallback(
     (name: string) => {
@@ -302,10 +330,14 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
               onToggle={() => setPicker(picker === "assignee" ? null : "assignee")}
               wide
               value={
-                assignee ? (
+                assigneeView ? (
                   <span className={styles.pillContent}>
-                    <Avatar name={assignee} kind="agent" size="md" />
-                    <span>{assignee}</span>
+                    <Avatar
+                      name={assigneeView.name}
+                      kind={assigneeView.kind === "agent" ? "agent" : "human"}
+                      size="md"
+                    />
+                    <span>{assigneeView.name}</span>
                   </span>
                 ) : (
                   <span className={styles.pillEmpty}>Unassigned</span>
@@ -322,23 +354,48 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                 <span className={styles.pillEmpty}>Unassigned</span>
                 <span className={styles.popSpacer} />
               </PickerRow>
-              {assignees.length > 0 && (
+              {assignees.agents.length > 0 && (
                 <>
                   <div className={styles.popSection}>Agents</div>
-                  {assignees.map((name) => (
-                    <PickerRow
-                      key={name}
-                      active={assignee === name}
-                      onClick={() => {
-                        setAssignee(name);
-                        setPicker(null);
-                      }}
-                    >
-                      <Avatar name={name} kind="agent" size="md" />
-                      <span>{name}</span>
-                      <span className={styles.popSpacer} />
-                    </PickerRow>
-                  ))}
+                  {assignees.agents.map((name) => {
+                    const path = `agents/${name}`;
+                    return (
+                      <PickerRow
+                        key={path}
+                        active={assignee === path}
+                        onClick={() => {
+                          setAssignee(path);
+                          setPicker(null);
+                        }}
+                      >
+                        <Avatar name={name} kind="agent" size="md" />
+                        <span>{name}</span>
+                        <span className={styles.popSpacer} />
+                      </PickerRow>
+                    );
+                  })}
+                </>
+              )}
+              {assignees.users.length > 0 && (
+                <>
+                  <div className={styles.popSection}>Users</div>
+                  {assignees.users.map((name) => {
+                    const path = `users/${name}`;
+                    return (
+                      <PickerRow
+                        key={path}
+                        active={assignee === path}
+                        onClick={() => {
+                          setAssignee(path);
+                          setPicker(null);
+                        }}
+                      >
+                        <Avatar name={name} kind="human" size="md" />
+                        <span>{name}</span>
+                        <span className={styles.popSpacer} />
+                      </PickerRow>
+                    );
+                  })}
                 </>
               )}
             </Picker>

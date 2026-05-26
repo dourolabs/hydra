@@ -149,7 +149,11 @@ describe("IssueCreateModal", () => {
 
   it("includes provided agent names in the Assignee picker", () => {
     render(
-      <IssueCreateModal open onClose={() => {}} assignees={["pm", "reviewer", "swe"]} />,
+      <IssueCreateModal
+        open
+        onClose={() => {}}
+        assignees={{ agents: ["pm", "reviewer", "swe"], users: [] }}
+      />,
     );
 
     openAssigneePicker();
@@ -162,8 +166,25 @@ describe("IssueCreateModal", () => {
     expect(screen.getByTestId("avatar-swe")).toBeDefined();
   });
 
+  it("renders both Agents and Users sections when both lists are non-empty", () => {
+    render(
+      <IssueCreateModal
+        open
+        onClose={() => {}}
+        assignees={{ agents: ["swe"], users: ["alice"] }}
+      />,
+    );
+
+    openAssigneePicker();
+
+    expect(screen.getByText("Agents")).toBeDefined();
+    expect(screen.getByText("Users")).toBeDefined();
+    expect(screen.getByTestId("avatar-swe")).toBeDefined();
+    expect(screen.getByTestId("avatar-alice")).toBeDefined();
+  });
+
   it("renders only Unassigned when assignees is empty", () => {
-    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+    render(<IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />);
 
     openAssigneePicker();
 
@@ -176,7 +197,7 @@ describe("IssueCreateModal", () => {
   it("preserves drafts when the modal is dismissed via the close button", () => {
     const onClose = vi.fn();
     const { unmount } = render(
-      <IssueCreateModal open onClose={onClose} assignees={[]} />,
+      <IssueCreateModal open onClose={onClose} assignees={{ agents: [], users: [] }} />,
     );
 
     fireEvent.change(screen.getByPlaceholderText(TITLE_PLACEHOLDER), {
@@ -198,7 +219,7 @@ describe("IssueCreateModal", () => {
     ).toBe(JSON.stringify("Draft description"));
 
     unmount();
-    render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
+    render(<IssueCreateModal open onClose={onClose} assignees={{ agents: [], users: [] }} />);
     expect(
       (screen.getByPlaceholderText(TITLE_PLACEHOLDER) as HTMLInputElement).value,
     ).toBe("Draft title");
@@ -208,7 +229,7 @@ describe("IssueCreateModal", () => {
   });
 
   it("renders all label rows in the Labels picker popover when opened", () => {
-    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+    render(<IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />);
 
     openPickerByLabel("Labels");
 
@@ -221,7 +242,7 @@ describe("IssueCreateModal", () => {
   });
 
   it("renders all color swatches in the Labels picker create-new section", () => {
-    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+    render(<IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />);
 
     openPickerByLabel("Labels");
 
@@ -243,7 +264,7 @@ describe("IssueCreateModal", () => {
   });
 
   it("renders the Type picker rows when opened", () => {
-    render(<IssueCreateModal open onClose={() => {}} assignees={[]} />);
+    render(<IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />);
 
     openPickerByLabel("Type");
 
@@ -258,7 +279,7 @@ describe("IssueCreateModal", () => {
   it("clears drafts when the user clicks Cancel", () => {
     const onClose = vi.fn();
     const { unmount } = render(
-      <IssueCreateModal open onClose={onClose} assignees={[]} />,
+      <IssueCreateModal open onClose={onClose} assignees={{ agents: [], users: [] }} />,
     );
 
     fireEvent.change(screen.getByPlaceholderText(TITLE_PLACEHOLDER), {
@@ -277,7 +298,7 @@ describe("IssueCreateModal", () => {
     ).toBe(null);
 
     unmount();
-    render(<IssueCreateModal open onClose={onClose} assignees={[]} />);
+    render(<IssueCreateModal open onClose={onClose} assignees={{ agents: [], users: [] }} />);
     expect(
       (screen.getByPlaceholderText(TITLE_PLACEHOLDER) as HTMLInputElement).value,
     ).toBe("");

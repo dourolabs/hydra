@@ -111,8 +111,18 @@ vi.mock("../../features/auth/useAuth", () => ({
   }),
 }));
 
+interface UsersState {
+  agents: { name: string }[];
+  users: { username: string }[];
+}
+const usersState: UsersState = { agents: [], users: [] };
+
 vi.mock("../../hooks/useAgents", () => ({
-  useAgents: () => ({ data: [], isLoading: false }),
+  useAgents: () => ({ data: usersState.agents, isLoading: false }),
+}));
+
+vi.mock("../../hooks/useUsers", () => ({
+  useUsers: () => ({ data: usersState.users, isLoading: false }),
 }));
 
 vi.mock("../../api/auth", () => ({
@@ -177,7 +187,11 @@ vi.mock("../../features/issues/view/IssuesTable.module.css", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
-  Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
+  Avatar: ({ name, kind }: { name: string; kind?: string }) => (
+    <span data-testid="avatar" data-kind={kind ?? "human"}>
+      {name}
+    </span>
+  ),
   Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid="type-chip">{type}</span>,
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
@@ -298,6 +312,8 @@ beforeEach(() => {
   paginatedState.countFilters = undefined;
   treesState.childStatusMap = new Map();
   treesState.sessionsByIssue = new Map();
+  usersState.agents = [];
+  usersState.users = [];
 });
 
 afterEach(() => {
@@ -613,5 +629,61 @@ describe("IssuesListPage IssuesTable rendering", () => {
     // base green background with the yellow in-progress color.
     expect(fills[1]!.className).toContain("progressFill");
     expect(fills[1]!.className).toContain("progressFillActive");
+  });
+});
+
+describe("IssuesListPage Creator and Assignee pickers", () => {
+  it("Creator picker shows only user rows (no agent rows)", () => {
+    usersState.agents = [{ name: "swe" }, { name: "reviewer" }];
+    usersState.users = [{ username: "bob" }, { username: "carol" }];
+
+    renderIssuesList("/");
+
+    const creator = screen.getByTestId("issues-filter-creator");
+    const avatars = creator.querySelectorAll('[data-testid="avatar"]');
+    const names = Array.from(avatars).map((a) => a.textContent);
+
+    // The current user "alice" is injected by the page so the My-issues
+    // flow has a row to land on; the two seeded users also appear; no
+    // agent names should leak into the Creator picker.
+    expect(names).toContain("alice");
+    expect(names).toContain("bob");
+    expect(names).toContain("carol");
+    expect(names).not.toContain("swe");
+    expect(names).not.toContain("reviewer");
+
+    // Every avatar rendered inside the Creator picker is the human variant.
+    for (const a of avatars) {
+      expect(a.getAttribute("data-kind")).toBe("human");
+    }
+  });
+
+  it("Assignee picker shows an Agents section before a Users section, each kind tagged correctly", () => {
+    usersState.agents = [{ name: "reviewer" }, { name: "swe" }];
+    usersState.users = [{ username: "bob" }];
+
+    renderIssuesList("/");
+
+    const assignee = screen.getByTestId("issues-filter-assignee");
+
+    // Section headers appear in DOM order: Agents, then Users.
+    const text = assignee.textContent ?? "";
+    const agentsIdx = text.indexOf("Agents");
+    const usersIdx = text.indexOf("Users");
+    expect(agentsIdx).toBeGreaterThanOrEqual(0);
+    expect(usersIdx).toBeGreaterThanOrEqual(0);
+    expect(agentsIdx).toBeLessThan(usersIdx);
+
+    // Every Avatar's kind matches the section it lives in. Agent names come
+    // through `data-kind="agent"`; user names through `data-kind="human"`.
+    const avatars = Array.from(
+      assignee.querySelectorAll('[data-testid="avatar"]'),
+    ) as HTMLElement[];
+    const byName = new Map(avatars.map((a) => [a.textContent ?? "", a.getAttribute("data-kind")]));
+    expect(byName.get("swe")).toBe("agent");
+    expect(byName.get("reviewer")).toBe("agent");
+    expect(byName.get("bob")).toBe("human");
+    // alice (the logged-in user) is also injected into userOptions.
+    expect(byName.get("alice")).toBe("human");
   });
 });

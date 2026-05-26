@@ -80,7 +80,11 @@ interface IssuesViewProps {
   // Selectable rows for the Creator and Assignee dropdowns. Each row has a
   // display `name` (used for Creator, which stays bare) and an `assigneePath`
   // (used for Assignee). The page is responsible for ensuring the current
-  // user appears here.
+  // user appears in `userOptions`.
+  //
+  // Creator filter renders users only. Assignee filter renders both sections:
+  // Agents first, then Users, each sorted by name.
+  agentOptions: { name: string; assigneePath: string }[];
   userOptions: { name: string; assigneePath: string }[];
   eyebrow: string;
   title: string;
@@ -109,6 +113,7 @@ export function IssuesView({
   onCreatorChange,
   selectedAssignee,
   onAssigneeChange,
+  agentOptions,
   userOptions,
   eyebrow,
   title,
@@ -233,7 +238,7 @@ export function IssuesView({
             value={
               selectedCreator ? (
                 <span className={styles.pillContent}>
-                  <Avatar name={selectedCreator} kind="agent" size="md" />
+                  <Avatar name={selectedCreator} kind="human" size="md" />
                   <span>{selectedCreator}</span>
                 </span>
               ) : (
@@ -259,7 +264,7 @@ export function IssuesView({
                   setOpenPicker(null);
                 }}
               >
-                <Avatar name={opt.name} kind="agent" size="md" />
+                <Avatar name={opt.name} kind="human" size="md" />
                 <span>{opt.name}</span>
               </PickerRow>
             ))}
@@ -275,11 +280,18 @@ export function IssuesView({
             value={
               selectedAssignee ? (
                 (() => {
-                  const match = userOptions.find((o) => o.assigneePath === selectedAssignee);
-                  const label = match?.name ?? selectedAssignee;
+                  const agentMatch = agentOptions.find(
+                    (o) => o.assigneePath === selectedAssignee,
+                  );
+                  const userMatch = !agentMatch
+                    ? userOptions.find((o) => o.assigneePath === selectedAssignee)
+                    : undefined;
+                  const kind: "agent" | "human" = agentMatch ? "agent" : "human";
+                  const label =
+                    agentMatch?.name ?? userMatch?.name ?? selectedAssignee;
                   return (
                     <span className={styles.pillContent}>
-                      <Avatar name={label} kind="agent" size="md" />
+                      <Avatar name={label} kind={kind} size="md" />
                       <span>{label}</span>
                     </span>
                   );
@@ -298,19 +310,42 @@ export function IssuesView({
             >
               <span>Any assignee</span>
             </PickerRow>
-            {userOptions.map((opt) => (
-              <PickerRow
-                key={opt.assigneePath}
-                active={selectedAssignee === opt.assigneePath}
-                onClick={() => {
-                  onAssigneeChange(opt.assigneePath);
-                  setOpenPicker(null);
-                }}
-              >
-                <Avatar name={opt.name} kind="agent" size="md" />
-                <span>{opt.name}</span>
-              </PickerRow>
-            ))}
+            {agentOptions.length > 0 && (
+              <>
+                <div className={styles.popSection}>Agents</div>
+                {agentOptions.map((opt) => (
+                  <PickerRow
+                    key={opt.assigneePath}
+                    active={selectedAssignee === opt.assigneePath}
+                    onClick={() => {
+                      onAssigneeChange(opt.assigneePath);
+                      setOpenPicker(null);
+                    }}
+                  >
+                    <Avatar name={opt.name} kind="agent" size="md" />
+                    <span>{opt.name}</span>
+                  </PickerRow>
+                ))}
+              </>
+            )}
+            {userOptions.length > 0 && (
+              <>
+                <div className={styles.popSection}>Users</div>
+                {userOptions.map((opt) => (
+                  <PickerRow
+                    key={opt.assigneePath}
+                    active={selectedAssignee === opt.assigneePath}
+                    onClick={() => {
+                      onAssigneeChange(opt.assigneePath);
+                      setOpenPicker(null);
+                    }}
+                  >
+                    <Avatar name={opt.name} kind="human" size="md" />
+                    <span>{opt.name}</span>
+                  </PickerRow>
+                ))}
+              </>
+            )}
           </Picker>
         </div>
 

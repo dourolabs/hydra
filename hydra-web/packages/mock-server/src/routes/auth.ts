@@ -1,9 +1,11 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { DEV_USERNAME, DEV_GITHUB_USER_ID, DEV_TOKEN } from "../auth.js";
+import type { Store } from "../store.js";
 import type {
   WhoAmIResponse,
   UserSummary,
+  ListUsersResponse,
   GithubTokenResponse,
   LoginResponse,
   DeviceStartResponse,
@@ -15,7 +17,7 @@ const COOKIE_NAME = "hydra_token";
 /**
  * API-level auth routes under /v1 (token-based, no cookies).
  */
-export function createAuthRoutes(): Hono {
+export function createAuthRoutes(store: Store): Hono {
   const app = new Hono();
 
   // POST /v1/login — accepts any body, returns dev token
@@ -35,13 +37,21 @@ export function createAuthRoutes(): Hono {
     return c.json(resp);
   });
 
+  // GET /v1/users
+  app.get("/v1/users", (c) => {
+    const items = store.list<UserSummary>("users");
+    const users: UserSummary[] = items.map(({ entry }) => entry.data);
+    const resp: ListUsersResponse = { users };
+    return c.json(resp);
+  });
+
   // GET /v1/users/:username
   app.get("/v1/users/:username", (c) => {
     const username = c.req.param("username");
-    const resp: UserSummary = {
-      username,
-      github_user_id: DEV_GITHUB_USER_ID,
-    };
+    const entry = store.get<UserSummary>("users", username);
+    const resp: UserSummary = entry
+      ? entry.data
+      : { username, github_user_id: DEV_GITHUB_USER_ID };
     return c.json(resp);
   });
 
