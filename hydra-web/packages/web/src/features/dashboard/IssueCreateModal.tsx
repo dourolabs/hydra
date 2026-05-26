@@ -140,7 +140,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           status: "open",
           dependencies: [],
           patches: [],
-          // Phase 4b: assignee is a typed `ActorPrincipal`. The picker
+          // Phase 4b: assignee is a typed `Principal`. The picker
           // surfaces agent names today, so wire as `Principal::Agent`.
           ...(params.assignee && {
             assignee: { kind: "agent", name: params.assignee } as const,

@@ -9,11 +9,12 @@
 
 use async_trait::async_trait;
 use hydra_common::ActorId;
+use hydra_common::Principal;
 use hydra_common::api::v1::merge_check::{
     BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError, MergeBlockedReason,
     SuggestedAction,
 };
-use hydra_common::api::v1::repositories::{MergePolicy, Principal, ReviewerGroup};
+use hydra_common::api::v1::repositories::{AssigneeRef, MergePolicy, ReviewerGroup};
 use hydra_common::review_utils::is_review_non_stale;
 
 use crate::domain::actors::ActorRef;
@@ -251,13 +252,28 @@ async fn evaluate_mergers_layer(
 
 fn to_eligible_principal(rp: &ResolvedPrincipal) -> EligiblePrincipal {
     match &rp.source {
-        Principal::User(u) => EligiblePrincipal::User {
-            username: u.as_str().to_string(),
+        AssigneeRef::Static(p) => EligiblePrincipal::User {
+            username: principal_display_name(p),
         },
-        Principal::Dynamic(dref) => EligiblePrincipal::Dynamic {
+        AssigneeRef::Dynamic(dref) => EligiblePrincipal::Dynamic {
             reference: *dref,
             resolved_to: rp.resolved_to.clone(),
         },
+    }
+}
+
+/// Surface name for a static principal in eligibility lists. Until
+/// Phase 6 of `/designs/actor-system-overhaul.md` tightens
+/// `EligiblePrincipal` to carry the typed `Principal`, the
+/// `MergeBlockedError` wire format keeps a single string column —
+/// we use the principal's identity name (`User.name` / `Agent.name`
+/// / `External.username`) so it round-trips cleanly through the
+/// existing `merge_check` payload.
+fn principal_display_name(p: &Principal) -> String {
+    match p {
+        Principal::User { name } => name.as_str().to_string(),
+        Principal::Agent { name } => name.as_str().to_string(),
+        Principal::External { username, .. } => username.clone(),
     }
 }
 
@@ -370,11 +386,12 @@ mod tests {
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
     use chrono::Utc;
+    use hydra_common::Principal as ApiPrincipal;
     use hydra_common::api::v1::merge_check::{
         BlockedAtLayer, MergeBlockedError, MergeBlockedReason,
     };
     use hydra_common::api::v1::repositories::{
-        MergePolicy, MergerRule, Principal as ApiPrincipal, ReviewerGroup,
+        AssigneeRef, MergePolicy, MergerRule, ReviewerGroup,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
     use hydra_common::{ActorId, ActorRef as CommonActorRef, Repository};
@@ -431,8 +448,10 @@ mod tests {
         name
     }
 
-    fn user(name: &str) -> ApiPrincipal {
-        ApiPrincipal::User(ApiUsername::from(name))
+    fn user(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(ApiPrincipal::User {
+            name: ApiUsername::try_new(name).unwrap_or_else(|_| ApiUsername::from(name)),
+        })
     }
 
     fn user_actor(name: &str) -> CommonActorRef {

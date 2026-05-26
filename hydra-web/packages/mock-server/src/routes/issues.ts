@@ -167,7 +167,7 @@ export function createIssueRoutes(store: Store): Hono {
     if (assignee) {
       // Phase 4b: query param `assignee` is the canonical path form
       // (`users/<x>` / `agents/<x>` / `external/<sys>/<x>`). The mock
-      // store still keeps a typed `ActorPrincipal` on each issue, so
+      // store still keeps a typed `Principal` on each issue, so
       // compare against the path-form encoding here.
       filtered = filtered.filter(({ entry }) => {
         const p = entry.data.assignee;

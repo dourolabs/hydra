@@ -105,7 +105,7 @@ describe("Issue list filtering", () => {
   });
 
   it("filters by assignee", async () => {
-    // Phase 4b: assignee is a typed ActorPrincipal; the query-string
+    // Phase 4b: assignee is a typed Principal; the query-string
     // filter is the canonical path form (`users/<name>`).
     store.create(
       "issues",

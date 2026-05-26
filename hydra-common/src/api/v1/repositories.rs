@@ -1,7 +1,10 @@
 use crate::RepoName;
 use crate::api::v1::users::Username;
+use crate::principal::Principal;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use std::str::FromStr;
 
 fn is_false(b: &bool) -> bool {
     !b
@@ -81,45 +84,101 @@ impl<'de> Deserialize<'de> for DynamicRef {
     }
 }
 
-/// A principal — either a static username or a dynamic reference resolved at
-/// merge-attempt time.
+/// A reference to a merge-policy principal — either a static
+/// [`Principal`](crate::Principal) (user / agent / external) or a
+/// [`DynamicRef`] resolved at merge-attempt time.
 ///
-/// Wire form is a single string: a bare username (e.g. `"alice"`) maps to
-/// [`Principal::User`]; a string starting with `@` maps to
-/// [`Principal::Dynamic`] against the closed [`DynamicRef`] enumeration.
+/// Phase 5a of `/designs/actor-system-overhaul.md` replaces this file's old
+/// `Principal { User(Username), Dynamic(DynamicRef) }` enum with this
+/// wrapper so the static side reuses the shared [`Principal`] (gaining
+/// `Agent` / `External` variants, closing the "User-can-hide-agent"
+/// footgun documented in §4.2).
+///
+/// **Wire form** is a single string, kept YAML-friendly:
+///
+/// - `"users/alice"`        → `Static(Principal::User { name })`
+/// - `"agents/swe"`         → `Static(Principal::Agent { name })`
+/// - `"external/github/x"`  → `Static(Principal::External { .. })`
+/// - `"@patch.author"`      → `Dynamic(DynamicRef::PatchAuthor)`
+///
+/// For backwards compatibility with pre-Phase-5a configs (and existing
+/// stored merge_policy JSON blobs), a bare username with no `/` or `@`
+/// also deserialises as `Static(Principal::User { name })` — the
+/// deserialiser is intentionally lenient so we do not need a JSON-blob
+/// migration over the `repositories` table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
-pub enum Principal {
-    User(Username),
+pub enum AssigneeRef {
+    Static(Principal),
     Dynamic(DynamicRef),
 }
 
-impl Serialize for Principal {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+impl AssigneeRef {
+    /// Construct a [`AssigneeRef::Static`] wrapping the given principal.
+    pub fn static_principal(principal: Principal) -> Self {
+        AssigneeRef::Static(principal)
+    }
+
+    /// Construct a [`AssigneeRef::Dynamic`] from a [`DynamicRef`].
+    pub fn dynamic(dref: DynamicRef) -> Self {
+        AssigneeRef::Dynamic(dref)
+    }
+
+    /// Canonical wire form: `users/<x>` / `agents/<x>` /
+    /// `external/<sys>/<x>` for [`AssigneeRef::Static`] and
+    /// `@<shorthand>` for [`AssigneeRef::Dynamic`].
+    pub fn to_wire_string(&self) -> String {
         match self {
-            Principal::User(u) => serializer.serialize_str(u.as_str()),
-            Principal::Dynamic(d) => d.serialize(serializer),
+            AssigneeRef::Static(p) => p.to_path(),
+            AssigneeRef::Dynamic(d) => format!("@{}", d.shorthand()),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for Principal {
+impl fmt::Display for AssigneeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_wire_string())
+    }
+}
+
+impl Serialize for AssigneeRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_wire_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for AssigneeRef {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let raw = String::deserialize(deserializer)?;
-        if let Some(rest) = raw.strip_prefix('@') {
-            let dr = DynamicRef::from_shorthand(rest).map_err(D::Error::custom)?;
-            Ok(Principal::Dynamic(dr))
-        } else {
-            Ok(Principal::User(Username::from(raw)))
-        }
+        parse_assignee_ref(&raw).map_err(D::Error::custom)
     }
+}
+
+/// Parse a single [`AssigneeRef`] wire string. Public for the SQL-side
+/// equivalents to share a single oracle in tests.
+pub fn parse_assignee_ref(raw: &str) -> Result<AssigneeRef, String> {
+    if let Some(rest) = raw.strip_prefix('@') {
+        let dr = DynamicRef::from_shorthand(rest)?;
+        return Ok(AssigneeRef::Dynamic(dr));
+    }
+    // Path form: `users/...`, `agents/...`, `external/.../...`.
+    if raw.contains('/') {
+        return Principal::from_str(raw)
+            .map(AssigneeRef::Static)
+            .map_err(|e| e.to_string());
+    }
+    // Legacy bare-string fallback — treated as a User. This is the
+    // pre-Phase-5a wire form; we keep accepting it so stored configs do
+    // not need a JSON-blob migration.
+    let name = Username::try_new(raw).map_err(|e| e.to_string())?;
+    Ok(AssigneeRef::Static(Principal::User { name }))
 }
 
 /// One reviewer group inside a [`MergePolicy`]. Members of `any_of` are
@@ -132,8 +191,8 @@ pub struct ReviewerGroup {
     /// Optional label surfaced in errors and in spawned review-request issues.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Principals — any combination of static usernames and dynamic refs.
-    pub any_of: Vec<Principal>,
+    /// Principals — any combination of static `Principal`s and dynamic refs.
+    pub any_of: Vec<AssigneeRef>,
     /// Minimum number of distinct approving principals from `any_of` required
     /// for this group to be satisfied. Defaults to 1.
     #[serde(
@@ -155,7 +214,7 @@ pub struct ReviewerGroup {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct MergerRule {
-    pub any_of: Vec<Principal>,
+    pub any_of: Vec<AssigneeRef>,
 }
 
 /// Per-repository merge policy. ALL reviewer groups must be satisfied; the
@@ -754,8 +813,26 @@ mod tests {
 
     // ---- MergePolicy ----------------------------------------------------
 
-    fn user(name: &str) -> Principal {
-        Principal::User(Username::from(name))
+    use crate::api::v1::agents::AgentName;
+    use crate::principal::ExternalSystem;
+
+    fn user(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(Principal::User {
+            name: Username::try_new(name).unwrap(),
+        })
+    }
+
+    fn agent(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(Principal::Agent {
+            name: AgentName::try_new(name).unwrap(),
+        })
+    }
+
+    fn external(system: &str, username: &str) -> AssigneeRef {
+        AssigneeRef::Static(Principal::External {
+            system: ExternalSystem::try_new(system).unwrap(),
+            username: username.to_string(),
+        })
     }
 
     fn full_merge_policy() -> MergePolicy {
@@ -775,7 +852,7 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice")],
+                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice")],
             }),
         }
     }
@@ -789,8 +866,12 @@ mod tests {
     }
 
     #[test]
-    fn merge_policy_round_trips_through_yaml() {
+    fn merge_policy_round_trips_through_yaml_legacy_bare_strings() {
         // Mirrors the example in /designs/merge-time-constraints.md §4.2.
+        // Uses the pre-Phase-5a bare-string wire form, which the lenient
+        // deserialiser still accepts (treats every bare token as a `User`)
+        // so existing stored merge_policy JSON blobs round-trip without a
+        // JSON-shape migration.
         let yaml = r#"
 reviewers:
   - label: code-review
@@ -821,36 +902,107 @@ mergers:
         assert!(policy.reviewers[0].exclude_author);
         assert_eq!(
             policy.mergers.as_ref().unwrap().any_of,
-            vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
+            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
         );
 
+        // Re-serialising emits the new canonical path form
+        // (`users/alice`), and re-parsing that form round-trips back to
+        // the same value.
         let serialized = serde_yaml_ng::to_string(&policy).unwrap();
+        assert!(
+            serialized.contains("users/alice"),
+            "re-serialisation should use the canonical path form, got: {serialized}"
+        );
         let reparsed: MergePolicy = serde_yaml_ng::from_str(&serialized).unwrap();
         assert_eq!(reparsed, policy);
     }
 
     #[test]
-    fn principal_user_serializes_as_bare_string() {
-        let value = serde_json::to_value(user("alice")).unwrap();
-        assert_eq!(value, json!("alice"));
-        let back: Principal = serde_json::from_value(json!("alice")).unwrap();
+    fn merge_policy_round_trips_through_yaml_path_form() {
+        // Phase 5a canonical wire form: explicit path prefixes for every
+        // static principal kind plus the existing `@patch.author` shorthand
+        // for dynamic refs.
+        let yaml = r#"
+reviewers:
+  - any_of:
+      - users/alice
+      - agents/swe
+      - external/github/jayantk
+mergers:
+  any_of:
+    - "@patch.author"
+    - agents/swe
+"#;
+        let policy: MergePolicy = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(
+            policy.reviewers[0].any_of,
+            vec![user("alice"), agent("swe"), external("github", "jayantk"),]
+        );
+        assert_eq!(
+            policy.mergers.as_ref().unwrap().any_of,
+            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), agent("swe"),]
+        );
+    }
+
+    #[test]
+    fn assignee_ref_static_serializes_in_canonical_path_form() {
+        assert_eq!(
+            serde_json::to_value(user("alice")).unwrap(),
+            json!("users/alice")
+        );
+        assert_eq!(
+            serde_json::to_value(agent("swe")).unwrap(),
+            json!("agents/swe")
+        );
+        assert_eq!(
+            serde_json::to_value(external("github", "jayantk")).unwrap(),
+            json!("external/github/jayantk")
+        );
+    }
+
+    #[test]
+    fn assignee_ref_dynamic_serializes_with_at_prefix() {
+        let value = serde_json::to_value(AssigneeRef::Dynamic(DynamicRef::PatchAuthor)).unwrap();
+        assert_eq!(value, json!("@patch.author"));
+    }
+
+    #[test]
+    fn assignee_ref_legacy_bare_string_deserializes_as_user() {
+        // Backward-compat with pre-Phase-5a stored blobs.
+        let back: AssigneeRef = serde_json::from_value(json!("alice")).unwrap();
         assert_eq!(back, user("alice"));
+    }
+
+    #[test]
+    fn assignee_ref_path_form_deserializes_to_typed_principal() {
+        let cases = [
+            (json!("users/alice"), user("alice")),
+            (json!("agents/swe"), agent("swe")),
+            (
+                json!("external/github/jayantk"),
+                external("github", "jayantk"),
+            ),
+        ];
+        for (wire, expected) in cases {
+            let back: AssigneeRef = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(back, expected, "deserialize {wire}");
+        }
     }
 
     #[test]
     fn dynamic_ref_shorthands_round_trip() {
         let variant = DynamicRef::PatchAuthor;
         let wire = "@patch.author";
-        let principal = Principal::Dynamic(variant);
+        let principal = AssigneeRef::Dynamic(variant);
         let value = serde_json::to_value(&principal).unwrap();
         assert_eq!(value, json!(wire), "serialize {variant:?}");
-        let back: Principal = serde_json::from_value(json!(wire)).unwrap();
+        let back: AssigneeRef = serde_json::from_value(json!(wire)).unwrap();
         assert_eq!(back, principal, "deserialize {wire}");
     }
 
     #[test]
-    fn principal_unknown_dynamic_ref_fails_with_useful_error() {
-        let err = serde_json::from_value::<Principal>(json!("@nope.nope")).unwrap_err();
+    fn assignee_ref_unknown_dynamic_ref_fails_with_useful_error() {
+        let err = serde_json::from_value::<AssigneeRef>(json!("@nope.nope")).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("@nope.nope"),
@@ -868,13 +1020,25 @@ mergers:
         // accepted: policies that mention them must fail to parse with the
         // same error a typo would produce.
         for removed in ["@parent_issue.creator", "@parent_issue.assignee"] {
-            let err = serde_json::from_value::<Principal>(json!(removed)).unwrap_err();
+            let err = serde_json::from_value::<AssigneeRef>(json!(removed)).unwrap_err();
             let msg = err.to_string();
             assert!(
                 msg.contains(removed),
                 "error should name the offending ref {removed}, got: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn assignee_ref_invalid_path_form_errors() {
+        // `users/` with empty segment fails Principal::from_str.
+        assert!(serde_json::from_value::<AssigneeRef>(json!("users/")).is_err());
+        // Unknown prefix is reported as an unknown kind.
+        let err = serde_json::from_value::<AssigneeRef>(json!("robots/r2")).unwrap_err();
+        assert!(
+            err.to_string().contains("robots"),
+            "error should name the unknown kind, got: {err}",
+        );
     }
 
     #[test]
@@ -948,6 +1112,48 @@ mergers:
             !obj.contains_key("exclude_author"),
             "default exclude_author should be omitted on the wire"
         );
-        assert_eq!(obj.get("any_of"), Some(&json!(["alice"])));
+        assert_eq!(obj.get("any_of"), Some(&json!(["users/alice"])));
+    }
+
+    #[test]
+    fn legacy_stored_merge_policy_json_blob_parses() {
+        // Snapshot of the pre-Phase-5a stored JSON shape (matches what
+        // `hydra-web/packages/mock-server/fixtures/seed.json` ships for
+        // `acme/api-gateway`). The lenient deserialiser must continue to
+        // read it without a SQL-side migration, then re-serialise into
+        // the canonical path form.
+        let legacy = json!({
+            "reviewers": [
+                {
+                    "label": "code-review",
+                    "any_of": ["reviewer", "carol"],
+                    "count": 2
+                },
+                {
+                    "label": "human-signoff",
+                    "any_of": ["alice", "bob"]
+                }
+            ],
+            "mergers": {"any_of": ["@patch.author", "alice"]}
+        });
+        let policy: MergePolicy = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            policy.reviewers[0].any_of,
+            vec![user("reviewer"), user("carol")]
+        );
+        assert_eq!(
+            policy.mergers.as_ref().unwrap().any_of,
+            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
+        );
+        // Reserialising migrates the bare strings to canonical path form.
+        let rewritten = serde_json::to_value(&policy).unwrap();
+        assert_eq!(
+            rewritten["mergers"]["any_of"],
+            json!(["@patch.author", "users/alice"])
+        );
+        assert_eq!(
+            rewritten["reviewers"][0]["any_of"],
+            json!(["users/reviewer", "users/carol"])
+        );
     }
 }

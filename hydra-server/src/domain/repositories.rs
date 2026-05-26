@@ -1,31 +1,21 @@
-use super::users::Username;
+use hydra_common::Principal;
 use hydra_common::api::v1 as api;
-use serde::de::Error as _;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
 use thiserror::Error;
 
 /// Domain mirror of [`api::repositories::DynamicRef`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DynamicRef {
     PatchAuthor,
 }
 
 impl DynamicRef {
-    /// The wire form *without* the leading `@`.
     pub fn shorthand(self) -> &'static str {
         match self {
             DynamicRef::PatchAuthor => "patch.author",
-        }
-    }
-
-    pub fn from_shorthand(s: &str) -> Result<Self, String> {
-        match s {
-            "patch.author" => Ok(DynamicRef::PatchAuthor),
-            other => Err(format!(
-                "unknown dynamic reference '@{other}'; expected one of @patch.author"
-            )),
         }
     }
 }
@@ -36,72 +26,25 @@ impl fmt::Display for DynamicRef {
     }
 }
 
-impl Serialize for DynamicRef {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut buf = String::with_capacity(self.shorthand().len() + 1);
-        buf.push('@');
-        buf.push_str(self.shorthand());
-        serializer.serialize_str(&buf)
-    }
-}
-
-impl<'de> Deserialize<'de> for DynamicRef {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        let rest = raw.strip_prefix('@').ok_or_else(|| {
-            D::Error::custom(format!(
-                "expected a dynamic reference starting with '@', got {raw:?}"
-            ))
-        })?;
-        DynamicRef::from_shorthand(rest).map_err(D::Error::custom)
-    }
-}
-
-/// Domain mirror of [`api::repositories::Principal`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Principal {
-    User(Username),
+/// Domain mirror of [`api::repositories::AssigneeRef`] — a static
+/// [`Principal`] or a dynamic ref resolved at merge-attempt time.
+///
+/// The domain layer is constructed via the validating
+/// [`MergePolicy::try_from`] API → domain conversion; there is no
+/// stand-alone serde wire format because the domain `MergePolicy` is
+/// stored as the API-layer type in the repositories table.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "ref_kind", rename_all = "snake_case")]
+pub enum AssigneeRef {
+    Static(Principal),
     Dynamic(DynamicRef),
 }
 
-impl fmt::Display for Principal {
+impl fmt::Display for AssigneeRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Principal::User(name) => f.write_str(name.as_str()),
-            Principal::Dynamic(d) => d.fmt(f),
-        }
-    }
-}
-
-impl Serialize for Principal {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Principal::User(u) => serializer.serialize_str(u.as_str()),
-            Principal::Dynamic(d) => d.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Principal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        if let Some(rest) = raw.strip_prefix('@') {
-            let dr = DynamicRef::from_shorthand(rest).map_err(D::Error::custom)?;
-            Ok(Principal::Dynamic(dr))
-        } else {
-            Ok(Principal::User(Username::from(raw)))
+            AssigneeRef::Static(p) => p.fmt(f),
+            AssigneeRef::Dynamic(d) => d.fmt(f),
         }
     }
 }
@@ -111,7 +54,7 @@ impl<'de> Deserialize<'de> for Principal {
 pub struct ReviewerGroup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    pub any_of: Vec<Principal>,
+    pub any_of: Vec<AssigneeRef>,
     pub count: u32,
     pub exclude_author: bool,
 }
@@ -119,7 +62,7 @@ pub struct ReviewerGroup {
 /// Domain mirror of [`api::repositories::MergerRule`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergerRule {
-    pub any_of: Vec<Principal>,
+    pub any_of: Vec<AssigneeRef>,
 }
 
 /// Domain mirror of [`api::repositories::MergePolicy`].
@@ -162,11 +105,6 @@ pub enum MergePolicyValidationError {
     #[error("reviewer group label {label:?} appears on multiple groups; labels must be distinct")]
     DuplicateReviewerLabel { label: String },
 
-    #[error(
-        "invalid principal username {name:?}: usernames must be non-empty and contain no whitespace"
-    )]
-    InvalidUsername { name: String },
-
     #[error("reviewer group {group_index} ({label}) lists principal {principal} more than once")]
     DuplicatePrincipalInReviewerGroup {
         group_index: usize,
@@ -185,22 +123,15 @@ fn label_for_message(label: &Option<String>, group_index: usize) -> String {
     }
 }
 
-fn validate_principal(p: &Principal) -> Result<(), MergePolicyValidationError> {
-    if let Principal::User(name) = p {
-        let s = name.as_str();
-        if s.is_empty() || s.chars().any(char::is_whitespace) {
-            return Err(MergePolicyValidationError::InvalidUsername {
-                name: s.to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// Validate a [`MergePolicy`] for structural and semantic correctness.
 ///
 /// Returns the first failure encountered; callers are expected to surface the
 /// error to the user rather than continue with a partially valid policy.
+///
+/// Per-principal *existence* validation (i.e. that the named user / agent
+/// resolves to an actual store row) is done separately in the app layer via
+/// `Store::principal_exists`; this function only checks intra-policy shape
+/// invariants.
 pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyValidationError> {
     let mut seen_labels: HashSet<&str> = HashSet::new();
     for (group_index, group) in policy.reviewers.iter().enumerate() {
@@ -235,9 +166,8 @@ pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyVali
             });
         }
 
-        let mut seen: HashSet<&Principal> = HashSet::new();
+        let mut seen: HashSet<&AssigneeRef> = HashSet::new();
         for principal in &group.any_of {
-            validate_principal(principal)?;
             if !seen.insert(principal) {
                 return Err(
                     MergePolicyValidationError::DuplicatePrincipalInReviewerGroup {
@@ -254,9 +184,8 @@ pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyVali
         if mergers.any_of.is_empty() {
             return Err(MergePolicyValidationError::EmptyMergerAnyOf);
         }
-        let mut seen: HashSet<&Principal> = HashSet::new();
+        let mut seen: HashSet<&AssigneeRef> = HashSet::new();
         for principal in &mergers.any_of {
-            validate_principal(principal)?;
             if !seen.insert(principal) {
                 return Err(MergePolicyValidationError::DuplicatePrincipalInMergers {
                     principal: principal.to_string(),
@@ -286,20 +215,20 @@ impl From<DynamicRef> for api::repositories::DynamicRef {
     }
 }
 
-impl From<api::repositories::Principal> for Principal {
-    fn from(value: api::repositories::Principal) -> Self {
+impl From<api::repositories::AssigneeRef> for AssigneeRef {
+    fn from(value: api::repositories::AssigneeRef) -> Self {
         match value {
-            api::repositories::Principal::User(name) => Principal::User(name.into()),
-            api::repositories::Principal::Dynamic(d) => Principal::Dynamic(d.into()),
+            api::repositories::AssigneeRef::Static(p) => AssigneeRef::Static(p),
+            api::repositories::AssigneeRef::Dynamic(d) => AssigneeRef::Dynamic(d.into()),
         }
     }
 }
 
-impl From<Principal> for api::repositories::Principal {
-    fn from(value: Principal) -> Self {
+impl From<AssigneeRef> for api::repositories::AssigneeRef {
+    fn from(value: AssigneeRef) -> Self {
         match value {
-            Principal::User(name) => api::repositories::Principal::User(name.into()),
-            Principal::Dynamic(d) => api::repositories::Principal::Dynamic(d.into()),
+            AssigneeRef::Static(p) => api::repositories::AssigneeRef::Static(p),
+            AssigneeRef::Dynamic(d) => api::repositories::AssigneeRef::Dynamic(d.into()),
         }
     }
 }
@@ -370,15 +299,26 @@ impl TryFrom<api::repositories::MergePolicy> for MergePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hydra_common::api::v1::agents::AgentName;
     use hydra_common::api::v1::repositories as api_repos;
-    use hydra_common::api::v1::users::Username as ApiUsername;
+    use hydra_common::api::v1::users::Username;
 
-    fn user(name: &str) -> Principal {
-        Principal::User(Username::from(name))
+    fn user(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(Principal::User {
+            name: Username::try_new(name).unwrap(),
+        })
     }
 
-    fn api_user(name: &str) -> api_repos::Principal {
-        api_repos::Principal::User(ApiUsername::from(name))
+    fn agent(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(Principal::Agent {
+            name: AgentName::try_new(name).unwrap(),
+        })
+    }
+
+    fn api_user(name: &str) -> api_repos::AssigneeRef {
+        api_repos::AssigneeRef::Static(Principal::User {
+            name: Username::try_new(name).unwrap(),
+        })
     }
 
     fn valid_policy() -> MergePolicy {
@@ -398,7 +338,7 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor), user("alice")],
+                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice")],
             }),
         }
     }
@@ -421,7 +361,7 @@ mod tests {
             ],
             mergers: Some(api_repos::MergerRule {
                 any_of: vec![
-                    api_repos::Principal::Dynamic(api_repos::DynamicRef::PatchAuthor),
+                    api_repos::AssigneeRef::Dynamic(api_repos::DynamicRef::PatchAuthor),
                     api_user("alice"),
                 ],
             }),
@@ -561,45 +501,6 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_username_is_rejected() {
-        let policy = MergePolicy {
-            reviewers: vec![ReviewerGroup {
-                label: None,
-                any_of: vec![user("alice smith")],
-                count: 1,
-                exclude_author: true,
-            }],
-            mergers: None,
-        };
-        let err = validate_merge_policy(&policy).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                MergePolicyValidationError::InvalidUsername { ref name } if name == "alice smith"
-            ),
-            "expected InvalidUsername, got {err:?}",
-        );
-    }
-
-    #[test]
-    fn empty_username_is_rejected() {
-        let policy = MergePolicy {
-            reviewers: vec![ReviewerGroup {
-                label: None,
-                any_of: vec![user("")],
-                count: 1,
-                exclude_author: true,
-            }],
-            mergers: None,
-        };
-        let err = validate_merge_policy(&policy).unwrap_err();
-        assert!(
-            matches!(err, MergePolicyValidationError::InvalidUsername { ref name } if name.is_empty()),
-            "expected InvalidUsername, got {err:?}",
-        );
-    }
-
-    #[test]
     fn duplicate_principal_in_reviewer_group_is_rejected() {
         let policy = MergePolicy {
             reviewers: vec![ReviewerGroup {
@@ -618,7 +519,7 @@ mod tests {
                     group_index: 0,
                     ref principal,
                     ..
-                } if principal == "alice"
+                } if principal == "users/alice"
             ),
             "expected DuplicatePrincipalInReviewerGroup, got {err:?}",
         );
@@ -637,7 +538,7 @@ mod tests {
             matches!(
                 err,
                 MergePolicyValidationError::DuplicatePrincipalInMergers { ref principal }
-                    if principal == "alice"
+                    if principal == "users/alice"
             ),
             "expected DuplicatePrincipalInMergers, got {err:?}",
         );
@@ -649,12 +550,20 @@ mod tests {
     }
 
     #[test]
-    fn principal_serializes_as_bare_string_or_at_prefix() {
-        let json_alice = serde_json::to_value(user("alice")).unwrap();
-        assert_eq!(json_alice, serde_json::json!("alice"));
-
-        let json_dynamic =
-            serde_json::to_value(Principal::Dynamic(DynamicRef::PatchAuthor)).unwrap();
-        assert_eq!(json_dynamic, serde_json::json!("@patch.author"));
+    fn agent_principal_validates_intra_policy_invariants() {
+        // The validation function does not enforce that agents are
+        // distinct from users — the type system already separates them
+        // and `principal_exists` handles cross-table lookups. Confirm a
+        // policy mixing the two passes intra-shape validation.
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: None,
+                any_of: vec![user("alice"), agent("swe")],
+                count: 1,
+                exclude_author: false,
+            }],
+            mergers: None,
+        };
+        validate_merge_policy(&policy).expect("mixed user/agent policy must validate");
     }
 }

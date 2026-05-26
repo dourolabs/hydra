@@ -131,6 +131,25 @@ pub enum RepositoryError {
     AlreadyExists(RepoName),
     #[error("repository '{0}' not found")]
     NotFound(RepoName),
+    /// Phase 5a (`/designs/actor-system-overhaul.md` §4.2 / §4.5):
+    /// `principal_exists` validation at repo-config write time rejected
+    /// a static `Principal` in `merge_policy.{reviewers,mergers}.any_of`
+    /// that does not resolve to a real User or Agent row. External
+    /// principals are format-checked only and never trigger this. The
+    /// route layer renders it as a 400 with body
+    /// `{"error": "unknown actor 'users/ghost'"}` (canonical path form
+    /// via `Principal::Display`).
+    #[error("unknown actor '{principal}'")]
+    UnknownPrincipal { principal: hydra_common::Principal },
+    /// Lookup failure (DB error, etc.) while validating the static
+    /// principal `principal`. Distinct from `UnknownPrincipal` so the
+    /// route layer can render it as a 500 rather than a 400.
+    #[error("failed to validate principal '{principal}'")]
+    PrincipalLookup {
+        principal: hydra_common::Principal,
+        #[source]
+        source: StoreError,
+    },
     #[error("repository store error")]
     Store {
         #[source]

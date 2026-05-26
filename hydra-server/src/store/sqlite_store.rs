@@ -5656,23 +5656,27 @@ mod tests {
 
     #[tokio::test]
     async fn repository_round_trip_merge_policy_some() {
-        use hydra_common::repositories::{MergePolicy, MergerRule, Principal, ReviewerGroup};
+        use hydra_common::Principal;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::repositories::{AssigneeRef, MergePolicy, MergerRule, ReviewerGroup};
 
         let store = create_test_store().await;
         let name = RepoName::from_str("dourolabs/hydra").unwrap();
         let mut config = sample_repository_config();
+        let static_user = |name: &str| {
+            AssigneeRef::Static(Principal::User {
+                name: ApiUsername::try_new(name).unwrap(),
+            })
+        };
         config.merge_policy = Some(MergePolicy {
             reviewers: vec![ReviewerGroup {
                 label: Some("core".to_string()),
-                any_of: vec![
-                    Principal::User(Username::from("ada").into()),
-                    Principal::User(Username::from("grace").into()),
-                ],
+                any_of: vec![static_user("ada"), static_user("grace")],
                 count: 1,
                 exclude_author: true,
             }],
             mergers: Some(MergerRule {
-                any_of: vec![Principal::User(Username::from("ada").into())],
+                any_of: vec![static_user("ada")],
             }),
         });
 

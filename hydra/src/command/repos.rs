@@ -1091,7 +1091,9 @@ mergers:
     /// `run.sh`.
     #[test]
     fn load_merge_policy_file_parses_e2e_fixture() {
-        use hydra_common::repositories::Principal;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::repositories::AssigneeRef;
+        use hydra_common::Principal;
 
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1100,7 +1102,12 @@ mergers:
         let policy = load_merge_policy_file(&path).expect("e2e fixture must parse");
         assert_eq!(policy.reviewers.len(), 1, "exactly one reviewer group");
         let group = &policy.reviewers[0];
-        assert_eq!(group.any_of, vec![Principal::User("reviewer".into())]);
+        assert_eq!(
+            group.any_of,
+            vec![AssigneeRef::Static(Principal::User {
+                name: ApiUsername::try_new("reviewer").unwrap(),
+            })]
+        );
         assert_eq!(group.count, 1);
         assert!(group.exclude_author);
         assert!(
@@ -1136,15 +1143,15 @@ mergers:
                         "reviewers": [
                             {
                                 "label": "code-review",
-                                "any_of": ["reviewer", "carol"],
+                                "any_of": ["users/reviewer", "users/carol"],
                             },
                             {
                                 "label": "human-signoff",
-                                "any_of": ["alice", "bob"],
+                                "any_of": ["users/alice", "users/bob"],
                             }
                         ],
                         "mergers": {
-                            "any_of": ["@patch.author", "alice"]
+                            "any_of": ["@patch.author", "users/alice"]
                         }
                     }
                 }));

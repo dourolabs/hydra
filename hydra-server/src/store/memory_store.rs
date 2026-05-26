@@ -2625,8 +2625,8 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use hydra_common::{
-        IssueId, RepoName, SessionId, VersionNumber, Versioned,
-        api::v1::repositories::{DynamicRef, MergePolicy, MergerRule, Principal, ReviewerGroup},
+        IssueId, Principal, RepoName, SessionId, VersionNumber, Versioned,
+        api::v1::repositories::{AssigneeRef, DynamicRef, MergePolicy, MergerRule, ReviewerGroup},
         api::v1::users::Username as ApiUsername,
         repositories::{Repository, SearchRepositoriesQuery},
     };
@@ -2773,12 +2773,14 @@ mod tests {
         config.merge_policy = Some(MergePolicy {
             reviewers: vec![ReviewerGroup {
                 label: Some("code-review".to_string()),
-                any_of: vec![Principal::User(ApiUsername::from("reviewer"))],
+                any_of: vec![AssigneeRef::Static(Principal::User {
+                    name: ApiUsername::try_new("reviewer").unwrap(),
+                })],
                 count: 1,
                 exclude_author: true,
             }],
             mergers: Some(MergerRule {
-                any_of: vec![Principal::Dynamic(DynamicRef::PatchAuthor)],
+                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor)],
             }),
         });
 
