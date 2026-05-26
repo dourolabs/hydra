@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { MarkdownViewer } from "@hydra/ui";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./ChatMessageList.module.css";
@@ -13,7 +13,7 @@ function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
   );
 }
 
-function renderEvent(event: ConversationEvent, index: number, agentName: string) {
+function renderEvent(event: SessionEvent, index: number, agentName: string) {
   switch (event.type) {
     case "user_message":
       return (
@@ -53,27 +53,18 @@ function renderEvent(event: ConversationEvent, index: number, agentName: string)
       return <SystemEvent key={index} text="Session resumed" timestamp={event.timestamp} />;
     case "closed":
       return <SystemEvent key={index} text="Conversation closed" timestamp={event.timestamp} />;
+    case "tool_use":
+    case "unknown":
+      return null;
   }
 }
 
 interface ChatMessageListProps {
-  events: ConversationEvent[];
+  events: SessionEvent[];
   agentName?: string | null;
-  /**
-   * Which read path produced `events` — `session_events` for the new
-   * SessionEvent merge (design step 11) or `conversation_events` for the
-   * legacy fallback. Surfaced on the container as
-   * `data-transcript-source` so e2e tests and DevTools can confirm the
-   * cut-over fired without poking React internals.
-   */
-  "data-transcript-source"?: string;
 }
 
-export function ChatMessageList({
-  events,
-  agentName,
-  "data-transcript-source": transcriptSource,
-}: ChatMessageListProps) {
+export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const resolvedAgent = agentName || "Agent";
 
@@ -89,7 +80,7 @@ export function ChatMessageList({
         ref={containerRef}
         className={styles.container}
         data-testid="chat-message-list"
-        data-transcript-source={transcriptSource}
+        data-transcript-source="session_events"
       >
         <div className={styles.empty}>
           <p className={styles.emptyText}>
@@ -105,7 +96,7 @@ export function ChatMessageList({
       ref={containerRef}
       className={styles.container}
       data-testid="chat-message-list"
-      data-transcript-source={transcriptSource}
+      data-transcript-source="session_events"
     >
       <div className={styles.thread}>
         {events.map((event, i) => renderEvent(event, i, resolvedAgent))}

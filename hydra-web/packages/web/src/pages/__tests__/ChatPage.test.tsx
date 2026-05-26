@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
-import type { Conversation, ConversationEvent } from "@hydra/api";
+import type { Conversation, SessionEvent } from "@hydra/api";
 
 // --- Mocks ---
 
@@ -11,9 +11,7 @@ vi.mock("react-router-dom", () => ({
 }));
 
 let mockConversation: Conversation | undefined;
-let mockEvents: ConversationEvent[] = [];
-let mockTranscriptSource: "session_events" | "conversation_events" =
-  "conversation_events";
+let mockEvents: SessionEvent[] = [];
 let mockIsLoading = false;
 let mockError: Error | null = null;
 
@@ -28,7 +26,6 @@ vi.mock("../../features/chat/useConversations", () => ({
 vi.mock("../../features/chat/useChatTranscript", () => ({
   useChatTranscript: () => ({
     events: mockEvents,
-    source: mockTranscriptSource,
     isLoading: false,
     error: null,
   }),
@@ -196,7 +193,6 @@ describe("ChatPage 2-pane layout", () => {
     vi.clearAllMocks();
     mockConversation = makeConversation();
     mockEvents = [];
-    mockTranscriptSource = "conversation_events";
     mockIsLoading = false;
     mockError = null;
     // jsdom doesn't implement Element.scrollTo, which the ChatMessageList
@@ -279,7 +275,6 @@ describe("ChatPage 2-pane layout", () => {
   });
 
   it("renders SessionEvent-sourced transcript with data-transcript-source=session_events", () => {
-    mockTranscriptSource = "session_events";
     mockEvents = [
       { type: "user_message", content: "hi from session", timestamp: "2026-04-01T10:00:00Z" },
       {
@@ -298,29 +293,14 @@ describe("ChatPage 2-pane layout", () => {
     cleanup();
   });
 
-  it("renders ConversationEvent fallback with data-transcript-source=conversation_events", () => {
-    mockTranscriptSource = "conversation_events";
-    mockEvents = [
-      { type: "user_message", content: "legacy q", timestamp: "2026-01-01T00:00:00Z" },
-    ];
-    render(<ChatPage />);
-
-    const list = screen.getByTestId("chat-message-list");
-    expect(list.getAttribute("data-transcript-source")).toBe("conversation_events");
-    expect(screen.getByText("legacy q")).toBeDefined();
-
-    cleanup();
-  });
-
   it("preserves chronological order of a 2-session resumption-chain transcript", () => {
-    mockTranscriptSource = "session_events";
     // The merge result the hook produces: first session's events, then the
     // resumed session's events. ChatPage renders them in order.
     mockEvents = [
       { type: "user_message", content: "q1", timestamp: "2026-04-01T09:01:00Z" },
       { type: "assistant_message", content: "a1", timestamp: "2026-04-01T09:02:00Z" },
       { type: "suspending", reason: "ctx", timestamp: "2026-04-01T09:30:00Z" },
-      { type: "resumed", session_id: "t-first", timestamp: "2026-04-01T10:00:30Z" },
+      { type: "resumed", from_session_id: "t-first", timestamp: "2026-04-01T10:00:30Z" },
       { type: "user_message", content: "q2", timestamp: "2026-04-01T10:05:00Z" },
       { type: "assistant_message", content: "a2", timestamp: "2026-04-01T10:10:00Z" },
     ];

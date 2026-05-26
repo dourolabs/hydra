@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 import { mergeOptimisticEvents } from "../mergeOptimisticEvents";
 
-function userMessage(content: string, timestamp: string): ConversationEvent {
+function userMessage(content: string, timestamp: string): SessionEvent {
   return { type: "user_message", content, timestamp };
 }
 
-function assistantMessage(content: string, timestamp: string): ConversationEvent {
+function assistantMessage(content: string, timestamp: string): SessionEvent {
   return { type: "assistant_message", content, timestamp };
 }
 
@@ -14,11 +14,11 @@ describe("mergeOptimisticEvents", () => {
   it("appends an optimistic message that has no server-side counterpart yet", () => {
     // This is the in-flight state right after onMutate: transcript still has
     // the prior turn, optimistic carries the freshly-sent message.
-    const transcript: ConversationEvent[] = [
+    const transcript: SessionEvent[] = [
       userMessage("hi", "2026-05-23T16:59:00Z"),
       assistantMessage("hello", "2026-05-23T16:59:30Z"),
     ];
-    const optimistic: ConversationEvent[] = [userMessage("how are you", "2026-05-23T17:00:00Z")];
+    const optimistic: SessionEvent[] = [userMessage("how are you", "2026-05-23T17:00:00Z")];
 
     const result = mergeOptimisticEvents(transcript, optimistic);
 
@@ -34,10 +34,10 @@ describe("mergeOptimisticEvents", () => {
     // alongside fire-and-forget invalidateQueries; the just-sent message
     // briefly disappeared between local clear and refetch landing. The merge
     // must hold the optimistic until the real event arrives in `transcript`.
-    const transcriptBeforeRefetch: ConversationEvent[] = [
+    const transcriptBeforeRefetch: SessionEvent[] = [
       userMessage("hi", "2026-05-23T16:59:00Z"),
     ];
-    const optimistic: ConversationEvent[] = [userMessage("how are you", "2026-05-23T17:00:00Z")];
+    const optimistic: SessionEvent[] = [userMessage("how are you", "2026-05-23T17:00:00Z")];
 
     // Even with the mutation `settled` (onSettled has fired), the new event
     // is not yet in the transcript. The optimistic stays visible.
@@ -50,11 +50,11 @@ describe("mergeOptimisticEvents", () => {
     // After the refetch lands the transcript now contains the real event.
     // The merge must remove the optimistic to avoid showing the user-message
     // twice — a render with both would also flicker.
-    const transcriptAfterRefetch: ConversationEvent[] = [
+    const transcriptAfterRefetch: SessionEvent[] = [
       userMessage("hi", "2026-05-23T16:59:00Z"),
       userMessage("how are you", "2026-05-23T17:00:00.123Z"),
     ];
-    const optimistic: ConversationEvent[] = [
+    const optimistic: SessionEvent[] = [
       // Note: the optimistic has a slightly different timestamp than the
       // server-assigned one — content is the matching key, not timestamp.
       userMessage("how are you", "2026-05-23T17:00:00.000Z"),
@@ -69,8 +69,8 @@ describe("mergeOptimisticEvents", () => {
   it("reconciles two duplicate sends of the same text one-for-one", () => {
     // A user can hit enter twice with identical content. Each optimistic
     // entry should match a distinct real event, not all collapse to one.
-    const transcript: ConversationEvent[] = [userMessage("ping", "2026-05-23T17:00:00Z")];
-    const optimistic: ConversationEvent[] = [
+    const transcript: SessionEvent[] = [userMessage("ping", "2026-05-23T17:00:00Z")];
+    const optimistic: SessionEvent[] = [
       userMessage("ping", "2026-05-23T17:00:01Z"),
       userMessage("ping", "2026-05-23T17:00:02Z"),
     ];
@@ -85,8 +85,8 @@ describe("mergeOptimisticEvents", () => {
     // The dedup pass only matches on user_message content. Other types
     // (none currently produced optimistically, but reserved for future) are
     // appended verbatim.
-    const transcript: ConversationEvent[] = [];
-    const optimistic: ConversationEvent[] = [
+    const transcript: SessionEvent[] = [];
+    const optimistic: SessionEvent[] = [
       assistantMessage("hello", "2026-05-23T17:00:00Z"),
     ];
     const result = mergeOptimisticEvents(transcript, optimistic);
@@ -95,7 +95,7 @@ describe("mergeOptimisticEvents", () => {
   });
 
   it("returns the transcript unchanged when there are no optimistic events", () => {
-    const transcript: ConversationEvent[] = [
+    const transcript: SessionEvent[] = [
       userMessage("hi", "2026-05-23T17:00:00Z"),
     ];
     const result = mergeOptimisticEvents(transcript, []);

@@ -1,7 +1,8 @@
 import { test, expect } from "../../fixtures/auth";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 
 const CONVERSATION_ID = "c-mobile-composer";
+const SESSION_ID = "t-mobile-composer";
 
 const conversation = {
   conversation_id: CONVERSATION_ID,
@@ -25,7 +26,19 @@ const conversationSummary = {
   updated_at: conversation.updated_at,
 };
 
-const events: ConversationEvent[] = [
+const sessionSummary = {
+  session_id: SESSION_ID,
+  version: 1,
+  timestamp: "2026-05-13T10:00:00Z",
+  session: {
+    prompt: "",
+    creator: "alice",
+    status: "running",
+    creation_time: "2026-05-13T10:00:00Z",
+  },
+};
+
+const sessionEvents: SessionEvent[] = [
   { type: "user_message", content: "Hello", timestamp: "2026-05-13T10:00:00Z" },
   { type: "assistant_message", content: "Hi there", timestamp: "2026-05-13T10:01:00Z" },
 ];
@@ -45,11 +58,20 @@ async function mockChatRoutes(page: import("@playwright/test").Page) {
       body: JSON.stringify(conversation),
     });
   });
-  await page.route(new RegExp(`/api/v1/conversations/${CONVERSATION_ID}/events$`), (route) => {
+  // SessionEvent per-session fan-out: list sessions for the conversation,
+  // then fetch each session's event log.
+  await page.route(new RegExp(`/api/v1/sessions/${SESSION_ID}/events($|\\?)`), (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(events),
+      body: JSON.stringify(sessionEvents),
+    });
+  });
+  await page.route(/\/api\/v1\/sessions(\?|$)/, (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sessions: [sessionSummary] }),
     });
   });
 }

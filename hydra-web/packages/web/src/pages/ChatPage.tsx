@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
-import type { Conversation, ConversationEvent } from "@hydra/api";
+import type { Conversation, SessionEvent } from "@hydra/api";
 import { useConversation } from "../features/chat/useConversations";
 import { useChatTranscript } from "../features/chat/useChatTranscript";
 import { mergeOptimisticEvents } from "../features/chat/mergeOptimisticEvents";
@@ -32,13 +32,12 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
 
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("chat");
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTabKey>("related");
-  // Local optimistic events live outside the query cache so they layer on top
-  // of whichever transcript source (SessionEvent merge or legacy
-  // ConversationEvent fallback) is active. Entries are reconciled away in the
+  // Local optimistic events live outside the query cache so they layer on
+  // top of the SessionEvent transcript. Entries are reconciled away in the
   // `events` merge below as soon as their server-side counterpart lands in
   // `transcript.events`, so the message never flickers between the mutation
   // settling and the refetch completing.
-  const [optimisticEvents, setOptimisticEvents] = useState<ConversationEvent[]>([]);
+  const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
 
   useBreadcrumbs(
     [
@@ -48,7 +47,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
     conversation?.title || conversationId,
   );
 
-  const events = useMemo<ConversationEvent[]>(
+  const events = useMemo<SessionEvent[]>(
     () => mergeOptimisticEvents(transcript.events, optimisticEvents),
     [transcript.events, optimisticEvents],
   );
@@ -56,11 +55,11 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const sendMutation = useMutation({
     mutationFn: (content: string) => apiClient.sendMessage(conversationId, { content }),
     onMutate: (content) => {
-      const optimistic: ConversationEvent = {
+      const optimistic = {
         type: "user_message",
         content,
         timestamp: new Date().toISOString(),
-      };
+      } satisfies SessionEvent;
       setOptimisticEvents((prev) => [...prev, optimistic]);
       return { optimistic };
     },
@@ -71,15 +70,14 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
       }
     },
     onSettled: () => {
-      // Invalidate every transcript source so the refetch covers both the
-      // SessionEvent path (new sessions) and the ConversationEvent fallback
-      // (legacy sessions). Clearing the optimistic entry is left to the
-      // `events` merge above, which drops it once the refetched transcript
-      // contains the real event — this avoids the flicker that occurred when
-      // synchronously clearing local state here raced the refetch.
+      // Refetch the per-session SessionEvent logs (and the sessions list, in
+      // case send-on-closed conversation spawned a fresh session). Clearing
+      // the optimistic entry is left to the `events` merge above, which
+      // drops it once the refetched transcript contains the real event —
+      // this avoids the flicker that occurred when synchronously clearing
+      // local state here raced the refetch.
       queryClient.invalidateQueries({ queryKey: ["sessionsByConversation", conversationId] });
       queryClient.invalidateQueries({ queryKey: ["sessionEvents"] });
-      queryClient.invalidateQueries({ queryKey: ["conversationEvents", conversationId] });
       queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
     },
   });
@@ -182,11 +180,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         data-testid="chat-pane"
       >
         <ChatHeader conversation={conversation} />
-        <ChatMessageList
-          events={events}
-          agentName={conversation.agent_name}
-          data-transcript-source={transcript.source}
-        />
+        <ChatMessageList events={events} agentName={conversation.agent_name} />
         <ChatInput
           conversationId={conversationId}
           onSend={handleSend}

@@ -53,7 +53,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@chat:sidebar` — Clicking a chat row in the sidebar navigates to /chat/&lt;id&gt;
 - `@chat:default-mine` — `/chat` defaults to the logged-in user's chats (Mine); toggle flips to All (`?scope=all`) and back, the Chats query carries `creator=<me>` by default
-- `@chat:transcript-source` — Chat detail page renders from `SessionEvent` (`data-transcript-source="session_events"` on the message list) for conversations whose linked sessions have `SessionEvent` rows; falls back to `ConversationEvent` (`data-transcript-source="conversation_events"`) for legacy pre-rollout conversations. Across a 2-session resumption chain the merged transcript renders in chronological order and the per-session fan-out hits each session's `/v1/sessions/:id/events`.
+- `@chat:transcript-source` — Chat detail page renders from `SessionEvent` (`data-transcript-source="session_events"` on the message list). Across a 2-session resumption chain the merged transcript renders in chronological order and the per-session fan-out hits each session's `/v1/sessions/:id/events`.
 
 ## Error Handling
 

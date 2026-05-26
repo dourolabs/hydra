@@ -1,58 +1,11 @@
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type {
-  ConversationEvent,
   ConversationId,
   SessionEvent,
   SessionSummaryRecord,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
-
-/**
- * Render-only adapter: project a {@link SessionEvent} onto the existing
- * {@link ConversationEvent} shape. `tool_use` (out of scope for Phase C per
- * design §3.7) and forward-compat `unknown` are dropped — the chat view
- * does not surface them yet.
- *
- * `SessionEvent.resumed` carries `from_session_id`; `ConversationEvent.resumed`
- * carries `session_id`. The chat renderer only reads the timestamp, so we
- * forward `from_session_id` into `session_id` to keep a single render path.
- */
-export function sessionEventToConversationEvent(
-  event: SessionEvent,
-): ConversationEvent | null {
-  switch (event.type) {
-    case "user_message":
-      return {
-        type: "user_message",
-        content: event.content,
-        timestamp: event.timestamp,
-      };
-    case "assistant_message":
-      return {
-        type: "assistant_message",
-        content: event.content,
-        timestamp: event.timestamp,
-      };
-    case "suspending":
-      return {
-        type: "suspending",
-        reason: event.reason,
-        timestamp: event.timestamp,
-      };
-    case "resumed":
-      return {
-        type: "resumed",
-        session_id: event.from_session_id,
-        timestamp: event.timestamp,
-      };
-    case "closed":
-      return { type: "closed", timestamp: event.timestamp };
-    case "tool_use":
-    case "unknown":
-      return null;
-  }
-}
 
 /**
  * Order session-summary records by creation time ascending so concatenating
@@ -73,19 +26,8 @@ function sessionsInResumptionOrder(
   });
 }
 
-export type ChatTranscriptSource = "session_events" | "conversation_events";
-
 export interface ChatTranscriptResult {
-  events: ConversationEvent[];
-  /**
-   * Which read path produced the events:
-   *  - `session_events`: at least one session in the conversation's
-   *    resumption chain returned a non-empty `SessionEvent` log; the
-   *    merged result is rendered.
-   *  - `conversation_events`: legacy fallback (no `SessionEvent` rows in
-   *    any linked session, or the conversation has no linked sessions yet).
-   */
-  source: ChatTranscriptSource;
+  events: SessionEvent[];
   isLoading: boolean;
   error: unknown;
 }
@@ -95,11 +37,9 @@ export interface ChatTranscriptResult {
  * §3.4.1: list sessions for the conversation, parallel fan-out fetch their
  * `SessionEvent` logs, and concatenate in creation-time order.
  *
- * Falls back to `GET /v1/conversations/:id/events` (legacy
- * `ConversationEvent` rendering) when the merged `SessionEvent` view is
- * empty — i.e. for conversations whose sessions all predate the dual-write
- * rollout. This is the cut-over described in design step 11; removing the
- * legacy path entirely is step 18.
+ * Phase E step 18 retired the legacy `ConversationEvent` fallback: chat
+ * content lives exclusively on `SessionEvent` now, so the only read path
+ * is the per-session fan-out.
  */
 export function useChatTranscript(conversationId: string): ChatTranscriptResult {
   const sessionsQuery = useQuery({
@@ -132,59 +72,22 @@ export function useChatTranscript(conversationId: string): ChatTranscriptResult 
   // would recompute every render anyway. The merge is a cheap O(N) loop, so
   // recomputing each render is acceptable and avoids a stale-reference foot
   // gun if a future contributor adds extra deps to a memo here.
-  const mergedSessionEvents: ConversationEvent[] = [];
+  const events: SessionEvent[] = [];
   for (const q of sessionEventQueries) {
     if (!q.data) continue;
     for (const e of q.data) {
-      const projected = sessionEventToConversationEvent(e);
-      if (projected) mergedSessionEvents.push(projected);
+      events.push(e);
     }
   }
 
-  // The fallback gate must wait for the sessions-list query to resolve;
-  // otherwise the first render (orderedSessionIds === []) would fire the
-  // legacy `GET /v1/conversations/:id/events` before we even know whether
-  // this conversation has linked sessions.
-  const sessionFetchesSettled =
-    !sessionsQuery.isPending &&
-    (orderedSessionIds.length === 0 ||
-      sessionEventQueries.every((q) => !q.isPending));
-  const sessionEventsEmpty = mergedSessionEvents.length === 0;
-
-  // Legacy fallback: read ConversationEvent only after the SessionEvent
-  // fan-out has settled and produced nothing. Gating prevents a spurious
-  // hit on /v1/conversations/:id/events for new sessions on every render.
-  const conversationEventsQuery = useQuery({
-    queryKey: ["conversationEvents", conversationId],
-    queryFn: () => apiClient.getConversationEvents(conversationId),
-    enabled: !!conversationId && sessionFetchesSettled && sessionEventsEmpty,
-  });
-
-  if (!sessionEventsEmpty) {
-    return {
-      events: mergedSessionEvents,
-      source: "session_events",
-      isLoading:
-        sessionsQuery.isLoading ||
-        sessionEventQueries.some((q) => q.isLoading),
-      error:
-        sessionsQuery.error ??
-        sessionEventQueries.find((q) => q.error)?.error ??
-        null,
-    };
-  }
-
   return {
-    events: conversationEventsQuery.data ?? [],
-    source: "conversation_events",
+    events,
     isLoading:
       sessionsQuery.isLoading ||
-      sessionEventQueries.some((q) => q.isLoading) ||
-      conversationEventsQuery.isLoading,
+      sessionEventQueries.some((q) => q.isLoading),
     error:
       sessionsQuery.error ??
       sessionEventQueries.find((q) => q.error)?.error ??
-      conversationEventsQuery.error ??
       null,
   };
 }

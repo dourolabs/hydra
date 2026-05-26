@@ -1,7 +1,8 @@
 import { test, expect } from "../../fixtures/auth";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 
 const CONVERSATION_ID = "c-mobile-scroll";
+const SESSION_ID = "t-mobile-scroll";
 
 const conversation = {
   conversation_id: CONVERSATION_ID,
@@ -25,8 +26,20 @@ const conversationSummary = {
   updated_at: conversation.updated_at,
 };
 
-function buildEvents(count: number): ConversationEvent[] {
-  const out: ConversationEvent[] = [];
+const sessionSummary = {
+  session_id: SESSION_ID,
+  version: 1,
+  timestamp: "2026-05-13T10:00:00Z",
+  session: {
+    prompt: "",
+    creator: "alice",
+    status: "running",
+    creation_time: "2026-05-13T10:00:00Z",
+  },
+};
+
+function buildEvents(count: number): SessionEvent[] {
+  const out: SessionEvent[] = [];
   for (let i = 1; i <= count; i++) {
     const ts = new Date(Date.UTC(2026, 4, 13, 10, i)).toISOString();
     if (i % 2 === 1) {
@@ -66,7 +79,7 @@ test.describe("Mobile chat scroll @mobile:chat-scroll", () => {
       },
     );
     await page.route(
-      new RegExp(`/api/v1/conversations/${CONVERSATION_ID}/events$`),
+      new RegExp(`/api/v1/sessions/${SESSION_ID}/events($|\\?)`),
       (route) => {
         route.fulfill({
           status: 200,
@@ -75,6 +88,13 @@ test.describe("Mobile chat scroll @mobile:chat-scroll", () => {
         });
       },
     );
+    await page.route(/\/api\/v1\/sessions(\?|$)/, (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ sessions: [sessionSummary] }),
+      });
+    });
 
     await page.goto(`/chat/${CONVERSATION_ID}`);
 

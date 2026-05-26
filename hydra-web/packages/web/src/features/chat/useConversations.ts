@@ -20,11 +20,3 @@ export function useConversation(conversationId: string) {
     enabled: !!conversationId,
   });
 }
-
-export function useConversationEvents(conversationId: string) {
-  return useQuery({
-    queryKey: ["conversationEvents", conversationId],
-    queryFn: () => apiClient.getConversationEvents(conversationId),
-    enabled: !!conversationId,
-  });
-}

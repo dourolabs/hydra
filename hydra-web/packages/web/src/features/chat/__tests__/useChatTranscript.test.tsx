@@ -3,7 +3,6 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type {
-  ConversationEvent,
   ListSessionsResponse,
   SessionEvent,
   SessionSummaryRecord,
@@ -11,19 +10,15 @@ import type {
 
 const mockListSessions = vi.fn();
 const mockGetSessionEvents = vi.fn();
-const mockGetConversationEvents = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   apiClient: {
     listSessions: (...args: unknown[]) => mockListSessions(...args),
     getSessionEvents: (sid: string) => mockGetSessionEvents(sid),
-    getConversationEvents: (cid: string) => mockGetConversationEvents(cid),
   },
 }));
 
-const { useChatTranscript, sessionEventToConversationEvent } = await import(
-  "../useChatTranscript"
-);
+const { useChatTranscript } = await import("../useChatTranscript");
 
 function wrapper() {
   const queryClient = new QueryClient({
@@ -56,120 +51,12 @@ function makeListSessionsResponse(
   return { sessions: records } as ListSessionsResponse;
 }
 
-describe("sessionEventToConversationEvent", () => {
-  it("maps user_message verbatim", () => {
-    const e: SessionEvent = {
-      type: "user_message",
-      content: "hi",
-      timestamp: "t",
-    };
-    expect(sessionEventToConversationEvent(e)).toEqual({
-      type: "user_message",
-      content: "hi",
-      timestamp: "t",
-    });
-  });
-
-  it("maps assistant_message verbatim", () => {
-    const e: SessionEvent = {
-      type: "assistant_message",
-      content: "hello",
-      timestamp: "t",
-    };
-    expect(sessionEventToConversationEvent(e)).toEqual({
-      type: "assistant_message",
-      content: "hello",
-      timestamp: "t",
-    });
-  });
-
-  it("maps suspending with reason", () => {
-    const e: SessionEvent = {
-      type: "suspending",
-      reason: "ctx limit",
-      timestamp: "t",
-    };
-    expect(sessionEventToConversationEvent(e)).toEqual({
-      type: "suspending",
-      reason: "ctx limit",
-      timestamp: "t",
-    });
-  });
-
-  it("forwards SessionEvent.resumed.from_session_id into ConversationEvent.resumed.session_id", () => {
-    const e: SessionEvent = {
-      type: "resumed",
-      from_session_id: "t-prev",
-      timestamp: "t",
-    };
-    expect(sessionEventToConversationEvent(e)).toEqual({
-      type: "resumed",
-      session_id: "t-prev",
-      timestamp: "t",
-    });
-  });
-
-  it("drops tool_use (out of scope for the Phase C cut-over)", () => {
-    const e: SessionEvent = {
-      type: "tool_use",
-      tool_name: "shell",
-      payload: {} as never,
-      timestamp: "t",
-    };
-    expect(sessionEventToConversationEvent(e)).toBeNull();
-  });
-
-  it("drops the forward-compat unknown variant", () => {
-    expect(sessionEventToConversationEvent({ type: "unknown" })).toBeNull();
-  });
-});
-
 describe("useChatTranscript", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("falls back to ConversationEvent when the conversation has no linked sessions", async () => {
-    mockListSessions.mockResolvedValue(makeListSessionsResponse([]));
-    const legacy: ConversationEvent[] = [
-      { type: "user_message", content: "legacy q", timestamp: "2026-01-01T00:00:00Z" },
-      { type: "assistant_message", content: "legacy a", timestamp: "2026-01-01T00:01:00Z" },
-    ];
-    mockGetConversationEvents.mockResolvedValue(legacy);
-
-    const { result } = renderHook(() => useChatTranscript("c-1"), {
-      wrapper: wrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.source).toBe("conversation_events");
-      expect(result.current.events).toEqual(legacy);
-    });
-    expect(mockGetSessionEvents).not.toHaveBeenCalled();
-  });
-
-  it("falls back to ConversationEvent when every linked session has zero SessionEvent rows", async () => {
-    mockListSessions.mockResolvedValue(
-      makeListSessionsResponse([makeSessionSummary("t-1", "2026-01-01T00:00:00Z")]),
-    );
-    mockGetSessionEvents.mockResolvedValue([]);
-    const legacy: ConversationEvent[] = [
-      { type: "user_message", content: "pre-rollout q", timestamp: "2026-01-01T00:00:00Z" },
-    ];
-    mockGetConversationEvents.mockResolvedValue(legacy);
-
-    const { result } = renderHook(() => useChatTranscript("c-1"), {
-      wrapper: wrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.source).toBe("conversation_events");
-      expect(result.current.events).toEqual(legacy);
-    });
-    expect(mockGetSessionEvents).toHaveBeenCalledWith("t-1");
-  });
-
-  it("uses the SessionEvent merge when at least one linked session has rows", async () => {
+  it("returns the SessionEvent merge when at least one linked session has rows", async () => {
     mockListSessions.mockResolvedValue(
       makeListSessionsResponse([makeSessionSummary("t-1", "2026-01-01T00:00:00Z")]),
     );
@@ -183,14 +70,42 @@ describe("useChatTranscript", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.source).toBe("session_events");
       expect(result.current.events).toEqual([
         { type: "user_message", content: "new q", timestamp: "2026-01-01T00:00:30Z" },
         { type: "assistant_message", content: "new a", timestamp: "2026-01-01T00:00:45Z" },
       ]);
     });
-    // The legacy fallback must not fire when the new path produced rows.
-    expect(mockGetConversationEvents).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty transcript when the conversation has no linked sessions", async () => {
+    mockListSessions.mockResolvedValue(makeListSessionsResponse([]));
+
+    const { result } = renderHook(() => useChatTranscript("c-1"), {
+      wrapper: wrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(result.current.events).toEqual([]);
+    expect(mockGetSessionEvents).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty transcript when every linked session has zero SessionEvent rows", async () => {
+    mockListSessions.mockResolvedValue(
+      makeListSessionsResponse([makeSessionSummary("t-1", "2026-01-01T00:00:00Z")]),
+    );
+    mockGetSessionEvents.mockResolvedValue([]);
+
+    const { result } = renderHook(() => useChatTranscript("c-1"), {
+      wrapper: wrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(result.current.events).toEqual([]);
+    expect(mockGetSessionEvents).toHaveBeenCalledWith("t-1");
   });
 
   it("concatenates per-session SessionEvent logs in creation-time order across a resumption chain", async () => {
@@ -229,7 +144,6 @@ describe("useChatTranscript", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.source).toBe("session_events");
       expect(result.current.events).toHaveLength(6);
     });
 
@@ -250,7 +164,9 @@ describe("useChatTranscript", () => {
     expect(contents).toEqual(["q1", "a1", "q2", "a2"]);
   });
 
-  it("drops tool_use and unknown variants from the merge", async () => {
+  it("keeps tool_use and unknown variants in the merged log (renderers drop them)", async () => {
+    // The transcript hook is content-agnostic now: it returns the raw
+    // SessionEvent stream and lets the renderer decide what to display.
     mockListSessions.mockResolvedValue(
       makeListSessionsResponse([makeSessionSummary("t-1", "2026-01-01T00:00:00Z")]),
     );
@@ -271,10 +187,12 @@ describe("useChatTranscript", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.source).toBe("session_events");
+      expect(result.current.events.length).toBeGreaterThan(0);
     });
     expect(result.current.events.map((e) => e.type)).toEqual([
       "user_message",
+      "tool_use",
+      "unknown",
       "assistant_message",
     ]);
   });

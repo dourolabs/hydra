@@ -45,11 +45,12 @@ async function mockChatRoutes(page: import("@playwright/test").Page) {
       body: JSON.stringify(conversation),
     });
   });
-  await page.route(new RegExp(`/api/v1/conversations/${CONVERSATION_ID}/events$`), (route) => {
+  // No linked sessions ⇒ empty transcript via the SessionEvent fan-out.
+  await page.route(/\/api\/v1\/sessions(\?|$)/, (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([]),
+      body: JSON.stringify({ sessions: [] }),
     });
   });
 }

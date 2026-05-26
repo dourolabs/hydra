@@ -315,6 +315,28 @@ describe("Conversations", () => {
     await resetServer();
   });
 
+  // The frontend no longer reads chat content from
+  // GET /v1/conversations/:id/events (the legacy `ConversationEvent` path was
+  // retired in Phase E step 18), so HydraApiClient does not expose a method
+  // for it. The mock-server still serves the lifecycle-only route, so this
+  // helper hits it directly to keep the route under contract coverage.
+  async function fetchConversationEvents(
+    conversationId: string,
+  ): Promise<Response> {
+    return originalFetch(
+      `${baseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/events`,
+      { headers: { Authorization: "Bearer dev-token-12345" } },
+    );
+  }
+
+  async function expectConversationEvents(
+    conversationId: string,
+  ): Promise<Array<{ type: string }>> {
+    const resp = await fetchConversationEvents(conversationId);
+    expect(resp.status).toBe(200);
+    return (await resp.json()) as Array<{ type: string }>;
+  }
+
   it("seed conversation chat is reachable via the linked session's events", async () => {
     const conversation = await client.getConversation("c-seed00001");
     expect(conversation.conversation_id).toBe("c-seed00001");
@@ -324,7 +346,7 @@ describe("Conversations", () => {
     // ConversationEvent is lifecycle-only after the SessionEvent migration;
     // an active conversation that has not been suspended/closed has no
     // entries. Chat content lives on the linked session.
-    const events = await client.getConversationEvents("c-seed00001");
+    const events = await expectConversationEvents("c-seed00001");
     expect(events).toEqual([]);
 
     const linked = await client.listSessions({ conversation_id: "c-seed00001" });
@@ -421,7 +443,7 @@ describe("Conversations", () => {
 
     // The conversation event log is lifecycle-only: send does not write
     // here.
-    const convEventsBeforeClose = await client.getConversationEvents(cid);
+    const convEventsBeforeClose = await expectConversationEvents(cid);
     expect(convEventsBeforeClose).toEqual([]);
 
     // close sets status to closed and appends a closed event to the
@@ -429,7 +451,7 @@ describe("Conversations", () => {
     await client.closeConversation(cid);
     const afterClose = await client.getConversation(cid);
     expect(afterClose.status).toBe("closed");
-    const closedEvents = await client.getConversationEvents(cid);
+    const closedEvents = await expectConversationEvents(cid);
     expect(closedEvents[closedEvents.length - 1].type).toBe("closed");
 
     // resume flips back to active
@@ -452,7 +474,8 @@ describe("Conversations", () => {
 
   it("GET on unknown id returns 404", async () => {
     await expect(client.getConversation("c-does-not-exist")).rejects.toBeInstanceOf(ApiError);
-    await expect(client.getConversationEvents("c-does-not-exist")).rejects.toBeInstanceOf(ApiError);
+    const resp = await fetchConversationEvents("c-does-not-exist");
+    expect(resp.status).toBe(404);
   });
 
   it("dev/reset restores seed conversation and clears transient ones", async () => {
@@ -467,7 +490,7 @@ describe("Conversations", () => {
     expect(seed.conversation_id).toBe("c-seed00001");
     // c-seed00006 is a closed seed conversation — its `closed` lifecycle
     // event proves the conversation_events map was repopulated by reset.
-    const seedEvents = await client.getConversationEvents("c-seed00006");
+    const seedEvents = await expectConversationEvents("c-seed00006");
     expect(seedEvents.some((e) => e.type === "closed")).toBe(true);
 
     // Transient one is gone
