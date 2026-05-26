@@ -1,3 +1,6 @@
+use std::fmt;
+use std::str::FromStr;
+
 use serde_json::Value;
 
 use crate::HydraId;
@@ -42,6 +45,38 @@ impl ObjectKind {
             ObjectKind::Document => "document",
             ObjectKind::Conversation => "conversation",
         }
+    }
+}
+
+/// Error returned when a string does not name a known `ObjectKind`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseObjectKindError(pub String);
+
+impl fmt::Display for ParseObjectKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown object kind '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseObjectKindError {}
+
+impl FromStr for ObjectKind {
+    type Err = ParseObjectKindError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "issue" => Ok(ObjectKind::Issue),
+            "patch" => Ok(ObjectKind::Patch),
+            "document" => Ok(ObjectKind::Document),
+            "conversation" => Ok(ObjectKind::Conversation),
+            other => Err(ParseObjectKindError(other.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for ObjectKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
