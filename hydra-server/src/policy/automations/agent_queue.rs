@@ -936,7 +936,9 @@ mod tests {
         updated_patch.reviews = vec![Review::new(
             "needs adjustments".to_string(),
             false,
-            "reviewer".to_string(),
+            hydra_common::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            },
             None,
         )];
         handles

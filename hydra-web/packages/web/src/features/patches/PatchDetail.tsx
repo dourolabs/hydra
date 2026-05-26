@@ -5,6 +5,10 @@ import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { PatchActivity } from "./PatchActivity";
+import {
+  principalAvatarKind,
+  principalDisplayName,
+} from "../principal/formatPrincipal";
 import styles from "./PatchDetail.module.css";
 
 interface PatchDetailProps {
@@ -179,8 +183,14 @@ function ReviewsList({ reviews }: ReviewsListProps) {
       {reviews.map((review, i) => (
         <li key={i} className={styles.review}>
           <div className={styles.reviewHead}>
-            <Avatar name={review.author} kind="human" size="md" />
-            <span className={styles.reviewAuthor}>{review.author}</span>
+            <Avatar
+              name={principalDisplayName(review.author)}
+              kind={principalAvatarKind(review.author)}
+              size="md"
+            />
+            <span className={styles.reviewAuthor}>
+              {principalDisplayName(review.author)}
+            </span>
             <Badge status={review.is_approved ? "approved" : "changes-requested"} />
             {review.submitted_at && (
               <span className={styles.reviewWhen}>{formatTimestamp(review.submitted_at)}</span>

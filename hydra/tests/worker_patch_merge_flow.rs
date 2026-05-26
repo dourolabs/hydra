@@ -60,10 +60,12 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
         record.patch.reviews = vec![Review::new(
             "looks good".to_string(),
             true,
-            "reviewer".to_string(),
+            hydra_common::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            },
             Some(chrono::Utc::now()),
         )];
-        let request = UpsertPatchRequest::new(record.patch);
+        let request = UpsertPatchRequest::new(record.patch.into());
         client.update_patch(&patch_id, &request).await?;
     }
 
@@ -200,10 +202,12 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
         record.patch.reviews = vec![Review::new(
             "lgtm".to_string(),
             true,
-            "reviewer".to_string(),
+            hydra_common::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            },
             Some(chrono::Utc::now()),
         )];
-        let request = UpsertPatchRequest::new(record.patch);
+        let request = UpsertPatchRequest::new(record.patch.into());
         client.update_patch(&patch_id, &request).await?;
     }
 
@@ -354,10 +358,12 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
         record.patch.reviews = vec![Review::new(
             "approved".to_string(),
             true,
-            "reviewer".to_string(),
+            hydra_common::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            },
             Some(chrono::Utc::now()),
         )];
-        let request = UpsertPatchRequest::new(record.patch);
+        let request = UpsertPatchRequest::new(record.patch.into());
         client.update_patch(patch_id, &request).await?;
     }
 

@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use git2::Oid;
 use hydra_common::RepoName;
 use hydra_common::api::v1 as api;
+use hydra_common::principal::Principal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -60,11 +61,19 @@ impl FromStr for PatchStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Stored review record (Phase 5b: `author` is the shared
+/// [`Principal`], not a bare string).
+///
+/// Deserialization is back-compat with the pre-Phase-5b on-disk shape
+/// via [`legacy_author_to_principal`]: a string-typed `author` is
+/// rewritten in flight using the Phase 4a heuristic. This keeps
+/// running through the soft-cutover window even before the row
+/// migration touches every patch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Review {
     pub contents: String,
     pub is_approved: bool,
-    pub author: String,
+    pub author: Principal,
     /// Timestamp for when the review was recorded.
     #[serde(default)]
     pub submitted_at: Option<DateTime<Utc>>,
@@ -74,7 +83,7 @@ impl Review {
     pub fn new(
         contents: String,
         is_approved: bool,
-        author: String,
+        author: Principal,
         submitted_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
@@ -84,6 +93,66 @@ impl Review {
             submitted_at,
         }
     }
+}
+
+impl<'de> Deserialize<'de> for Review {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawReview {
+            contents: String,
+            is_approved: bool,
+            author: serde_json::Value,
+            #[serde(default)]
+            submitted_at: Option<DateTime<Utc>>,
+        }
+
+        let raw = RawReview::deserialize(deserializer)?;
+        let author = match raw.author {
+            // Typed (Phase 5b) wire form: `{ "kind": ..., ... }`.
+            serde_json::Value::Object(_) => {
+                serde_json::from_value(raw.author).map_err(de::Error::custom)?
+            }
+            // Legacy v1 wire form: bare string. Backfilled via the same
+            // syntactic heuristic as `Issue.assignee` (Phase 4a); the row
+            // migration rewrites stored blobs offline, but we have to keep
+            // accepting unmigrated rows on read until the migration has
+            // touched every row.
+            serde_json::Value::String(raw_author) => {
+                legacy_author_to_principal(&raw_author).ok_or_else(|| {
+                    de::Error::custom(format!(
+                        "Review.author legacy string '{raw_author}' could not be parsed as a Principal"
+                    ))
+                })?
+            }
+            other => {
+                return Err(de::Error::custom(format!(
+                    "Review.author must be a typed Principal object or legacy string; got {other}"
+                )));
+            }
+        };
+
+        Ok(Review {
+            contents: raw.contents,
+            is_approved: raw.is_approved,
+            author,
+            submitted_at: raw.submitted_at,
+        })
+    }
+}
+
+/// Apply the Phase 4a legacy-assignee heuristic to a bare
+/// `Review.author` string from a pre-Phase-5b stored blob. Per
+/// design §12, the cutover accepts the breaking-change posture:
+/// bare strings that don't look like a typed path are wrapped as
+/// `Principal::User { name }` via [`Principal::parse_legacy_assignee`].
+/// Anything that can't even validate as a [`Username`] (e.g. empty
+/// string) returns `None` so the deserializer can surface the
+/// problem.
+fn legacy_author_to_principal(raw: &str) -> Option<Principal> {
+    Principal::parse_legacy_assignee(raw)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,6 +509,16 @@ impl From<Patch> for api::patches::Patch {
             value.commit_range.map(Into::into),
             value.base_branch,
         )
+    }
+}
+
+/// Lossy convenience conversion (drops review authors): produces the
+/// request-side [`api::patches::UpsertPatch`] from a domain [`Patch`].
+/// Used by tests / the GitHub PR poller for round-tripping through
+/// the API request shape.
+impl From<Patch> for api::patches::UpsertPatch {
+    fn from(value: Patch) -> Self {
+        api::patches::UpsertPatch::from(api::patches::Patch::from(value))
     }
 }
 

@@ -15,8 +15,8 @@ use hydra_common::{
     constants::ENV_HYDRA_ISSUE_ID,
     issues::IssueId,
     patches::{
-        Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, Review, SearchPatchesQuery,
-        UpsertPatchRequest, UpsertPatchResponse,
+        Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, SearchPatchesQuery,
+        UpsertPatch, UpsertPatchRequest, UpsertPatchResponse, UpsertReviewRequest,
     },
     repositories::SearchRepositoriesQuery,
     PatchId, RelativeVersionNumber, RepoName, Versioned,
@@ -121,14 +121,15 @@ pub enum PatchesCommand {
     },
 
     /// Add a review to an existing patch.
+    ///
+    /// Phase 5b of `/designs/actor-system-overhaul.md` (§6) drops the
+    /// `--author` flag: the server stamps the review's `Principal`
+    /// author from the authenticated actor (the agent / user that the
+    /// CLI's token resolves to).
     Review {
         /// Patch id to review.
         #[arg(value_name = "PATCH_ID")]
         id: PatchId,
-
-        /// Name of the reviewer.
-        #[arg(long = "author", value_name = "AUTHOR", required = true)]
-        author: String,
 
         /// Review contents in plaintext.
         #[arg(long = "contents", value_name = "CONTENTS", required = true)]
@@ -286,11 +287,10 @@ pub async fn run(
         PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
         PatchesCommand::Review {
             id,
-            author,
             contents,
             approve,
             request_changes,
-        } => review_patch(client, id, author, contents, approve, request_changes).await,
+        } => review_patch(client, id, contents, approve, request_changes).await,
         PatchesCommand::Update {
             id,
             title,
@@ -721,7 +721,10 @@ async fn update_patch_inner(
     }
 
     let response = client
-        .update_patch(&patch_id, &UpsertPatchRequest::new(updated_patch.clone()))
+        .update_patch(
+            &patch_id,
+            &UpsertPatchRequest::new(updated_patch.clone().into()),
+        )
         .await
         .with_context(|| format!("failed to update patch '{patch_id}'"))?;
 
@@ -979,7 +982,7 @@ async fn merge_patch(
                     let mut merged_patch = patch.clone();
                     merged_patch.status = PatchStatus::Merged;
                     client
-                        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+                        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch.into()))
                         .await
                         .with_context(|| {
                             format!("failed to update patch '{patch_id}' status to Merged")
@@ -1169,7 +1172,7 @@ async fn merge_patch(
     let mut merged_patch = patch.clone();
     merged_patch.status = PatchStatus::Merged;
     client
-        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch.into()))
         .await
         .with_context(|| format!("failed to update patch '{patch_id}' status to Merged"))?;
 
@@ -1304,7 +1307,7 @@ pub async fn create_patch_artifact_from_repo(
     let github_token = client.get_github_token().await.ok();
     push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
 
-    let upsert_request = UpsertPatchRequest::new(patch_payload.clone());
+    let upsert_request = UpsertPatchRequest::new(patch_payload.clone().into());
 
     let response = client
         .create_patch(&upsert_request)
@@ -1344,36 +1347,40 @@ fn apply_patch_to_repo(patch: &Patch, git_root: &Path) -> Result<()> {
 async fn review_patch(
     client: &HydraClient,
     id: PatchId,
-    author: String,
     contents: String,
     approve: bool,
     request_changes: bool,
 ) -> Result<()> {
-    let author = author.trim().to_string();
-    if author.is_empty() {
-        bail!("Author must not be empty.");
-    }
     let contents = contents.trim().to_string();
     if contents.is_empty() {
         bail!("Review contents must not be empty.");
     }
 
-    let mut record = client
+    let record = client
         .get_patch(&id)
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
 
-    record
-        .patch
-        .reviews
-        .push(Review::new(contents, approve, author, Some(Utc::now())));
+    // Phase 5b §6: the wire-shape `UpsertReviewRequest` omits `author`;
+    // the server stamps the typed `Principal` author from the
+    // authenticated actor. Existing reviews round-trip through the
+    // `From<Patch> for UpsertPatch` conversion (which drops authors),
+    // and the server's `build_patch_from_upsert` matches them by
+    // `(contents, is_approved, submitted_at)` and preserves their
+    // stored authors.
+    let mut upsert: UpsertPatch = record.patch.into();
+    upsert.reviews.push(UpsertReviewRequest::new(
+        contents,
+        approve,
+        Some(Utc::now()),
+    ));
 
     if request_changes {
-        record.patch.status = PatchStatus::ChangesRequested;
+        upsert.status = PatchStatus::ChangesRequested;
     }
 
     let response = client
-        .update_patch(&id, &UpsertPatchRequest::new(record.patch))
+        .update_patch(&id, &UpsertPatchRequest::new(upsert))
         .await
         .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
@@ -1863,7 +1870,7 @@ mod tests {
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
         );
-        let expected_request = UpsertPatchRequest::new(patch.clone());
+        let expected_request = UpsertPatchRequest::new(patch.clone().into());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
         let patch_record = PatchVersionRecord::new(
             patch_id("p-1"),
@@ -2069,7 +2076,7 @@ mod tests {
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
         );
-        let expected_request = UpsertPatchRequest::new(expected_patch);
+        let expected_request = UpsertPatchRequest::new(expected_patch.into());
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"), 0);
         let server = MockServer::start();
         let client = hydra_client(&server);
@@ -2123,7 +2130,7 @@ mod tests {
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
         );
-        let expected_request = UpsertPatchRequest::new(patch.clone());
+        let expected_request = UpsertPatchRequest::new(patch.clone().into());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
         let patch_record = PatchVersionRecord::new(
             patch_id("p-service"),
@@ -2179,7 +2186,9 @@ mod tests {
         let existing_review = Review::new(
             "needs work".to_string(),
             false,
-            "bob".to_string(),
+            hydra_common::Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
+            },
             Some(existing_submitted_at),
         );
         let review_patch_id = patch_id("p-review");
@@ -2213,14 +2222,19 @@ mod tests {
         let update_mock = server.mock(move |when, then| {
             when.method(PUT)
                 .path(format!("/v1/patches/{}", patch_id_for_mock.as_ref()))
+                // Phase 5b: the wire-shape `UpsertReviewRequest` omits
+                // `author`; the server stamps the typed `Principal` from
+                // the authenticated actor for the new review (the existing
+                // one round-trips author-less and is preserved server-side
+                // by `(contents, is_approved, submitted_at)` matching).
                 .json_body_partial(
                     r#"{
                         "patch": {
                             "title": "reviewed patch",
                             "description": "description",
                             "reviews": [
-                                {"contents": "needs work", "is_approved": false, "author": "bob"},
-                                {"contents": "looks good now", "is_approved": true, "author": "alice"}
+                                {"contents": "needs work", "is_approved": false},
+                                {"contents": "looks good now", "is_approved": true}
                             ]
                         }
                     }"#,
@@ -2233,7 +2247,6 @@ mod tests {
         review_patch(
             &client,
             review_patch_id.clone(),
-            "alice".to_string(),
             "looks good now".to_string(),
             true,
             false,
@@ -2284,7 +2297,7 @@ mod tests {
                         "patch": {
                             "status": "ChangesRequested",
                             "reviews": [
-                                {"contents": "needs work", "is_approved": false, "author": "alice"}
+                                {"contents": "needs work", "is_approved": false}
                             ]
                         }
                     }"#,
@@ -2296,7 +2309,6 @@ mod tests {
         review_patch(
             &client,
             patch_id("p-review-rc"),
-            "alice".to_string(),
             "needs work".to_string(),
             false,
             true,
@@ -2347,7 +2359,7 @@ mod tests {
                         "patch": {
                             "status": "Open",
                             "reviews": [
-                                {"contents": "lgtm", "is_approved": true, "author": "alice"}
+                                {"contents": "lgtm", "is_approved": true}
                             ]
                         }
                     }"#,
@@ -2359,7 +2371,6 @@ mod tests {
         review_patch(
             &client,
             patch_id("p-review-approve"),
-            "alice".to_string(),
             "lgtm".to_string(),
             true,
             false,
@@ -2417,7 +2428,9 @@ mod tests {
                 vec![Review::new(
                     "looks ok".to_string(),
                     false,
-                    "sam".to_string(),
+                    hydra_common::Principal::User {
+                        name: hydra_common::api::v1::users::Username::try_new("sam").unwrap(),
+                    },
                     None,
                 )],
                 sample_repo_name(),
@@ -2431,26 +2444,31 @@ mod tests {
             Utc::now(),
             Vec::new(),
         );
-        let expected_request = UpsertPatchRequest::new(Patch::new(
-            "Updated title".to_string(),
-            "Updated description".to_string(),
-            sample_diff(),
-            PatchStatus::Closed,
-            false,
-            Username::from("test-creator"),
-            vec![Review::new(
-                "looks ok".to_string(),
+        let expected_request = UpsertPatchRequest::new(
+            Patch::new(
+                "Updated title".to_string(),
+                "Updated description".to_string(),
+                sample_diff(),
+                PatchStatus::Closed,
                 false,
-                "sam".to_string(),
+                Username::from("test-creator"),
+                vec![Review::new(
+                    "looks ok".to_string(),
+                    false,
+                    hydra_common::Principal::User {
+                        name: hydra_common::api::v1::users::Username::try_new("sam").unwrap(),
+                    },
+                    None,
+                )],
+                sample_repo_name(),
                 None,
-            )],
-            sample_repo_name(),
-            None,
-            false,
-            None,
-            None,
-            None,
-        ));
+                false,
+                None,
+                None,
+                None,
+            )
+            .into(),
+        );
         let server = MockServer::start();
         let client = hydra_client(&server);
         let get_mock = mock_get_patch(&server, patch_record.clone());
@@ -2874,7 +2892,11 @@ mod tests {
             remote_url.clone(),
             vec![(sample_repo_name(), remote_url)],
         );
-        mock_create_patch(&server, UpsertPatchRequest::new(patch_payload), response);
+        mock_create_patch(
+            &server,
+            UpsertPatchRequest::new(patch_payload.into()),
+            response,
+        );
         mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
         mock_whoami(&server);

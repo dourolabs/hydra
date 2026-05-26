@@ -8,8 +8,7 @@ use crate::{
 };
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
-use hydra_common::api::v1 as api;
-use hydra_common::{PatchId, Versioned};
+use hydra_common::{ExternalSystem, PatchId, Principal, Versioned};
 use octocrab::{
     Octocrab,
     models::{
@@ -257,7 +256,13 @@ async fn sync_patch_from_github(
             )
             .await?;
 
-        let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+        let github_reviews = build_review_entries(
+            state.store.as_ref(),
+            reviews,
+            review_comments,
+            issue_comments,
+        )
+        .await?;
         let github_reviews = filter_reviews_by_creator(github_reviews, patch.creator.as_str());
         let review_updates = review_updates(&latest_patch.reviews, github_reviews);
         apply_github_sync(
@@ -274,6 +279,12 @@ async fn sync_patch_from_github(
     };
 
     if updated_patch != latest_patch {
+        // Server-internal callers (poller / sync workers) bypass the
+        // wire-shape `UpsertPatchRequest` path because the typed
+        // `Principal` review authors built in `build_review_entries`
+        // would be dropped by the lossy `From<Patch> for UpsertPatch`
+        // conversion. Call into `state.upsert_patch` directly with the
+        // already-stamped domain Patch instead.
         state
             .upsert_patch(
                 ActorRef::System {
@@ -281,7 +292,7 @@ async fn sync_patch_from_github(
                     on_behalf_of: None,
                 },
                 Some(patch_id.clone()),
-                api::patches::UpsertPatchRequest::new(updated_patch.into()),
+                updated_patch,
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
@@ -334,11 +345,19 @@ async fn select_github_installation_client(
     Ok(Some(installation_client))
 }
 
-fn build_review_entries(
+/// Convert raw GitHub-side review / comment payloads into typed
+/// [`Review`] entries. Per Phase 5b §4.4, each review's `author` is
+/// looked up by GitHub login: a matching Hydra user yields
+/// `Principal::User { name }`, otherwise `Principal::External {
+/// system: "github", username }`. The users table is **not** mutated
+/// when no Hydra account matches — un-mapped GitHub logins surface
+/// only as `External` principals on read.
+async fn build_review_entries(
+    store: &dyn crate::store::ReadOnlyStore,
     reviews: Vec<PullRequestReview>,
     review_comments: Vec<PullRequestComment>,
     issue_comments: Vec<IssueComment>,
-) -> Vec<Review> {
+) -> anyhow::Result<Vec<Review>> {
     let mut entries = Vec::new();
 
     for review in reviews {
@@ -349,9 +368,11 @@ fn build_review_entries(
             continue;
         }
 
-        let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
+        let Some(login) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
+
+        let author = principal_for_github_login(store, &login).await?;
 
         entries.push(Review::new(
             body,
@@ -371,9 +392,11 @@ fn build_review_entries(
             continue;
         }
 
-        let Some(author) = comment.user.as_ref().map(|user| user.login.clone()) else {
+        let Some(login) = comment.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
+
+        let author = principal_for_github_login(store, &login).await?;
 
         entries.push(Review::new(
             body.to_string(),
@@ -391,22 +414,48 @@ fn build_review_entries(
             continue;
         }
 
+        let login = comment.user.login.clone();
+        let author = principal_for_github_login(store, &login).await?;
+
         entries.push(Review::new(
             body.to_string(),
             false,
-            comment.user.login.clone(),
+            author,
             Some(comment.created_at),
         ));
     }
 
-    dedupe_reviews(entries)
+    Ok(dedupe_reviews(entries))
 }
 
+/// Resolve a raw GitHub login to a [`Principal`] per design §4.4.
+async fn principal_for_github_login(
+    store: &dyn crate::store::ReadOnlyStore,
+    login: &str,
+) -> anyhow::Result<Principal> {
+    match store.get_user_by_github_login(login).await? {
+        Some(user) => Ok(Principal::User {
+            name: user.item.username.clone().into(),
+        }),
+        None => Ok(Principal::External {
+            system: ExternalSystem::try_new("github").expect("'github' is a valid external system"),
+            username: login.to_string(),
+        }),
+    }
+}
+
+/// Keep only reviews whose typed `author` resolves to the patch
+/// creator's Hydra username. Reviews with `Principal::Agent` or
+/// `Principal::External` authors are dropped — those are by
+/// definition not "from the creator".
 fn filter_reviews_by_creator(reviews: Vec<Review>, creator: &str) -> Vec<Review> {
     let before_count = reviews.len();
     let filtered: Vec<Review> = reviews
         .into_iter()
-        .filter(|review| review.author.eq_ignore_ascii_case(creator))
+        .filter(|review| match &review.author {
+            Principal::User { name } => name.as_str().eq_ignore_ascii_case(creator),
+            _ => false,
+        })
         .collect();
     let removed = before_count - filtered.len();
     if removed > 0 {
@@ -434,7 +483,7 @@ fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review
         let timestamp = review
             .submitted_at
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
-        (timestamp, review.author.clone())
+        (timestamp, review.author.to_path())
     });
 
     merged_reviews
@@ -479,7 +528,7 @@ fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
 
 fn review_key(review: &Review) -> (String, bool, String, Option<DateTime<Utc>>) {
     (
-        review.author.clone(),
+        review.author.to_path(),
         review.is_approved,
         review.contents.clone(),
         review.submitted_at,
@@ -682,9 +731,29 @@ mod tests {
 
     use crate::domain::users::Username;
     use crate::test_utils::{FailingStore, test_state, test_state_handles, test_state_with_store};
+    use hydra_common::api::v1::users::Username as ApiUsername;
 
     fn sample_diff() -> String {
         "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
+    }
+
+    /// Test helper: build a `Principal::User { name }` from a raw
+    /// string username. Skips API-side validation so the existing
+    /// fixtures (`"alice"`, `"bob"`, …) keep working.
+    fn user_principal(name: &str) -> Principal {
+        Principal::User {
+            name: ApiUsername::try_new(name)
+                .unwrap_or_else(|_| ApiUsername::from(name.to_string())),
+        }
+    }
+
+    /// Test helper: build a `Principal::External` with system
+    /// `"github"`. Mirrors the runtime poller fallback.
+    fn github_external_principal(login: &str) -> Principal {
+        Principal::External {
+            system: ExternalSystem::try_new("github").unwrap(),
+            username: login.to_string(),
+        }
     }
 
     #[tokio::test]
@@ -756,13 +825,13 @@ mod tests {
         let existing = vec![Review::new(
             "local".to_string(),
             false,
-            "alice".to_string(),
+            user_principal("alice"),
             None,
         )];
         let github_reviews = vec![Review::new(
             "approved".to_string(),
             true,
-            "bob".to_string(),
+            user_principal("bob"),
             Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
         )];
 
@@ -778,12 +847,17 @@ mod tests {
         let existing = vec![Review::new(
             "looks fine".to_string(),
             true,
-            "alice".to_string(),
+            user_principal("alice"),
             None,
         )];
         let github_reviews = vec![
             existing[0].clone(),
-            Review::new("please update".to_string(), false, "bob".to_string(), None),
+            Review::new(
+                "please update".to_string(),
+                false,
+                user_principal("bob"),
+                None,
+            ),
         ];
 
         assert!(has_new_non_approved_reviews(&existing, &github_reviews));
@@ -791,7 +865,7 @@ mod tests {
         let approvals_only = vec![Review::new(
             "lgtm".to_string(),
             true,
-            "carol".to_string(),
+            user_principal("carol"),
             None,
         )];
         assert!(!has_new_non_approved_reviews(&existing, &approvals_only));
@@ -802,7 +876,7 @@ mod tests {
         let review = Review::new(
             "same".to_string(),
             false,
-            "alice".to_string(),
+            user_principal("alice"),
             Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
         );
         let result = dedupe_reviews(vec![review.clone(), review.clone()]);
@@ -897,7 +971,7 @@ mod tests {
         let reviews = vec![Review::new(
             "please update".to_string(),
             false,
-            "alice".to_string(),
+            user_principal("alice"),
             None,
         )];
         let ci_status = GithubCiStatus::new(GithubCiState::Success, None);
@@ -936,7 +1010,7 @@ mod tests {
         let existing_reviews = vec![Review::new(
             "please update".to_string(),
             false,
-            "alice".to_string(),
+            user_principal("alice"),
             None,
         )];
         let patch = Patch::new(
@@ -1230,18 +1304,63 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn build_review_entries_collects_all_review_types() {
+    #[tokio::test]
+    async fn build_review_entries_collects_all_review_types() {
+        let handles = test_state_handles();
         let reviews = vec![make_pr_review("alice", "looks good", "APPROVED")];
         let review_comments = vec![make_pr_comment("bob", "comment body")];
         let issue_comments = vec![make_issue_comment("charlie", "issue comment")];
 
-        let result = build_review_entries(reviews, review_comments, issue_comments);
+        let result = build_review_entries(
+            handles.store.as_ref(),
+            reviews,
+            review_comments,
+            issue_comments,
+        )
+        .await
+        .expect("build_review_entries should not error");
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0].author, "alice");
+        // None of these GitHub logins are mapped to Hydra users, so each
+        // author lands as a `Principal::External { system: "github", ... }`.
+        assert_eq!(result[0].author, github_external_principal("alice"));
         assert!(result[0].is_approved);
-        assert_eq!(result[1].author, "bob");
-        assert_eq!(result[2].author, "charlie");
+        assert_eq!(result[1].author, github_external_principal("bob"));
+        assert_eq!(result[2].author, github_external_principal("charlie"));
+    }
+
+    /// Phase 5b §4.4: a GitHub login that matches a Hydra user
+    /// (case-insensitively) is rewritten to `Principal::User`; an
+    /// unmapped login falls back to `Principal::External`.
+    #[tokio::test]
+    async fn build_review_entries_maps_known_user_to_principal_user() {
+        let handles = test_state_handles();
+        // Seed a Hydra user named "alice" — case-insensitive lookup will
+        // match the GitHub login "Alice" below.
+        handles
+            .store
+            .as_ref()
+            .add_user(
+                crate::domain::users::User::new(Username::from("alice"), None, false),
+                &ActorRef::test(),
+            )
+            .await
+            .expect("seed user");
+
+        let reviews = vec![make_pr_review("Alice", "looks good", "APPROVED")];
+        let review_comments = vec![make_pr_comment("octocat", "an external commenter")];
+        let issue_comments: Vec<IssueComment> = vec![];
+
+        let result = build_review_entries(
+            handles.store.as_ref(),
+            reviews,
+            review_comments,
+            issue_comments,
+        )
+        .await
+        .expect("build_review_entries should not error");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].author, user_principal("alice"));
+        assert_eq!(result[1].author, github_external_principal("octocat"));
     }
 
     #[test]
@@ -1250,23 +1369,28 @@ mod tests {
             Review::new(
                 "creator review".to_string(),
                 false,
-                "alice".to_string(),
+                user_principal("alice"),
                 None,
             ),
-            Review::new("third party".to_string(), false, "bob".to_string(), None),
+            Review::new(
+                "third party".to_string(),
+                false,
+                user_principal("bob"),
+                None,
+            ),
         ];
         let result = filter_reviews_by_creator(reviews, "alice");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].author, "alice");
+        assert_eq!(result[0].author, user_principal("alice"));
         assert_eq!(result[0].contents, "creator review");
     }
 
     #[test]
     fn filter_reviews_by_creator_case_insensitive() {
         let reviews = vec![
-            Review::new("review 1".to_string(), false, "Alice".to_string(), None),
-            Review::new("review 2".to_string(), false, "ALICE".to_string(), None),
-            Review::new("review 3".to_string(), false, "aLiCe".to_string(), None),
+            Review::new("review 1".to_string(), false, user_principal("Alice"), None),
+            Review::new("review 2".to_string(), false, user_principal("ALICE"), None),
+            Review::new("review 3".to_string(), false, user_principal("aLiCe"), None),
         ];
         let result = filter_reviews_by_creator(reviews, "alice");
         assert_eq!(result.len(), 3);
@@ -1275,16 +1399,34 @@ mod tests {
     #[test]
     fn filter_reviews_by_creator_removes_all_third_party() {
         let reviews = vec![
-            Review::new("review 1".to_string(), false, "bob".to_string(), None),
-            Review::new("review 2".to_string(), false, "charlie".to_string(), None),
-            Review::new("review 3".to_string(), false, "dave".to_string(), None),
+            Review::new("review 1".to_string(), false, user_principal("bob"), None),
+            Review::new(
+                "review 2".to_string(),
+                false,
+                user_principal("charlie"),
+                None,
+            ),
+            Review::new("review 3".to_string(), false, user_principal("dave"), None),
         ];
         let result = filter_reviews_by_creator(reviews, "alice");
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn build_and_filter_end_to_end() {
+    #[tokio::test]
+    async fn build_and_filter_end_to_end() {
+        let handles = test_state_handles();
+        // Seed "alice" so her GitHub login resolves to `Principal::User`,
+        // which is what `filter_reviews_by_creator` keys on (per Phase 5b).
+        handles
+            .store
+            .as_ref()
+            .add_user(
+                crate::domain::users::User::new(Username::from("alice"), None, false),
+                &ActorRef::test(),
+            )
+            .await
+            .expect("seed user");
+
         let reviews = vec![
             make_pr_review("alice", "creator review", "COMMENTED"),
             make_pr_review("bob", "third party review", "CHANGES_REQUESTED"),
@@ -1298,16 +1440,22 @@ mod tests {
             make_issue_comment("dave", "third party issue comment"),
         ];
 
-        let all_reviews = build_review_entries(reviews, review_comments, issue_comments);
+        let all_reviews = build_review_entries(
+            handles.store.as_ref(),
+            reviews,
+            review_comments,
+            issue_comments,
+        )
+        .await
+        .expect("build_review_entries should not error");
         assert_eq!(all_reviews.len(), 6);
 
         let filtered = filter_reviews_by_creator(all_reviews, "alice");
         assert_eq!(filtered.len(), 3);
-        assert!(
-            filtered
-                .iter()
-                .all(|r| r.author.eq_ignore_ascii_case("alice"))
-        );
+        assert!(filtered.iter().all(|r| matches!(
+            &r.author,
+            Principal::User { name } if name.as_str().eq_ignore_ascii_case("alice"),
+        )));
     }
 
     #[tokio::test]
@@ -1533,7 +1681,7 @@ mod tests {
         let existing_reviews = vec![Review::new(
             "please update".to_string(),
             false,
-            "alice".to_string(),
+            user_principal("alice"),
             None,
         )];
         let github = GithubPr::new(

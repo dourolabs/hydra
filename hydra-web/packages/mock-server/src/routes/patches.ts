@@ -4,8 +4,12 @@ import { generateId } from "../id.js";
 import { DEV_USERNAME } from "../auth.js";
 import type {
   Patch,
+  Principal,
+  Review,
+  UpsertPatch,
   UpsertPatchRequest,
   UpsertPatchResponse,
+  UpsertReviewRequest,
   PatchVersionRecord,
   ListPatchesResponse,
   ListPatchVersionsResponse,
@@ -13,6 +17,67 @@ import type {
   PatchSummary,
   ReviewSummary,
 } from "@hydra/api";
+
+/**
+ * Phase 5b of `/designs/actor-system-overhaul.md` (§6): the
+ * mock-server's review-author stamping mirrors the production
+ * server's behaviour. For each incoming `UpsertReviewRequest`:
+ *
+ *   * if the tuple `(contents, is_approved, submitted_at)` matches
+ *     an existing review on the prior patch version, preserve the
+ *     stored author;
+ *   * otherwise stamp the typed `Principal::User { name: DEV_USERNAME }`
+ *     — the mock harness has a single authenticated dev user, so
+ *     mirroring its identity onto new reviews lines up with the
+ *     real auth flow.
+ */
+function stampReviewAuthors(
+  incoming: UpsertReviewRequest[],
+  prior: Review[],
+): Review[] {
+  const defaultAuthor: Principal = { kind: "user", name: DEV_USERNAME };
+  return incoming.map((req) => {
+    const match = prior.find(
+      (existing) =>
+        existing.contents === req.contents &&
+        existing.is_approved === req.is_approved &&
+        existing.submitted_at === req.submitted_at,
+    );
+    return {
+      contents: req.contents,
+      is_approved: req.is_approved,
+      author: match ? match.author : defaultAuthor,
+      submitted_at: req.submitted_at,
+    };
+  });
+}
+
+/**
+ * Translate the wire-shape `UpsertPatch` (with author-less
+ * `UpsertReviewRequest`s) into the canonical stored `Patch` shape
+ * (with author-bearing `Review`s). Used by both POST (no prior
+ * reviews) and PUT (prior reviews loaded from the store).
+ */
+function upsertPatchToPatch(
+  upsert: UpsertPatch,
+  prior: Review[],
+): Patch {
+  return {
+    title: upsert.title,
+    description: upsert.description,
+    diff: upsert.diff,
+    status: upsert.status,
+    is_automatic_backup: upsert.is_automatic_backup,
+    creator: upsert.creator,
+    reviews: stampReviewAuthors(upsert.reviews ?? [], prior),
+    service_repo_name: upsert.service_repo_name,
+    github: upsert.github,
+    deleted: upsert.deleted ?? false,
+    branch_name: upsert.branch_name,
+    commit_range: upsert.commit_range,
+    base_branch: upsert.base_branch,
+  };
+}
 
 const COLLECTION = "patches";
 const SSE_PREFIX = "patch";
@@ -72,11 +137,13 @@ export function createPatchRoutes(store: Store): Hono {
   app.post("/v1/patches", async (c) => {
     const body = await c.req.json<UpsertPatchRequest>();
     const id = generateId("patch");
-    const patch: Patch = {
+    const upsert: UpsertPatch = {
       ...body.patch,
       creator: body.patch.creator || DEV_USERNAME,
-      reviews: body.patch.reviews ?? [],
     };
+    // POST has no prior reviews; every incoming review is "new" and
+    // therefore stamped with the dev user's typed Principal.
+    const patch = upsertPatchToPatch(upsert, []);
     const entry = store.create<Patch>(COLLECTION, id, patch, SSE_PREFIX);
     const resp: UpsertPatchResponse = {
       patch_id: id,
@@ -89,10 +156,10 @@ export function createPatchRoutes(store: Store): Hono {
   app.put("/v1/patches/:id", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<UpsertPatchRequest>();
-    const patch: Patch = {
-      ...body.patch,
-      reviews: body.patch.reviews ?? [],
-    };
+    // Preserve existing review authors on a PUT by matching the
+    // incoming tuple against the prior stored patch's reviews.
+    const prior = store.get<Patch>(COLLECTION, id)?.data.reviews ?? [];
+    const patch = upsertPatchToPatch(body.patch, prior);
     const entry = store.update<Patch>(COLLECTION, id, patch, SSE_PREFIX);
     const resp: UpsertPatchResponse = {
       patch_id: id,

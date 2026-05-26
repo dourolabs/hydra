@@ -1,6 +1,36 @@
 use chrono::{DateTime, Utc};
 
 use crate::api::v1::patches::{PatchVersionRecord, Review};
+use crate::principal::Principal;
+
+/// Are two [`Principal`]s "the same actor" for review-attribution
+/// purposes? Phase 5b keeps the pre-Phase-5b case-insensitive
+/// semantics for `User` / `Agent` names so existing reviews
+/// authored as `Principal::User { name: "Alice" }` still satisfy a
+/// merge policy that names `Principal::User { name: "alice" }`.
+/// [`Principal::External`] matches on `(system, username)` with
+/// case-insensitive username compare.
+fn principals_match_ci(a: &Principal, b: &Principal) -> bool {
+    match (a, b) {
+        (Principal::User { name: n1 }, Principal::User { name: n2 }) => {
+            n1.as_str().eq_ignore_ascii_case(n2.as_str())
+        }
+        (Principal::Agent { name: n1 }, Principal::Agent { name: n2 }) => {
+            n1.as_str().eq_ignore_ascii_case(n2.as_str())
+        }
+        (
+            Principal::External {
+                system: s1,
+                username: u1,
+            },
+            Principal::External {
+                system: s2,
+                username: u2,
+            },
+        ) => s1 == s2 && u1.eq_ignore_ascii_case(u2),
+        _ => false,
+    }
+}
 
 /// Per-review staleness check against a precomputed cutoff timestamp.
 ///
@@ -39,22 +69,29 @@ pub fn is_review_non_stale(review: &Review, patch_versions: &[PatchVersionRecord
     is_non_stale_with_cutoff(review, cutoff)
 }
 
-/// Find the latest non-stale review by a given author (case-insensitive match).
-/// When multiple reviews exist from the same author, the one with the latest
-/// `submitted_at` timestamp wins. Reviews without a timestamp are treated
-/// as older than any review with a timestamp.
+/// Find the latest non-stale review by a given author (matched
+/// case-insensitively on the principal's name). When multiple
+/// reviews exist from the same author, the one with the latest
+/// `submitted_at` timestamp wins. Reviews without a timestamp are
+/// treated as older than any review with a timestamp.
 ///
-/// If `staleness_cutoff` is `Some`, reviews whose `submitted_at` is before the
-/// cutoff are considered stale and excluded. Reviews without a `submitted_at`
-/// are also considered stale when a cutoff is present.
+/// If `staleness_cutoff` is `Some`, reviews whose `submitted_at` is
+/// before the cutoff are considered stale and excluded. Reviews
+/// without a `submitted_at` are also considered stale when a cutoff
+/// is present.
+///
+/// Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
+/// `Review.author` from a bare string to [`Principal`]; this
+/// function follows suit and matches by Principal. See
+/// [`principals_match_ci`] for the matching semantics.
 pub fn find_latest_review_by_author<'a>(
     reviews: &'a [Review],
-    author: &str,
+    author: &Principal,
     staleness_cutoff: Option<DateTime<Utc>>,
 ) -> Option<&'a Review> {
     reviews
         .iter()
-        .filter(|r| r.author.eq_ignore_ascii_case(author))
+        .filter(|r| principals_match_ci(&r.author, author))
         .filter(|r| is_non_stale_with_cutoff(r, staleness_cutoff))
         .max_by(|a, b| {
             // Reviews with submitted_at are always newer than those without
@@ -101,20 +138,40 @@ pub fn has_approved_non_dismissed_review(
     reviews: &[Review],
     staleness_cutoff: Option<DateTime<Utc>>,
 ) -> bool {
-    // Collect unique authors (case-insensitive)
-    let authors: std::collections::HashSet<String> = reviews
-        .iter()
-        .map(|r| r.author.to_ascii_lowercase())
-        .collect();
-
-    for author in &authors {
-        if let Some(latest) = find_latest_review_by_author(reviews, author, staleness_cutoff) {
+    // Collect unique authors keyed on canonical path form (case-folded
+    // for User/Agent/External name segments). Using a String key keeps
+    // the per-actor uniqueness identical to the pre-Phase-5b
+    // `to_ascii_lowercase()` deduplication.
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for review in reviews {
+        let key = canonical_principal_key(&review.author);
+        if !seen_keys.insert(key) {
+            continue;
+        }
+        if let Some(latest) =
+            find_latest_review_by_author(reviews, &review.author, staleness_cutoff)
+        {
             if latest.is_approved {
                 return true;
             }
         }
     }
     false
+}
+
+/// Canonical, case-folded key for a [`Principal`] — used to dedupe
+/// per-author when scanning a review list. Mirrors the matching done
+/// by [`principals_match_ci`].
+fn canonical_principal_key(p: &Principal) -> String {
+    match p {
+        Principal::User { name } => format!("users/{}", name.as_str().to_ascii_lowercase()),
+        Principal::Agent { name } => format!("agents/{}", name.as_str().to_ascii_lowercase()),
+        Principal::External { system, username } => format!(
+            "external/{}/{}",
+            system.as_str(),
+            username.to_ascii_lowercase()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -128,6 +185,13 @@ mod tests {
     use chrono::Duration;
     use std::str::FromStr;
 
+    fn user(name: &str) -> Principal {
+        Principal::User {
+            name: crate::api::v1::users::Username::try_new(name)
+                .unwrap_or_else(|_| crate::api::v1::users::Username::from(name.to_string())),
+        }
+    }
+
     fn make_review(
         contents: &str,
         is_approved: bool,
@@ -137,7 +201,7 @@ mod tests {
         Review::new(
             contents.to_string(),
             is_approved,
-            author.to_string(),
+            user(author),
             submitted_at,
         )
     }
@@ -187,7 +251,7 @@ mod tests {
             make_review("other", true, "bob", Some(now)),
         ];
 
-        let result = find_latest_review_by_author(&reviews, "alice", None).unwrap();
+        let result = find_latest_review_by_author(&reviews, &user("alice"), None).unwrap();
         assert!(result.is_approved);
         assert_eq!(result.contents, "newer");
     }
@@ -196,7 +260,7 @@ mod tests {
     fn find_latest_review_case_insensitive() {
         let reviews = vec![make_review("ok", true, "Alice", Some(Utc::now()))];
 
-        let result = find_latest_review_by_author(&reviews, "alice", None);
+        let result = find_latest_review_by_author(&reviews, &user("alice"), None);
         assert!(result.is_some());
         assert!(result.unwrap().is_approved);
     }
@@ -205,7 +269,7 @@ mod tests {
     fn find_latest_review_no_match() {
         let reviews = vec![make_review("ok", true, "bob", Some(Utc::now()))];
 
-        let result = find_latest_review_by_author(&reviews, "alice", None);
+        let result = find_latest_review_by_author(&reviews, &user("alice"), None);
         assert!(result.is_none());
     }
 
@@ -220,7 +284,7 @@ mod tests {
             make_review("changes needed", false, "alice", Some(now)),
         ];
 
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff)).unwrap();
+        let result = find_latest_review_by_author(&reviews, &user("alice"), Some(cutoff)).unwrap();
         assert!(!result.is_approved);
         assert_eq!(result.contents, "changes needed");
     }
@@ -236,7 +300,7 @@ mod tests {
             Some(now - Duration::hours(2)),
         )];
 
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff));
+        let result = find_latest_review_by_author(&reviews, &user("alice"), Some(cutoff));
         assert!(result.is_none());
     }
 
@@ -246,7 +310,7 @@ mod tests {
         let cutoff = now - Duration::hours(1);
         let reviews = vec![make_review("LGTM", true, "alice", None)];
 
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff));
+        let result = find_latest_review_by_author(&reviews, &user("alice"), Some(cutoff));
         assert!(result.is_none());
     }
 

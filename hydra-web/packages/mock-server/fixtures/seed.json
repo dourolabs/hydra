@@ -1631,7 +1631,7 @@
         {
           "contents": "Looks good overall. A few questions:\n1. Should we add token caching to reduce calls to the OIDC provider?\n2. The error handling in the callback route could be more specific.\n3. Consider adding a health check endpoint that verifies OIDC provider connectivity.",
           "is_approved": false,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-14T16:30:00.000Z"
         }
       ],
@@ -1694,7 +1694,7 @@
         {
           "contents": "LGTM! Clean implementation. The scope hierarchy is well thought out.",
           "is_approved": true,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-13T11:00:00.000Z"
         }
       ],
@@ -1746,7 +1746,7 @@
               {
                 "contents": "LGTM! Clean implementation. The scope hierarchy is well thought out.",
                 "is_approved": true,
-                "author": "reviewer",
+                "author": {"kind": "agent", "name": "reviewer"},
                 "submitted_at": "2026-03-13T11:00:00.000Z"
               }
             ],
@@ -1774,7 +1774,7 @@
         {
           "contents": "The sliding window implementation has a race condition between INCR and EXPIRE. Use a Lua script or MULTI/EXEC to make it atomic. Also, the Redis connection pool isn't being closed on shutdown which causes the memory leak reported in i-seed00006.",
           "is_approved": false,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-14T15:00:00.000Z"
         }
       ],
@@ -1857,7 +1857,7 @@
         {
           "contents": "The federation setup looks correct. Good use of @key directives and entity references. The dataloader pattern is well-implemented.",
           "is_approved": true,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-13T12:00:00.000Z"
         }
       ],
@@ -1887,7 +1887,7 @@
         {
           "contents": "Clean integration. The persistence adapter handles edge cases well. Approved.",
           "is_approved": true,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-14T18:30:00.000Z"
         }
       ],
@@ -1963,7 +1963,7 @@
         {
           "contents": "Good first cut. Two notes: (1) consider moving `startHeartbeat` interval to a class constant; (2) the connection map is keyed by user_id — what's the plan for multiple concurrent connections from one user?",
           "is_approved": false,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-15T11:00:00.000Z"
         }
       ],
@@ -2016,7 +2016,7 @@
         {
           "contents": "The queue itself is clean, but the deadlock under burst load needs to be fixed before merge. Specifically, when the in-flight promise rejects, queued callers should also see the rejection — right now if `inflight.delete` runs before they `.then()`, the next call sees no in-flight and starts another refresh, which is the bug.",
           "is_approved": false,
-          "author": "reviewer",
+          "author": {"kind": "agent", "name": "reviewer"},
           "submitted_at": "2026-03-15T15:00:00.000Z"
         }
       ],

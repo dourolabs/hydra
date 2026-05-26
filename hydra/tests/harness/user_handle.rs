@@ -245,7 +245,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertPatchRequest::new(patch);
+        let request = UpsertPatchRequest::new(patch.into());
         let response = self
             .client
             .create_patch(&request)
@@ -287,7 +287,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertPatchRequest::new(patch);
+        let request = UpsertPatchRequest::new(patch.into());
         let response = self
             .client
             .create_patch(&request)

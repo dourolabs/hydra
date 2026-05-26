@@ -275,7 +275,19 @@ impl PatchAssertions for PatchVersionRecord {
     }
 
     fn assert_review_from(&self, author: &str, is_approved: bool) {
-        let review = self.patch.reviews.iter().find(|r| r.author == author);
+        // Phase 5b: `Review.author` is a typed `Principal`. Match via
+        // its canonical path form for back-compat — accept either a
+        // bare name (assumed `users/<name>`) or a full path form.
+        let normalized = if author.contains('/') {
+            author.to_string()
+        } else {
+            format!("users/{author}")
+        };
+        let review = self
+            .patch
+            .reviews
+            .iter()
+            .find(|r| r.author.to_path().eq_ignore_ascii_case(&normalized));
         match review {
             Some(r) => {
                 assert_eq!(
@@ -285,11 +297,11 @@ impl PatchAssertions for PatchVersionRecord {
                 );
             }
             None => {
-                let authors: Vec<&str> = self
+                let authors: Vec<String> = self
                     .patch
                     .reviews
                     .iter()
-                    .map(|r| r.author.as_str())
+                    .map(|r| r.author.to_path())
                     .collect();
                 panic!(
                     "patch {}: expected review from '{}', but only found reviews from: {:?}",

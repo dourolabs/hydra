@@ -347,7 +347,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Persist the updated GitHub metadata via AppState (store is read-only
         // in the automation context, so we must go through AppState for writes).
-        let request = hydra_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
+        // Phase 5b: this is a server-internal automation path — the patch
+        // already carries its existing typed `Principal` review authors, so
+        // we go through the domain-shape `upsert_patch` directly rather than
+        // the wire-shape `upsert_patch_from_request`, which would drop the
+        // authors on the round-trip through `UpsertPatch`.
         ctx.app_state
             .upsert_patch(
                 ActorRef::Automation {
@@ -355,7 +359,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     triggered_by: Some(Box::new(ctx.actor().clone())),
                 },
                 Some(patch_id.clone()),
-                request,
+                patch,
             )
             .await
             .map_err(|e| {

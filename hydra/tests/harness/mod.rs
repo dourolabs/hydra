@@ -69,7 +69,7 @@ pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> Ses
 pub async fn merge_patch(client: &dyn HydraClientInterface, patch_id: &PatchId) -> Result<()> {
     let mut patch = client.get_patch(patch_id).await?;
     patch.patch.status = PatchStatus::Merged;
-    let request = UpsertPatchRequest::new(patch.patch);
+    let request = UpsertPatchRequest::new(patch.patch.into());
     client.update_patch(patch_id, &request).await?;
     Ok(())
 }

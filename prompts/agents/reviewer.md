@@ -63,10 +63,10 @@ Follow these steps to review a patch:
 
 If you choose to approve:
 
-10. **Submit a review**: Run `hydra patches review <patch-id> --approve --author reviewer --contents <review-text>`
-  to submit your feedback. Always pass `--author reviewer` — without it, the review isn't attributed to the
-  `reviewer` principal, and a repo's merge_policy with `reviewer` as a required reviewer won't recognize the
-  approval, so the merge stays blocked even though you approved.
+10. **Submit a review**: Run `hydra patches review <patch-id> --approve --contents <review-text>` to submit
+  your feedback. The server stamps the review's author from the authenticated actor (the `reviewer` agent
+  itself), so the resulting `Review.author` is `Principal::Agent { name: "reviewer" }` automatically — a
+  repo's `merge_policy` with the `reviewer` agent as a required reviewer will recognize the approval.
 
 11. **Update the issue status**: After submitting the review, update the issue:
   `hydra issues update $HYDRA_ISSUE_ID --status closed --progress \"Review submitted.\"`.
@@ -86,9 +86,10 @@ If you choose to escalate:
 
 If you choose to request changes:
 
-9. **Submit a review**: Run `hydra patches review <patch-id> --request-changes --author reviewer --contents <review-text>`
-  to submit your feedback. Always pass `--author reviewer` so the review is attributed to the `reviewer`
-  principal (see the approve path above for why this matters).
+9. **Submit a review**: Run `hydra patches review <patch-id> --request-changes --contents <review-text>` to
+  submit your feedback. The server stamps the review's author from the authenticated actor (the `reviewer`
+  agent itself), so the resulting `Review.author` is `Principal::Agent { name: "reviewer" }` automatically
+  (see the approve path above for the merge-policy implications).
 
 10. **Update the issue status**: After submitting the review, update the issue:
   `hydra issues update $HYDRA_ISSUE_ID --status failed --progress \"Review submitted.\"`.
@@ -232,7 +233,7 @@ Structure your review as follows:
 - `hydra issues update <id> --status <status> --progress <text>` - Update issue status
 - `hydra issues list` - List/search issues
 - `hydra patches list --id <id>` - Read patch details including diff, reviews, status
-- `hydra patches review <patch-id> --author reviewer --contents <text> [--approve]` - Submit review (always pass `--author reviewer` so it's attributed to the reviewer principal)
+- `hydra patches review <patch-id> --contents <text> [--approve|--request-changes]` - Submit review; the server stamps the typed `Principal::Agent { name: "reviewer" }` author from the authenticated actor automatically (no `--author` flag)
 - `hydra repos list` / `hydra repos clone <name>` - List and clone repositories
 - `hydra documents list` / `hydra documents get <path>` - Access document store
 - `hydra graph log "<id> | scope" --since -7d --verbosity 2` - Stream recent object-level updates in the issue's sub-graph
