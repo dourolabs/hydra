@@ -529,15 +529,25 @@ mod tests {
     /// Connects to the per-test postgres pool indicated by `DATABASE_URL`,
     /// drops + recreates the `metis` schema, runs migrations to HEAD, and
     /// returns the prepared pool.
+    ///
+    /// Also drops `public._sqlx_migrations` so the next `MIGRATOR.run`
+    /// replays from scratch. Without that, the second call within one test
+    /// would find every migration "applied" and skip them, leaving the
+    /// freshly-recreated `metis` schema empty. Mirrors the equivalent
+    /// reset in `hydra-server/tests/migration_roundtrip.rs`.
     async fn prepare_pool(dsn: &str) -> anyhow::Result<PgPool> {
         let pool = PgPoolOptions::new()
             .max_connections(2)
             .connect(dsn)
             .await
             .context("connect to seed-determinism test DB")?;
-        pool.execute("DROP SCHEMA IF EXISTS metis CASCADE; CREATE SCHEMA metis;")
-            .await
-            .context("reset metis schema")?;
+        pool.execute(
+            "DROP SCHEMA IF EXISTS metis CASCADE; \
+             CREATE SCHEMA metis; \
+             DROP TABLE IF EXISTS public._sqlx_migrations;",
+        )
+        .await
+        .context("reset metis schema and sqlx migration tracking table")?;
         hydra_server::store::postgres_v2::run_migrations(&pool).await?;
         Ok(pool)
     }
@@ -561,7 +571,25 @@ mod tests {
             out.status,
             String::from_utf8_lossy(&out.stderr),
         );
-        String::from_utf8(out.stdout).context("pg_dump output not utf-8")
+        let raw = String::from_utf8(out.stdout).context("pg_dump output not utf-8")?;
+        Ok(strip_pg_dump_restrict_tokens(&raw))
+    }
+
+    /// pg_dump 16.14+ emits a fresh random token on each invocation in the
+    /// leading `\restrict <token>` and trailing `\unrestrict <token>` psql
+    /// meta-commands, which makes byte-wise snapshot comparison flaky. The
+    /// payload between those lines is deterministic; drop the wrapper lines
+    /// so the determinism check actually compares the data.
+    fn strip_pg_dump_restrict_tokens(dump: &str) -> String {
+        let mut out = String::with_capacity(dump.len());
+        for line in dump.lines() {
+            if line.starts_with("\\restrict ") || line.starts_with("\\unrestrict ") {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
     }
 
     /// Run `seed_baseline` twice against freshly-reset databases and
