@@ -234,10 +234,12 @@ mod ts_export {
         // API v1: patches
         crate::patches::PatchStatus::export_all(&cfg).expect("PatchStatus");
         crate::patches::Review::export_all(&cfg).expect("Review");
+        crate::patches::UpsertReviewRequest::export_all(&cfg).expect("UpsertReviewRequest");
         crate::patches::GithubPr::export_all(&cfg).expect("GithubPr");
         crate::patches::GitOid::export_all(&cfg).expect("GitOid");
         crate::patches::CommitRange::export_all(&cfg).expect("CommitRange");
         crate::patches::Patch::export_all(&cfg).expect("Patch");
+        crate::patches::UpsertPatch::export_all(&cfg).expect("UpsertPatch");
         crate::patches::PatchVersionRecord::export_all(&cfg).expect("PatchVersionRecord");
         crate::patches::UpsertPatchRequest::export_all(&cfg).expect("UpsertPatchRequest");
         crate::patches::UpsertPatchResponse::export_all(&cfg).expect("UpsertPatchResponse");

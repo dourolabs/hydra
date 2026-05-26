@@ -2,6 +2,10 @@ import { Link } from "react-router-dom";
 import { Avatar, Badge, DiffViewer, Spinner } from "@hydra/ui";
 import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatch } from "../patches/usePatch";
+import {
+  principalAvatarKind,
+  principalDisplayName,
+} from "../principal/formatPrincipal";
 import styles from "./PatchPreview.module.css";
 
 interface PatchPreviewCardProps {
@@ -62,8 +66,12 @@ function PatchPreviewCard({ patchId, issueId }: PatchPreviewCardProps) {
         <div className={styles.patchReviews}>
           {patch.reviews.map((review, i) => (
             <span key={i} className={styles.patchReviewChip}>
-              <Avatar name={review.author} size="sm" />
-              {review.author}
+              <Avatar
+                name={principalDisplayName(review.author)}
+                kind={principalAvatarKind(review.author)}
+                size="sm"
+              />
+              {principalDisplayName(review.author)}
               {" \u2014 "}
               <Badge
                 status={review.is_approved ? "approved" : "changes-requested"}

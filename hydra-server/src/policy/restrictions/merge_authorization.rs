@@ -295,7 +295,7 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<String> {
 
     let mut authors: Vec<String> = Vec::new();
     for review in &api_reviews {
-        let key = review.author.to_ascii_lowercase();
+        let key = principal_display_name(&review.author).to_ascii_lowercase();
         if authors.iter().any(|a| a.eq_ignore_ascii_case(&key)) {
             continue;
         }
@@ -305,7 +305,7 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<String> {
             None,
         ) {
             if latest.is_approved && is_review_non_stale(latest, &versions) {
-                authors.push(latest.author.clone());
+                authors.push(principal_display_name(&latest.author));
             }
         }
     }
@@ -429,7 +429,12 @@ mod tests {
         Review::new(
             "LGTM".to_string(),
             true,
-            author.to_string(),
+            // Phase 5b: review authors are typed `Principal`s; assume User
+            // for these in-file test fixtures.
+            ApiPrincipal::User {
+                name: ApiUsername::try_new(author)
+                    .unwrap_or_else(|_| ApiUsername::from(author.to_string())),
+            },
             Some(Utc::now()),
         )
     }

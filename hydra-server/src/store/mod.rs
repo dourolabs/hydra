@@ -569,6 +569,49 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
 
+    /// Look up a Hydra user from a raw GitHub login (case-insensitive).
+    ///
+    /// Phase 5b of `/designs/actor-system-overhaul.md` (§4.4): the
+    /// GitHub PR poller maps `pr_review.user.login` to
+    /// `Principal::User { name }` when a Hydra account exists for
+    /// that login, and falls back to
+    /// `Principal::External { system: "github", username }` otherwise.
+    /// The users table does not carry a separate `github_login`
+    /// column today (only `github_user_id`), so per the design we
+    /// treat the Hydra username as the GitHub login and match
+    /// case-insensitively.
+    ///
+    /// Default implementation: try a direct (case-sensitive)
+    /// [`Self::get_user`] first as the fast path, then fall back to
+    /// a case-insensitive scan of [`Self::list_users`]. Stores that
+    /// want a single-shot case-insensitive index lookup can override
+    /// this method.
+    ///
+    /// Returns `Ok(None)` when no matching, non-deleted user exists.
+    async fn get_user_by_github_login(
+        &self,
+        login: &str,
+    ) -> Result<Option<Versioned<User>>, StoreError> {
+        // Fast path: exact-case username match.
+        let exact = Username::from(login);
+        match self.get_user(&exact, false).await {
+            Ok(user) => return Ok(Some(user)),
+            Err(StoreError::UserNotFound(_)) => {}
+            Err(other) => return Err(other),
+        }
+
+        // Fall back to a case-insensitive scan. Deleted users are filtered
+        // out by `list_users` default (include_deleted = false), which
+        // matches the design's intent: the poller should not attribute a
+        // review to a tombstoned account.
+        let users = self.list_users(&SearchUsersQuery::default()).await?;
+        let login_lower = login.to_ascii_lowercase();
+        Ok(users
+            .into_iter()
+            .find(|(name, _)| name.as_str().eq_ignore_ascii_case(&login_lower))
+            .map(|(_, versioned)| versioned))
+    }
+
     /// Returns whether the given [`Principal`] exists in the store.
     ///
     /// Phase 4b of `/designs/actor-system-overhaul.md` (§4.5):

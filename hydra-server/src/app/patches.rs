@@ -1,10 +1,13 @@
 use crate::{
-    domain::{actors::ActorRef, patches::Patch},
+    domain::{
+        actors::{ActorId, ActorRef},
+        patches::{Patch, Review},
+    },
     store::{ReadOnlyStore, Status, StoreError},
 };
 use hydra_common::{
     PatchId, SessionId, VersionNumber, Versioned, api::v1 as api,
-    api::v1::patches::SearchPatchesQuery,
+    api::v1::patches::SearchPatchesQuery, principal::Principal,
 };
 use thiserror::Error;
 
@@ -65,6 +68,18 @@ pub enum UpsertPatchError {
         existing_patch_id: PatchId,
         branch_name: String,
     },
+    /// The authenticated actor is not eligible to author a (newly-submitted)
+    /// review on a patch upsert request. Phase 5b of
+    /// `/designs/actor-system-overhaul.md` (§4.1, §4.3, §6): only durable
+    /// principals (`Principal::User`, `Principal::Agent`) can be stamped as
+    /// review authors; `Adhoc` sessions, `External` actors, `Legacy`
+    /// identifiers, and server-internal `System`/`Automation` actors fail
+    /// here with HTTP 400.
+    #[error("{reason}")]
+    InvalidActorForReview {
+        actor: Box<ActorRef>,
+        reason: String,
+    },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
@@ -114,15 +129,41 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn upsert_patch(
+    /// Convert + stamp + persist in a single call: the route-handler
+    /// entry point for `POST /v1/patches` and `PUT /v1/patches/:id`.
+    ///
+    /// Per Phase 5b of `/designs/actor-system-overhaul.md` (§6), the
+    /// embedded review payload (`UpsertReviewRequest`) carries no
+    /// author — for each incoming review the server either preserves
+    /// the existing stored author (matched against the stored patch by
+    /// `(contents, is_approved, submitted_at)`) or stamps the author
+    /// from the authenticated `actor`. Server-internal callers (the
+    /// GitHub PR poller, etc.) bypass this method and call
+    /// [`Self::upsert_patch`] directly with a pre-stamped domain
+    /// [`Patch`].
+    pub async fn upsert_patch_from_request(
         &self,
         actor: ActorRef,
         patch_id: Option<PatchId>,
         request: api::patches::UpsertPatchRequest,
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
-        let api::patches::UpsertPatchRequest { patch, .. } = request;
-        let mut patch: Patch = patch.into();
+        let patch = self
+            .build_patch_from_upsert(&actor, patch_id.as_ref(), request.patch)
+            .await?;
+        self.upsert_patch(actor, patch_id, patch).await
+    }
 
+    /// Persist a fully-constructed domain [`Patch`] — i.e. one with
+    /// stamped [`Principal`] review authors already in place.
+    /// Server-internal callers (GitHub PR poller) use this method
+    /// directly; the HTTP route handlers go through
+    /// [`Self::upsert_patch_from_request`].
+    pub async fn upsert_patch(
+        &self,
+        actor: ActorRef,
+        patch_id: Option<PatchId>,
+        mut patch: Patch,
+    ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
             Some(id) => {
@@ -182,6 +223,145 @@ impl AppState {
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
         Ok((patch_id, version))
+    }
+
+    /// Convert a wire-shape [`api::patches::UpsertPatch`] into a
+    /// stored-shape domain [`Patch`]. Newly-submitted reviews
+    /// (those that do not appear in the prior stored version's
+    /// `reviews` array, matched by
+    /// `(contents, is_approved, submitted_at)`) are stamped with the
+    /// authenticated actor's `Principal`; the rest keep their stored
+    /// author. Per Phase 5b of `/designs/actor-system-overhaul.md` §6,
+    /// only [`Principal`]-eligible actors (User, Agent, plus the
+    /// pre-Phase-1 `Username` variant) can stamp new reviews —
+    /// `Adhoc`, `External`, `Legacy`, and server-internal
+    /// `System`/`Automation` actors all return
+    /// [`UpsertPatchError::InvalidActorForReview`].
+    async fn build_patch_from_upsert(
+        &self,
+        actor: &ActorRef,
+        patch_id: Option<&PatchId>,
+        upsert: api::patches::UpsertPatch,
+    ) -> Result<Patch, UpsertPatchError> {
+        let api::patches::UpsertPatch {
+            title,
+            description,
+            diff,
+            status,
+            is_automatic_backup,
+            creator,
+            reviews: incoming_reviews,
+            service_repo_name,
+            github,
+            deleted,
+            branch_name,
+            commit_range,
+            base_branch,
+            ..
+        } = upsert;
+
+        let existing_reviews: Vec<Review> = if let Some(id) = patch_id {
+            match self.store.as_ref().get_patch(id, false).await {
+                Ok(versioned) => versioned.item.reviews,
+                // Treat a missing patch as "no existing reviews"; the
+                // subsequent store.update_patch_with_actor will surface
+                // the not-found error.
+                Err(StoreError::PatchNotFound(_)) => Vec::new(),
+                Err(source) => return Err(UpsertPatchError::Store { source }),
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Lazily derive the author principal only if there's at least one
+        // incoming review without a match in the prior stored version. This
+        // keeps "PUT to update non-review fields" working for actor kinds
+        // that aren't review-eligible (e.g. legacy Username flows).
+        let mut new_review_author: Option<Principal> = None;
+        let mut stamped_reviews: Vec<Review> = Vec::with_capacity(incoming_reviews.len());
+        for req in incoming_reviews {
+            let matched = existing_reviews.iter().find(|existing| {
+                existing.contents == req.contents
+                    && existing.is_approved == req.is_approved
+                    && existing.submitted_at == req.submitted_at
+            });
+            let author = match matched {
+                Some(existing) => existing.author.clone(),
+                None => {
+                    if new_review_author.is_none() {
+                        new_review_author = Some(principal_for_review_author(actor)?);
+                    }
+                    new_review_author
+                        .clone()
+                        .expect("new_review_author was just set")
+                }
+            };
+            stamped_reviews.push(Review {
+                contents: req.contents,
+                is_approved: req.is_approved,
+                author,
+                submitted_at: req.submitted_at,
+            });
+        }
+
+        Ok(Patch {
+            title,
+            description,
+            diff,
+            status: status.into(),
+            is_automatic_backup,
+            creator: creator.into(),
+            reviews: stamped_reviews,
+            service_repo_name,
+            github: github.map(Into::into),
+            deleted,
+            branch_name,
+            commit_range: commit_range.map(Into::into),
+            base_branch,
+        })
+    }
+}
+
+/// Derive the [`Principal`] to stamp on a newly-submitted review
+/// from the authenticated actor. Phase 5b of
+/// `/designs/actor-system-overhaul.md` §6 / §4.1: only durable
+/// principals can author reviews.
+#[allow(clippy::result_large_err)]
+fn principal_for_review_author(actor: &ActorRef) -> Result<Principal, UpsertPatchError> {
+    let invalid = |reason: &str| UpsertPatchError::InvalidActorForReview {
+        actor: Box::new(actor.clone()),
+        reason: reason.to_string(),
+    };
+    let actor_id = match actor {
+        ActorRef::Authenticated { actor_id, .. } => actor_id,
+        ActorRef::System { .. } => {
+            return Err(invalid(
+                "system actor cannot author reviews via the patch upsert API",
+            ));
+        }
+        ActorRef::Automation { .. } => {
+            return Err(invalid(
+                "automation actor cannot author reviews via the patch upsert API",
+            ));
+        }
+    };
+    match actor_id {
+        // Phase-1 typed principals.
+        ActorId::User(name) => Ok(Principal::User { name: name.clone() }),
+        ActorId::Agent(name) => Ok(Principal::Agent { name: name.clone() }),
+        // Pre-Phase-1 username variant: treat as User for back-compat —
+        // existing human-user CLI flows still produce this variant.
+        ActorId::Username(name) => Ok(Principal::User { name: name.clone() }),
+        ActorId::Adhoc(_) => Err(invalid("ad-hoc sessions cannot author reviews")),
+        ActorId::External { .. } => Err(invalid(
+            "external actors cannot author reviews via the patch upsert API",
+        )),
+        ActorId::Legacy(_) => Err(invalid("legacy actor identifiers cannot author reviews")),
+        // Session/Issue/Service actor refs are not Principal-eligible
+        // identities — they have no durable user/agent name behind them.
+        ActorId::Session(_) | ActorId::Issue(_) | ActorId::Service(_) => Err(invalid(
+            "session/issue/service actors cannot author reviews",
+        )),
     }
 }
 
@@ -304,7 +484,7 @@ mod tests {
 
         handles
             .state
-            .upsert_patch(ActorRef::from(&actor), Some(patch_id.clone()), request)
+            .upsert_patch_from_request(ActorRef::from(&actor), Some(patch_id.clone()), request)
             .await?;
 
         // Poll until the automation updates the github metadata.
@@ -422,7 +602,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(ActorRef::from(&actor), None, request)
+            .upsert_patch_from_request(ActorRef::from(&actor), None, request)
             .await?;
 
         // Poll until the automation creates the github metadata.
@@ -473,7 +653,7 @@ mod tests {
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
-            .upsert_patch(ActorRef::test(), None, request1)
+            .upsert_patch_from_request(ActorRef::test(), None, request1)
             .await?;
 
         // Close the first patch
@@ -502,7 +682,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         handles
             .state
-            .upsert_patch(ActorRef::test(), None, request2)
+            .upsert_patch_from_request(ActorRef::test(), None, request2)
             .await?;
 
         Ok(())
@@ -530,7 +710,7 @@ mod tests {
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
-            .upsert_patch(ActorRef::test(), None, request1)
+            .upsert_patch_from_request(ActorRef::test(), None, request1)
             .await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
@@ -552,7 +732,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
             .state
-            .upsert_patch(ActorRef::test(), Some(patch1_id), request2)
+            .upsert_patch_from_request(ActorRef::test(), Some(patch1_id), request2)
             .await?;
 
         Ok(())
@@ -599,7 +779,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(ActorRef::from(&actor), None, request)
+            .upsert_patch_from_request(ActorRef::from(&actor), None, request)
             .await?;
 
         let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
@@ -609,5 +789,298 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 5b: review-author stamping & rejection tests
+    // -----------------------------------------------------------------
+
+    use crate::app::patches::UpsertPatchError;
+    use crate::domain::actors::{ActorId as DomainActorId, ActorRef as DomainActorRef};
+    use crate::domain::patches::Review;
+    use hydra_common::ExternalSystem;
+    use hydra_common::api::v1::patches::{UpsertPatch, UpsertReviewRequest};
+    use hydra_common::principal::Principal;
+
+    fn user_actor(name: &str) -> Actor {
+        Actor::new_for_user(Username::from(name)).0
+    }
+
+    fn agent_actor(name: &str) -> Actor {
+        Actor::new_from_actor_id(
+            DomainActorId::Agent(hydra_common::api::v1::agents::AgentName::try_new(name).unwrap()),
+            Username::from(name),
+        )
+        .0
+    }
+
+    fn adhoc_actor() -> Actor {
+        let session_id = hydra_common::SessionId::new();
+        Actor::new_from_actor_id(
+            DomainActorId::Adhoc(session_id),
+            Username::from("ad-hoc-creator"),
+        )
+        .0
+    }
+
+    async fn seed_patch_for_review_tests(
+        handles: &crate::test_utils::TestStateHandles,
+        creator: &str,
+    ) -> anyhow::Result<hydra_common::PatchId> {
+        let repo_name = hydra_common::RepoName::new("octo", "repo")?;
+        let patch = crate::domain::patches::Patch::new(
+            "for-review".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            crate::domain::patches::PatchStatus::Open,
+            false,
+            Username::from(creator),
+            Vec::new(),
+            repo_name,
+            None,
+            None,
+            None,
+            None,
+        );
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(patch, &DomainActorRef::test())
+            .await?;
+        Ok(patch_id)
+    }
+
+    fn upsert_with_one_new_review(
+        creator: &str,
+        prior_patch: &crate::domain::patches::Patch,
+        new_contents: &str,
+    ) -> UpsertPatch {
+        let mut upsert: UpsertPatch = api::patches::Patch::from(prior_patch.clone()).into();
+        upsert.creator = hydra_common::api::v1::users::Username::from(creator);
+        upsert.reviews.push(UpsertReviewRequest::new(
+            new_contents.to_string(),
+            true,
+            Some(Utc::now()),
+        ));
+        upsert
+    }
+
+    #[tokio::test]
+    async fn user_actor_stamps_review_author_as_principal_user() -> anyhow::Result<()> {
+        let handles = crate::test_utils::test_state_handles();
+        let creator = "alice";
+        let patch_id = seed_patch_for_review_tests(&handles, creator).await?;
+
+        let prior = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let actor = user_actor(creator);
+        let upsert = upsert_with_one_new_review(creator, &prior.item, "lgtm");
+
+        let request = api::patches::UpsertPatchRequest::new(upsert);
+        handles
+            .state
+            .upsert_patch_from_request(
+                DomainActorRef::from(&actor),
+                Some(patch_id.clone()),
+                request,
+            )
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(stored.item.reviews.len(), 1);
+        assert_eq!(
+            stored.item.reviews[0].author,
+            Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new(creator).unwrap(),
+            },
+            "User actor should stamp Principal::User on the new review"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_actor_stamps_review_author_as_principal_agent() -> anyhow::Result<()> {
+        let handles = crate::test_utils::test_state_handles();
+        let patch_id = seed_patch_for_review_tests(&handles, "alice").await?;
+
+        let prior = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let actor = agent_actor("reviewer");
+        let upsert = upsert_with_one_new_review("alice", &prior.item, "approved by reviewer");
+
+        let request = api::patches::UpsertPatchRequest::new(upsert);
+        handles
+            .state
+            .upsert_patch_from_request(
+                DomainActorRef::from(&actor),
+                Some(patch_id.clone()),
+                request,
+            )
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(stored.item.reviews.len(), 1);
+        assert_eq!(
+            stored.item.reviews[0].author,
+            Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            },
+            "Agent actor should stamp Principal::Agent on the new review"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn adhoc_actor_is_rejected_when_submitting_a_review() -> anyhow::Result<()> {
+        let handles = crate::test_utils::test_state_handles();
+        let patch_id = seed_patch_for_review_tests(&handles, "alice").await?;
+
+        let prior = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let actor = adhoc_actor();
+        let upsert = upsert_with_one_new_review("alice", &prior.item, "lgtm");
+
+        let request = api::patches::UpsertPatchRequest::new(upsert);
+        let err = handles
+            .state
+            .upsert_patch_from_request(
+                DomainActorRef::from(&actor),
+                Some(patch_id.clone()),
+                request,
+            )
+            .await
+            .expect_err("ad-hoc actor must be rejected on review submission");
+
+        match err {
+            UpsertPatchError::InvalidActorForReview { reason, .. } => {
+                assert_eq!(reason, "ad-hoc sessions cannot author reviews");
+            }
+            other => panic!("expected InvalidActorForReview, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn existing_review_author_is_preserved_across_no_op_update() -> anyhow::Result<()> {
+        let handles = crate::test_utils::test_state_handles();
+        let repo_name = hydra_common::RepoName::new("octo", "repo")?;
+
+        // Seed a patch with one existing review authored by `bob`.
+        let existing_submitted_at = Utc::now();
+        let existing_review = Review::new(
+            "earlier review".to_string(),
+            false,
+            Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
+            },
+            Some(existing_submitted_at),
+        );
+        let patch = crate::domain::patches::Patch::new(
+            "for-review".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            crate::domain::patches::PatchStatus::Open,
+            false,
+            Username::from("alice"),
+            vec![existing_review.clone()],
+            repo_name,
+            None,
+            None,
+            None,
+            None,
+        );
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(patch, &DomainActorRef::test())
+            .await?;
+
+        // Now alice updates the patch with the existing review echoed back
+        // through the request shape (which drops the author). The server's
+        // matching logic must preserve bob's author rather than re-stamping
+        // it as alice.
+        let prior = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let mut upsert: UpsertPatch = api::patches::Patch::from(prior.item.clone()).into();
+        upsert.creator = hydra_common::api::v1::users::Username::from("alice");
+
+        let actor = user_actor("alice");
+        let request = api::patches::UpsertPatchRequest::new(upsert);
+        handles
+            .state
+            .upsert_patch_from_request(
+                DomainActorRef::from(&actor),
+                Some(patch_id.clone()),
+                request,
+            )
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(stored.item.reviews.len(), 1);
+        assert_eq!(
+            stored.item.reviews[0].author,
+            Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
+            },
+            "existing review author must be preserved across no-op round-trip"
+        );
+        Ok(())
+    }
+
+    // Sanity smoke test: the request-shape `External` principal flows
+    // unchanged through `From<Patch> for UpsertPatch` (which drops authors),
+    // so we can't observe it on the request side here. This test instead
+    // covers the format invariant: build a stored Review with an External
+    // author and confirm it round-trips through serde.
+    #[test]
+    fn review_with_external_author_round_trips_through_serde() {
+        let review = Review::new(
+            "lgtm".to_string(),
+            true,
+            Principal::External {
+                system: ExternalSystem::try_new("github").unwrap(),
+                username: "octocat".to_string(),
+            },
+            Some(Utc::now()),
+        );
+        let json = serde_json::to_string(&review).unwrap();
+        let back: Review = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, review);
+    }
+
+    /// Backfill heuristic mirror: the on-disk legacy shape
+    /// (bare `author: "string"`) must still deserialize after a
+    /// soft cutover. Phase 5b §8.2: the row migration rewrites
+    /// stored blobs, but until it has touched every row the runtime
+    /// deserializer applies the same `parse_legacy_assignee`
+    /// heuristic.
+    #[test]
+    fn review_deserialize_accepts_legacy_string_author_as_user() {
+        let json = r#"{
+            "contents": "old style review",
+            "is_approved": true,
+            "author": "alice",
+            "submitted_at": null
+        }"#;
+        let review: Review = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            review.author,
+            Principal::User {
+                name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn review_deserialize_accepts_legacy_agents_path_as_agent() {
+        let json = r#"{
+            "contents": "old style agent review",
+            "is_approved": true,
+            "author": "agents/reviewer",
+            "submitted_at": null
+        }"#;
+        let review: Review = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            review.author,
+            Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap(),
+            }
+        );
     }
 }

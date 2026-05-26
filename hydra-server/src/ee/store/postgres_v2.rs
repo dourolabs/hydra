@@ -5499,7 +5499,9 @@ mod tests {
             vec![Review::new(
                 "looks good".to_string(),
                 true,
-                "alice".to_string(),
+                hydra_common::Principal::User {
+                    name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+                },
                 None,
             )],
             RepoName::from_str("org/repo").unwrap(),

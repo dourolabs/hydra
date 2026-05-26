@@ -138,7 +138,9 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
                     .map(|review| ReviewSummary {
                         contents: review.contents,
                         is_approved: review.is_approved,
-                        author: review.author,
+                        // Phase 5b: `Review.author` is a typed `Principal`;
+                        // render its canonical path form for changelog output.
+                        author: review.author.to_path(),
                     })
                     .collect(),
             })
@@ -346,7 +348,7 @@ pub fn summarize_reviews_value(reviews: Option<&[Review]>) -> Value {
         .map(|review| ReviewSummary {
             contents: review.contents.clone(),
             is_approved: review.is_approved,
-            author: review.author.clone(),
+            author: review.author.to_path(),
         })
         .collect();
     serde_json::to_value(summaries).unwrap_or(Value::Null)

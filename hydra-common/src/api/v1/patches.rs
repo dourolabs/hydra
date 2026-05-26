@@ -3,7 +3,7 @@ use super::{
     serde_helpers::{deserialize_comma_separated, serialize_comma_separated},
     users::Username,
 };
-use crate::{PatchId, RepoName, VersionNumber, actor_ref::ActorRef};
+use crate::{PatchId, RepoName, VersionNumber, actor_ref::ActorRef, principal::Principal};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -64,24 +64,80 @@ impl FromStr for PatchStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A review recorded against a patch.
+///
+/// Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
+/// `author` from a bare string to the shared [`Principal`], so
+/// reviews are attributed to the same typed party form the rest of
+/// the system uses. On the inbound wire, clients use
+/// [`UpsertReviewRequest`] (no author) and the server stamps the
+/// author from the authenticated actor (§6); the [`Review`] type
+/// here is the canonical/response shape.
+///
+/// The deserializer is back-compat with the pre-Phase-5b wire shape:
+/// a bare-string `author` is rewritten in flight via
+/// [`Principal::parse_legacy_assignee`]. This keeps clients running
+/// through the soft-cutover window — including when reading rows the
+/// server's row migration has not yet touched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Review {
     pub contents: String,
     pub is_approved: bool,
-    pub author: String,
+    pub author: Principal,
     /// Timestamp for when the review was recorded.
     #[serde(default)]
     pub submitted_at: Option<DateTime<Utc>>,
+}
+
+impl<'de> Deserialize<'de> for Review {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Permissive forward-compat deserialize: ignore unknown fields
+        // (e.g. a future `confidence` field), and accept either the
+        // Phase-5b typed `author: { kind, ... }` shape or the legacy
+        // bare-string `author: "name"` shape.
+        #[derive(Deserialize)]
+        struct RawReview {
+            contents: String,
+            is_approved: bool,
+            author: Value,
+            #[serde(default)]
+            submitted_at: Option<DateTime<Utc>>,
+        }
+        let raw = RawReview::deserialize(deserializer)?;
+        let author = match raw.author {
+            Value::Object(_) => serde_json::from_value::<Principal>(raw.author)
+                .map_err(de::Error::custom)?,
+            Value::String(s) => Principal::parse_legacy_assignee(&s).ok_or_else(|| {
+                de::Error::custom(format!(
+                    "Review.author legacy string '{s}' could not be parsed as a Principal"
+                ))
+            })?,
+            other => {
+                return Err(de::Error::custom(format!(
+                    "Review.author must be a typed Principal object or legacy string; got {other}"
+                )));
+            }
+        };
+        Ok(Review {
+            contents: raw.contents,
+            is_approved: raw.is_approved,
+            author,
+            submitted_at: raw.submitted_at,
+        })
+    }
 }
 
 impl Review {
     pub fn new(
         contents: String,
         is_approved: bool,
-        author: String,
+        author: Principal,
         submitted_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
@@ -89,6 +145,48 @@ impl Review {
             is_approved,
             author,
             submitted_at,
+        }
+    }
+}
+
+/// Request-side review payload (`POST` / `PUT /v1/patches`).
+///
+/// Per Phase 5b of `/designs/actor-system-overhaul.md` (§6), the
+/// author of a review is server-derived from the authenticated actor
+/// for newly-submitted reviews; existing reviews keep their stored
+/// author across patch upserts (matched by `(contents, is_approved,
+/// submitted_at)`). Clients therefore never specify a review author
+/// on the inbound side — this struct intentionally omits the field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertReviewRequest {
+    pub contents: String,
+    pub is_approved: bool,
+    #[serde(default)]
+    pub submitted_at: Option<DateTime<Utc>>,
+}
+
+impl UpsertReviewRequest {
+    pub fn new(contents: String, is_approved: bool, submitted_at: Option<DateTime<Utc>>) -> Self {
+        Self {
+            contents,
+            is_approved,
+            submitted_at,
+        }
+    }
+}
+
+impl From<Review> for UpsertReviewRequest {
+    /// Drop the (server-stamped) `author` field when round-tripping a
+    /// response-shape [`Review`] into a request payload — e.g. when the
+    /// CLI re-uploads the result of a `GET /v1/patches/:id` with edits.
+    fn from(review: Review) -> Self {
+        Self {
+            contents: review.contents,
+            is_approved: review.is_approved,
+            submitted_at: review.submitted_at,
         }
     }
 }
@@ -352,16 +450,110 @@ impl PatchVersionRecord {
     }
 }
 
+/// Request-side payload for `POST /v1/patches` and `PUT /v1/patches/:id`.
+///
+/// Mirrors [`Patch`] field-for-field, except `reviews` is
+/// `Vec<UpsertReviewRequest>` — clients never specify review authors
+/// on the inbound side (server-stamped from the authenticated actor;
+/// see [`UpsertReviewRequest`] and Phase 5b of
+/// `/designs/actor-system-overhaul.md` §6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertPatch {
+    #[serde(default)]
+    pub title: String,
+    pub description: String,
+    pub diff: String,
+    #[serde(default)]
+    pub status: PatchStatus,
+    #[serde(default)]
+    pub is_automatic_backup: bool,
+    pub creator: Username,
+    #[serde(default)]
+    pub reviews: Vec<UpsertReviewRequest>,
+    pub service_repo_name: RepoName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GithubPr>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_range: Option<CommitRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+}
+
+impl UpsertPatch {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        title: String,
+        description: String,
+        diff: String,
+        status: PatchStatus,
+        is_automatic_backup: bool,
+        creator: Username,
+        reviews: Vec<UpsertReviewRequest>,
+        service_repo_name: RepoName,
+        github: Option<GithubPr>,
+        deleted: bool,
+        branch_name: Option<String>,
+        commit_range: Option<CommitRange>,
+        base_branch: Option<String>,
+    ) -> Self {
+        Self {
+            title,
+            description,
+            diff,
+            status,
+            is_automatic_backup,
+            creator,
+            reviews,
+            service_repo_name,
+            github,
+            deleted,
+            branch_name,
+            commit_range,
+            base_branch,
+        }
+    }
+}
+
+impl From<Patch> for UpsertPatch {
+    /// Re-encode a response-shape [`Patch`] as a request-shape
+    /// [`UpsertPatch`] by dropping `author` from every review. Used
+    /// by the CLI's get-then-mutate-then-put flow.
+    fn from(patch: Patch) -> Self {
+        Self {
+            title: patch.title,
+            description: patch.description,
+            diff: patch.diff,
+            status: patch.status,
+            is_automatic_backup: patch.is_automatic_backup,
+            creator: patch.creator,
+            reviews: patch.reviews.into_iter().map(Into::into).collect(),
+            service_repo_name: patch.service_repo_name,
+            github: patch.github,
+            deleted: patch.deleted,
+            branch_name: patch.branch_name,
+            commit_range: patch.commit_range,
+            base_branch: patch.base_branch,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertPatchRequest {
-    pub patch: Patch,
+    pub patch: UpsertPatch,
 }
 
 impl UpsertPatchRequest {
-    pub fn new(patch: Patch) -> Self {
+    pub fn new(patch: UpsertPatch) -> Self {
         Self { patch }
     }
 }
@@ -862,11 +1054,20 @@ mod tests {
             is_automatic_backup: false,
             creator: Username::from("alice"),
             reviews: vec![
-                Review::new("looks good".to_string(), true, "bob".to_string(), None),
+                Review::new(
+                    "looks good".to_string(),
+                    true,
+                    Principal::User {
+                        name: Username::from("bob"),
+                    },
+                    None,
+                ),
                 Review::new(
                     "needs changes".to_string(),
                     false,
-                    "carol".to_string(),
+                    Principal::User {
+                        name: Username::from("carol"),
+                    },
                     None,
                 ),
             ],
@@ -882,11 +1083,17 @@ mod tests {
         }
     }
 
+    fn user_principal(name: &str) -> Principal {
+        Principal::User {
+            name: Username::from(name),
+        }
+    }
+
     #[test]
     fn review_summary_counts_reviews_and_checks_approval() {
         let reviews = vec![
-            Review::new("ok".to_string(), false, "a".to_string(), None),
-            Review::new("lgtm".to_string(), true, "b".to_string(), None),
+            Review::new("ok".to_string(), false, user_principal("a"), None),
+            Review::new("lgtm".to_string(), true, user_principal("b"), None),
         ];
         let summary = ReviewSummary::from_reviews(&reviews);
         assert_eq!(summary.count, 2);
@@ -898,7 +1105,7 @@ mod tests {
         let reviews = vec![Review::new(
             "needs work".to_string(),
             false,
-            "a".to_string(),
+            user_principal("a"),
             None,
         )];
         let summary = ReviewSummary::from_reviews(&reviews);
@@ -988,13 +1195,13 @@ mod tests {
                         {
                             "contents": "looks good",
                             "is_approved": true,
-                            "author": "bob",
+                            "author": {"kind": "user", "name": "bob"},
                             "submitted_at": null,
                         },
                         {
                             "contents": "needs changes",
                             "is_approved": false,
-                            "author": "carol",
+                            "author": {"kind": "user", "name": "carol"},
                             "submitted_at": null,
                         },
                     ],

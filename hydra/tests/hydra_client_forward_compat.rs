@@ -512,7 +512,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         None,
     );
-    let upsert_patch = UpsertPatchRequest::new(patch);
+    let upsert_patch = UpsertPatchRequest::new(patch.into());
 
     let created_patch = client.create_patch(&upsert_patch).await?;
     assert_eq!(created_patch.patch_id, patch_id);

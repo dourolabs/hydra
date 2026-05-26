@@ -98,10 +98,11 @@ PRs attached to issues. Status: `Open`, `Closed`, `Merged`, `ChangesRequested`. 
 
 - **Close** with `hydra patches update <p-id> --status Closed` — typically when the user is
   cancelling the work the patch was attached to (e.g., right after dropping the parent issue).
-- **Review or comment** with `hydra patches review <p-id> --author <name> --contents "..."`. Add
+- **Review or comment** with `hydra patches review <p-id> --contents "..."`. Add
   `--approve` for an approval or `--request-changes` for a change request; omit both for a plain
-  comment. Use this when the user wants to relay specific feedback to the patch author. Quote the
-  user's wording in `--contents` rather than paraphrasing.
+  comment. The server stamps the review's typed `Principal` author from the authenticated actor —
+  no `--author` flag. Use this when the user wants to relay specific feedback to the patch author.
+  Quote the user's wording in `--contents` rather than paraphrasing.
 
 Do NOT create or merge patches from chat. For form-bearing `review-request` issues escalated by the
 reviewer agent, use `hydra issues submit-form` (see below), **not** `hydra patches review` — the

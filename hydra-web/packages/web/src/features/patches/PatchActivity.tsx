@@ -3,6 +3,7 @@ import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatchVersions } from "./usePatchVersions";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
+import { principalDisplayName } from "../principal/formatPrincipal";
 import type { Change } from "../activity/types";
 import styles from "../activity/ActivityTimeline.module.css";
 
@@ -43,7 +44,7 @@ function diffPatchVersions(
     for (const review of newReviews) {
       changes.push({
         field: "review",
-        after: `${review.author}: ${review.is_approved ? "approved" : "changes requested"}`,
+        after: `${principalDisplayName(review.author)}: ${review.is_approved ? "approved" : "changes requested"}`,
       });
     }
   }

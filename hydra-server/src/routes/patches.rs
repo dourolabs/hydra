@@ -88,7 +88,7 @@ pub async fn create_patch(
         )));
     }
     let (patch_id, version) = state
-        .upsert_patch(ActorRef::from(&actor), None, payload)
+        .upsert_patch_from_request(ActorRef::from(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -106,7 +106,7 @@ pub async fn update_patch(
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
     let (patch_id, version) = state
-        .upsert_patch(ActorRef::from(&actor), Some(patch_id), payload)
+        .upsert_patch_from_request(ActorRef::from(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -689,6 +689,10 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
              for branch '{branch_name}'. Consider updating that patch with: \
              hydra patches update {existing_patch_id}"
         )),
+        UpsertPatchError::InvalidActorForReview { actor, reason } => {
+            warn!(actor = ?actor, "rejected review-author request from non-principal actor");
+            ApiError::bad_request(reason)
+        }
         UpsertPatchError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }
@@ -795,7 +799,9 @@ mod merge_check_tests {
         Review::new(
             "LGTM".to_string(),
             true,
-            author.to_string(),
+            ApiPrincipal::User {
+                name: ApiUsername::try_new(author).unwrap_or_else(|_| ApiUsername::from(author)),
+            },
             Some(Utc::now()),
         )
     }
