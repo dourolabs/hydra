@@ -17,10 +17,6 @@ import type { IssueVersionRecord } from "./generated/IssueVersionRecord";
 import type { SearchIssuesQuery } from "./generated/SearchIssuesQuery";
 import type { ListIssuesResponse } from "./generated/ListIssuesResponse";
 import type { ListIssueVersionsResponse } from "./generated/ListIssueVersionsResponse";
-import type { AddTodoItemRequest } from "./generated/AddTodoItemRequest";
-import type { ReplaceTodoListRequest } from "./generated/ReplaceTodoListRequest";
-import type { SetTodoItemStatusRequest } from "./generated/SetTodoItemStatusRequest";
-import type { TodoListResponse } from "./generated/TodoListResponse";
 import type { UpsertPatchRequest } from "./generated/UpsertPatchRequest";
 import type { UpsertPatchResponse } from "./generated/UpsertPatchResponse";
 import type { PatchVersionRecord } from "./generated/PatchVersionRecord";
@@ -319,28 +315,6 @@ export class HydraApiClient {
   /** POST /v1/issues/:issueId/feedback */
   submitFeedback(issueId: string, feedback: string): Promise<IssueVersionRecord> {
     return this.post(`/v1/issues/${encodeURIComponent(issueId)}/feedback`, { feedback });
-  }
-
-  /** POST /v1/issues/:issueId/todo-items */
-  addTodoItem(issueId: string, request: AddTodoItemRequest): Promise<TodoListResponse> {
-    return this.post(`/v1/issues/${encodeURIComponent(issueId)}/todo-items`, request);
-  }
-
-  /** PUT /v1/issues/:issueId/todo-items */
-  replaceTodoList(issueId: string, request: ReplaceTodoListRequest): Promise<TodoListResponse> {
-    return this.put(`/v1/issues/${encodeURIComponent(issueId)}/todo-items`, request);
-  }
-
-  /** POST /v1/issues/:issueId/todo-items/:index */
-  setTodoItemStatus(
-    issueId: string,
-    index: number,
-    request: SetTodoItemStatusRequest,
-  ): Promise<TodoListResponse> {
-    return this.post(
-      `/v1/issues/${encodeURIComponent(issueId)}/todo-items/${encodeURIComponent(String(index))}`,
-      request,
-    );
   }
 
   // ---------------------------------------------------------------------------

@@ -130,7 +130,6 @@ function seedVersionedEntity<T extends object>(
 function normalizeIssue(issue: Issue): Issue {
   return {
     ...issue,
-    todo_list: issue.todo_list ?? [],
     dependencies: issue.dependencies ?? [],
     patches: issue.patches ?? [],
   };

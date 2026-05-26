@@ -10,11 +10,6 @@ import type {
   ListIssueVersionsResponse,
   IssueSummaryRecord,
   IssueSummary,
-  AddTodoItemRequest,
-  ReplaceTodoListRequest,
-  SetTodoItemStatusRequest,
-  TodoListResponse,
-  TodoItem,
 } from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 
@@ -77,7 +72,6 @@ export function createIssueRoutes(store: Store): Hono {
     const id = generateId("issue");
     const issue: Issue = {
       ...body.issue,
-      todo_list: body.issue.todo_list ?? [],
       dependencies: body.issue.dependencies ?? [],
       patches: body.issue.patches ?? [],
     };
@@ -101,7 +95,6 @@ export function createIssueRoutes(store: Store): Hono {
     const body = await c.req.json<UpsertIssueRequest>();
     const issue: Issue = {
       ...body.issue,
-      todo_list: body.issue.todo_list ?? [],
       dependencies: body.issue.dependencies ?? [],
       patches: body.issue.patches ?? [],
     };
@@ -273,56 +266,6 @@ export function createIssueRoutes(store: Store): Hono {
     const entry = store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
     const creationTime = store.getCreationTime(COLLECTION, id)!;
     return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime));
-  });
-
-  // POST /v1/issues/:id/todo-items — add a todo item
-  app.post("/v1/issues/:id/todo-items", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json<AddTodoItemRequest>();
-    const existing = store.get<Issue>(COLLECTION, id);
-    if (!existing) {
-      return c.json({ error: `issue '${id}' not found` }, 404);
-    }
-    const todoList = [...(existing.data.todo_list ?? []), { description: body.description, is_done: body.is_done }];
-    const updated: Issue = { ...existing.data, todo_list: todoList };
-    store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
-    const resp: TodoListResponse = { issue_id: id, todo_list: todoList };
-    return c.json(resp);
-  });
-
-  // PUT /v1/issues/:id/todo-items — replace todo list
-  app.put("/v1/issues/:id/todo-items", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json<ReplaceTodoListRequest>();
-    const existing = store.get<Issue>(COLLECTION, id);
-    if (!existing) {
-      return c.json({ error: `issue '${id}' not found` }, 404);
-    }
-    const todoList: TodoItem[] = body.todo_list;
-    const updated: Issue = { ...existing.data, todo_list: todoList };
-    store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
-    const resp: TodoListResponse = { issue_id: id, todo_list: todoList };
-    return c.json(resp);
-  });
-
-  // POST /v1/issues/:id/todo-items/:index — set todo item status
-  app.post("/v1/issues/:id/todo-items/:index", async (c) => {
-    const id = c.req.param("id");
-    const index = Number(c.req.param("index"));
-    const body = await c.req.json<SetTodoItemStatusRequest>();
-    const existing = store.get<Issue>(COLLECTION, id);
-    if (!existing) {
-      return c.json({ error: `issue '${id}' not found` }, 404);
-    }
-    const todoList = [...(existing.data.todo_list ?? [])];
-    if (index < 0 || index >= todoList.length) {
-      return c.json({ error: `todo item index ${index} out of range` }, 422);
-    }
-    todoList[index] = { ...todoList[index], is_done: body.is_done };
-    const updated: Issue = { ...existing.data, todo_list: todoList };
-    store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
-    const resp: TodoListResponse = { issue_id: id, todo_list: todoList };
-    return c.json(resp);
   });
 
   return app;
