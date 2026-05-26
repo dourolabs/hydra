@@ -69,6 +69,12 @@ impl FromStr for PatchStatus {
 /// rewritten in flight using the Phase 4a heuristic. This keeps
 /// running through the soft-cutover window even before the row
 /// migration touches every patch.
+///
+/// Each bare-string hit emits a `tracing::warn!` on the
+/// `review_author_legacy_decode` target so we can release-soak the
+/// fallback and confirm zero unmigrated-row traffic before deleting
+/// it (design §8.2, §11 row 7). The same instrumentation mirrors the
+/// `ActorId::Legacy` warn-log added in p-qtlpckuo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Review {
     pub contents: String,
@@ -121,6 +127,11 @@ impl<'de> Deserialize<'de> for Review {
             // accepting unmigrated rows on read until the migration has
             // touched every row.
             serde_json::Value::String(raw_author) => {
+                tracing::warn!(
+                    target: "review_author_legacy_decode",
+                    raw = %raw_author,
+                    "deserialized Review.author from bare legacy string",
+                );
                 legacy_author_to_principal(&raw_author).ok_or_else(|| {
                     de::Error::custom(format!(
                         "Review.author legacy string '{raw_author}' could not be parsed as a Principal"

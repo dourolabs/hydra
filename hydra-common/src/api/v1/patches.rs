@@ -79,6 +79,12 @@ impl FromStr for PatchStatus {
 /// [`Principal::parse_legacy_assignee`]. This keeps clients running
 /// through the soft-cutover window — including when reading rows the
 /// server's row migration has not yet touched.
+///
+/// Each bare-string hit emits a `tracing::warn!` on the
+/// `review_author_legacy_decode` target so we can release-soak the
+/// fallback and confirm zero stale-client traffic before deleting it
+/// (design §8.2, §11 row 7). The same instrumentation mirrors the
+/// `ActorId::Legacy` warn-log added in p-qtlpckuo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -114,11 +120,18 @@ impl<'de> Deserialize<'de> for Review {
             Value::Object(_) => {
                 serde_json::from_value::<Principal>(raw.author).map_err(de::Error::custom)?
             }
-            Value::String(s) => Principal::parse_legacy_assignee(&s).ok_or_else(|| {
-                de::Error::custom(format!(
-                    "Review.author legacy string '{s}' could not be parsed as a Principal"
-                ))
-            })?,
+            Value::String(s) => {
+                tracing::warn!(
+                    target: "review_author_legacy_decode",
+                    raw = %s,
+                    "deserialized Review.author from bare legacy string",
+                );
+                Principal::parse_legacy_assignee(&s).ok_or_else(|| {
+                    de::Error::custom(format!(
+                        "Review.author legacy string '{s}' could not be parsed as a Principal"
+                    ))
+                })?
+            }
             other => {
                 return Err(de::Error::custom(format!(
                     "Review.author must be a typed Principal object or legacy string; got {other}"
@@ -1158,6 +1171,29 @@ mod tests {
         assert_eq!(summary_record.version, 5);
         assert_eq!(summary_record.patch.title, "fix bug");
         assert_eq!(summary_record.actor, None);
+    }
+
+    // The legacy bare-string `author` fallback is gated on a
+    // release-soak with zero `review_author_legacy_decode` warn-logs
+    // (design §8.2, §11 row 7). The workspace has no `tracing-test`
+    // dep, so this is a smoke test that the path runs through the
+    // `warn!` without panicking and yields the expected typed
+    // Principal. Drop alongside the fallback removal.
+    #[test]
+    fn review_legacy_string_author_emits_warn_without_panic() {
+        let json = r#"{
+            "contents": "old style review",
+            "is_approved": true,
+            "author": "alice",
+            "submitted_at": null
+        }"#;
+        let review: Review = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            review.author,
+            Principal::User {
+                name: Username::try_new("alice").unwrap(),
+            }
+        );
     }
 
     mod graph_view {
