@@ -7,7 +7,6 @@ use hydra_common::issues::IssueId;
 
 /// Validates issue lifecycle constraints when closing:
 /// - All blockers must be in a terminal state
-/// - All todo items must be done
 /// - All children must be in a terminal state
 #[derive(Default)]
 pub struct IssueLifecycleRestriction;
@@ -56,26 +55,6 @@ impl Restriction for IssueLifecycleRestriction {
             ) {
                 open_blockers.push(dependency.issue_id.clone());
             }
-        }
-
-        // Check todos
-        let mut incomplete_todos: Vec<usize> = Vec::new();
-        for (index, item) in new.todo_list.iter().enumerate() {
-            if !item.is_done {
-                incomplete_todos.push(index + 1);
-            }
-        }
-
-        if !incomplete_todos.is_empty() {
-            let numbers = incomplete_todos
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(PolicyViolation {
-                policy_name: self.name().to_string(),
-                message: format!("cannot close issue with incomplete todo items: {numbers}"),
-            });
         }
 
         // Check children (only if we have an issue_id, i.e., this is an update)
@@ -139,7 +118,7 @@ fn join_issue_ids(ids: &[IssueId]) -> String {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueDependency, IssueType, TodoItem};
+    use crate::domain::issues::{Issue, IssueDependency, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
@@ -185,7 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allows_closing_with_no_deps_or_todos() {
+    async fn allows_closing_with_no_deps() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
 
@@ -203,39 +182,6 @@ mod tests {
             store: &store,
         };
         assert!(restriction.evaluate(&ctx).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn rejects_closing_with_incomplete_todos() {
-        let restriction = IssueLifecycleRestriction::new();
-        let store = MemoryStore::new();
-
-        let mut issue = make_issue(IssueStatus::Closed);
-        issue.todo_list = vec![
-            TodoItem::new("done task".to_string(), true),
-            TodoItem::new("not done".to_string(), false),
-        ];
-        let payload = OperationPayload::Issue {
-            issue_id: None,
-            new: issue,
-            old: None,
-        };
-        let actor = ActorRef::test();
-        let ctx = RestrictionContext {
-            operation: Operation::UpdateIssue,
-            actor: &actor,
-            payload: &payload,
-            store: &store,
-        };
-        let result = restriction.evaluate(&ctx).await;
-        assert!(result.is_err());
-        let violation = result.unwrap_err();
-        assert_eq!(violation.policy_name, "issue_lifecycle_validation");
-        assert!(
-            violation
-                .message
-                .contains("cannot close issue with incomplete todo items")
-        );
     }
 
     #[tokio::test]
