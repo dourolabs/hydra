@@ -10,10 +10,9 @@ use hydra_common::{
     api::v1::{
         form::{Action, ActionStyle, Effect, Field, Form, Input, SelectOption},
         issues::{
-            AddTodoItemRequest, FormValidationError, IssueVersionRecord, ListIssueVersionsResponse,
-            ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-            SetTodoItemStatusRequest, SubmitFeedbackRequest, SubmitFormRequest, SubmitFormResponse,
-            TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+            FormValidationError, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
+            SearchIssuesQuery, SubmitFeedbackRequest, SubmitFormRequest, SubmitFormResponse,
+            UpsertIssueRequest, UpsertIssueResponse,
         },
     },
 };
@@ -68,10 +67,6 @@ fn default_user() -> Username {
 
 fn missing_user() -> Username {
     Username::from("")
-}
-
-fn todo(description: &str, is_done: bool) -> TodoItem {
-    TodoItem::new(description.to_string(), is_done)
 }
 
 #[tokio::test]
@@ -550,48 +545,6 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
-
-    let todo_list = vec![todo("write tests", false), todo("review PR", false)];
-    let base_issue = issue(
-        IssueType::Task,
-        "issue with todos",
-        default_user(),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        todo_list,
-        vec![],
-        Vec::new(),
-    );
-
-    let created: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(base_issue.clone().into(), None))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let mut closed_issue = base_issue.clone();
-    closed_issue.status = IssueStatus::Closed;
-    let response = client
-        .put(format!(
-            "{}/v1/issues/{}",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&UpsertIssueRequest::new(closed_issue.clone().into(), None))
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-    Ok(())
-}
-
-#[tokio::test]
 async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
@@ -713,136 +666,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             &hydra_common::api::v1::issues::Issue::from(closed_issue)
         )
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
-
-    let initial_todo = todo("write tests", false);
-    let created: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(
-            issue(
-                IssueType::Task,
-                "issue with todos",
-                default_user(),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                vec![initial_todo.clone()],
-                vec![],
-                Vec::new(),
-            )
-            .into(),
-            None,
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let added: TodoListResponse = client
-        .post(format!(
-            "{}/v1/issues/{}/todo-items",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&AddTodoItemRequest::new("review PR".to_string(), false))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert_eq!(
-        added.todo_list,
-        vec![
-            hydra_common::api::v1::issues::TodoItem::from(initial_todo.clone()),
-            hydra_common::api::v1::issues::TodoItem::from(todo("review PR", false))
-        ]
-    );
-
-    let updated: TodoListResponse = client
-        .post(format!(
-            "{}/v1/issues/{}/todo-items/2",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&SetTodoItemStatusRequest::new(true))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(updated.todo_list[1].is_done);
-
-    let repeated: TodoListResponse = client
-        .post(format!(
-            "{}/v1/issues/{}/todo-items/2",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&SetTodoItemStatusRequest::new(true))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(repeated.todo_list[1].is_done);
-
-    let unset: TodoListResponse = client
-        .post(format!(
-            "{}/v1/issues/{}/todo-items/2",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&SetTodoItemStatusRequest::new(false))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(!unset.todo_list[1].is_done);
-
-    let replacement = ReplaceTodoListRequest::new(vec![
-        todo("rewrite docs", false).into(),
-        todo("review PR", true).into(),
-    ]);
-
-    let replaced: TodoListResponse = client
-        .put(format!(
-            "{}/v1/issues/{}/todo-items",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&replacement)
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert_eq!(replaced.todo_list, replacement.todo_list);
-
-    let fetched: IssueVersionRecord = client
-        .get(format!(
-            "{}/v1/issues/{}",
-            server.base_url(),
-            created.issue_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert_eq!(fetched.issue.todo_list, replacement.todo_list);
-
-    let invalid_update = client
-        .post(format!(
-            "{}/v1/issues/{}/todo-items/99",
-            server.base_url(),
-            created.issue_id
-        ))
-        .json(&SetTodoItemStatusRequest::new(true))
-        .send()
-        .await?;
-    assert_eq!(invalid_update.status(), reqwest::StatusCode::BAD_REQUEST);
-
     Ok(())
 }
 

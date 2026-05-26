@@ -1,6 +1,6 @@
 use crate::{
     domain::actors::ActorRef,
-    domain::issues::{Issue, IssueDependencyType, IssueStatus, TodoItem},
+    domain::issues::{Issue, IssueDependencyType, IssueStatus},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use chrono::Utc;
@@ -90,27 +90,6 @@ pub enum UpsertIssueError {
     PolicyViolation(#[from] crate::policy::PolicyViolation),
     #[error("invalid form: {message}")]
     InvalidForm { message: String },
-}
-
-#[derive(Debug, Error)]
-pub enum UpdateTodoListError {
-    #[error("issue '{issue_id}' not found")]
-    IssueNotFound {
-        #[source]
-        source: StoreError,
-        issue_id: IssueId,
-    },
-    #[error("todo item number {item_number} is out of range for issue '{issue_id}'")]
-    InvalidItemNumber {
-        issue_id: IssueId,
-        item_number: usize,
-    },
-    #[error("issue store operation failed")]
-    Store {
-        #[source]
-        source: StoreError,
-        issue_id: IssueId,
-    },
 }
 
 #[derive(Debug, Error)]
@@ -441,59 +420,6 @@ impl AppState {
         store.get_issue_children(issue_id).await
     }
 
-    pub async fn add_todo_item(
-        &self,
-        issue_id: IssueId,
-        item: TodoItem,
-        actor: ActorRef,
-    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
-            UpdateTodoListError::IssueNotFound {
-                source,
-                issue_id: issue_id.clone(),
-            }
-        })?;
-        let mut issue = issue.item;
-
-        issue.todo_list.push(item);
-        let todo_list = issue.todo_list.clone();
-        self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
-            .await
-            .map_err(|source| UpdateTodoListError::Store {
-                source,
-                issue_id: issue_id.clone(),
-            })?;
-        Ok(todo_list)
-    }
-
-    pub async fn replace_todo_list(
-        &self,
-        issue_id: IssueId,
-        todo_list: Vec<TodoItem>,
-        actor: ActorRef,
-    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
-            UpdateTodoListError::IssueNotFound {
-                source,
-                issue_id: issue_id.clone(),
-            }
-        })?;
-        let mut issue = issue.item;
-
-        issue.todo_list = todo_list.clone();
-        self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
-            .await
-            .map_err(|source| UpdateTodoListError::Store {
-                source,
-                issue_id: issue_id.clone(),
-            })?;
-        Ok(todo_list)
-    }
-
     pub async fn submit_form_action(
         &self,
         issue_id: IssueId,
@@ -702,50 +628,6 @@ impl AppState {
 
         info!(issue_id = %issue_id, "feedback submitted");
         Ok(version)
-    }
-
-    pub async fn set_todo_item_status(
-        &self,
-        issue_id: IssueId,
-        item_number: usize,
-        is_done: bool,
-        actor: ActorRef,
-    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
-            UpdateTodoListError::IssueNotFound {
-                source,
-                issue_id: issue_id.clone(),
-            }
-        })?;
-        let mut issue = issue.item;
-
-        if item_number == 0 {
-            return Err(UpdateTodoListError::InvalidItemNumber {
-                issue_id,
-                item_number,
-            });
-        }
-        let index = item_number - 1;
-        let item =
-            issue
-                .todo_list
-                .get_mut(index)
-                .ok_or(UpdateTodoListError::InvalidItemNumber {
-                    issue_id: issue_id.clone(),
-                    item_number,
-                })?;
-        item.is_done = is_done;
-
-        let todo_list = issue.todo_list.clone();
-        self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
-            .await
-            .map_err(|source| UpdateTodoListError::Store {
-                source,
-                issue_id: issue_id.clone(),
-            })?;
-        Ok(todo_list)
     }
 }
 

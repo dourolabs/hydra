@@ -254,18 +254,6 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::issues::get_issue_version),
         )
         .route(
-            "/v1/issues/:issue_id/todo-items",
-            post(routes::issues::add_todo_item).put(routes::issues::replace_todo_list),
-        )
-        .route(
-            "/v1/issues/:issue_id/todo-items/:item_number",
-            post(routes::issues::set_todo_item_status),
-        )
-        .route(
-            "/v1/issues/:issue_id/todo-items/:item_number/",
-            post(routes::issues::set_todo_item_status),
-        )
-        .route(
             "/v1/issues/:issue_id/actions",
             post(routes::issues::submit_form_action),
         )
