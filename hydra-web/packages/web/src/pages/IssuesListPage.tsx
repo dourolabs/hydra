@@ -8,6 +8,7 @@ import {
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { useAgents } from "../hooks/useAgents";
+import { useUsers } from "../hooks/useUsers";
 import { actorDisplayName, actorPrincipalPath } from "../api/auth";
 import {
   IssuesView,
@@ -268,23 +269,35 @@ export function IssuesListPage() {
   );
 
   const { data: agents } = useAgents();
-  // Picker rows for Creator/Assignee. `name` is the user-facing label; for
-  // the Assignee filter we also need a Principal `path` (Phase 4b) because
-  // the wire form is `users/<x>` / `agents/<x>`. Creator stays bare.
-  const userOptions = useMemo(() => {
+  const { data: users } = useUsers();
+  // Picker rows for Creator/Assignee. `name` is the user-facing label; the
+  // Assignee filter needs a Principal `path` (Phase 4b) because the wire form
+  // is `users/<x>` / `agents/<x>`. Creator stays bare.
+  const agentOptions = useMemo(() => {
     const seen = new Set<string>();
     const opts: { name: string; assigneePath: string }[] = [];
     for (const a of agents ?? []) {
-      if (seen.has(`agents/${a.name}`)) continue;
-      seen.add(`agents/${a.name}`);
+      if (seen.has(a.name)) continue;
+      seen.add(a.name);
       opts.push({ name: a.name, assigneePath: `agents/${a.name}` });
     }
-    if (currentUser && currentPrincipalPath && !seen.has(currentPrincipalPath)) {
-      seen.add(currentPrincipalPath);
+    return opts.sort((a, b) => a.name.localeCompare(b.name));
+  }, [agents]);
+
+  const userOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: { name: string; assigneePath: string }[] = [];
+    for (const u of users ?? []) {
+      if (seen.has(u.username)) continue;
+      seen.add(u.username);
+      opts.push({ name: u.username, assigneePath: `users/${u.username}` });
+    }
+    if (currentUser && currentPrincipalPath && !seen.has(currentUser)) {
+      seen.add(currentUser);
       opts.push({ name: currentUser, assigneePath: currentPrincipalPath });
     }
     return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, [agents, currentUser, currentPrincipalPath]);
+  }, [users, currentUser, currentPrincipalPath]);
 
   const serverFilters = useMemo(
     () => buildServerFilters(filterState, searchQuery),
@@ -362,6 +375,7 @@ export function IssuesListPage() {
         onCreatorChange={handleCreatorChange}
         selectedAssignee={filterState.assignee}
         onAssigneeChange={handleAssigneeChange}
+        agentOptions={agentOptions}
         userOptions={userOptions}
         eyebrow={formatEyebrow(eyebrowPrefix, displayCount)}
         title={title}

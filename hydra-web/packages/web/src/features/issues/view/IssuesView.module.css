@@ -76,6 +76,21 @@
   gap: 6px;
 }
 
+/* Section header rendered inside the Assignee picker popover to separate the
+ * Agents and Users sections. Mirrors `popSection` in `IssueCreateModal.module.css`. */
+.popSection {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  padding: 8px 10px 4px;
+}
+
+.popSection:first-child {
+  padding-top: 4px;
+}
+
 .toolbarSpacer {
   flex: 1;
 }

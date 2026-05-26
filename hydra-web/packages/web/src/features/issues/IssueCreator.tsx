@@ -22,8 +22,26 @@ function buildRepoOptions(repos: RepositoryRecord[] | undefined): SelectOption[]
   return options;
 }
 
+export interface IssueCreatorAssignees {
+  agents: string[];
+  users: string[];
+}
+
 interface IssueCreatorProps {
-  assignees: string[];
+  assignees: IssueCreatorAssignees;
+}
+
+function parseAssigneePath(
+  path: string,
+): { kind: "agent" | "user"; name: string } | null {
+  if (!path) return null;
+  if (path.startsWith("agents/")) {
+    return { kind: "agent", name: path.slice("agents/".length) };
+  }
+  if (path.startsWith("users/")) {
+    return { kind: "user", name: path.slice("users/".length) };
+  }
+  return null;
 }
 
 export function IssueCreator({ assignees }: IssueCreatorProps) {
@@ -42,7 +60,13 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { data: repos } = useRepositories();
 
   const mutation = useMutation({
-    mutationFn: (params: { title: string; description: string; creator: string; assignee?: string; repoName?: string }) =>
+    mutationFn: (params: {
+      title: string;
+      description: string;
+      creator: string;
+      assignee?: { kind: "agent" | "user"; name: string };
+      repoName?: string;
+    }) =>
       apiClient.createIssue({
         issue: {
           type: "task",
@@ -53,11 +77,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           status: "open",
           dependencies: [],
           patches: [],
-          // Phase 4b: assignee is a typed `Principal`. The picker
-          // surfaces agent names today, so wire as `Principal::Agent`.
-          ...(params.assignee && {
-            assignee: { kind: "agent", name: params.assignee },
-          }),
+          ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && { session_settings: { repo_name: params.repoName } }),
         },
         session_id: null,
@@ -86,11 +106,12 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
     const desc = description.trim();
     if (!desc) return;
 
+    const assigneePrincipal = parseAssigneePath(assignee);
     mutation.mutate({
       title: title.trim(),
       description: desc,
       creator: currentUsername,
-      ...(assignee && { assignee }),
+      ...(assigneePrincipal && { assignee: assigneePrincipal }),
       ...(repoName && { repoName }),
     });
   };
@@ -102,9 +123,13 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
     }
   };
 
+  // Section-prefixed labels so the user can tell agents apart from users in
+  // the flat `<select>`. The wire value is the Principal path so the kind is
+  // recoverable at submit time.
   const assigneeOptions: SelectOption[] = [
     { value: "", label: "Unassigned" },
-    ...assignees.map((a) => ({ value: a, label: a })),
+    ...assignees.agents.map((a) => ({ value: `agents/${a}`, label: `Agent · ${a}` })),
+    ...assignees.users.map((u) => ({ value: `users/${u}`, label: `User · ${u}` })),
   ];
 
   return (

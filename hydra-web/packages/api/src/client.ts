@@ -41,6 +41,7 @@ import type { WhoAmIResponse } from "./generated/WhoAmIResponse";
 import type { UserSummary } from "./generated/UserSummary";
 import type { GithubTokenResponse } from "./generated/GithubTokenResponse";
 import type { ListAgentsResponse } from "./generated/ListAgentsResponse";
+import type { ListUsersResponse } from "./generated/ListUsersResponse";
 import type { AgentResponse } from "./generated/AgentResponse";
 import type { UpsertAgentRequest } from "./generated/UpsertAgentRequest";
 import type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
@@ -470,6 +471,11 @@ export class HydraApiClient {
   /** GET /v1/whoami */
   whoami(): Promise<WhoAmIResponse> {
     return this.get("/v1/whoami");
+  }
+
+  /** GET /v1/users */
+  listUsers(): Promise<ListUsersResponse> {
+    return this.get("/v1/users");
   }
 
   /** GET /v1/users/:username */

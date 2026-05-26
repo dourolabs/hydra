@@ -2103,6 +2103,12 @@
       }
     }
   },
+  "users": {
+    "alice": { "username": "alice", "github_user_id": 1001 },
+    "bob": { "username": "bob", "github_user_id": 1002 },
+    "carol": { "username": "carol", "github_user_id": 1003 },
+    "dev-user": { "username": "dev-user", "github_user_id": 1004 }
+  },
   "agents": {
     "swe": {
       "name": "swe",

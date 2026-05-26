@@ -4,6 +4,7 @@ import { Spinner } from "@hydra/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
 import { useAgents } from "../hooks/useAgents";
+import { useUsers } from "../hooks/useUsers";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { GlobalSearchModal } from "../features/search/GlobalSearchModal";
 import { useGlobalSearchShortcut } from "../features/search/useGlobalSearchShortcut";
@@ -23,10 +24,16 @@ const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 function GlobalIssueCreateModal() {
   const { isOpen, close } = useIssueCreateModal();
   const { data: agents } = useAgents();
+  const { data: users } = useUsers();
   const assignees = useMemo(() => {
-    const names = (agents ?? []).map((a) => a.name);
-    return Array.from(new Set(names)).sort();
-  }, [agents]);
+    const agentNames = Array.from(
+      new Set((agents ?? []).map((a) => a.name)),
+    ).sort();
+    const userNames = Array.from(
+      new Set((users ?? []).map((u) => u.username)),
+    ).sort();
+    return { agents: agentNames, users: userNames };
+  }, [agents, users]);
   return <IssueCreateModal open={isOpen} onClose={close} assignees={assignees} />;
 }
 
