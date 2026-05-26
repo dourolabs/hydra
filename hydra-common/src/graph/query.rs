@@ -25,8 +25,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::graph::view::ObjectKind;
 use crate::HydraId;
+use crate::graph::view::ObjectKind;
 
 // -- AST ----------------------------------------------------------------
 
@@ -461,7 +461,7 @@ impl<'a> Parser<'a> {
         // Filter stage: `kind=...`.
         if name == "kind" {
             self.bump();
-            return self.parse_kind_stage(&name_tok);
+            return self.parse_kind_stage();
         }
 
         // Relation stage.
@@ -486,7 +486,7 @@ impl<'a> Parser<'a> {
         self.parse_relation_stage(&stage_kind, &name_tok)
     }
 
-    fn parse_kind_stage(&mut self, kind_word: &Token) -> Result<Stage, ParseError> {
+    fn parse_kind_stage(&mut self) -> Result<Stage, ParseError> {
         // We've consumed the `kind` word. Now require `=`, then KINDLIST.
         let eq_tok = match self.peek() {
             Some(tok) => tok.clone(),
@@ -544,7 +544,6 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        let _ = kind_word; // silence unused-binding lint
         Ok(Stage::Kind(kinds))
     }
 
@@ -1363,11 +1362,12 @@ hint: queries must start with a source id (e.g., 'i-abcdef | scope')";
     fn fails_ancestors_without_rel() {
         let err = parse("i-abcd | ancestors").unwrap_err();
         assert_eq!(err.message, "'ancestors' requires 'rel='");
-        assert!(err
-            .hint
-            .as_deref()
-            .unwrap()
-            .contains("ancestors rel=child-of"));
+        assert!(
+            err.hint
+                .as_deref()
+                .unwrap()
+                .contains("ancestors rel=child-of")
+        );
     }
 
     #[test]
