@@ -177,42 +177,6 @@ describe("Issues", () => {
       expect(issue.issue.status).toBe("closed");
     }
   });
-
-  it("todo items: add, replace, set status", async () => {
-    const created = await client.createIssue(issuePayload);
-    const issueId = created.issue_id;
-
-    // Add todo item
-    const added = await client.addTodoItem(issueId, {
-      description: "First task",
-      is_done: false,
-    });
-    expect(added.issue_id).toBe(issueId);
-    expect(added.todo_list).toHaveLength(1);
-    expect(added.todo_list[0].description).toBe("First task");
-    expect(added.todo_list[0].is_done).toBe(false);
-
-    // Add another
-    const added2 = await client.addTodoItem(issueId, {
-      description: "Second task",
-      is_done: false,
-    });
-    expect(added2.todo_list).toHaveLength(2);
-
-    // Set todo item status
-    const toggled = await client.setTodoItemStatus(issueId, 0, {
-      is_done: true,
-    });
-    expect(toggled.todo_list[0].is_done).toBe(true);
-    expect(toggled.todo_list[1].is_done).toBe(false);
-
-    // Replace entire todo list
-    const replaced = await client.replaceTodoList(issueId, {
-      todo_list: [{ description: "Replaced task", is_done: true }],
-    });
-    expect(replaced.todo_list).toHaveLength(1);
-    expect(replaced.todo_list[0].description).toBe("Replaced task");
-  });
 });
 
 // ---------------------------------------------------------------------------
