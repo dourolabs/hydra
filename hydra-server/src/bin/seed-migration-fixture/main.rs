@@ -18,8 +18,9 @@
 //!    one row).
 //! 2. Runs `MIGRATOR.run(&pool)` to apply every migration on the checkout
 //!    to HEAD. Captures the maximum applied version (the **pin**).
-//! 3. Invokes [`hydra_server::test_seed::seed_baseline`] for the
-//!    deterministic catalogue of rows.
+//! 3. Invokes [`seed::seed_baseline`] (sibling module) for the
+//!    deterministic, store-based catalogue of rows. The catalogue size
+//!    scales with the `--scale` flag.
 //! 4. Shells out to `pg_dump --data-only --inserts --column-inserts
 //!    --schema=metis $DATABASE_URL` and captures stdout.
 //! 5. Computes a sha256 over `hydra-server/migrations/` (filenames sorted
@@ -39,8 +40,11 @@
 //!    emit now. Override with `--force` (catches accidental runs against
 //!    the wrong checkout).
 
+mod seed;
+
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use hydra_server::store::postgres_v2::PostgresStoreV2;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use sqlx::postgres::{PgPoolOptions, PgRow};
@@ -48,6 +52,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::info;
+
+use crate::seed::SeedConfig;
 
 /// Directory containing the Postgres migrations bundled into this binary.
 /// Resolved at build time via `CARGO_MANIFEST_DIR` so the tool works
@@ -79,6 +85,14 @@ struct Cli {
     /// not match the current tree.
     #[arg(long, default_value_t = false)]
     force: bool,
+
+    /// Per-shape multiplier for the deterministic seed catalogue. `1`
+    /// (the default) matches the prior raw-SQL seed's coverage (one
+    /// row per assignee shape, per Review.author shape, etc.); larger
+    /// values fan everything out by that factor for migration-stress
+    /// testing without changing the kinds of rows produced.
+    #[arg(long, default_value_t = 1)]
+    scale: usize,
 }
 
 #[tokio::main]
@@ -134,10 +148,11 @@ async fn run(cli: Cli) -> Result<()> {
         .context("read max migration version from _sqlx_migrations")?;
     info!(baseline_version, "captured baseline pin");
 
-    hydra_server::test_seed::seed_baseline(&pool)
+    let store = PostgresStoreV2::new(pool.clone());
+    seed::seed_baseline(&store, SeedConfig::for_scale(cli.scale))
         .await
         .context("run seed_baseline")?;
-    info!("seeded baseline rows");
+    info!(scale = cli.scale, "seeded baseline rows");
 
     pool.close().await;
 
