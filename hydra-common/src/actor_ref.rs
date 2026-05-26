@@ -209,6 +209,28 @@ impl ActorRef {
             }
         }
     }
+
+    /// Return the `session_id` of the innermost `Authenticated` actor reached
+    /// by walking the same `Authenticated | Automation.triggered_by` chain
+    /// that [`on_behalf_of`] walks.
+    ///
+    /// Used by policy automations that need to recover the originating
+    /// session for `ActorId::Agent` / `ActorId::Adhoc` writes — `on_behalf_of`
+    /// returns the bare `ActorId` and discards the surrounding `session_id`
+    /// field, so consumers that want both must call this helper alongside it.
+    ///
+    /// `System { on_behalf_of }` carries an `ActorId` rather than a nested
+    /// `ActorRef`, so its branch returns `None` — there is no inner
+    /// `Authenticated` to recurse into.
+    pub fn originating_session_id(&self) -> Option<&SessionId> {
+        match self {
+            ActorRef::Authenticated { session_id, .. } => session_id.as_ref(),
+            ActorRef::System { .. } => None,
+            ActorRef::Automation { triggered_by, .. } => triggered_by
+                .as_ref()
+                .and_then(|t| t.originating_session_id()),
+        }
+    }
 }
 
 /// Parse a user-facing shorthand string into an `ActorId`.
@@ -1353,6 +1375,56 @@ mod tests {
         let json = serde_json::to_string(&actor_ref).unwrap();
         let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
         assert_eq!(actor_ref, deserialized);
+    }
+
+    #[test]
+    fn originating_session_id_authenticated_agent_with_sid() {
+        let sid = SessionId::from_str("s-abcdef").unwrap();
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(AgentName::try_new("swe").unwrap()),
+            session_id: Some(sid.clone()),
+        };
+        assert_eq!(actor_ref.originating_session_id(), Some(&sid));
+    }
+
+    #[test]
+    fn originating_session_id_authenticated_agent_without_sid() {
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(AgentName::try_new("swe").unwrap()),
+            session_id: None,
+        };
+        assert_eq!(actor_ref.originating_session_id(), None);
+    }
+
+    #[test]
+    fn originating_session_id_authenticated_username_without_sid() {
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+            session_id: None,
+        };
+        assert_eq!(actor_ref.originating_session_id(), None);
+    }
+
+    #[test]
+    fn originating_session_id_automation_recurses_through_triggered_by() {
+        let sid = SessionId::from_str("s-abcdef").unwrap();
+        let actor_ref = ActorRef::Automation {
+            automation_name: "github_pr_sync".into(),
+            triggered_by: Some(Box::new(ActorRef::Authenticated {
+                actor_id: ActorId::Agent(AgentName::try_new("swe").unwrap()),
+                session_id: Some(sid.clone()),
+            })),
+        };
+        assert_eq!(actor_ref.originating_session_id(), Some(&sid));
+    }
+
+    #[test]
+    fn originating_session_id_system_returns_none() {
+        let actor_ref = ActorRef::System {
+            worker_name: "task-spawner".into(),
+            on_behalf_of: Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+        };
+        assert_eq!(actor_ref.originating_session_id(), None);
     }
 
     #[test]
