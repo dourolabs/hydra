@@ -376,6 +376,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::sessions::relay::session_relay),
         )
         .route("/v1/whoami", get(routes::whoami::whoami))
+        .route("/v1/users", get(routes::users::list_users))
         .route("/v1/users/:username", get(routes::users::get_user))
         .route(
             "/v1/users/:username/secrets",

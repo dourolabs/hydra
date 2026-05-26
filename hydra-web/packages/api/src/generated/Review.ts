@@ -11,6 +11,18 @@ import type { Principal } from "./Principal";
  * [`UpsertReviewRequest`] (no author) and the server stamps the
  * author from the authenticated actor (§6); the [`Review`] type
  * here is the canonical/response shape.
+ *
+ * The deserializer is back-compat with the pre-Phase-5b wire shape:
+ * a bare-string `author` is rewritten in flight via
+ * [`Principal::parse_legacy_assignee`]. This keeps clients running
+ * through the soft-cutover window — including when reading rows the
+ * server's row migration has not yet touched.
+ *
+ * Each bare-string hit emits a `tracing::warn!` on the
+ * `review_author_legacy_decode` target so we can release-soak the
+ * fallback and confirm zero stale-client traffic before deleting it
+ * (design §8.2, §11 row 7). The same instrumentation mirrors the
+ * `ActorId::Legacy` warn-log added in p-qtlpckuo.
  */
 export type Review = {
   contents: string;

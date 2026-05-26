@@ -274,6 +274,7 @@ mod ts_export {
         crate::users::User::export_all(&cfg).expect("User");
         crate::users::UserSummary::export_all(&cfg).expect("UserSummary");
         crate::users::SearchUsersQuery::export_all(&cfg).expect("SearchUsersQuery");
+        crate::users::ListUsersResponse::export_all(&cfg).expect("ListUsersResponse");
 
         // API v1: version
         crate::version::VersionResponse::export_all(&cfg).expect("VersionResponse");
