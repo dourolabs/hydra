@@ -2,7 +2,7 @@
 //! plus the kind post-filters to apply after hydration.
 //!
 //! The resolver is the runtime counterpart to the parser/lowering library in
-//! [`hydra_common::graph::query`]. The parser yields a flat sequence of
+//! [`crate::command::graph::query`]. The parser yields a flat sequence of
 //! [`LoweredStage`]s; the resolver issues one HTTP call per stage (three for
 //! `scope`; zero for `Kind`), evolving the vertex set per the
 //! inclusive-by-default contract documented in
@@ -23,11 +23,11 @@ use std::collections::HashSet;
 use anyhow::{Context, Result};
 use futures::stream::{FuturesUnordered, StreamExt};
 use hydra_common::api::v1::relations::ListRelationsRequest;
-use hydra_common::graph::query::{Direction, LoweredQuery, LoweredStage, RelationsQuery};
 use hydra_common::graph::ObjectKind;
 use hydra_common::HydraId;
 
 use crate::client::HydraClientInterface;
+use crate::command::graph::query::{Direction, LoweredQuery, LoweredStage, RelationsQuery};
 
 /// Output of [`resolve`].
 #[derive(Debug, Clone, Default)]

@@ -1,7 +1,7 @@
 //! `hydra graph search` — implementation.
 //!
 //! The selection input is the positional pipe-grammar query (parsed in
-//! [`hydra_common::graph::query`]). The flow is:
+//! [`crate::command::graph::query`]). The flow is:
 //!
 //! 1. Parse the query string. Parse errors print the caret block and exit 2.
 //! 2. [`crate::command::graph::resolver::resolve`] walks the lowered query
@@ -19,13 +19,13 @@ use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
-use hydra_common::graph::query::parse;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
 use crate::command::graph::dispatch::{hydrate_by_id, HydratedNode};
+use crate::command::graph::query::parse;
 use crate::command::graph::resolver::{resolve, Resolved};
 use crate::command::graph::DEFAULT_HYDRATION_CONCURRENCY;
 use crate::command::output::{CommandContext, ResolvedOutputFormat};

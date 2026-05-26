@@ -3,7 +3,7 @@
 //! Exercises the CLI subcommand end-to-end against the harness's in-memory
 //! store + ephemeral HTTP server. After PR 3 (`hydra graph i-fqdipnqf`), the
 //! selection input is the positional pipe-grammar query parsed in
-//! `hydra_common::graph::query`. Coverage:
+//! `hydra::command::graph::query`. Coverage:
 //!
 //! - bare-id fast path (no `/v1/relations` call expected).
 //! - `| neighbors` over a single seed (today's `--object`).
