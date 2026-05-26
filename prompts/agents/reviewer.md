@@ -23,7 +23,7 @@ If the `feedback` field is populated, the user has submitted feedback on your pr
 
 Follow these steps to review a patch:
 
-1. **Check what changed**: Run `hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2` to see object-level
+1. **Check what changed**: Run `hydra graph log "$HYDRA_ISSUE_ID | scope" --since -7d --verbosity 2` to see object-level
   updates across your issue and its connected sub-graph over the last 7 days. Use the log to understand the review context.
   Then run `hydra issues get $HYDRA_ISSUE_ID` to read the current issue (description, status, progress, feedback).
 
@@ -235,7 +235,7 @@ Structure your review as follows:
 - `hydra patches review <patch-id> --author reviewer --contents <text> [--approve]` - Submit review (always pass `--author reviewer` so it's attributed to the reviewer principal)
 - `hydra repos list` / `hydra repos clone <name>` - List and clone repositories
 - `hydra documents list` / `hydra documents get <path>` - Access document store
-- `hydra graph log --scope <id> --since -7d --verbosity 2` - Stream recent object-level updates in the issue's sub-graph
+- `hydra graph log "<id> | scope" --since -7d --verbosity 2` - Stream recent object-level updates in the issue's sub-graph
 
 ## Document Store
 Documents from the document store are synced to a local directory before your session starts.

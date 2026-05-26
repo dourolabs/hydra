@@ -1,16 +1,20 @@
-//! Integration tests for `hydra graph log`.
+//! Integration tests for `hydra graph log` (PR 5 pipe-grammar cutover).
 //!
 //! Exercises the CLI subcommand end-to-end against the harness's in-memory
 //! store + ephemeral HTTP server, covering:
-//! - per-version `created`/`updated` events for an issue with multiple
-//!   in-window versions
-//! - merging of events across two nodes in descending-ts order
-//! - `--limit` truncation
-//! - conversation log going through the event-stream fold
-//! - `--verbosity` controlling which field changes surface in `changes`
-//! - `--since` after `--until` (exit 2)
-//! - omitted `--since` falls back to the Unix epoch ("from the beginning of time")
-//! - `--max-nodes` cap (exit 2) and empty selection (exit 2)
+//! - the bare-id fast path (single-object log, no `/v1/relations` call)
+//! - `'<id> | neighbors'` for per-version `created`/`updated` events
+//! - `'<id> | scope'` (and `| scope | kind=patch`) regression against the
+//!   pre-cutover `--scope` invocation
+//! - **inclusive-by-default** contract: `| children` over a childless issue
+//!   still emits the seed's own events
+//! - **`exclusive` flag** regression: matches today's `--source` semantics
+//! - `--limit` truncation, descending-ts ordering, `--verbosity` projection,
+//!   conversation event-stream fold
+//! - **flag removal**: `--source`/`--scope`/`--object`/etc. now produce
+//!   clap parse errors at exit 2
+//! - PM-playbook smoke: `'<id> | scope'` is the canonical replacement for
+//!   the old `--scope <id>` opening invocation
 
 mod harness;
 
@@ -40,7 +44,43 @@ fn records_for_id<'a>(records: &'a [Value], id: &str) -> Vec<&'a Value> {
 }
 
 #[tokio::test]
-async fn log_emits_per_version_events_for_issue_in_window() -> Result<()> {
+async fn log_bare_id_emits_single_object_events() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    // Bare-id source: no `/v1/relations` call is needed at all.
+    let issue = user.create_issue("bare-id-log").await?;
+    user.update_issue_status(&issue, IssueStatus::InProgress)
+        .await?;
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            issue.as_ref(),
+            "--since",
+            "-1h",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    // Should include both the `created` event and the status-update.
+    let matched = records_for_id(&records, issue.as_ref());
+    assert_eq!(
+        matched.len(),
+        2,
+        "expected 2 events for the lone issue, got {records:?}",
+    );
+    assert!(
+        matched.iter().any(|r| r["event"] == "created"),
+        "expected created event in {matched:?}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_neighbors_emits_per_version_events_for_issue_in_window() -> Result<()> {
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
 
@@ -57,10 +97,9 @@ async fn log_emits_per_version_events_for_issue_in_window() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -114,10 +153,9 @@ async fn log_merges_events_across_nodes_in_descending_ts_order() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -160,10 +198,9 @@ async fn log_limit_truncates_to_n_records() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
             "--limit",
             "2",
         ])
@@ -174,7 +211,163 @@ async fn log_limit_truncates_to_n_records() -> Result<()> {
 }
 
 #[tokio::test]
-async fn log_conversation_uses_event_fold() -> Result<()> {
+async fn log_scope_form_matches_today_scope_invocation() -> Result<()> {
+    // Regression: `'<id> | scope'` is the DSL replacement for today's
+    // `--scope <id>` selection.
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let parent = user.create_issue("log-scope-parent").await?;
+    let child = user.create_child_issue(&parent, "log-scope-child").await?;
+    user.update_issue_status(&child, IssueStatus::InProgress)
+        .await?;
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            &format!("{} | scope", parent.as_ref()),
+            "--since",
+            "-1h",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    // Both parent and child versions appear because `scope` is inherently
+    // inclusive and fans out via child-of.
+    assert!(
+        !records_for_id(&records, parent.as_ref()).is_empty(),
+        "parent missing in scope log: {records:?}",
+    );
+    assert!(
+        !records_for_id(&records, child.as_ref()).is_empty(),
+        "child missing in scope log: {records:?}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_scope_kind_patch_with_limit() -> Result<()> {
+    // `'<id> | scope | kind=patch' --since X --limit 10` — bounded scope
+    // patch events.
+    use hydra_common::RepoName;
+    use std::str::FromStr;
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/log-scope-kind")
+        .build()
+        .await?;
+    let user = harness.default_user();
+    let client = harness.client()?;
+    let repo = RepoName::from_str("acme/log-scope-kind")?;
+
+    let parent = user.create_issue("log-kind-parent").await?;
+    let child = user.create_child_issue(&parent, "log-kind-child").await?;
+    let patch = user.create_patch("log-kind-p", "x", &repo).await?;
+    client
+        .create_relation(&CreateRelationRequest {
+            source_id: child.clone().into(),
+            target_id: patch.clone().into(),
+            rel_type: "has-patch".to_string(),
+        })
+        .await?;
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            &format!("{} | scope | kind=patch", parent.as_ref()),
+            "--since",
+            "-1h",
+            "--limit",
+            "10",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    assert!(!records.is_empty(), "expected events");
+    for record in &records {
+        assert_eq!(
+            record["kind"].as_str(),
+            Some("patch"),
+            "kind=patch filter not applied: {record}",
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_inclusive_default_children_includes_seed_with_no_children() -> Result<()> {
+    // **Inclusive-by-default** contract: `'<id> | children'` over an issue
+    // with no children still emits events for the seed itself.
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let lonely = user.create_issue("log-lonely").await?;
+    // No children; no other relations.
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            &format!("{} | children", lonely.as_ref()),
+            "--since",
+            "-1h",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    let matched = records_for_id(&records, lonely.as_ref());
+    assert!(
+        matched.iter().any(|r| r["event"] == "created"),
+        "inclusive-default should keep the seed: {records:?}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_exclusive_children_regression_matches_old_source_form() -> Result<()> {
+    // `'<id> | children exclusive'` matches today's `--source <id>`: the
+    // resolver issues `source_ids=<id>` and drops the seed from the
+    // resulting vertex set. For a child-of edge (source=child, target=parent),
+    // `'<child> | children exclusive'` walks one hop along the outgoing edge
+    // to the parent, then drops the seed.
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let parent = user.create_issue("log-excl-parent").await?;
+    let child = user.create_child_issue(&parent, "log-excl-child").await?;
+    user.update_issue_status(&child, IssueStatus::InProgress)
+        .await?;
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            &format!("{} | children exclusive", child.as_ref()),
+            "--since",
+            "-1h",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    // Only the parent should appear; the seed (child) is excluded.
+    assert!(
+        !records_for_id(&records, parent.as_ref()).is_empty(),
+        "expected parent events; got: {records:?}",
+    );
+    assert!(
+        records_for_id(&records, child.as_ref()).is_empty(),
+        "exclusive should drop the seed (child); got: {records:?}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_conversation_uses_event_fold_via_neighbors_kind_filter() -> Result<()> {
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
     let client = harness.client()?;
@@ -211,12 +404,9 @@ async fn log_conversation_uses_event_fold() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors | kind=conversation", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
-            "--kind",
-            "conversation",
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -232,8 +422,6 @@ async fn log_conversation_uses_event_fold() -> Result<()> {
         assert_eq!(record["kind"].as_str(), Some("conversation"));
         assert_eq!(record["id"].as_str(), Some(conv.conversation_id.as_ref()));
     }
-    // Exactly one `created` event (the first version overall is inside the
-    // window).
     let created_count = records
         .iter()
         .filter(|r| r["event"].as_str() == Some("created"))
@@ -248,7 +436,7 @@ async fn log_l1_hides_description_change_visible_at_l3() -> Result<()> {
     let user = harness.default_user();
     let client = harness.client()?;
 
-    // Anchor the target issue in the relation graph so `--object parent`
+    // Anchor the target issue in the relation graph so neighbors of parent
     // resolves to a non-empty node set.
     let parent = user.create_issue("log-v3-parent").await?;
     let issue = user.create_child_issue(&parent, "log-v3-target").await?;
@@ -265,10 +453,9 @@ async fn log_l1_hides_description_change_visible_at_l3() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
             "--verbosity",
             "1",
         ])
@@ -291,10 +478,9 @@ async fn log_l1_hides_description_change_visible_at_l3() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
             "--verbosity",
             "3",
         ])
@@ -331,8 +517,7 @@ async fn log_without_since_defaults_to_epoch() -> Result<()> {
             "jsonl",
             "graph",
             "log",
-            "--object",
-            parent.as_ref(),
+            &format!("{} | neighbors", parent.as_ref()),
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -354,12 +539,11 @@ async fn log_since_after_until_exits_code_two() -> Result<()> {
         .cli_expect_failure(&[
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "2026-05-15T13:00:00Z",
             "--until",
             "2026-05-15T12:00:00Z",
-            "--object",
-            parent.as_ref(),
         ])
         .await?;
     assert_eq!(output.status.code(), Some(2));
@@ -384,10 +568,9 @@ async fn log_max_nodes_one_exits_code_two() -> Result<()> {
             "jsonl",
             "graph",
             "log",
+            &format!("{} | neighbors", parent.as_ref()),
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
             "--max-nodes",
             "1",
         ])
@@ -402,19 +585,108 @@ async fn log_max_nodes_one_exits_code_two() -> Result<()> {
 }
 
 #[tokio::test]
-async fn log_empty_selection_exits_code_two() -> Result<()> {
+async fn log_parse_error_exits_code_two() -> Result<()> {
+    // Parse failure: `kids` is not a real stage name; the parser surfaces
+    // a Levenshtein hint and we exit 2.
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
+
     let output = user
-        .cli_expect_failure(&["graph", "log", "--since", "-1h"])
+        .cli_expect_failure(&["graph", "log", "i-abcdef | kids", "--since", "-1h"])
         .await?;
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        output
-            .stderr
-            .contains("at least one of --source, --target, --object, or --scope"),
-        "missing helpful message: {}",
+        output.stderr.contains("unknown stage 'kids'"),
+        "expected parser error, got: {}",
         output.stderr,
+    );
+    assert!(
+        output.stderr.contains("children"),
+        "expected 'did you mean children?' hint, got: {}",
+        output.stderr,
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_old_source_flag_is_rejected_by_clap() -> Result<()> {
+    // The `--source` flag (and every other selection flag) was deleted by
+    // PR 5. clap rejects it as an unrecognized arg at exit 2.
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+    let parent = user.create_issue("log-flag-removal").await?;
+
+    let output = user
+        .cli_expect_failure(&[
+            "graph",
+            "log",
+            "--source",
+            parent.as_ref(),
+            "--since",
+            "-1h",
+        ])
+        .await?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr_lower = output.stderr.to_lowercase();
+    assert!(
+        stderr_lower.contains("unexpected argument")
+            || stderr_lower.contains("unrecognized argument"),
+        "expected clap unknown-arg error, got: {}",
+        output.stderr,
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_old_scope_flag_is_rejected_by_clap() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+    let parent = user.create_issue("log-scope-flag-removal").await?;
+
+    let output = user
+        .cli_expect_failure(&["graph", "log", "--scope", parent.as_ref(), "--since", "-1h"])
+        .await?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr_lower = output.stderr.to_lowercase();
+    assert!(
+        stderr_lower.contains("unexpected argument")
+            || stderr_lower.contains("unrecognized argument"),
+        "expected clap unknown-arg error for --scope, got: {}",
+        output.stderr,
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn log_pm_playbook_scope_form_smoke() -> Result<()> {
+    // The PM playbook's standard opening invocation maps from
+    //   hydra graph log --scope $HYDRA_ISSUE_ID --since -7d --verbosity 2
+    // to
+    //   hydra graph log '<issue> | scope' --since -7d --verbosity 2
+    // This is the exact form the PM agent will use post-cutover.
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let issue = user.create_issue("pm-playbook-smoke").await?;
+    let _child = user.create_child_issue(&issue, "pm-playbook-child").await?;
+
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "log",
+            &format!("{} | scope", issue.as_ref()),
+            "--since",
+            "-7d",
+            "--verbosity",
+            "2",
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    assert!(
+        !records_for_id(&records, issue.as_ref()).is_empty(),
+        "PM playbook scope form should surface the seed issue's events: {records:?}",
     );
     Ok(())
 }
