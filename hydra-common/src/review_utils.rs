@@ -1,36 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::api::v1::patches::{PatchVersionRecord, Review};
-use crate::principal::Principal;
-
-/// Are two [`Principal`]s "the same actor" for review-attribution
-/// purposes? Phase 5b keeps the pre-Phase-5b case-insensitive
-/// semantics for `User` / `Agent` names so existing reviews
-/// authored as `Principal::User { name: "Alice" }` still satisfy a
-/// merge policy that names `Principal::User { name: "alice" }`.
-/// [`Principal::External`] matches on `(system, username)` with
-/// case-insensitive username compare.
-fn principals_match_ci(a: &Principal, b: &Principal) -> bool {
-    match (a, b) {
-        (Principal::User { name: n1 }, Principal::User { name: n2 }) => {
-            n1.as_str().eq_ignore_ascii_case(n2.as_str())
-        }
-        (Principal::Agent { name: n1 }, Principal::Agent { name: n2 }) => {
-            n1.as_str().eq_ignore_ascii_case(n2.as_str())
-        }
-        (
-            Principal::External {
-                system: s1,
-                username: u1,
-            },
-            Principal::External {
-                system: s2,
-                username: u2,
-            },
-        ) => s1 == s2 && u1.eq_ignore_ascii_case(u2),
-        _ => false,
-    }
-}
+use crate::principal::{Principal, principal_eq};
 
 /// Per-review staleness check against a precomputed cutoff timestamp.
 ///
@@ -83,7 +54,7 @@ pub fn is_review_non_stale(review: &Review, patch_versions: &[PatchVersionRecord
 /// Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
 /// `Review.author` from a bare string to [`Principal`]; this
 /// function follows suit and matches by Principal. See
-/// [`principals_match_ci`] for the matching semantics.
+/// [`principal_eq`] for the matching semantics.
 pub fn find_latest_review_by_author<'a>(
     reviews: &'a [Review],
     author: &Principal,
@@ -91,7 +62,7 @@ pub fn find_latest_review_by_author<'a>(
 ) -> Option<&'a Review> {
     reviews
         .iter()
-        .filter(|r| principals_match_ci(&r.author, author))
+        .filter(|r| principal_eq(&r.author, author))
         .filter(|r| is_non_stale_with_cutoff(r, staleness_cutoff))
         .max_by(|a, b| {
             // Reviews with submitted_at are always newer than those without
@@ -161,7 +132,7 @@ pub fn has_approved_non_dismissed_review(
 
 /// Canonical, case-folded key for a [`Principal`] — used to dedupe
 /// per-author when scanning a review list. Mirrors the matching done
-/// by [`principals_match_ci`].
+/// by [`principal_eq`].
 fn canonical_principal_key(p: &Principal) -> String {
     match p {
         Principal::User { name } => format!("users/{}", name.as_str().to_ascii_lowercase()),

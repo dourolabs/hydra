@@ -200,6 +200,40 @@ impl Principal {
     }
 }
 
+/// Kind-aware, case-insensitive equality on [`Principal`].
+///
+/// `User` matches `User` by case-insensitive name; `Agent` matches `Agent`
+/// by case-insensitive name; `External` matches `External` when both
+/// `system` and `username` are case-insensitive equal. Mismatched kinds
+/// never compare equal — a [`Principal::User`] named `swe` does not match a
+/// [`Principal::Agent`] named `swe`.
+///
+/// Phase 6 of `/designs/actor-system-overhaul.md` uses this helper in
+/// every merge-authorisation matching site (mergers list, reviewer-group
+/// quorum, author exclusion) so the same principal-equality rule is
+/// applied uniformly.
+pub fn principal_eq(a: &Principal, b: &Principal) -> bool {
+    match (a, b) {
+        (Principal::User { name: n1 }, Principal::User { name: n2 }) => {
+            n1.as_str().eq_ignore_ascii_case(n2.as_str())
+        }
+        (Principal::Agent { name: n1 }, Principal::Agent { name: n2 }) => {
+            n1.as_str().eq_ignore_ascii_case(n2.as_str())
+        }
+        (
+            Principal::External {
+                system: s1,
+                username: u1,
+            },
+            Principal::External {
+                system: s2,
+                username: u2,
+            },
+        ) => s1.as_str().eq_ignore_ascii_case(s2.as_str()) && u1.eq_ignore_ascii_case(u2),
+        _ => false,
+    }
+}
+
 impl fmt::Display for Principal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_path())
@@ -479,5 +513,72 @@ mod tests {
     fn parse_legacy_assignee_returns_none_for_invalid_input() {
         assert_eq!(Principal::parse_legacy_assignee(""), None);
         assert_eq!(Principal::parse_legacy_assignee("alice bob"), None);
+    }
+
+    // --- principal_eq (Phase 6 kind-aware case-insensitive equality) -----
+
+    #[test]
+    fn principal_eq_same_user_same_case() {
+        assert!(principal_eq(&alice(), &alice()));
+    }
+
+    #[test]
+    fn principal_eq_user_case_insensitive() {
+        let upper = Principal::user(Username::try_new("ALICE").unwrap());
+        assert!(principal_eq(&alice(), &upper));
+    }
+
+    #[test]
+    fn principal_eq_agent_case_insensitive() {
+        let swe_lower = Principal::agent(AgentName::try_new("swe").unwrap());
+        let swe_mixed = Principal::agent(AgentName::try_new("sWE").unwrap());
+        let swe_upper = Principal::agent(AgentName::try_new("Swe").unwrap());
+        assert!(principal_eq(&swe_lower, &swe_mixed));
+        assert!(principal_eq(&swe_lower, &swe_upper));
+        assert!(principal_eq(&swe_mixed, &swe_upper));
+    }
+
+    #[test]
+    fn principal_eq_user_does_not_match_agent_with_same_name() {
+        let swe_user = Principal::user(Username::try_new("swe").unwrap());
+        let swe_agent = Principal::agent(AgentName::try_new("swe").unwrap());
+        assert!(!principal_eq(&swe_user, &swe_agent));
+        assert!(!principal_eq(&swe_agent, &swe_user));
+    }
+
+    #[test]
+    fn principal_eq_external_does_not_match_user_with_same_name() {
+        let user_x = Principal::user(Username::try_new("x").unwrap());
+        let ext_x = Principal::external(ExternalSystem::try_new("github").unwrap(), "x");
+        assert!(!principal_eq(&user_x, &ext_x));
+        assert!(!principal_eq(&ext_x, &user_x));
+    }
+
+    #[test]
+    fn principal_eq_external_matches_same_system_and_username_ci() {
+        let lower = Principal::external(ExternalSystem::try_new("github").unwrap(), "jayantk");
+        let upper = Principal::external(ExternalSystem::try_new("GitHub").unwrap(), "JayantK");
+        assert!(principal_eq(&lower, &upper));
+    }
+
+    #[test]
+    fn principal_eq_external_differs_by_system() {
+        let gh = Principal::external(ExternalSystem::try_new("github").unwrap(), "alice");
+        let gl = Principal::external(ExternalSystem::try_new("gitlab").unwrap(), "alice");
+        assert!(!principal_eq(&gh, &gl));
+    }
+
+    #[test]
+    fn principal_eq_external_differs_by_username() {
+        let alice = Principal::external(ExternalSystem::try_new("github").unwrap(), "alice");
+        let bob = Principal::external(ExternalSystem::try_new("github").unwrap(), "bob");
+        assert!(!principal_eq(&alice, &bob));
+    }
+
+    #[test]
+    fn principal_eq_different_users() {
+        let alice = Principal::user(Username::try_new("alice").unwrap());
+        let bob = Principal::user(Username::try_new("bob").unwrap());
+        assert!(!principal_eq(&alice, &bob));
     }
 }

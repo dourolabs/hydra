@@ -799,7 +799,11 @@ fn blocked_at_layer_str(layer: BlockedAtLayer) -> &'static str {
 
 fn render_eligible_principal(principal: &EligiblePrincipal) -> String {
     match principal {
-        EligiblePrincipal::User { username } => username.clone(),
+        EligiblePrincipal::User { name } => format!("users/{}", name.as_str()),
+        EligiblePrincipal::Agent { name } => format!("agents/{}", name.as_str()),
+        EligiblePrincipal::External { system, username } => {
+            format!("external/{}/{}", system.as_str(), username)
+        }
         EligiblePrincipal::Dynamic {
             reference,
             resolved_to,
@@ -1586,10 +1590,10 @@ mod tests {
                 label: Some("code-review".to_string()),
                 eligible_principals: vec![
                     EligiblePrincipal::User {
-                        username: "reviewer".to_string(),
+                        name: hydra_common::api::v1::users::Username::try_new("reviewer").unwrap(),
                     },
                     EligiblePrincipal::User {
-                        username: "jayantk".to_string(),
+                        name: hydra_common::api::v1::users::Username::try_new("jayantk").unwrap(),
                     },
                 ],
                 current_approvals: vec![],
