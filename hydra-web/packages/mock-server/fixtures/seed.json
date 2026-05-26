@@ -10,14 +10,6 @@
       "assignee": { "kind": "user", "name": "alice" },
       "dependencies": [],
       "patches": [],
-      "todo_list": [
-        { "description": "Finalize OAuth2 provider selection", "is_done": true },
-        { "description": "Complete database migration plan", "is_done": true },
-        { "description": "Implement rate limiting middleware", "is_done": false },
-        { "description": "Build real-time collaboration engine", "is_done": false },
-        { "description": "Deploy GraphQL gateway", "is_done": false },
-        { "description": "Update deployment scripts", "is_done": false }
-      ],
       "last_updated_at": "2026-05-12T10:30:00.000Z",
       "history": [
         {
@@ -31,15 +23,7 @@
             "status": "open",
             "assignee": null,
             "dependencies": [],
-            "patches": [],
-            "todo_list": [
-              { "description": "Finalize OAuth2 provider selection", "is_done": false },
-              { "description": "Complete database migration plan", "is_done": false },
-              { "description": "Implement rate limiting middleware", "is_done": false },
-              { "description": "Build real-time collaboration engine", "is_done": false },
-              { "description": "Deploy GraphQL gateway", "is_done": false },
-              { "description": "Update deployment scripts", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -59,15 +43,7 @@
         {
           "timestamp": "2026-03-14T10:00:00.000Z",
           "patch": {
-            "progress": "Database migration shipped. Auth scope work complete. Federation gateway live with Users + Issues subgraphs.",
-            "todo_list": [
-              { "description": "Finalize OAuth2 provider selection", "is_done": true },
-              { "description": "Complete database migration plan", "is_done": true },
-              { "description": "Implement rate limiting middleware", "is_done": false },
-              { "description": "Build real-time collaboration engine", "is_done": false },
-              { "description": "Deploy GraphQL gateway", "is_done": false },
-              { "description": "Update deployment scripts", "is_done": false }
-            ]
+            "progress": "Database migration shipped. Auth scope work complete. Federation gateway live with Users + Issues subgraphs."
           }
         },
         {
@@ -91,13 +67,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00001"],
-      "todo_list": [
-        { "description": "Set up Keycloak instance", "is_done": true },
-        { "description": "Implement authorization code flow", "is_done": true },
-        { "description": "Add token refresh logic", "is_done": false },
-        { "description": "Migrate existing sessions", "is_done": false },
-        { "description": "Update API endpoint auth checks", "is_done": false }
-      ],
       "last_updated_at": "2026-05-11T08:45:00.000Z",
       "history": [
         {
@@ -111,14 +80,7 @@
             "status": "open",
             "assignee": null,
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Set up Keycloak instance", "is_done": false },
-              { "description": "Implement authorization code flow", "is_done": false },
-              { "description": "Add token refresh logic", "is_done": false },
-              { "description": "Migrate existing sessions", "is_done": false },
-              { "description": "Update API endpoint auth checks", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -132,28 +94,14 @@
         {
           "timestamp": "2026-03-05T14:10:00.000Z",
           "patch": {
-            "progress": "Keycloak selected. Standing up dev instance.",
-            "todo_list": [
-              { "description": "Set up Keycloak instance", "is_done": true },
-              { "description": "Implement authorization code flow", "is_done": false },
-              { "description": "Add token refresh logic", "is_done": false },
-              { "description": "Migrate existing sessions", "is_done": false },
-              { "description": "Update API endpoint auth checks", "is_done": false }
-            ]
+            "progress": "Keycloak selected. Standing up dev instance."
           }
         },
         {
           "timestamp": "2026-03-10T18:00:00.000Z",
           "patch": {
             "progress": "Authorization code flow implemented; PR open for review.",
-            "patches": ["p-seed00001"],
-            "todo_list": [
-              { "description": "Set up Keycloak instance", "is_done": true },
-              { "description": "Implement authorization code flow", "is_done": true },
-              { "description": "Add token refresh logic", "is_done": false },
-              { "description": "Migrate existing sessions", "is_done": false },
-              { "description": "Update API endpoint auth checks", "is_done": false }
-            ]
+            "patches": ["p-seed00001"]
           }
         }
       ]
@@ -171,11 +119,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": [],
-      "todo_list": [
-        { "description": "Implement token refresh endpoint", "is_done": true },
-        { "description": "Add request queuing during refresh", "is_done": false },
-        { "description": "Handle concurrent refresh race condition", "is_done": false }
-      ],
       "last_updated_at": "2026-05-10T19:20:00.000Z",
       "history": [
         {
@@ -190,12 +133,7 @@
             "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Implement token refresh endpoint", "is_done": false },
-              { "description": "Add request queuing during refresh", "is_done": false },
-              { "description": "Handle concurrent refresh race condition", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -208,12 +146,7 @@
         {
           "timestamp": "2026-03-14T17:40:00.000Z",
           "patch": {
-            "progress": "Token refresh endpoint implemented. Working on queuing logic next.",
-            "todo_list": [
-              { "description": "Implement token refresh endpoint", "is_done": true },
-              { "description": "Add request queuing during refresh", "is_done": false },
-              { "description": "Handle concurrent refresh race condition", "is_done": false }
-            ]
+            "progress": "Token refresh endpoint implemented. Working on queuing logic next."
           }
         }
       ]
@@ -228,11 +161,6 @@
       "assignee": { "kind": "agent", "name": "swe" },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
       "patches": ["p-seed00002"],
-      "todo_list": [
-        { "description": "Define scope taxonomy", "is_done": true },
-        { "description": "Implement scope validation middleware", "is_done": true },
-        { "description": "Update API docs with scope requirements", "is_done": true }
-      ],
       "last_updated_at": "2026-03-13T11:30:00.000Z",
       "history": [
         {
@@ -246,36 +174,21 @@
             "status": "open",
             "assignee": { "kind": "agent", "name": "swe" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Define scope taxonomy", "is_done": false },
-              { "description": "Implement scope validation middleware", "is_done": false },
-              { "description": "Update API docs with scope requirements", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
           "timestamp": "2026-03-02T15:30:00.000Z",
           "patch": {
             "status": "in-progress",
-            "progress": "Defining scope taxonomy.",
-            "todo_list": [
-              { "description": "Define scope taxonomy", "is_done": true },
-              { "description": "Implement scope validation middleware", "is_done": false },
-              { "description": "Update API docs with scope requirements", "is_done": false }
-            ]
+            "progress": "Defining scope taxonomy."
           }
         },
         {
           "timestamp": "2026-03-12T09:00:00.000Z",
           "patch": {
             "progress": "Middleware implemented, PR up for review.",
-            "patches": ["p-seed00002"],
-            "todo_list": [
-              { "description": "Define scope taxonomy", "is_done": true },
-              { "description": "Implement scope validation middleware", "is_done": true },
-              { "description": "Update API docs with scope requirements", "is_done": false }
-            ]
+            "patches": ["p-seed00002"]
           }
         }
       ]
@@ -290,7 +203,6 @@
       "assignee": { "kind": "agent", "name": "swe" },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": [],
-      "todo_list": [],
       "last_updated_at": "2026-03-14T10:00:00.000Z",
       "history": [
         {
@@ -304,8 +216,7 @@
             "status": "open",
             "assignee": null,
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-            "patches": [],
-            "todo_list": []
+            "patches": []
           }
         },
         {
@@ -337,11 +248,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00003"],
-      "todo_list": [
-        { "description": "Design rate limit tiers", "is_done": true },
-        { "description": "Implement sliding window algorithm", "is_done": true },
-        { "description": "Fix Redis connection pool leak", "is_done": false }
-      ],
       "last_updated_at": "2026-05-13T11:00:00.000Z",
       "history": [
         {
@@ -356,12 +262,7 @@
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Design rate limit tiers", "is_done": false },
-              { "description": "Implement sliding window algorithm", "is_done": false },
-              { "description": "Fix Redis connection pool leak", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -376,12 +277,7 @@
           "timestamp": "2026-03-12T15:00:00.000Z",
           "patch": {
             "progress": "Sliding window prototype works. Opening PR.",
-            "patches": ["p-seed00003"],
-            "todo_list": [
-              { "description": "Design rate limit tiers", "is_done": true },
-              { "description": "Implement sliding window algorithm", "is_done": true },
-              { "description": "Fix Redis connection pool leak", "is_done": false }
-            ]
+            "patches": ["p-seed00003"]
           }
         },
         {
@@ -402,7 +298,6 @@
       "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
       "patches": [],
-      "todo_list": [],
       "last_updated_at": "2026-02-08T17:45:00.000Z",
       "history": [
         {
@@ -416,8 +311,7 @@
             "status": "open",
             "assignee": null,
             "dependencies": [],
-            "patches": [],
-            "todo_list": []
+            "patches": []
           }
         },
         {
@@ -445,13 +339,7 @@
       "status": "open",
       "assignee": null,
       "dependencies": [],
-      "patches": [],
-      "todo_list": [
-        { "description": "Create theme token system (colors, shadows, borders)", "is_done": false },
-        { "description": "Implement ThemeProvider context", "is_done": false },
-        { "description": "Add toggle component to settings", "is_done": false },
-        { "description": "Update all component styles for dark theme", "is_done": false }
-      ]
+      "patches": []
     },
     "i-seed00009": {
       "type": "task",
@@ -466,11 +354,6 @@
       },
       "dependencies": [],
       "patches": ["p-seed00007"],
-      "todo_list": [
-        { "description": "Profile current query performance", "is_done": true },
-        { "description": "Add GIN index on description column", "is_done": true },
-        { "description": "Benchmark after indexing", "is_done": false }
-      ],
       "last_updated_at": "2026-05-12T16:00:00.000Z",
       "history": [
         {
@@ -485,12 +368,7 @@
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
-            "patches": [],
-            "todo_list": [
-              { "description": "Profile current query performance", "is_done": false },
-              { "description": "Add GIN index on description column", "is_done": false },
-              { "description": "Benchmark after indexing", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -498,24 +376,14 @@
           "patch": {
             "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
-            "progress": "Profiling: 95th percentile latency at 2.4s on description LIKE search.",
-            "todo_list": [
-              { "description": "Profile current query performance", "is_done": true },
-              { "description": "Add GIN index on description column", "is_done": false },
-              { "description": "Benchmark after indexing", "is_done": false }
-            ]
+            "progress": "Profiling: 95th percentile latency at 2.4s on description LIKE search."
           }
         },
         {
           "timestamp": "2026-03-15T08:55:00.000Z",
           "patch": {
             "progress": "GIN index PR open. Pending benchmark.",
-            "patches": ["p-seed00007"],
-            "todo_list": [
-              { "description": "Profile current query performance", "is_done": true },
-              { "description": "Add GIN index on description column", "is_done": true },
-              { "description": "Benchmark after indexing", "is_done": false }
-            ]
+            "patches": ["p-seed00007"]
           }
         }
       ]
@@ -529,8 +397,7 @@
       "status": "dropped",
       "assignee": { "kind": "user", "name": "dev-user" },
       "dependencies": [],
-      "patches": [],
-      "todo_list": []
+      "patches": []
     },
     "i-seed00011": {
       "type": "review-request",
@@ -629,12 +496,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00008"],
-      "todo_list": [
-        { "description": "Implement ConnectionManager class", "is_done": true },
-        { "description": "Add JWT authentication on connect", "is_done": true },
-        { "description": "Handle reconnection with exponential backoff", "is_done": false },
-        { "description": "Write unit tests", "is_done": false }
-      ],
       "last_updated_at": "2026-05-12T09:30:00.000Z",
       "history": [
         {
@@ -649,13 +510,7 @@
             "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Implement ConnectionManager class", "is_done": false },
-              { "description": "Add JWT authentication on connect", "is_done": false },
-              { "description": "Handle reconnection with exponential backoff", "is_done": false },
-              { "description": "Write unit tests", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -669,13 +524,7 @@
           "timestamp": "2026-03-15T10:45:00.000Z",
           "patch": {
             "progress": "ConnectionManager + JWT auth done. PR open.",
-            "patches": ["p-seed00008"],
-            "todo_list": [
-              { "description": "Implement ConnectionManager class", "is_done": true },
-              { "description": "Add JWT authentication on connect", "is_done": true },
-              { "description": "Handle reconnection with exponential backoff", "is_done": false },
-              { "description": "Write unit tests", "is_done": false }
-            ]
+            "patches": ["p-seed00008"]
           }
         }
       ]
@@ -693,11 +542,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00005"],
-      "todo_list": [
-        { "description": "Set up Yjs document model", "is_done": true },
-        { "description": "Implement Y-WebSocket provider", "is_done": true },
-        { "description": "Add PostgreSQL persistence adapter", "is_done": true }
-      ],
       "last_updated_at": "2026-03-14T18:45:00.000Z",
       "history": [
         {
@@ -712,12 +556,7 @@
             "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Set up Yjs document model", "is_done": false },
-              { "description": "Implement Y-WebSocket provider", "is_done": false },
-              { "description": "Add PostgreSQL persistence adapter", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -731,12 +570,7 @@
           "timestamp": "2026-03-14T17:30:00.000Z",
           "patch": {
             "progress": "Provider + persistence adapter merged.",
-            "patches": ["p-seed00005"],
-            "todo_list": [
-              { "description": "Set up Yjs document model", "is_done": true },
-              { "description": "Implement Y-WebSocket provider", "is_done": true },
-              { "description": "Add PostgreSQL persistence adapter", "is_done": true }
-            ]
+            "patches": ["p-seed00005"]
           }
         }
       ]
@@ -754,11 +588,6 @@
       },
       "dependencies": [],
       "patches": ["p-seed00009"],
-      "todo_list": [
-        { "description": "Reproduce the race condition in tests", "is_done": true },
-        { "description": "Implement distributed lock with Redis SETNX", "is_done": true },
-        { "description": "Add cleanup worker metrics", "is_done": false }
-      ],
       "last_updated_at": "2026-05-13T09:00:00.000Z",
       "history": [
         {
@@ -773,12 +602,7 @@
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
-            "patches": [],
-            "todo_list": [
-              { "description": "Reproduce the race condition in tests", "is_done": false },
-              { "description": "Implement distributed lock with Redis SETNX", "is_done": false },
-              { "description": "Add cleanup worker metrics", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -786,24 +610,14 @@
           "patch": {
             "assignee": { "kind": "agent", "name": "swe" },
             "status": "in-progress",
-            "progress": "swe agent investigating. Reproduced race in test harness.",
-            "todo_list": [
-              { "description": "Reproduce the race condition in tests", "is_done": true },
-              { "description": "Implement distributed lock with Redis SETNX", "is_done": false },
-              { "description": "Add cleanup worker metrics", "is_done": false }
-            ]
+            "progress": "swe agent investigating. Reproduced race in test harness."
           }
         },
         {
           "timestamp": "2026-03-15T13:20:00.000Z",
           "patch": {
             "progress": "Distributed lock implemented; PR up for review.",
-            "patches": ["p-seed00009"],
-            "todo_list": [
-              { "description": "Reproduce the race condition in tests", "is_done": true },
-              { "description": "Implement distributed lock with Redis SETNX", "is_done": true },
-              { "description": "Add cleanup worker metrics", "is_done": false }
-            ]
+            "patches": ["p-seed00009"]
           }
         }
       ]
@@ -821,12 +635,6 @@
       },
       "dependencies": [],
       "patches": ["p-seed00006"],
-      "todo_list": [
-        { "description": "Profile memory usage under load", "is_done": true },
-        { "description": "Identify root cause of listener accumulation", "is_done": true },
-        { "description": "Register AbortSignal cleanup handler", "is_done": true },
-        { "description": "Add connection count metrics endpoint", "is_done": true }
-      ],
       "last_updated_at": "2026-05-12T20:00:00.000Z",
       "history": [
         {
@@ -841,13 +649,7 @@
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [],
-            "patches": [],
-            "todo_list": [
-              { "description": "Profile memory usage under load", "is_done": false },
-              { "description": "Identify root cause of listener accumulation", "is_done": false },
-              { "description": "Register AbortSignal cleanup handler", "is_done": false },
-              { "description": "Add connection count metrics endpoint", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -861,26 +663,14 @@
         {
           "timestamp": "2026-03-13T17:00:00.000Z",
           "patch": {
-            "progress": "Root cause found: AbortSignal listener not registered.",
-            "todo_list": [
-              { "description": "Profile memory usage under load", "is_done": true },
-              { "description": "Identify root cause of listener accumulation", "is_done": true },
-              { "description": "Register AbortSignal cleanup handler", "is_done": false },
-              { "description": "Add connection count metrics endpoint", "is_done": false }
-            ]
+            "progress": "Root cause found: AbortSignal listener not registered."
           }
         },
         {
           "timestamp": "2026-03-15T11:30:00.000Z",
           "patch": {
             "progress": "Fix implemented; PR p-seed00006 submitted for review.",
-            "patches": ["p-seed00006"],
-            "todo_list": [
-              { "description": "Profile memory usage under load", "is_done": true },
-              { "description": "Identify root cause of listener accumulation", "is_done": true },
-              { "description": "Register AbortSignal cleanup handler", "is_done": true },
-              { "description": "Add connection count metrics endpoint", "is_done": true }
-            ]
+            "patches": ["p-seed00006"]
           }
         }
       ]
@@ -897,14 +687,7 @@
         "repo_name": "acme/api-gateway"
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
-      "patches": ["p-seed00004"],
-      "todo_list": [
-        { "description": "Deploy Apollo Gateway", "is_done": true },
-        { "description": "Implement Users subgraph", "is_done": true },
-        { "description": "Implement Issues subgraph", "is_done": true },
-        { "description": "Implement Sessions subgraph", "is_done": false },
-        { "description": "Implement Patches subgraph", "is_done": false }
-      ]
+      "patches": ["p-seed00004"]
     },
     "i-seed00018": {
       "type": "task",
@@ -926,12 +709,7 @@
       "status": "open",
       "assignee": null,
       "dependencies": [],
-      "patches": [],
-      "todo_list": [
-        { "description": "Design webhook registration API", "is_done": false },
-        { "description": "Implement delivery worker with retries", "is_done": false },
-        { "description": "Add HMAC signature verification", "is_done": false }
-      ]
+      "patches": []
     },
     "i-seed00020": {
       "type": "task",
@@ -946,12 +724,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
       "patches": ["p-seed00010"],
-      "todo_list": [
-        { "description": "Design per-client refresh queue API", "is_done": true },
-        { "description": "Wire mutex into HTTP client", "is_done": true },
-        { "description": "Fix burst-load deadlock", "is_done": false },
-        { "description": "Surface refresh errors to all queued callers", "is_done": false }
-      ],
       "last_updated_at": "2026-05-13T17:30:00.000Z",
       "history": [
         {
@@ -966,39 +738,21 @@
             "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00003" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Design per-client refresh queue API", "is_done": false },
-              { "description": "Wire mutex into HTTP client", "is_done": false },
-              { "description": "Fix burst-load deadlock", "is_done": false },
-              { "description": "Surface refresh errors to all queued callers", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
           "timestamp": "2026-03-15T09:00:00.000Z",
           "patch": {
             "status": "in-progress",
-            "progress": "API design ratified. Implementing mutex.",
-            "todo_list": [
-              { "description": "Design per-client refresh queue API", "is_done": true },
-              { "description": "Wire mutex into HTTP client", "is_done": false },
-              { "description": "Fix burst-load deadlock", "is_done": false },
-              { "description": "Surface refresh errors to all queued callers", "is_done": false }
-            ]
+            "progress": "API design ratified. Implementing mutex."
           }
         },
         {
           "timestamp": "2026-03-15T14:30:00.000Z",
           "patch": {
             "progress": "Initial wiring complete; deadlock observed under burst load. Investigating.",
-            "patches": ["p-seed00010"],
-            "todo_list": [
-              { "description": "Design per-client refresh queue API", "is_done": true },
-              { "description": "Wire mutex into HTTP client", "is_done": true },
-              { "description": "Fix burst-load deadlock", "is_done": false },
-              { "description": "Surface refresh errors to all queued callers", "is_done": false }
-            ]
+            "patches": ["p-seed00010"]
           }
         }
       ]
@@ -1016,12 +770,6 @@
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
       "patches": [],
-      "todo_list": [
-        { "description": "Cover happy-path single refresh", "is_done": true },
-        { "description": "Cover concurrent caller resolution", "is_done": true },
-        { "description": "Cover error propagation to all queued callers", "is_done": false },
-        { "description": "Cover burst-load deadlock regression", "is_done": false }
-      ],
       "last_updated_at": "2026-05-14T11:00:00.000Z",
       "history": [
         {
@@ -1036,13 +784,7 @@
             "assignee": { "kind": "agent", "name": "swe" },
             "session_settings": { "repo_name": "acme/web-app" },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00020" }],
-            "patches": [],
-            "todo_list": [
-              { "description": "Cover happy-path single refresh", "is_done": false },
-              { "description": "Cover concurrent caller resolution", "is_done": false },
-              { "description": "Cover error propagation to all queued callers", "is_done": false },
-              { "description": "Cover burst-load deadlock regression", "is_done": false }
-            ]
+            "patches": []
           }
         },
         {
@@ -1055,13 +797,7 @@
         {
           "timestamp": "2026-03-15T17:45:00.000Z",
           "patch": {
-            "progress": "Concurrent caller resolution test green. Error propagation next.",
-            "todo_list": [
-              { "description": "Cover happy-path single refresh", "is_done": true },
-              { "description": "Cover concurrent caller resolution", "is_done": true },
-              { "description": "Cover error propagation to all queued callers", "is_done": false },
-              { "description": "Cover burst-load deadlock regression", "is_done": false }
-            ]
+            "progress": "Concurrent caller resolution test green. Error propagation next."
           }
         }
       ]
@@ -1081,13 +817,7 @@
         { "type": "child-of", "issue_id": "i-seed00020" },
         { "type": "blocked-on", "issue_id": "i-seed00020" }
       ],
-      "patches": [],
-      "todo_list": [
-        { "description": "Build k6 load harness", "is_done": false },
-        { "description": "Run baseline (no mutex) measurements", "is_done": false },
-        { "description": "Run mutex-guarded measurements", "is_done": false },
-        { "description": "Publish comparison report", "is_done": false }
-      ]
+      "patches": []
     },
     "i-seed00023": {
       "type": "review-request",

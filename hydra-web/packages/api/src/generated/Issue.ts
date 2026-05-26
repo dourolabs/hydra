@@ -7,7 +7,6 @@ import type { IssueType } from "./IssueType";
 import type { PatchId } from "./PatchId";
 import type { Principal } from "./Principal";
 import type { SessionSettings } from "./SessionSettings";
-import type { TodoItem } from "./TodoItem";
 import type { Username } from "./Username";
 
 export type Issue = {
@@ -19,7 +18,6 @@ export type Issue = {
   status: IssueStatus;
   assignee?: Principal | null;
   session_settings?: SessionSettings;
-  todo_list?: Array<TodoItem>;
   dependencies: Array<IssueDependency>;
   patches: Array<PatchId>;
   deleted?: boolean;

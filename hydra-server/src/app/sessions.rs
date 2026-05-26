@@ -1410,7 +1410,6 @@ mod tests {
                         status: IssueStatus::Open,
                         assignee: None,
                         session_settings: session_settings.clone(),
-                        todo_list: Vec::new(),
                         dependencies: Vec::new(),
                         patches: Vec::new(),
                         deleted: false,

@@ -76,7 +76,6 @@ describe("Issues", () => {
       assignee: { kind: "user", name: "alice" },
       dependencies: [],
       patches: [],
-      todo_list: [],
     },
     session_id: null,
   };
@@ -1149,7 +1148,6 @@ describe("Seed data", () => {
     const seed1 = await client.getIssue("i-seed00001");
     expect(seed1.issue.type).toBe("feature");
     expect(seed1.issue.creator).toBe("alice");
-    expect(seed1.issue.todo_list!.length).toBeGreaterThan(0);
   });
 
   it("seed sessions are loaded", async () => {

@@ -21,7 +21,6 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     progress: "",
     dependencies: [],
     patches: [],
-    todo_list: [],
     ...overrides,
   };
 }

@@ -12,7 +12,6 @@ use crate::{
         documents::Document,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
-            TodoItem,
         },
         labels::Label,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
@@ -310,8 +309,6 @@ impl PostgresStoreV2 {
         let job_settings_json = serde_json::to_value(&issue.session_settings).map_err(|e| {
             StoreError::Internal(format!("failed to serialize session_settings: {e}"))
         })?;
-        let todo_list_json = serde_json::to_value(&issue.todo_list)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
         let form_json = issue
             .form
             .as_ref()
@@ -337,8 +334,8 @@ impl PostgresStoreV2 {
         // readers keep working. Phase 7 drops the column.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, form, form_response, feedback)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -352,7 +349,6 @@ impl PostgresStoreV2 {
             .bind(assignee_path.as_deref())
             .bind(&assignee_principal_json)
             .bind(&job_settings_json)
-            .bind(&todo_list_json)
             .bind(issue.deleted)
             .bind(actor)
             .bind(&form_json)
@@ -431,8 +427,6 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
             })?;
-        let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
         let form = row
             .form
             .as_ref()
@@ -467,7 +461,6 @@ impl PostgresStoreV2 {
             status,
             assignee,
             session_settings,
-            todo_list,
             dependencies: vec![],
             patches: vec![],
             deleted: row.deleted,
@@ -1331,11 +1324,16 @@ struct IssueRow {
     creator: String,
     progress: String,
     status: String,
+    /// Legacy `assignee TEXT` column. Phase 4b reads
+    /// `assignee_principal` as the source of truth; this field is still
+    /// selected so the dual-written column round-trips through
+    /// `sqlx::FromRow`, but is no longer consumed at the Rust layer.
+    /// Phase 7 drops the column.
+    #[allow(dead_code)]
     assignee: Option<String>,
     #[sqlx(default)]
     assignee_principal: Option<Value>,
     job_settings: Value,
-    todo_list: Value,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -2110,7 +2108,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
              form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
@@ -2151,7 +2149,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, todo_list, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, \
              form, form_response, feedback
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -2215,7 +2213,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // subqueries or DISTINCT ON.
         let subquery = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-             i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.todo_list, i.deleted, i.actor, \
+             i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
              i.form, i.form_response, i.feedback \
@@ -5307,7 +5305,7 @@ mod tests {
             documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-                SessionSettings, TodoItem,
+                SessionSettings,
             },
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
             users::{User, Username},
@@ -5344,7 +5342,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
             None,
@@ -5543,10 +5540,6 @@ mod tests {
                 memory_limit: Some("4Gi".to_string()),
                 secrets: Some(vec!["job-secret".to_string()]),
             }),
-            vec![
-                TodoItem::new("todo one".to_string(), false),
-                TodoItem::new("todo two".to_string(), true),
-            ],
             dependencies,
             patches,
             Some(Form {
@@ -6524,7 +6517,7 @@ mod tests {
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(
             fetched.item, issue,
-            "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, patches)"
+            "Issue must round-trip all fields (assignee, job_settings, dependencies, patches)"
         );
     }
 
@@ -6651,7 +6644,6 @@ mod tests {
             None,
             vec![],
             vec![],
-            vec![],
             None,
             None,
             None,
@@ -6668,7 +6660,6 @@ mod tests {
             IssueStatus::Open,
             None,
             None,
-            vec![],
             vec![],
             vec![],
             None,
@@ -7852,7 +7843,6 @@ mod tests {
             None,
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -7868,7 +7858,6 @@ mod tests {
             IssueStatus::Closed,
             None,
             None,
-            Vec::new(),
             Vec::new(),
             Vec::new(),
             None,

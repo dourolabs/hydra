@@ -82,7 +82,6 @@ async fn issue_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,

@@ -160,12 +160,6 @@ mod ts_export {
         crate::issues::IssueType::export_all(&cfg).expect("IssueType");
         crate::issues::IssueDependencyType::export_all(&cfg).expect("IssueDependencyType");
         crate::issues::IssueDependency::export_all(&cfg).expect("IssueDependency");
-        crate::issues::TodoItem::export_all(&cfg).expect("TodoItem");
-        crate::issues::TodoListResponse::export_all(&cfg).expect("TodoListResponse");
-        crate::issues::AddTodoItemRequest::export_all(&cfg).expect("AddTodoItemRequest");
-        crate::issues::ReplaceTodoListRequest::export_all(&cfg).expect("ReplaceTodoListRequest");
-        crate::issues::SetTodoItemStatusRequest::export_all(&cfg)
-            .expect("SetTodoItemStatusRequest");
         crate::issues::Issue::export_all(&cfg).expect("Issue");
         crate::issues::SessionSettings::export_all(&cfg).expect("SessionSettings");
         crate::issues::IssueVersionRecord::export_all(&cfg).expect("IssueVersionRecord");

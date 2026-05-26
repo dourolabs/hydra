@@ -1643,7 +1643,6 @@ mod tests {
                 None,
                 None,
                 Vec::new(),
-                Vec::new(),
                 patches,
                 false,
                 None,
@@ -2764,7 +2763,6 @@ mod tests {
                     ss.branch = Some("feature-branch".to_string());
                     ss
                 }),
-                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 false,

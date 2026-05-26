@@ -50,7 +50,6 @@ function toSummaryRecord(
     progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
     patches: issue.patches,
-    todo_list: issue.todo_list,
     deleted: issue.deleted,
     labels: getLabelsForObject(issueId),
   };

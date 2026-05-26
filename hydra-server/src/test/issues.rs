@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
         users::Username,
     },
     test_utils::{spawn_test_server, test_client},
@@ -27,7 +27,6 @@ fn issue(
     progress: String,
     status: IssueStatus,
     assignee: Option<&str>,
-    todo_list: Vec<TodoItem>,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
 ) -> Issue {
@@ -48,7 +47,6 @@ fn issue(
         status,
         assignee_principal,
         None,
-        todo_list,
         dependencies,
         patches,
         None,
@@ -86,7 +84,6 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
@@ -117,7 +114,6 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 IssueStatus::InProgress,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
@@ -153,7 +149,6 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
@@ -184,7 +179,6 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 IssueStatus::InProgress,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
@@ -265,7 +259,6 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 IssueStatus::Open,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
@@ -310,7 +303,6 @@ async fn create_issue_rejects_missing_creator_with_parent() -> anyhow::Result<()
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -338,7 +330,6 @@ async fn create_issue_rejects_missing_creator_with_parent() -> anyhow::Result<()
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 child_dependencies.clone(),
                 Vec::new(),
             )
@@ -367,7 +358,6 @@ async fn create_issue_rejects_missing_creator_without_parent() -> anyhow::Result
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -397,7 +387,6 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -423,7 +412,6 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 blocked_dependencies.clone(),
                 Vec::new(),
             )
@@ -449,7 +437,6 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Closed,
                 None,
-                Vec::new(),
                 blocked_dependencies.clone(),
                 Vec::new(),
             )
@@ -478,7 +465,6 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -504,7 +490,6 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 child_dependencies.clone(),
                 Vec::new(),
             )
@@ -530,7 +515,6 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 String::new(),
                 IssueStatus::Closed,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -556,7 +540,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         String::new(),
         IssueStatus::Open,
         None,
-        Vec::new(),
         vec![],
         Vec::new(),
     );
@@ -567,7 +550,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         String::new(),
         IssueStatus::Open,
         Some("owner-1"),
-        Vec::new(),
         vec![],
         Vec::new(),
     );
@@ -578,7 +560,6 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         String::new(),
         IssueStatus::Closed,
         None,
-        Vec::new(),
         vec![],
         Vec::new(),
     );
@@ -687,7 +668,6 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -743,7 +723,6 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -822,7 +801,6 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -875,7 +853,6 @@ async fn delete_issue_idempotency() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -950,7 +927,6 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -977,7 +953,6 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 String::new(),
                 IssueStatus::InProgress,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1003,7 +978,6 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 String::new(),
                 IssueStatus::InProgress,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1074,7 +1048,6 @@ async fn get_issue_version_zero_returns_400() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1116,7 +1089,6 @@ async fn get_issue_version_out_of_range_negative_offset_returns_400() -> anyhow:
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1178,7 +1150,6 @@ async fn list_issues_count_true_returns_total_count() -> anyhow::Result<()> {
                     String::new(),
                     IssueStatus::Open,
                     None,
-                    Vec::new(),
                     vec![],
                     Vec::new(),
                 )
@@ -1303,7 +1274,6 @@ async fn create_issue_with_form(
         String::new(),
         IssueStatus::Open,
         None,
-        Vec::new(),
         vec![],
         Vec::new(),
     )
@@ -1534,7 +1504,6 @@ async fn submit_form_action_no_form_on_issue() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1610,7 +1579,6 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::InProgress,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1664,7 +1632,6 @@ async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow:
                 String::new(),
                 IssueStatus::Closed,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1716,7 +1683,6 @@ async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::R
                 String::new(),
                 IssueStatus::Failed,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1787,7 +1753,6 @@ async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
             )
@@ -1858,7 +1823,6 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
                 status: IssueStatus::InProgress,
                 assignee: None,
                 session_settings: Default::default(),
-                todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,

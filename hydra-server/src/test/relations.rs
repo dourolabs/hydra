@@ -32,7 +32,6 @@ async fn create_issue(
                 IssueStatus::Open,
                 None,
                 None,
-                Vec::new(),
                 vec![],
                 Vec::new(),
                 None,
