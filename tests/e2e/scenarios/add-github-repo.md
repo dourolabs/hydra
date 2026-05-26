@@ -15,11 +15,11 @@ Verify that the `dourolabs/hydra-test-fixture` repository was pre-registered dur
 1. Navigate to the repositories page at `http://localhost:8080`
 2. Verify that `dourolabs/hydra-test-fixture` appears in the repository list
 3. Confirm the repository entry shows the correct name and URL
-4. Validate the merge policy was applied by `run.sh`. The dashboard does not currently surface `merge_policy` in the repositories UI (separate finding — flag in the test report, do not fix as part of this scenario). As a fallback, query the API directly via bash:
+4. Validate the merge policy was applied by `run.sh`. The repositories page now surfaces a **Merge policy** column; for `dourolabs/hydra-test-fixture` it should render the `code-review` reviewer group requiring the `reviewer` agent, and a Mergers row reading `unset (any approver)`. Cross-check via the API:
    ```bash
    env -u HYDRA_TOKEN HYDRA_SERVER_URL=http://127.0.0.1:8080 \
-     ./target/release/hydra-sp repos list --output json \
-     | jq '.[] | select(.name == "dourolabs/hydra-test-fixture") | .repository.merge_policy'
+     ./target/release/hydra-sp repos list --output-format jsonl \
+     | jq 'select(.name == "dourolabs/hydra-test-fixture") | .repository.merge_policy'
    ```
    And verify the returned JSON contains:
    - `reviewers[0].any_of` includes `"reviewer"` — the required reviewer is the `reviewer` agent.
@@ -30,7 +30,7 @@ Verify that the `dourolabs/hydra-test-fixture` repository was pre-registered dur
 - The repositories page loads without errors
 - `dourolabs/hydra-test-fixture` is listed as a registered repository
 - No errors or broken UI elements are visible
+- The Merge policy column for the fixture row shows the `code-review` reviewer group with `reviewer` and a Mergers row reading `unset (any approver)`.
 - The API-level `merge_policy` JSON for the fixture repository reflects what `run.sh` set:
   - At least one reviewer group requires the `reviewer` agent.
   - `mergers` is unset (anyone may merge once the reviewer-approval condition is satisfied).
-- The dashboard not surfacing `merge_policy` is flagged in the test report as a separate finding (UI gap), not as a failure of this scenario.
