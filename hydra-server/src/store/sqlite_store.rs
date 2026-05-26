@@ -11370,4 +11370,256 @@ mod tests {
         );
         assert_eq!(agent_config["model"], "gpt-4o");
     }
+
+    // ---- assignee_principal backfill (Phase 4a fix) ----
+
+    /// Apply the Phase 4a `assignee_principal` backfill migration to a
+    /// pre-migration schema. The test fixture creates `agents` and
+    /// `issues_v2` (without `assignee_principal`) so the migration's
+    /// `ALTER TABLE` runs against a realistic starting state.
+    async fn apply_assignee_principal_backfill_migration(pool: &SqlitePool) {
+        let sql = include_str!(
+            "../../sqlite-migrations/20260530000000_add_assignee_principal_to_issues.sql"
+        );
+        sqlx::raw_sql(sql).execute(pool).await.unwrap();
+    }
+
+    /// Create a minimal pre-migration schema: `agents` + `issues_v2`
+    /// without the `assignee_principal` column. Both tables match the
+    /// shape at the moment immediately before
+    /// `20260530000000_add_assignee_principal_to_issues.sql` runs.
+    async fn setup_pre_assignee_principal_schema(pool: &SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE agents ( \
+                name TEXT PRIMARY KEY, \
+                prompt_path TEXT NOT NULL, \
+                max_tries INTEGER NOT NULL DEFAULT 3, \
+                max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
+                is_assignment_agent INTEGER NOT NULL DEFAULT 0, \
+                deleted INTEGER NOT NULL DEFAULT 0, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE issues_v2 ( \
+                id TEXT NOT NULL, \
+                version_number INTEGER NOT NULL, \
+                title TEXT NOT NULL DEFAULT '', \
+                issue_type TEXT NOT NULL, \
+                description TEXT NOT NULL, \
+                creator TEXT NOT NULL, \
+                progress TEXT NOT NULL DEFAULT '', \
+                status TEXT NOT NULL DEFAULT 'open', \
+                assignee TEXT, \
+                job_settings TEXT NOT NULL DEFAULT '{}', \
+                deleted INTEGER NOT NULL DEFAULT 0, \
+                actor TEXT, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                PRIMARY KEY (id, version_number))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_agent(pool: &SqlitePool, name: &str) {
+        sqlx::query("INSERT INTO agents (name, prompt_path) VALUES (?1, ?2)")
+            .bind(name)
+            .bind("/dev/null")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_legacy_issue(pool: &SqlitePool, id: &str, assignee: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO issues_v2 \
+             (id, version_number, issue_type, description, creator, assignee) \
+             VALUES (?1, 1, 'task', '', 'creator', ?2)",
+        )
+        .bind(id)
+        .bind(assignee)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn fetch_assignee_principal(pool: &SqlitePool, id: &str) -> Option<String> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT assignee_principal FROM issues_v2 WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_classifies_bare_agent_names_as_agent() {
+        // Bare-name agents (the Phase 4a conflation bug): with the
+        // `agents` table populated, the legacy `assignee = "swe"` row
+        // should backfill to `Principal::Agent { name: "swe" }`, not
+        // `Principal::User`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        insert_agent(&pool, "swe").await;
+        insert_agent(&pool, "reviewer").await;
+        insert_legacy_issue(&pool, "issue-swe", Some("swe")).await;
+        insert_legacy_issue(&pool, "issue-reviewer", Some("reviewer")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-swe").await,
+            Some(r#"{"kind":"agent","name":"swe"}"#.to_string())
+        );
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-reviewer").await,
+            Some(r#"{"kind":"agent","name":"reviewer"}"#.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_classifies_unknown_bare_names_as_user() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        insert_agent(&pool, "swe").await;
+        insert_legacy_issue(&pool, "issue-alice", Some("alice")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-alice").await,
+            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_preserves_canonical_path_forms() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        // Even with "swe" in the agents table, `users/swe` should be
+        // honoured as a user (the canonical form wins over the
+        // bare-name match).
+        insert_agent(&pool, "swe").await;
+        insert_legacy_issue(&pool, "issue-user-path", Some("users/alice")).await;
+        insert_legacy_issue(&pool, "issue-agent-path", Some("agents/swe")).await;
+        insert_legacy_issue(&pool, "issue-user-swe-path", Some("users/swe")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-user-path").await,
+            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+        );
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-agent-path").await,
+            Some(r#"{"kind":"agent","name":"swe"}"#.to_string())
+        );
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-user-swe-path").await,
+            Some(r#"{"kind":"user","name":"swe"}"#.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_empty_agents_table_lifts_all_bare_as_user() {
+        // No agents registered → behaves like the pre-fix migration:
+        // every well-formed bare name is a user.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        insert_legacy_issue(&pool, "issue-swe", Some("swe")).await;
+        insert_legacy_issue(&pool, "issue-alice", Some("alice")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-swe").await,
+            Some(r#"{"kind":"user","name":"swe"}"#.to_string())
+        );
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-alice").await,
+            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_leaves_invalid_input_null() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        insert_agent(&pool, "swe").await;
+        insert_legacy_issue(&pool, "issue-empty", Some("")).await;
+        insert_legacy_issue(&pool, "issue-whitespace", Some("alice bob")).await;
+        insert_legacy_issue(&pool, "issue-null", None).await;
+        // External path is intentionally NOT backfilled by this
+        // migration -- the dual-write path picks it up on next write.
+        insert_legacy_issue(&pool, "issue-external", Some("external/github/jayantk")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(fetch_assignee_principal(&pool, "issue-empty").await, None);
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-whitespace").await,
+            None
+        );
+        assert_eq!(fetch_assignee_principal(&pool, "issue-null").await, None);
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-external").await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_case_sensitive_against_agent_names() {
+        // "SWE" (uppercase) doesn't match the lowercase "swe" agent row,
+        // so it falls back to Principal::User -- mirroring
+        // `Principal::parse_legacy_assignee_with_agents`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        insert_agent(&pool, "swe").await;
+        insert_legacy_issue(&pool, "issue-upper", Some("SWE")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-upper").await,
+            Some(r#"{"kind":"user","name":"SWE"}"#.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn assignee_principal_backfill_classifies_deleted_agent_as_agent() {
+        // Once a name has been registered as an agent (even if later
+        // soft-deleted), legacy strings for that name still refer to
+        // the agent -- the agent row remains in the table with
+        // `deleted = 1`, and the migration's predicate doesn't filter
+        // on `deleted`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_assignee_principal_schema(&pool).await;
+
+        sqlx::query("INSERT INTO agents (name, prompt_path, deleted) VALUES (?1, ?2, 1)")
+            .bind("retired")
+            .bind("/dev/null")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_legacy_issue(&pool, "issue-retired", Some("retired")).await;
+
+        apply_assignee_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            fetch_assignee_principal(&pool, "issue-retired").await,
+            Some(r#"{"kind":"agent","name":"retired"}"#.to_string())
+        );
+    }
 }

@@ -13,6 +13,7 @@
 use crate::api::v1::agents::AgentName;
 use crate::api::v1::users::Username;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -186,12 +187,58 @@ impl Principal {
     ///    `Principal::User { name }`.
     /// 3. Else return `None`.
     ///
+    /// Note: every bare string is classified as `Principal::User`. Migration
+    /// callers that need to disambiguate users from agents (historically
+    /// conflated in `Issue.assignee` / `Review.author`) should use
+    /// [`Principal::parse_legacy_assignee_with_agents`] instead.
+    ///
     /// This is the Rust-side mirror of the SQL `CASE` expression used by
     /// the v1 → v2 row migration; both sites need the same rule, so it
     /// lives here next to [`Principal::from_str`] / [`Principal::to_path`].
     pub fn parse_legacy_assignee(value: &str) -> Option<Self> {
         if let Ok(p) = Self::from_str(value) {
             return Some(p);
+        }
+        if let Ok(name) = Username::try_new(value) {
+            return Some(Principal::User { name });
+        }
+        None
+    }
+
+    /// Variant of [`Principal::parse_legacy_assignee`] that consults a
+    /// known-agent-names set to disambiguate bare strings.
+    ///
+    /// Historically `Issue.assignee` and `Review.author` conflated user
+    /// and agent names in the same bare-string column. The Phase 4a
+    /// migration first classified every bare string as
+    /// `Principal::User`, lifting agents like `swe` / `reviewer` /
+    /// `merger` to the wrong kind. This variant fixes that by
+    /// case-sensitively matching the input against `agent_names`
+    /// before falling back to `Principal::User`.
+    ///
+    /// Classification order:
+    /// 1. Canonical `users/<x>` / `agents/<x>` / `external/<sys>/<x>`
+    ///    via [`Principal::from_str`].
+    /// 2. Bare `<x>` where `agent_names` contains `<x>` and `<x>`
+    ///    validates as an [`AgentName`] → `Principal::Agent`.
+    /// 3. Bare `<x>` that validates as a [`Username`] → `Principal::User`.
+    /// 4. `None`.
+    ///
+    /// `agent_names` should be the full set of agent names from the
+    /// live `agents` table at migration time, including deleted
+    /// entries — once a name was registered as an agent, legacy
+    /// attribution strings for that name refer to the agent.
+    pub fn parse_legacy_assignee_with_agents(
+        value: &str,
+        agent_names: &HashSet<String>,
+    ) -> Option<Self> {
+        if let Ok(p) = Self::from_str(value) {
+            return Some(p);
+        }
+        if agent_names.contains(value) {
+            if let Ok(name) = AgentName::try_new(value) {
+                return Some(Principal::Agent { name });
+            }
         }
         if let Ok(name) = Username::try_new(value) {
             return Some(Principal::User { name });
@@ -513,6 +560,115 @@ mod tests {
     fn parse_legacy_assignee_returns_none_for_invalid_input() {
         assert_eq!(Principal::parse_legacy_assignee(""), None);
         assert_eq!(Principal::parse_legacy_assignee("alice bob"), None);
+    }
+
+    // --- parse_legacy_assignee_with_agents (Phase 4a fix) ----------------
+
+    fn agent_set(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_canonical_path_unchanged() {
+        let agents = agent_set(&["swe", "reviewer"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("users/alice", &agents),
+            Some(alice())
+        );
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("agents/swe", &agents),
+            Some(swe())
+        );
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("external/github/jayantk", &agents),
+            Some(gh_jayantk())
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_bare_name_in_set_classifies_as_agent() {
+        // Pre-Phase-4a-fix would have lifted bare "swe" to Principal::User.
+        // With the agent-name set, we correctly classify it as an agent.
+        let agents = agent_set(&["swe", "reviewer", "merger", "pm"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("swe", &agents),
+            Some(swe())
+        );
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("reviewer", &agents),
+            Some(Principal::Agent {
+                name: AgentName::try_new("reviewer").unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_bare_name_not_in_set_classifies_as_user() {
+        let agents = agent_set(&["swe", "reviewer"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("alice", &agents),
+            Some(alice())
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_empty_agent_set_matches_old_behavior() {
+        // With no agents registered, every bare name is a user — same as
+        // `parse_legacy_assignee` before the fix.
+        let agents = HashSet::new();
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("alice", &agents),
+            Some(alice())
+        );
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("swe", &agents),
+            Some(Principal::User {
+                name: Username::try_new("swe").unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_case_sensitive_match() {
+        // Case-sensitive: "SWE" (uppercase) does NOT match the registered
+        // lowercase "swe" agent name, so it falls back to Principal::User.
+        // The agents table is case-sensitive (TEXT PRIMARY KEY in SQLite,
+        // unqualified TEXT in postgres), so we mirror that here.
+        let agents = agent_set(&["swe"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("SWE", &agents),
+            Some(Principal::User {
+                name: Username::try_new("SWE").unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_returns_none_for_invalid_input() {
+        let agents = agent_set(&["swe"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("", &agents),
+            None
+        );
+        // Whitespace-bearing strings fail Username validation and the
+        // agent-name set is consulted with the raw value (which also
+        // wouldn't validate as an AgentName).
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("alice bob", &agents),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_legacy_assignee_with_agents_known_agent_path_form_still_works() {
+        // Even if "swe" is in the agent set, `agents/swe` should be
+        // parsed via `Principal::from_str` first and not via the bare
+        // path. The end result is the same Principal::Agent.
+        let agents = agent_set(&["swe"]);
+        assert_eq!(
+            Principal::parse_legacy_assignee_with_agents("agents/swe", &agents),
+            Some(swe())
+        );
     }
 
     // --- principal_eq (Phase 6 kind-aware case-insensitive equality) -----

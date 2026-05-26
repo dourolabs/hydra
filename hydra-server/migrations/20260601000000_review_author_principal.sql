@@ -8,9 +8,19 @@
 -- / `Principal::parse_legacy_assignee`:
 --   * "users/<x>"    with valid <x> -> {"kind":"user", "name":"<x>"}
 --   * "agents/<x>"   with valid <x> -> {"kind":"agent","name":"<x>"}
---   * bare "<x>"     with valid <x> -> {"kind":"user", "name":"<x>"}
+--   * bare "<x>" matching `metis.agents.name`
+--                                   -> {"kind":"agent","name":"<x>"}
+--   * other bare "<x>" with valid <x>
+--                                   -> {"kind":"user", "name":"<x>"}
 -- "external/<sys>/<x>" is left unchanged; the runtime poller
 -- (re-)writes typed `External` principals on next sync.
+--
+-- The bare-name → agent classification is driven by the live
+-- `metis.agents` table (case-sensitive `=`, both deleted and
+-- non-deleted agents). Historically users and agents have been
+-- conflated in `Review.author` strings, so we split them out via
+-- this string match rather than blindly lifting every bare string
+-- to `Principal::User`.
 --
 -- Per [[migrations]]: this UPDATE walks every review object in
 -- every `reviews` JSONB array and rewrites the `author` key. The
@@ -49,6 +59,18 @@ SET reviews = COALESCE(
                         THEN jsonb_build_object(
                             'kind', 'agent',
                             'name', substring(elem ->> 'author' FROM 8)
+                        )
+                    -- Bare `<x>` matching a known agent.
+                    WHEN jsonb_typeof(elem -> 'author') = 'string'
+                         AND (elem ->> 'author') <> ''
+                         AND (elem ->> 'author') !~ '[/[:space:]]'
+                         AND EXISTS (
+                             SELECT 1 FROM metis.agents
+                             WHERE name = elem ->> 'author'
+                         )
+                        THEN jsonb_build_object(
+                            'kind', 'agent',
+                            'name', elem ->> 'author'
                         )
                     -- Bare `<username>` (most pre-Phase-5b reviews).
                     WHEN jsonb_typeof(elem -> 'author') = 'string'

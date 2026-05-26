@@ -9,13 +9,23 @@
 -- SQLite JSON1 dialect can express cleanly:
 --   * "users/<x>"    with valid <x> -> {"kind":"user", "name":"<x>"}
 --   * "agents/<x>"   with valid <x> -> {"kind":"agent","name":"<x>"}
---   * bare "<x>"     with valid <x> -> {"kind":"user", "name":"<x>"}
+--   * bare "<x>" matching `agents.name`
+--                                   -> {"kind":"agent","name":"<x>"}
+--   * other bare "<x>" with valid <x>
+--                                   -> {"kind":"user", "name":"<x>"}
 -- The `"external/<sys>/<x>"` case is left unchanged by the
 -- migration -- no real existing rows are expected to use that form
 -- yet, and the runtime poller (re-)writes typed `External`
 -- principals on next sync. Anything else (empty string, embedded
 -- whitespace) stays as-is; the Rust-side custom deserializer logs
 -- a warning and the patch falls through `parse_legacy_assignee`.
+--
+-- The bare-name → agent classification is driven by the live
+-- `agents` table (case-sensitive `=`, both deleted and non-deleted
+-- agents). Historically users and agents have been conflated in
+-- `Review.author` strings, so we split them out via this string
+-- match rather than blindly lifting every bare string to
+-- `Principal::User`.
 --
 -- Per [[migrations]]: the SELECT explicitly names every column on
 -- the `patches_v2` table. New columns (post-Phase-5b) require
@@ -64,6 +74,22 @@ SET reviews = (
                     THEN json_object(
                         'kind', 'agent',
                         'name', substr(json_extract(value, '$.author'), 8)
+                    )
+                -- Bare `<x>` matching a known agent.
+                WHEN json_type(value, '$.author') = 'text'
+                     AND json_extract(value, '$.author') != ''
+                     AND json_extract(value, '$.author') NOT LIKE '%/%'
+                     AND json_extract(value, '$.author') NOT LIKE '% %'
+                     AND json_extract(value, '$.author') NOT LIKE '%' || char(9)  || '%'
+                     AND json_extract(value, '$.author') NOT LIKE '%' || char(10) || '%'
+                     AND json_extract(value, '$.author') NOT LIKE '%' || char(13) || '%'
+                     AND EXISTS (
+                         SELECT 1 FROM agents
+                         WHERE agents.name = json_extract(value, '$.author')
+                     )
+                    THEN json_object(
+                        'kind', 'agent',
+                        'name', json_extract(value, '$.author')
                     )
                 -- Bare `<username>` (most pre-Phase-5b reviews).
                 WHEN json_type(value, '$.author') = 'text'
