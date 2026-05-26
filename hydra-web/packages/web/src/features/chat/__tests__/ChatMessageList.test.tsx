@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 
 vi.mock("@hydra/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -19,7 +19,7 @@ vi.mock("../ChatMessageList.module.css", () => ({
 
 const { ChatMessageList } = await import("../ChatMessageList");
 
-function userMessage(content: string, ts = "2026-05-14T00:00:00Z"): ConversationEvent {
+function userMessage(content: string, ts = "2026-05-14T00:00:00Z"): SessionEvent {
   return { type: "user_message", content, timestamp: ts };
 }
 
@@ -81,24 +81,15 @@ describe("ChatMessageList transcript source attribution", () => {
     vi.clearAllMocks();
   });
 
-  it("surfaces data-transcript-source on the container when provided", () => {
-    const { container } = render(
-      <ChatMessageList
-        events={[userMessage("hi")]}
-        data-transcript-source="session_events"
-      />,
-    );
+  it("hard-codes data-transcript-source=session_events on the populated container", () => {
+    const { container } = render(<ChatMessageList events={[userMessage("hi")]} />);
     const list = container.querySelector('[data-testid="chat-message-list"]');
     expect(list?.getAttribute("data-transcript-source")).toBe("session_events");
   });
 
-  it("surfaces data-transcript-source on the empty-state container", () => {
-    const { container } = render(
-      <ChatMessageList events={[]} data-transcript-source="conversation_events" />,
-    );
+  it("hard-codes data-transcript-source=session_events on the empty-state container", () => {
+    const { container } = render(<ChatMessageList events={[]} />);
     const list = container.querySelector('[data-testid="chat-message-list"]');
-    expect(list?.getAttribute("data-transcript-source")).toBe(
-      "conversation_events",
-    );
+    expect(list?.getAttribute("data-transcript-source")).toBe("session_events");
   });
 });

@@ -1,4 +1,4 @@
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 
 /**
  * Layer locally-optimistic `user_message` events on top of the server-side
@@ -14,16 +14,16 @@ import type { ConversationEvent } from "@hydra/api";
  * disappeared until the refetch resolved.
  */
 export function mergeOptimisticEvents(
-  transcript: readonly ConversationEvent[],
-  optimistic: readonly ConversationEvent[],
-): ConversationEvent[] {
+  transcript: readonly SessionEvent[],
+  optimistic: readonly SessionEvent[],
+): SessionEvent[] {
   const remaining = new Map<string, number>();
   for (const e of transcript) {
     if (e.type === "user_message") {
       remaining.set(e.content, (remaining.get(e.content) ?? 0) + 1);
     }
   }
-  const pending: ConversationEvent[] = [];
+  const pending: SessionEvent[] = [];
   for (const e of optimistic) {
     if (e.type === "user_message") {
       const left = remaining.get(e.content) ?? 0;

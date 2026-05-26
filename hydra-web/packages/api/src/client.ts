@@ -58,7 +58,6 @@ import type { SetSecretRequest } from "./generated/SetSecretRequest";
 import type { VersionResponse } from "./generated/VersionResponse";
 import type { Conversation } from "./generated/Conversation";
 import type { ConversationSummary } from "./generated/ConversationSummary";
-import type { ConversationEvent } from "./generated/ConversationEvent";
 import type { CreateConversationRequest } from "./generated/CreateConversationRequest";
 import type { SendMessageRequest } from "./generated/SendMessageRequest";
 import type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
@@ -619,11 +618,6 @@ export class HydraApiClient {
   /** GET /v1/conversations/:conversationId */
   getConversation(conversationId: string): Promise<Conversation> {
     return this.get(`/v1/conversations/${encodeURIComponent(conversationId)}`);
-  }
-
-  /** GET /v1/conversations/:conversationId/events */
-  getConversationEvents(conversationId: string): Promise<ConversationEvent[]> {
-    return this.get(`/v1/conversations/${encodeURIComponent(conversationId)}/events`);
   }
 
   /** POST /v1/conversations */

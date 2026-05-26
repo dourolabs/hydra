@@ -1,6 +1,6 @@
 import { test, expect } from "../../fixtures/auth";
 import type { Page } from "@playwright/test";
-import type { ConversationEvent } from "@hydra/api";
+import type { SessionEvent } from "@hydra/api";
 
 // Verifies the AppLayout main scroll container reserves room for iOS Safari's
 // home-indicator safe area on the chat detail page.
@@ -14,6 +14,7 @@ import type { ConversationEvent } from "@hydra/api";
 // the computed value up by the simulated inset.
 
 const CONVERSATION_ID = "c-mobile-bottom-safe-area";
+const SESSION_ID = "t-mobile-bottom-safe-area";
 const SIMULATED_SAFE_AREA_PX = 34; // iPhone-13-class home indicator height
 const BREATHING_ROOM_PX = 8;
 
@@ -39,7 +40,19 @@ const conversationSummary = {
   updated_at: conversation.updated_at,
 };
 
-const events: ConversationEvent[] = [
+const sessionSummary = {
+  session_id: SESSION_ID,
+  version: 1,
+  timestamp: "2026-05-13T10:00:00Z",
+  session: {
+    prompt: "",
+    creator: "alice",
+    status: "running",
+    creation_time: "2026-05-13T10:00:00Z",
+  },
+};
+
+const sessionEvents: SessionEvent[] = [
   { type: "user_message", content: "Hello", timestamp: "2026-05-13T10:00:00Z" },
   { type: "assistant_message", content: "Hi there", timestamp: "2026-05-13T10:01:00Z" },
 ];
@@ -59,11 +72,18 @@ async function mockChatRoutes(page: Page) {
       body: JSON.stringify(conversation),
     });
   });
-  await page.route(new RegExp(`/api/v1/conversations/${CONVERSATION_ID}/events$`), (route) => {
+  await page.route(new RegExp(`/api/v1/sessions/${SESSION_ID}/events($|\\?)`), (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(events),
+      body: JSON.stringify(sessionEvents),
+    });
+  });
+  await page.route(/\/api\/v1\/sessions(\?|$)/, (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sessions: [sessionSummary] }),
     });
   });
 }
