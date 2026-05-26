@@ -11622,4 +11622,443 @@ mod tests {
             Some(r#"{"kind":"agent","name":"retired"}"#.to_string())
         );
     }
+
+    // ---- review_author_principal backfill (Phase 5b fix) ----
+
+    /// Apply the Phase 5b `review_author_principal` backfill migration
+    /// to a pre-migration schema. The test fixture creates `agents` and
+    /// `patches_v2` so the migration's `UPDATE` over each row's
+    /// `reviews` JSON array runs against a realistic starting state.
+    async fn apply_review_author_principal_backfill_migration(pool: &SqlitePool) {
+        let sql =
+            include_str!("../../sqlite-migrations/20260601000000_review_author_principal.sql");
+        sqlx::raw_sql(sql).execute(pool).await.unwrap();
+    }
+
+    /// Create a minimal pre-migration schema: `agents` + `patches_v2`.
+    /// `patches_v2` mirrors the shape at the moment immediately before
+    /// `20260601000000_review_author_principal.sql` runs (i.e. after
+    /// `20260527000000_drop_patches_created_by.sql` has removed the
+    /// `created_by` column).
+    async fn setup_pre_review_author_principal_schema(pool: &SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE agents ( \
+                name TEXT PRIMARY KEY, \
+                prompt_path TEXT NOT NULL, \
+                max_tries INTEGER NOT NULL DEFAULT 3, \
+                max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
+                is_assignment_agent INTEGER NOT NULL DEFAULT 0, \
+                deleted INTEGER NOT NULL DEFAULT 0, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE patches_v2 ( \
+                id TEXT NOT NULL, \
+                version_number INTEGER NOT NULL, \
+                title TEXT NOT NULL DEFAULT '', \
+                description TEXT NOT NULL, \
+                diff TEXT NOT NULL, \
+                status TEXT NOT NULL DEFAULT 'open', \
+                is_automatic_backup INTEGER NOT NULL DEFAULT 0, \
+                creator TEXT, \
+                base_branch TEXT, \
+                branch_name TEXT, \
+                commit_range TEXT, \
+                reviews TEXT NOT NULL DEFAULT '[]', \
+                service_repo_name TEXT NOT NULL, \
+                github TEXT, \
+                deleted INTEGER NOT NULL DEFAULT 0, \
+                actor TEXT, \
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
+                PRIMARY KEY (id, version_number))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Insert a patch row with the given `reviews` JSON. Callers shape
+    /// the reviews array per-test.
+    async fn insert_patch_with_reviews_json(pool: &SqlitePool, id: &str, reviews_json: &str) {
+        sqlx::query(
+            "INSERT INTO patches_v2 \
+             (id, version_number, description, diff, reviews, service_repo_name) \
+             VALUES (?1, 1, '', '', ?2, 'owner/repo')",
+        )
+        .bind(id)
+        .bind(reviews_json)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn fetch_reviews_json(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT reviews FROM patches_v2 WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Build a single-element `reviews` array with the given author
+    /// value (string or object). `contents`, `is_approved`, and
+    /// `submitted_at` are filled with placeholders; the migration
+    /// passes those through, but the tests focus on the `author`
+    /// rewrite.
+    fn single_review(author: serde_json::Value) -> String {
+        serde_json::json!([{
+            "contents": "lgtm",
+            "is_approved": true,
+            "author": author,
+            "submitted_at": "2026-05-01T00:00:00+00:00"
+        }])
+        .to_string()
+    }
+
+    /// Extract the `author` field of each review element from the
+    /// stored JSON. Keeps assertions focused on classification rather
+    /// than on the migration's pass-through reshaping of the other
+    /// review fields.
+    fn extract_authors(reviews_json: &str) -> Vec<serde_json::Value> {
+        let arr: Vec<serde_json::Value> = serde_json::from_str(reviews_json).unwrap();
+        arr.into_iter()
+            .map(|r| r.get("author").cloned().unwrap_or(serde_json::Value::Null))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_classifies_bare_agent_names_as_agent() {
+        // Bare-name agents (the Phase 5b conflation bug): with the
+        // `agents` table populated, a legacy review `author = "reviewer"`
+        // should backfill to `Principal::Agent { name: "reviewer" }`,
+        // not `Principal::User`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "swe").await;
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-reviewer",
+            &single_review(serde_json::json!("reviewer")),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-swe",
+            &single_review(serde_json::json!("swe")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-reviewer").await),
+            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-swe").await),
+            vec![serde_json::json!({"kind": "agent", "name": "swe"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_classifies_unknown_bare_names_as_user() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-alice",
+            &single_review(serde_json::json!("alice")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-alice").await),
+            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_preserves_canonical_path_forms() {
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        // Even with "reviewer" in the agents table, `users/reviewer`
+        // should be honoured as a user (the canonical form wins over
+        // the bare-name match).
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-user-path",
+            &single_review(serde_json::json!("users/alice")),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-agent-path",
+            &single_review(serde_json::json!("agents/reviewer")),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-user-reviewer-path",
+            &single_review(serde_json::json!("users/reviewer")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-user-path").await),
+            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-agent-path").await),
+            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-user-reviewer-path").await),
+            vec![serde_json::json!({"kind": "user", "name": "reviewer"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_empty_agents_table_lifts_all_bare_as_user() {
+        // No agents registered → behaves like the pre-fix migration:
+        // every well-formed bare name is a user.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-reviewer",
+            &single_review(serde_json::json!("reviewer")),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-alice",
+            &single_review(serde_json::json!("alice")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-reviewer").await),
+            vec![serde_json::json!({"kind": "user", "name": "reviewer"})],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-alice").await),
+            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_preserves_invalid_or_external_authors() {
+        // Empty string, embedded whitespace, and `external/<sys>/<x>`
+        // all fall to the `ELSE` branch of the migration, which keeps
+        // the raw string value untouched. The runtime deserializer
+        // logs a warning and falls through `parse_legacy_assignee`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(&pool, "patch-empty", &single_review(serde_json::json!("")))
+            .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-whitespace",
+            &single_review(serde_json::json!("alice bob")),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-external",
+            &single_review(serde_json::json!("external/github/jayantk")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-empty").await),
+            vec![serde_json::json!("")],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-whitespace").await),
+            vec![serde_json::json!("alice bob")],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-external").await),
+            vec![serde_json::json!("external/github/jayantk")],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_case_sensitive_against_agent_names() {
+        // "Reviewer" (mixed case) doesn't match the lowercase
+        // "reviewer" agent row, so it falls back to Principal::User --
+        // mirroring `Principal::parse_legacy_assignee_with_agents`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-mixed",
+            &single_review(serde_json::json!("Reviewer")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-mixed").await),
+            vec![serde_json::json!({"kind": "user", "name": "Reviewer"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_classifies_deleted_agent_as_agent() {
+        // Once a name has been registered as an agent (even if later
+        // soft-deleted), legacy review-author strings for that name
+        // still refer to the agent -- the agent row remains in the
+        // table with `deleted = 1`, and the migration's predicate
+        // doesn't filter on `deleted`.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        sqlx::query("INSERT INTO agents (name, prompt_path, deleted) VALUES (?1, ?2, 1)")
+            .bind("retired")
+            .bind("/dev/null")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-retired",
+            &single_review(serde_json::json!("retired")),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-retired").await),
+            vec![serde_json::json!({"kind": "agent", "name": "retired"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_preserves_already_typed_author() {
+        // If `author` is already an object (the Phase-5b shape), the
+        // migration's first CASE arm matches and leaves it untouched.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-typed-agent",
+            &single_review(serde_json::json!({"kind": "agent", "name": "reviewer"})),
+        )
+        .await;
+        insert_patch_with_reviews_json(
+            &pool,
+            "patch-typed-user",
+            &single_review(serde_json::json!({"kind": "user", "name": "alice"})),
+        )
+        .await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-typed-agent").await),
+            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+        );
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-typed-user").await),
+            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+        );
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_skips_empty_reviews_array() {
+        // The migration's WHERE clause excludes rows whose `reviews`
+        // is NULL, `'[]'`, or otherwise has zero elements. Such rows
+        // should be left exactly as-is.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+        insert_patch_with_reviews_json(&pool, "patch-empty-array", "[]").await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(fetch_reviews_json(&pool, "patch-empty-array").await, "[]");
+    }
+
+    #[tokio::test]
+    async fn review_author_backfill_rewrites_all_reviews_in_array() {
+        // A single patch may have multiple reviews. The migration
+        // walks the array element-by-element and rewrites every
+        // `author`. Verify ordering is preserved and each element's
+        // classification is independent.
+        let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
+        setup_pre_review_author_principal_schema(&pool).await;
+
+        insert_agent(&pool, "reviewer").await;
+
+        let reviews = serde_json::json!([
+            {
+                "contents": "first",
+                "is_approved": false,
+                "author": "alice",
+                "submitted_at": "2026-05-01T00:00:00+00:00"
+            },
+            {
+                "contents": "second",
+                "is_approved": true,
+                "author": "reviewer",
+                "submitted_at": "2026-05-02T00:00:00+00:00"
+            },
+            {
+                "contents": "third",
+                "is_approved": true,
+                "author": "agents/reviewer",
+                "submitted_at": "2026-05-03T00:00:00+00:00"
+            },
+            {
+                "contents": "fourth",
+                "is_approved": false,
+                "author": "external/github/jayantk",
+                "submitted_at": "2026-05-04T00:00:00+00:00"
+            }
+        ])
+        .to_string();
+        insert_patch_with_reviews_json(&pool, "patch-multi", &reviews).await;
+
+        apply_review_author_principal_backfill_migration(&pool).await;
+
+        assert_eq!(
+            extract_authors(&fetch_reviews_json(&pool, "patch-multi").await),
+            vec![
+                serde_json::json!({"kind": "user", "name": "alice"}),
+                serde_json::json!({"kind": "agent", "name": "reviewer"}),
+                serde_json::json!({"kind": "agent", "name": "reviewer"}),
+                serde_json::json!("external/github/jayantk"),
+            ],
+        );
+    }
 }
