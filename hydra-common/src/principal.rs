@@ -456,7 +456,10 @@ mod tests {
 
     #[test]
     fn parse_legacy_assignee_accepts_canonical_path() {
-        assert_eq!(Principal::parse_legacy_assignee("users/alice"), Some(alice()));
+        assert_eq!(
+            Principal::parse_legacy_assignee("users/alice"),
+            Some(alice())
+        );
         assert_eq!(Principal::parse_legacy_assignee("agents/swe"), Some(swe()));
         assert_eq!(
             Principal::parse_legacy_assignee("external/github/jayantk"),

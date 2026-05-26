@@ -1,10 +1,10 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
 //! Exposed subcommands: `search` (PR 3), `diff` (PR 4), and `log` (PR 5).
-//! Selection-flag parsing, validation, and node-id resolution live in
-//! [`utils`]; the pipe-DSL resolver (used by `diff` after PR 4 and by
-//! `search`/`log` after PRs 3/5) lives in [`resolver`]; per-kind hydration
-//! and version-history fetching live in [`dispatch`].
+//! `search` and `diff` consume the positional pipe-grammar query parsed in
+//! `hydra_common::graph::query` and walked by [`resolver`]; `log` still rides
+//! on the legacy flag-mirror surface in [`utils`] until PR 5 cuts it over.
+//! Per-kind hydration and version-history fetching live in [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
@@ -27,6 +27,31 @@ use crate::command::output::CommandContext;
 /// on the server-side relations route.
 pub const DEFAULT_MAX_NODES: usize = 10_000;
 
+/// Long-form `--help` block for `hydra graph search`. Replaces the prior
+/// flag-by-flag listing with a grammar one-liner plus three worked examples
+/// and a pointer at the long-form reference (lands in PR 6).
+pub const SEARCH_LONG_ABOUT: &str = "\
+Return the set of hydrated graph nodes matching a pipe-grammar query.
+
+Grammar: SOURCE_IDS ('|' STAGE)* where STAGE is one of:
+  parents [rel=R] [transitive] [exclusive]
+  children [rel=R] [transitive] [exclusive]
+  neighbors [rel=R] [exclusive]
+  ancestors rel=R [exclusive]
+  descendants rel=R [exclusive]
+  scope
+  kind=K[,K...]
+
+Relation stages are inclusive by default (V | stage = V ∪ traversal(V));
+add `exclusive` to drop the seed.
+
+Examples:
+  hydra graph search 'i-abc123'
+  hydra graph search 'i-abc123 | scope | kind=patch'
+  hydra graph search 'i-abc123 | descendants rel=child-of'
+
+See hydra/docs/graph-query.md for the full reference.";
+
 /// Maximum number of in-flight per-id hydration requests.
 pub const DEFAULT_HYDRATION_CONCURRENCY: usize = 32;
 
@@ -39,37 +64,16 @@ pub const DEFAULT_SINCE: &str = "1970-01-01T00:00:00Z";
 
 #[derive(Debug, Subcommand)]
 pub enum GraphCommand {
-    /// Return the set of hydrated graph nodes matching a relation query.
+    /// Return the set of hydrated graph nodes matching a pipe-grammar query.
+    #[command(long_about = SEARCH_LONG_ABOUT)]
     Search {
-        /// Filter by source object ID.
-        #[arg(long, value_name = "ID")]
-        source: Option<HydraId>,
-
-        /// Filter by target object ID.
-        #[arg(long, value_name = "ID")]
-        target: Option<HydraId>,
-
-        /// Show all relations where this object is source or target.
-        #[arg(long, value_name = "ID")]
-        object: Option<HydraId>,
-
-        /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
-        #[arg(long, value_name = "TYPE")]
-        rel_type: Option<String>,
-
-        /// Follow transitive edges (requires --source or --target plus --rel-type).
-        #[arg(long)]
-        transitive: bool,
-
-        /// Convenience: include the issue plus all transitively-reachable
-        /// child issues plus all attached patches and documents. Mutually
-        /// exclusive with --source/--target/--object.
-        #[arg(long, value_name = "ID")]
-        scope: Option<HydraId>,
-
-        /// Post-filter the hydrated nodes to one or more kinds (repeatable).
-        #[arg(long = "kind", value_enum, value_name = "KIND")]
-        kinds: Vec<KindArg>,
+        /// Pipe-grammar query (single-quote it at the shell to protect '|').
+        ///
+        /// Grammar: SOURCE_IDS ('|' STAGE)*. Stages: parents, children,
+        /// neighbors, ancestors, descendants, scope, kind=KINDS. See
+        /// `hydra/docs/graph-query.md` for the full reference.
+        #[arg(value_name = "QUERY")]
+        query: String,
 
         /// Verbosity level (1 = terse, 2 = intermediate, 3 = full).
         #[arg(long, value_name = "LEVEL", default_value = "1")]
@@ -236,26 +240,14 @@ pub async fn run(
 ) -> Result<()> {
     match command {
         GraphCommand::Search {
-            source,
-            target,
-            object,
-            rel_type,
-            transitive,
-            scope,
-            kinds,
+            query,
             verbosity,
             max_nodes,
         } => {
             search::run_search(
                 client,
-                utils::Selection {
-                    source,
-                    target,
-                    object,
-                    rel_type,
-                    transitive,
-                    scope,
-                    kinds,
+                search::SearchParams {
+                    query,
                     verbosity: verbosity.0,
                     max_nodes,
                 },

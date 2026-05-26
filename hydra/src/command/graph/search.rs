@@ -1,9 +1,15 @@
 //! `hydra graph search` — implementation.
 //!
-//! Selection: the shared `Selection` flag surface (`--source`/`--target`/
-//! `--object`/`--rel-type`/`--transitive`) plus `--scope <ID>`. The result is
-//! the set of **nodes** addressed by the matching edges, hydrated and
-//! projected through the per-kind `GraphView::view_lN` impl.
+//! The selection input is the positional pipe-grammar query (parsed in
+//! [`hydra_common::graph::query`]). The flow is:
+//!
+//! 1. Parse the query string. Parse errors print the caret block and exit 2.
+//! 2. [`crate::command::graph::resolver::resolve`] walks the lowered query
+//!    against the server, applying the inclusive-by-default contract per
+//!    relation stage and the 3-call scope expansion per `scope` stage. The
+//!    `kind=` stage is recorded as a post-hydration filter.
+//! 3. Hydrate the terminal vertex set per-id.
+//! 4. Apply the kind post-filter (if any) and render at `--verbosity`.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -13,53 +19,62 @@ use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
+use hydra_common::graph::query::parse;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
 use crate::command::graph::dispatch::{hydrate_by_id, HydratedNode};
-use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
-use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
+use crate::command::graph::resolver::{resolve, Resolved};
+use crate::command::graph::DEFAULT_HYDRATION_CONCURRENCY;
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
 use crate::output_writer::write_stdout;
 
+/// Inputs to [`run_search`] after CLI parsing.
+pub struct SearchParams {
+    pub query: String,
+    pub verbosity: VerbosityLevel,
+    pub max_nodes: usize,
+}
+
 /// Top-level entry point for `hydra graph search`.
 ///
-/// User-input errors (mutually-exclusive flags, empty selection, node-budget
-/// cap exceeded) exit with code 2; transport / server errors propagate as
-/// `anyhow::Error` (exit 1).
+/// User-input errors (parse error, node-budget cap exceeded) exit with code
+/// 2; transport / server errors propagate as `anyhow::Error` (exit 1).
 pub async fn run_search(
     client: &dyn HydraClientInterface,
-    selection: Selection,
+    params: SearchParams,
     context: &CommandContext,
 ) -> Result<()> {
-    if let Err(msg) = validate(&selection) {
-        eprintln!("error: {msg}");
-        process::exit(2);
-    }
+    let parsed = match parse(&params.query) {
+        Ok(q) => q,
+        Err(err) => {
+            eprintln!("{err}");
+            process::exit(2);
+        }
+    };
 
-    let node_ids = resolve_node_ids(client, &selection).await?;
-    if node_ids.len() > selection.max_nodes {
+    let Resolved {
+        node_ids,
+        kind_filters,
+    } = resolve(client, parsed.lower()).await?;
+
+    if node_ids.len() > params.max_nodes {
         eprintln!(
             "error: matched node set ({}) exceeds --max-nodes ({}); narrow your selection (use --max-nodes to raise)",
             node_ids.len(),
-            selection.max_nodes,
+            params.max_nodes,
         );
         process::exit(2);
     }
 
     let mut nodes = hydrate_all(client, node_ids).await?;
-    apply_kind_filter(&mut nodes, &selection.kinds);
+    apply_kind_filters(&mut nodes, &kind_filters);
     nodes.sort_by(|a, b| a.id().as_ref().cmp(b.id().as_ref()));
 
     let mut buffer = Vec::new();
-    render(
-        context.output_format,
-        &nodes,
-        selection.verbosity,
-        &mut buffer,
-    )?;
+    render(context.output_format, &nodes, params.verbosity, &mut buffer)?;
     write_stdout(&buffer)?;
     Ok(())
 }
@@ -92,11 +107,22 @@ async fn hydrate_all(
     Ok(nodes)
 }
 
-fn apply_kind_filter(nodes: &mut Vec<HydratedNode>, kinds: &[KindArg]) {
-    if kinds.is_empty() {
+/// Apply the resolver's recorded `kind=` post-filters to the hydrated set.
+///
+/// Each list comes from one `| kind=...` stage in the query; the set of
+/// kinds allowed by the pipeline is their intersection. Empty `kind_filters`
+/// (no kind stage in the query) is a no-op.
+fn apply_kind_filters(nodes: &mut Vec<HydratedNode>, kind_filters: &[Vec<ObjectKind>]) {
+    if kind_filters.is_empty() {
         return;
     }
-    let allowed: HashSet<ObjectKind> = kinds.iter().map(|k| k.as_object_kind()).collect();
+    let mut iter = kind_filters.iter();
+    let mut allowed: HashSet<ObjectKind> =
+        iter.next().expect("non-empty").iter().copied().collect();
+    for ks in iter {
+        let next: HashSet<ObjectKind> = ks.iter().copied().collect();
+        allowed = allowed.intersection(&next).copied().collect();
+    }
     nodes.retain(|n| allowed.contains(&n.kind()));
 }
 

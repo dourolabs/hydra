@@ -1002,10 +1002,8 @@ mod tests {
         // omitted `?assignee=` key parses as `None`, but an explicit
         // `?assignee=` (empty value) should be a parse error rather than
         // silently coerced into `None`.
-        let err =
-            serde_urlencoded::from_str::<SearchIssuesQuery>("assignee=").expect_err(
-                "empty assignee should fail to deserialize as a Principal",
-            );
+        let err = serde_urlencoded::from_str::<SearchIssuesQuery>("assignee=")
+            .expect_err("empty assignee should fail to deserialize as a Principal");
         assert!(
             err.to_string().to_lowercase().contains("empty"),
             "expected error to mention empty principal: {err}"
