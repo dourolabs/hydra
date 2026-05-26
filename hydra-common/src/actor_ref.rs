@@ -500,6 +500,11 @@ impl<'de> Visitor<'de> for ActorIdVisitor {
     where
         E: DeError,
     {
+        tracing::warn!(
+            target: "actor_id_legacy_decode",
+            raw = %v,
+            "deserialized ActorId::Legacy from bare string",
+        );
         Ok(ActorId::Legacy(v.to_string()))
     }
 
@@ -507,6 +512,11 @@ impl<'de> Visitor<'de> for ActorIdVisitor {
     where
         E: DeError,
     {
+        tracing::warn!(
+            target: "actor_id_legacy_decode",
+            raw = %v,
+            "deserialized ActorId::Legacy from bare string",
+        );
         Ok(ActorId::Legacy(v))
     }
 
@@ -1177,6 +1187,25 @@ mod tests {
         assert_eq!(value, json!("free-form-legacy-blob"));
         let back: ActorId = serde_json::from_value(value).unwrap();
         assert_eq!(back, id);
+    }
+
+    // The `Legacy` variant is gated on a release-soak with zero
+    // `actor_id_legacy_decode` warn-logs (design §10 Q3, §8 C3). The
+    // workspace has no `tracing-test` dep, so this is a smoke test that
+    // both bare-string deserialization paths (`visit_str` /
+    // `visit_string`) run through the warn! without panicking and yield
+    // `ActorId::Legacy(...)`. Drop alongside the variant removal.
+    #[test]
+    fn actor_id_legacy_decode_smoke_emits_warn_without_panic() {
+        // visit_str path (borrowed): `from_str` / `from_slice` hand the
+        // visitor a `&str`.
+        let id: ActorId = serde_json::from_str("\"jayantk\"").unwrap();
+        assert_eq!(id, ActorId::Legacy("jayantk".to_string()));
+
+        // visit_string path (owned): `from_value(Value::String(_))` hands
+        // the visitor an owned `String`.
+        let id: ActorId = serde_json::from_value(json!("agents/swe")).unwrap();
+        assert_eq!(id, ActorId::Legacy("agents/swe".to_string()));
     }
 
     #[test]
