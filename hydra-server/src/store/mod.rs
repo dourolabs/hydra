@@ -30,8 +30,6 @@ use std::{fmt, str::FromStr};
 
 mod memory_store;
 #[cfg(feature = "postgres")]
-pub use crate::ee::store::migration;
-#[cfg(feature = "postgres")]
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
