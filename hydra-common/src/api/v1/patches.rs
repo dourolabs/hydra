@@ -111,8 +111,9 @@ impl<'de> Deserialize<'de> for Review {
         }
         let raw = RawReview::deserialize(deserializer)?;
         let author = match raw.author {
-            Value::Object(_) => serde_json::from_value::<Principal>(raw.author)
-                .map_err(de::Error::custom)?,
+            Value::Object(_) => {
+                serde_json::from_value::<Principal>(raw.author).map_err(de::Error::custom)?
+            }
             Value::String(s) => Principal::parse_legacy_assignee(&s).ok_or_else(|| {
                 de::Error::custom(format!(
                     "Review.author legacy string '{s}' could not be parsed as a Principal"
