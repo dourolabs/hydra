@@ -1,24 +1,46 @@
-//! Migration roundtrip integration test (PR-1 of the migration test harness;
-//! see `/designs/pre-prod-deploy-test-plan.md`).
+//! Migration roundtrip integration test (PR-1 + PR-2 of the migration test
+//! harness; see `/designs/pre-prod-deploy-test-plan.md`).
 //!
-//! Applies sqlx migrations to a baseline-shaped Postgres database, executes the
-//! hand-curated `migration_baseline.sql` fixture, rolls the remaining migrations
-//! forward, and asserts schema + data-shape invariants for this release's
-//! migrations.
+//! Applies sqlx migrations to a baseline-shaped Postgres database, executes
+//! the hand-curated `migration_baseline.sql` fixture, rolls the remaining
+//! migrations forward, runs the external `migrate-events` pass through the
+//! same library entry point the `hydra-migrate-sessions` binary uses, and
+//! asserts:
+//!
+//! 1. (§3.1) schema invariants — columns / tables added / dropped / tightened
+//!    by this release's migrations.
+//! 2. (§3.2) data-shape invariants — SQL-level read-back of the backfilled
+//!    rows.
+//! 3. (§3.3) store / domain-level smoke — high-level `Store` API reads of the
+//!    migrated rows confirm the typed `Principal` / `SessionMode` / refers-to
+//!    domain values deserialize as expected, plus a fresh CREATE → read-back
+//!    cycle exercises the post-migration write paths.
 //!
 //! Gated behind the `postgres` Cargo feature to match the rest of
 //! `hydra-server`'s postgres-specific code (`migration_tool/mod.rs:17`,
-//! `ee/store/postgres_v2.rs`, etc.). PR-2 will extend this with the
-//! external-migration hook and the store/domain smoke; PR-5 will give it a
-//! dedicated CI workflow.
+//! `ee/store/postgres_v2.rs`, etc.). PR-5 will give the test a dedicated CI
+//! workflow.
 
 #![cfg(feature = "postgres")]
 
 use anyhow::{Context, Result, bail};
-use hydra_server::store::postgres_v2::MIGRATOR;
+use chrono::Utc;
+use hydra_common::api::v1::agents::AgentName;
+use hydra_common::api::v1::users::Username as ApiUsername;
+use hydra_common::principal::Principal;
+use hydra_common::{HydraId, IssueId, PatchId, RepoName, SessionId};
+use hydra_server::domain::actors::ActorRef;
+use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
+use hydra_server::domain::patches::{Patch, PatchStatus, Review};
+use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, SessionMode};
+use hydra_server::domain::task_status::Status;
+use hydra_server::domain::users::Username;
+use hydra_server::store::postgres_v2::{MIGRATOR, PostgresStoreV2};
+use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
 use sqlx::migrate::Migrate;
 use sqlx::{PgPool, Row};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::str::FromStr;
 
 const FIXTURE_SQL: &str = include_str!("fixtures/migration_baseline.sql");
 
@@ -52,9 +74,36 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("apply remaining sqlx migrations past the baseline pin")?;
 
+    run_external_migrations(&pool)
+        .await
+        .context("run external migrations (migrate-events pass)")?;
+
     assert_schema_invariants(&pool).await?;
     assert_data_shape_invariants(&pool).await?;
+    assert_store_level_smoke(&pool)
+        .await
+        .context("§3.3 store / domain-level smoke")?;
 
+    Ok(())
+}
+
+/// External-migration hook. `events::run` is the exact library entry point
+/// the `hydra-migrate-sessions migrate-events` binary at
+/// `hydra-server/src/bin/hydra-migrate-sessions/main.rs` invokes — calling it
+/// here with the same `dry_run = false`, `up_to = None` arguments mirrors the
+/// production deploy step in `/playbooks/deploy-hydra.md`. ORDER MATTERS:
+/// `MIGRATOR.run` must complete first so `session_events_v2` exists; the
+/// later §3.3 assertions then exercise the rows this pass moved.
+async fn run_external_migrations(pool: &PgPool) -> Result<()> {
+    use hydra_server::migration_tool::{Backend, events};
+
+    let _ = events::run(
+        &Backend::Postgres(pool.clone()),
+        /* dry_run */ false,
+        /* up_to */ None,
+    )
+    .await
+    .context("migrate-events pass against the migrated baseline pool")?;
     Ok(())
 }
 
@@ -429,6 +478,382 @@ async fn expect_first_review_author(
         bail!("patch {patch_id}: expected reviews[0].author={expected_author}; got {got}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// §3.3 store / domain-level smoke
+//
+// The §3.2 assertions above verify SQL-level shapes of the migrated rows. PR-2
+// of `/designs/pre-prod-deploy-test-plan.md` adds this third layer: read the
+// migrated rows back through the live `Store` trait and assert the typed
+// domain objects (Principal, SessionMode, Review, SessionEvent, refers-to
+// relationship) deserialize cleanly, then exercise a create→read-back cycle on
+// the same APIs so any post-migration write path that diverged from the read
+// path fails loud here instead of at first prod traffic.
+//
+// The store-level rows used here live in the fixture's "§3.3 store-level
+// smoke" block — they mirror the earlier `i-bare000001` / `p-bareauth01`
+// rows but use all-alphabetic id suffixes so the Rust `IssueId` / `PatchId` /
+// `SessionId` newtypes (which reject digits) can parse them.
+// ---------------------------------------------------------------------------
+
+async fn assert_store_level_smoke(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+
+    smoke_read_issues(&store).await?;
+    smoke_read_patches(&store).await?;
+    smoke_read_sessions(&store).await?;
+    smoke_read_refers_to(&store).await?;
+    smoke_read_session_events(&store).await?;
+
+    smoke_create_issue(&store).await?;
+    smoke_create_patch(&store).await?;
+    smoke_create_session(&store).await?;
+    smoke_create_relationship(&store).await?;
+
+    Ok(())
+}
+
+async fn smoke_read_issues(store: &PostgresStoreV2) -> Result<()> {
+    // Bare-string assignee → Principal::User { name }.
+    let issue = store
+        .get_issue(&parse_issue_id("i-bareasgn")?, false)
+        .await
+        .context("Store::get_issue(i-bareasgn)")?;
+    match &issue.item.assignee {
+        Some(Principal::User { name }) if name.as_str() == "jayantk" => {}
+        other => bail!("i-bareasgn: expected Principal::User(jayantk); got {other:?}"),
+    }
+
+    // `users/jayantk` → Principal::User { name }.
+    let issue = store
+        .get_issue(&parse_issue_id("i-userpath")?, false)
+        .await
+        .context("Store::get_issue(i-userpath)")?;
+    match &issue.item.assignee {
+        Some(Principal::User { name }) if name.as_str() == "jayantk" => {}
+        other => bail!("i-userpath: expected Principal::User(jayantk); got {other:?}"),
+    }
+
+    // `agents/swe` → Principal::Agent { name }.
+    let issue = store
+        .get_issue(&parse_issue_id("i-agentpath")?, false)
+        .await
+        .context("Store::get_issue(i-agentpath)")?;
+    match &issue.item.assignee {
+        Some(Principal::Agent { name }) if name.as_str() == "swe" => {}
+        other => bail!("i-agentpath: expected Principal::Agent(swe); got {other:?}"),
+    }
+
+    // `external/github/foo` is intentionally left NULL by the SQL backfill.
+    let issue = store
+        .get_issue(&parse_issue_id("i-extpath")?, false)
+        .await
+        .context("Store::get_issue(i-extpath)")?;
+    if issue.item.assignee.is_some() {
+        bail!(
+            "i-extpath: expected assignee=None (external left NULL by backfill); got {:?}",
+            issue.item.assignee
+        );
+    }
+
+    // Bare NULL assignee → None.
+    let issue = store
+        .get_issue(&parse_issue_id("i-nullasgn")?, false)
+        .await
+        .context("Store::get_issue(i-nullasgn)")?;
+    if issue.item.assignee.is_some() {
+        bail!(
+            "i-nullasgn: expected assignee=None; got {:?}",
+            issue.item.assignee
+        );
+    }
+
+    Ok(())
+}
+
+async fn smoke_read_patches(store: &PostgresStoreV2) -> Result<()> {
+    let cases = [
+        (
+            "p-barerev",
+            Principal::User {
+                name: ApiUsername::try_new("jayantk").expect("jayantk validates"),
+            },
+        ),
+        (
+            "p-agentrev",
+            Principal::Agent {
+                name: AgentName::try_new("swe").expect("swe validates"),
+            },
+        ),
+        (
+            "p-typedrev",
+            Principal::User {
+                name: ApiUsername::try_new("jayantk").expect("jayantk validates"),
+            },
+        ),
+    ];
+    for (id, expected) in cases {
+        let patch = store
+            .get_patch(&parse_patch_id(id)?, false)
+            .await
+            .with_context(|| format!("Store::get_patch({id})"))?;
+        let author = patch
+            .item
+            .reviews
+            .first()
+            .with_context(|| format!("{id}: expected at least one review"))?
+            .author
+            .clone();
+        if author != expected {
+            bail!("{id}: expected reviews[0].author={expected:?}; got {author:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn smoke_read_sessions(store: &PostgresStoreV2) -> Result<()> {
+    // Headless task: mode backfill -> SessionMode::Headless.
+    let session = store
+        .get_session(&parse_session_id("s-headalpha")?, false)
+        .await
+        .context("Store::get_session(s-headalpha)")?;
+    match &session.item.mode {
+        SessionMode::Headless { prompt } if prompt == "do a thing" => {}
+        other => bail!("s-headalpha: expected Headless('do a thing'); got {other:?}"),
+    }
+
+    // Interactive task: mode backfill -> SessionMode::Interactive { conversation_id, .. }.
+    let session = store
+        .get_session(&parse_session_id("s-interone")?, false)
+        .await
+        .context("Store::get_session(s-interone)")?;
+    match &session.item.mode {
+        SessionMode::Interactive {
+            conversation_id, ..
+        } if conversation_id.as_ref() == "c-convalpha" => {}
+        other => bail!("s-interone: expected Interactive(c-convalpha); got {other:?}"),
+    }
+
+    // Resumed interactive task: resumed_from backfill points at the predecessor.
+    let session = store
+        .get_session(&parse_session_id("s-intertwo")?, false)
+        .await
+        .context("Store::get_session(s-intertwo)")?;
+    match session.item.resumed_from.as_ref().map(|s| s.as_ref()) {
+        Some("s-interone") => {}
+        other => bail!("s-intertwo: expected resumed_from=s-interone; got {other:?}"),
+    }
+    Ok(())
+}
+
+async fn smoke_read_refers_to(store: &PostgresStoreV2) -> Result<()> {
+    // The fixture's snake_case `refers_to` row between i-bareasgn and
+    // i-userpath should have been renamed to `refers-to` by the
+    // 20260529000000_rename_refers_to_to_kebab_case migration, and
+    // `Store::get_relationships` should surface it with the typed
+    // `RelationshipType::RefersTo` discriminant.
+    let source: HydraId = parse_issue_id("i-bareasgn")?.into();
+    let rels = store
+        .get_relationships(Some(&source), None, Some(RelationshipType::RefersTo))
+        .await
+        .context("Store::get_relationships(refers-to from i-bareasgn)")?;
+    let target_expected: HydraId = parse_issue_id("i-userpath")?.into();
+    if !rels
+        .iter()
+        .any(|r| r.target_id == target_expected && r.rel_type == RelationshipType::RefersTo)
+    {
+        bail!("expected a refers-to relationship from i-bareasgn to i-userpath; got {rels:?}");
+    }
+    Ok(())
+}
+
+async fn smoke_read_session_events(store: &PostgresStoreV2) -> Result<()> {
+    // `migrate-events` partitioned the two c-convalpha events into s-interone's
+    // window (`[14:00, 15:00)`). The §3.3 smoke confirms `Store::get_session_events`
+    // round-trips them into typed `SessionEvent::UserMessage` /
+    // `AssistantMessage` variants so any serde drift between
+    // `conversation_events_v2.event_data` and `session_events_v2.event_data`
+    // fails loud here.
+    let events = store
+        .get_session_events(&parse_session_id("s-interone")?)
+        .await
+        .context("Store::get_session_events(s-interone)")?;
+    if events.len() != 2 {
+        bail!(
+            "expected 2 migrated session_events for s-interone; got {} ({events:?})",
+            events.len(),
+        );
+    }
+    match &events[0].item {
+        SessionEvent::UserMessage { content, .. } if content == "smoke hello" => {}
+        other => bail!("s-interone[0]: expected UserMessage('smoke hello'); got {other:?}"),
+    }
+    match &events[1].item {
+        SessionEvent::AssistantMessage { content, .. } if content == "smoke hi" => {}
+        other => bail!("s-interone[1]: expected AssistantMessage('smoke hi'); got {other:?}"),
+    }
+    Ok(())
+}
+
+async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
+    let agent = AgentName::try_new("swe").expect("swe validates as an agent name");
+    let issue = Issue::new(
+        IssueType::Task,
+        "smoke: create issue with agent assignee".to_string(),
+        "post-migration write-path round-trip for Principal::Agent assignees".to_string(),
+        Username::from("jayantk"),
+        String::new(),
+        IssueStatus::Open,
+        Some(Principal::Agent {
+            name: agent.clone(),
+        }),
+        None,
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+    let (id, _) = store
+        .add_issue(issue, &ActorRef::test())
+        .await
+        .context("Store::add_issue post-migration")?;
+    let fetched = store
+        .get_issue(&id, false)
+        .await
+        .context("Store::get_issue post-migration")?;
+    match &fetched.item.assignee {
+        Some(Principal::Agent { name }) if name.as_str() == "swe" => Ok(()),
+        other => bail!(
+            "post-migration create_issue did not round-trip Principal::Agent(swe); got {other:?}"
+        ),
+    }
+}
+
+async fn smoke_create_patch(store: &PostgresStoreV2) -> Result<()> {
+    let author = Principal::User {
+        name: ApiUsername::try_new("jayantk").expect("jayantk validates"),
+    };
+    let review = Review::new(
+        "smoke approval".to_string(),
+        true,
+        author.clone(),
+        Some(Utc::now()),
+    );
+    let patch = Patch::new(
+        "smoke: create patch with typed review author".to_string(),
+        "post-migration write-path round-trip for typed Review.author".to_string(),
+        String::new(),
+        PatchStatus::Open,
+        false,
+        Username::from("jayantk"),
+        vec![review],
+        RepoName::from_str("dourolabs/hydra").expect("repo name validates"),
+        None,
+        None,
+        None,
+        None,
+    );
+    let (id, _) = store
+        .add_patch(patch, &ActorRef::test())
+        .await
+        .context("Store::add_patch post-migration")?;
+    let fetched = store
+        .get_patch(&id, false)
+        .await
+        .context("Store::get_patch post-migration")?;
+    let fetched_author = fetched
+        .item
+        .reviews
+        .first()
+        .context("post-migration patch: expected one review")?
+        .author
+        .clone();
+    if fetched_author != author {
+        bail!(
+            "post-migration create_patch did not round-trip the typed Review.author: \
+             expected {author:?}; got {fetched_author:?}"
+        );
+    }
+    Ok(())
+}
+
+async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
+    let session = Session::new(
+        Username::from("jayantk"),
+        None,
+        None,
+        AgentConfig::default(),
+        Default::default(),
+        None,
+        HashMap::new(),
+        None,
+        None,
+        None,
+        SessionMode::Headless {
+            prompt: "smoke: do a thing".to_string(),
+        },
+        Status::Complete,
+        None,
+        None,
+    );
+    let (id, _) = store
+        .add_session(session, Utc::now(), &ActorRef::test())
+        .await
+        .context("Store::add_session post-migration")?;
+    let fetched = store
+        .get_session(&id, false)
+        .await
+        .context("Store::get_session post-migration")?;
+    match &fetched.item.mode {
+        SessionMode::Headless { prompt } if prompt == "smoke: do a thing" => Ok(()),
+        other => bail!(
+            "post-migration create_session did not round-trip SessionMode::Headless; got {other:?}"
+        ),
+    }
+}
+
+async fn smoke_create_relationship(store: &PostgresStoreV2) -> Result<()> {
+    // The fixture already seeded a refers-to between i-bareasgn → i-userpath
+    // (verified above). Add a fresh refers-to between two different fixture
+    // issues to confirm the post-rename write path accepts the kebab-case
+    // value.
+    let source: HydraId = parse_issue_id("i-nullasgn")?.into();
+    let target: HydraId = parse_issue_id("i-agentpath")?.into();
+    let inserted = store
+        .add_relationship(&source, &target, RelationshipType::RefersTo)
+        .await
+        .context("Store::add_relationship(refers-to) post-migration")?;
+    if !inserted {
+        bail!(
+            "post-migration add_relationship reported no insert — \
+             the fixture already had a refers-to from i-nullasgn to i-agentpath?"
+        );
+    }
+    let rels = store
+        .get_relationships(Some(&source), None, Some(RelationshipType::RefersTo))
+        .await
+        .context("Store::get_relationships(refers-to from i-nullasgn)")?;
+    if !rels
+        .iter()
+        .any(|r| r.target_id == target && r.rel_type == RelationshipType::RefersTo)
+    {
+        bail!("post-migration: expected to read back the just-inserted refers-to; got {rels:?}");
+    }
+    Ok(())
+}
+
+fn parse_issue_id(s: &str) -> Result<IssueId> {
+    IssueId::from_str(s).with_context(|| format!("parse issue id '{s}'"))
+}
+
+fn parse_patch_id(s: &str) -> Result<PatchId> {
+    PatchId::from_str(s).with_context(|| format!("parse patch id '{s}'"))
+}
+
+fn parse_session_id(s: &str) -> Result<SessionId> {
+    SessionId::from_str(s).with_context(|| format!("parse session id '{s}'"))
 }
 
 // ---------------------------------------------------------------------------
