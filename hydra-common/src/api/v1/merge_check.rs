@@ -6,7 +6,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::PatchId;
+use crate::api::v1::agents::AgentName;
 use crate::api::v1::repositories::DynamicRef;
+use crate::api::v1::users::Username;
+use crate::principal::ExternalSystem;
 
 // `DynamicRef` already (de)serialises as the `@patch.author` shorthand the
 // design assumes (see `hydra-common/src/api/v1/repositories.rs`). We reuse it
@@ -137,6 +140,12 @@ pub enum MergeBlockedReason {
 /// variant if a team concept lands) can be added without breaking older
 /// parsers.
 ///
+/// The three static variants (`User`, `Agent`, `External`) mirror the
+/// shared [`crate::Principal`] type so consumers can route follow-up
+/// actions by kind — a `MergeBlockedError` referencing `agents/swe`
+/// surfaces as `EligiblePrincipal::Agent { name: "swe" }`, not a bare
+/// string that could be confused with a same-named user.
+///
 /// `Dynamic` always carries both `ref` (the raw `@…` shorthand from the
 /// policy, reusing the existing [`DynamicRef`] wire form) and `resolved_to`
 /// (the username it resolves to right now, or `null` if it could not be
@@ -147,6 +156,13 @@ pub enum MergeBlockedReason {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EligiblePrincipal {
     User {
+        name: Username,
+    },
+    Agent {
+        name: AgentName,
+    },
+    External {
+        system: ExternalSystem,
         username: String,
     },
     Dynamic {
@@ -193,14 +209,15 @@ mod tests {
                     "group_index": 0,
                     "label": "code-review",
                     "eligible_principals": [
-                        { "kind": "user", "username": "reviewer" },
-                        { "kind": "user", "username": "jayantk" }
+                        { "kind": "user", "name": "reviewer" },
+                        { "kind": "agent", "name": "swe" },
+                        { "kind": "external", "system": "github", "username": "jayantk" }
                     ],
                     "current_approvals": [],
                     "needed": 1,
                     "suggested_action": {
                         "kind": "file_review_request",
-                        "assign_to_one_of": ["reviewer", "jayantk"],
+                        "assign_to_one_of": ["reviewer", "swe", "jayantk"],
                         "title_hint": "Review p-xyzabc (code-review)"
                     }
                 }
@@ -267,17 +284,24 @@ mod tests {
             } => {
                 assert_eq!(*group_index, 0);
                 assert_eq!(label.as_deref(), Some("code-review"));
-                assert_eq!(eligible_principals.len(), 2);
+                assert_eq!(eligible_principals.len(), 3);
                 assert_eq!(
                     eligible_principals[0],
                     EligiblePrincipal::User {
-                        username: "reviewer".to_string()
+                        name: Username::try_new("reviewer").unwrap(),
                     }
                 );
                 assert_eq!(
                     eligible_principals[1],
-                    EligiblePrincipal::User {
-                        username: "jayantk".to_string()
+                    EligiblePrincipal::Agent {
+                        name: AgentName::try_new("swe").unwrap(),
+                    }
+                );
+                assert_eq!(
+                    eligible_principals[2],
+                    EligiblePrincipal::External {
+                        system: ExternalSystem::try_new("github").unwrap(),
+                        username: "jayantk".to_string(),
                     }
                 );
                 assert!(current_approvals.is_empty());
@@ -287,7 +311,7 @@ mod tests {
                         assign_to_one_of,
                         title_hint,
                     } => {
-                        assert_eq!(assign_to_one_of, &vec!["reviewer", "jayantk"]);
+                        assert_eq!(assign_to_one_of, &vec!["reviewer", "swe", "jayantk"]);
                         assert_eq!(title_hint, "Review p-xyzabc (code-review)");
                     }
                     other => panic!("expected file_review_request, got {other:?}"),
@@ -352,7 +376,7 @@ mod tests {
             group_index: 2,
             label: None,
             eligible_principals: vec![EligiblePrincipal::User {
-                username: "alice".to_string(),
+                name: Username::try_new("alice").unwrap(),
             }],
             current_approvals: vec![],
             needed: 1,

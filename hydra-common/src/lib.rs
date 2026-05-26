@@ -38,7 +38,9 @@ pub use ids::{
     random_len_for_count,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
-pub use principal::{ExternalSystem, ExternalSystemError, Principal, PrincipalParseError};
+pub use principal::{
+    ExternalSystem, ExternalSystemError, Principal, PrincipalParseError, principal_eq,
+};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
     CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse, Repository,

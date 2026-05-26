@@ -8,14 +8,14 @@
 //! `merge_policy`, preserving backward-compatibility with every repo today.
 
 use async_trait::async_trait;
-use hydra_common::ActorId;
-use hydra_common::Principal;
 use hydra_common::api::v1::merge_check::{
     BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError, MergeBlockedReason,
     SuggestedAction,
 };
 use hydra_common::api::v1::repositories::{AssigneeRef, MergePolicy, ReviewerGroup};
+use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::review_utils::is_review_non_stale;
+use hydra_common::{ActorId, Principal, principal_eq};
 
 use crate::domain::actors::ActorRef;
 use crate::domain::patches::{Patch, PatchStatus};
@@ -141,7 +141,11 @@ fn evaluate_reviewer_group(
     patch_id: &hydra_common::PatchId,
 ) -> Option<MergeBlockedReason> {
     let resolved = resolve_any_of(&group.any_of, ctx);
-    let author = ctx.patch.creator.as_str();
+    // `Patch.creator: Username` so the author is a `User` principal for
+    // matching purposes — agent / external creators don't exist today.
+    let author_principal = Principal::User {
+        name: ApiUsername::from(ctx.patch.creator.as_str()),
+    };
 
     // Apply author-exclusion to the eligible set used for both counting and
     // for the error's `suggested_action.assign_to_one_of` list.
@@ -151,8 +155,8 @@ fn evaluate_reviewer_group(
             if !group.exclude_author {
                 return true;
             }
-            match rp.resolved_to.as_deref() {
-                Some(name) => !name.eq_ignore_ascii_case(author),
+            match &rp.resolved_to {
+                Some(p) => !principal_eq(p, &author_principal),
                 None => true,
             }
         })
@@ -160,19 +164,19 @@ fn evaluate_reviewer_group(
 
     // Collect approving non-stale reviews per *eligible principal* (so a
     // single author cannot satisfy two slots).
-    let approving_names = approving_non_stale_authors(ctx.patch);
-    let mut satisfied_names: Vec<String> = Vec::new();
+    let approving_authors = approving_non_stale_authors(ctx.patch);
+    let mut satisfied_principals: Vec<Principal> = Vec::new();
     for rp in &eligible {
-        if let Some(name) = rp.resolved_to.as_deref() {
-            if approving_names.iter().any(|a| a.eq_ignore_ascii_case(name))
-                && !satisfied_names.iter().any(|s| s.eq_ignore_ascii_case(name))
+        if let Some(p) = &rp.resolved_to {
+            if approving_authors.iter().any(|a| principal_eq(a, p))
+                && !satisfied_principals.iter().any(|s| principal_eq(s, p))
             {
-                satisfied_names.push(name.to_string());
+                satisfied_principals.push(p.clone());
             }
         }
     }
 
-    if (satisfied_names.len() as u32) >= group.count {
+    if (satisfied_principals.len() as u32) >= group.count {
         return None;
     }
 
@@ -186,18 +190,19 @@ fn evaluate_reviewer_group(
         Some(label) => format!("Review {patch_id} ({label})"),
         None => format!("Review {patch_id}"),
     };
-    let current_approvals: Vec<String> = satisfied_names
+    let current_approvals: Vec<String> = satisfied_principals
         .iter()
         .take(group.count as usize)
-        .cloned()
+        .map(principal_display_name)
         .collect();
 
     // `assign_to_one_of` lists eligible principals not already counted as
     // approving (so the SWE doesn't re-assign an existing reviewer).
     let assign_to_one_of: Vec<String> = eligible
         .iter()
-        .filter_map(|rp| rp.resolved_to.clone())
-        .filter(|name| !satisfied_names.iter().any(|s| s.eq_ignore_ascii_case(name)))
+        .filter_map(|rp| rp.resolved_to.as_ref())
+        .filter(|p| !satisfied_principals.iter().any(|s| principal_eq(s, p)))
+        .map(principal_display_name)
         .collect();
 
     Some(MergeBlockedReason::MissingApprovals {
@@ -223,13 +228,13 @@ async fn evaluate_mergers_layer(
 ) -> Option<MergeBlockedReason> {
     let mergers = policy.mergers.as_ref()?;
     let resolved = resolve_any_of(&mergers.any_of, ctx);
-    let actor_username = actor_username(actor, ctx.store).await;
+    let actor_principal = actor_principal(actor, ctx.store).await;
 
-    if let Some(actor_name) = actor_username.as_deref() {
+    if let Some(actor_p) = actor_principal.as_ref() {
         let matches_any = resolved.iter().any(|rp| {
             rp.resolved_to
-                .as_deref()
-                .is_some_and(|n| n.eq_ignore_ascii_case(actor_name))
+                .as_ref()
+                .is_some_and(|p| principal_eq(p, actor_p))
         });
         if matches_any {
             return None;
@@ -240,7 +245,8 @@ async fn evaluate_mergers_layer(
         resolved.iter().map(to_eligible_principal).collect();
     let assign_to_one_of: Vec<String> = resolved
         .iter()
-        .filter_map(|rp| rp.resolved_to.clone())
+        .filter_map(|rp| rp.resolved_to.as_ref())
+        .map(principal_display_name)
         .collect();
 
     Some(MergeBlockedReason::NotInMergers {
@@ -250,25 +256,33 @@ async fn evaluate_mergers_layer(
     })
 }
 
+/// Map a resolved policy entry to the typed `EligiblePrincipal` that the
+/// merge-blocked wire shape carries.
 fn to_eligible_principal(rp: &ResolvedPrincipal) -> EligiblePrincipal {
     match &rp.source {
-        AssigneeRef::Static(p) => EligiblePrincipal::User {
-            username: principal_display_name(p),
-        },
+        AssigneeRef::Static(p) => static_principal_to_eligible(p),
         AssigneeRef::Dynamic(dref) => EligiblePrincipal::Dynamic {
             reference: *dref,
-            resolved_to: rp.resolved_to.clone(),
+            resolved_to: rp.resolved_to.as_ref().map(principal_display_name),
         },
     }
 }
 
-/// Surface name for a static principal in eligibility lists. Until
-/// Phase 6 of `/designs/actor-system-overhaul.md` tightens
-/// `EligiblePrincipal` to carry the typed `Principal`, the
-/// `MergeBlockedError` wire format keeps a single string column —
-/// we use the principal's identity name (`User.name` / `Agent.name`
-/// / `External.username`) so it round-trips cleanly through the
-/// existing `merge_check` payload.
+fn static_principal_to_eligible(p: &Principal) -> EligiblePrincipal {
+    match p {
+        Principal::User { name } => EligiblePrincipal::User { name: name.clone() },
+        Principal::Agent { name } => EligiblePrincipal::Agent { name: name.clone() },
+        Principal::External { system, username } => EligiblePrincipal::External {
+            system: system.clone(),
+            username: username.clone(),
+        },
+    }
+}
+
+/// Display name for a [`Principal`] when it needs to be flattened to a
+/// single string — used by `MergeBlockedReason::NotInMergers.actor` and
+/// `SuggestedAction.assign_to_one_of`, both of which intentionally stay
+/// stringly-typed as free-form CLI helpers. Matching never uses this.
 fn principal_display_name(p: &Principal) -> String {
     match p {
         Principal::User { name } => name.as_str().to_string(),
@@ -277,11 +291,11 @@ fn principal_display_name(p: &Principal) -> String {
     }
 }
 
-/// Collect usernames whose latest non-stale review on the patch is an
-/// approval. Matches the semantics of `has_approved_non_dismissed_review`
-/// (case-insensitive on author) but returns the set rather than a boolean
-/// so reviewer-group quorum counting can deduplicate.
-fn approving_non_stale_authors(patch: &Patch) -> Vec<String> {
+/// Collect the principals whose latest non-stale review on the patch is an
+/// approval. Mirrors `has_approved_non_dismissed_review` (kind-aware,
+/// case-insensitive on the principal's name) but returns the set rather
+/// than a boolean so reviewer-group quorum counting can deduplicate.
+fn approving_non_stale_authors(patch: &Patch) -> Vec<Principal> {
     let api_reviews: Vec<hydra_common::api::v1::patches::Review> =
         patch.reviews.iter().cloned().map(Into::into).collect();
 
@@ -293,10 +307,9 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<String> {
     // today's CLI behaviour at merge time.
     let versions: Vec<hydra_common::api::v1::patches::PatchVersionRecord> = Vec::new();
 
-    let mut authors: Vec<String> = Vec::new();
+    let mut authors: Vec<Principal> = Vec::new();
     for review in &api_reviews {
-        let key = principal_display_name(&review.author).to_ascii_lowercase();
-        if authors.iter().any(|a| a.eq_ignore_ascii_case(&key)) {
+        if authors.iter().any(|a| principal_eq(a, &review.author)) {
             continue;
         }
         if let Some(latest) = hydra_common::review_utils::find_latest_review_by_author(
@@ -305,49 +318,48 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<String> {
             None,
         ) {
             if latest.is_approved && is_review_non_stale(latest, &versions) {
-                authors.push(principal_display_name(&latest.author));
+                authors.push(latest.author.clone());
             }
         }
     }
     authors
 }
 
-/// Best-effort mapping from `ActorRef` to the username we should match
-/// against `mergers.any_of`. Returns `None` when no username can be
-/// derived — the caller treats that as "not in mergers".
-async fn actor_username(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<String> {
+/// Best-effort mapping from `ActorRef` to the typed [`Principal`] we
+/// should match against `mergers.any_of`. Returns `None` when no
+/// principal can be derived — the caller treats that as "not in mergers".
+///
+/// Phase 6 of `/designs/actor-system-overhaul.md`: an agent acts **as the
+/// agent**, not as its creator. So an `ActorId::Agent("swe")` resolves to
+/// `Principal::Agent { name: "swe" }` — a policy that wants the agent's
+/// creator to merge needs to name that creator (or the specific agent)
+/// explicitly. Session / Adhoc / Issue actors still resolve to their
+/// `User` creator since those are session-bound identities, not
+/// first-class principals.
+async fn actor_principal(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<Principal> {
     let actor_id = actor.on_behalf_of()?;
     match actor_id {
-        ActorId::Username(u) => Some(u.as_str().to_string()),
+        ActorId::Username(u) | ActorId::User(u) => Some(Principal::User { name: u }),
+        ActorId::Agent(a) => Some(Principal::Agent { name: a }),
+        ActorId::External { system, username } => Some(Principal::External { system, username }),
         // Phase-2 `Adhoc(sid)` matches the legacy `Session(sid)` arm:
         // both are sessions without a registered agent identity, so
-        // the merger username is the session's creator.
+        // the matching principal is the session's creator (a `User`).
         ActorId::Session(sid) | ActorId::Adhoc(sid) => store
             .get_session(&sid, false)
             .await
             .ok()
-            .map(|s| s.item.creator.as_str().to_string()),
+            .map(|s| Principal::User {
+                name: ApiUsername::from(s.item.creator.as_str()),
+            }),
         ActorId::Issue(iid) => store
             .get_issue(&iid, false)
             .await
             .ok()
-            .map(|i| i.item.creator.as_str().to_string()),
-        // Agent-spawned sessions share an actor row keyed by agent
-        // name; resolve via that row's creator so an agent acting on
-        // behalf of `alice` is matched as `alice` for merger
-        // membership. This is the closest Phase-2 approximation —
-        // Phase 6 of `/designs/actor-system-overhaul.md` revisits
-        // merger semantics with the typed `Principal`.
-        ActorId::Agent(_) => store
-            .get_actor(&actor_id.to_string())
-            .await
-            .ok()
-            .map(|a| a.item.creator.as_str().to_string()),
-        ActorId::Service(_) => None,
-        // `User` / `External` / `Legacy` aren't produced by any
-        // hydra-server call site that flows through merge auth yet.
-        // Phase 6 updates this resolver.
-        ActorId::User(_) | ActorId::External { .. } | ActorId::Legacy(_) => None,
+            .map(|i| Principal::User {
+                name: ApiUsername::from(i.item.creator.as_str()),
+            }),
+        ActorId::Service(_) | ActorId::Legacy(_) => None,
     }
 }
 
@@ -823,6 +835,202 @@ mod tests {
             store: &store,
         };
         assert!(r.evaluate(&ctx).await.is_ok());
+    }
+
+    // ---- Phase 6: kind-aware matching ----------------------------------
+
+    fn agent_ref_static(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(ApiPrincipal::Agent {
+            name: hydra_common::api::v1::agents::AgentName::try_new(name).unwrap(),
+        })
+    }
+
+    fn agent_actor(name: &str) -> CommonActorRef {
+        CommonActorRef::Authenticated {
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new(name).unwrap(),
+            ),
+            session_id: None,
+        }
+    }
+
+    fn typed_user_actor(name: &str) -> CommonActorRef {
+        CommonActorRef::Authenticated {
+            actor_id: ActorId::User(ApiUsername::from(name)),
+            session_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn user_principal_matches_users_path_merger_rule() {
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![user("alice")],
+            }),
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        let r = MergeAuthorizationRestriction::new();
+        let patch = make_patch_with(Vec::new(), "author");
+        let old = old_open("author");
+        evaluate(&r, &store, patch, Some(old), &typed_user_actor("alice"))
+            .await
+            .expect("ActorId::User(alice) should satisfy users/alice rule");
+    }
+
+    #[tokio::test]
+    async fn agent_principal_matches_agents_path_merger_rule() {
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![agent_ref_static("swe")],
+            }),
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        let r = MergeAuthorizationRestriction::new();
+        let patch = make_patch_with(Vec::new(), "author");
+        let old = old_open("author");
+        evaluate(&r, &store, patch, Some(old), &agent_actor("swe"))
+            .await
+            .expect("ActorId::Agent(swe) should satisfy agents/swe rule");
+    }
+
+    #[tokio::test]
+    async fn agent_with_user_name_does_not_match_users_path() {
+        // Agent "swe" must NOT satisfy `mergers: [users/swe]` — kind matters.
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![user("swe")],
+            }),
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        let r = MergeAuthorizationRestriction::new();
+        let patch = make_patch_with(Vec::new(), "author");
+        let old = old_open("author");
+        let err = evaluate(&r, &store, patch, Some(old), &agent_actor("swe"))
+            .await
+            .expect_err("agent swe must not satisfy users/swe rule");
+        let body = parse_message(&err);
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Mergers);
+        assert!(matches!(
+            body.reasons[0],
+            MergeBlockedReason::NotInMergers { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn user_with_agent_name_does_not_match_agents_path() {
+        // User "swe" must NOT satisfy `mergers: [agents/swe]` — kind matters.
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![agent_ref_static("swe")],
+            }),
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        let r = MergeAuthorizationRestriction::new();
+        let patch = make_patch_with(Vec::new(), "author");
+        let old = old_open("author");
+        let err = evaluate(&r, &store, patch, Some(old), &typed_user_actor("swe"))
+            .await
+            .expect_err("user swe must not satisfy agents/swe rule");
+        let body = parse_message(&err);
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Mergers);
+    }
+
+    #[tokio::test]
+    async fn external_review_does_not_satisfy_user_reviewer_entry() {
+        // A reviewer rule of `users/jayantk` is NOT satisfied by an
+        // approving review whose author is `Principal::External { system:
+        // "github", username: "jayantk" }` — kind matters even for review
+        // matching.
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![ReviewerGroup {
+                label: None,
+                any_of: vec![user("jayantk")],
+                count: 1,
+                exclude_author: true,
+            }],
+            mergers: None,
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        let r = MergeAuthorizationRestriction::new();
+        let external_review = Review::new(
+            "LGTM".to_string(),
+            true,
+            ApiPrincipal::External {
+                system: hydra_common::ExternalSystem::try_new("github").unwrap(),
+                username: "jayantk".to_string(),
+            },
+            Some(Utc::now()),
+        );
+        let patch = make_patch_with(vec![external_review], "author");
+        let old = old_open("author");
+        let err = evaluate(&r, &store, patch, Some(old), &user_actor("author"))
+            .await
+            .expect_err("external/github/jayantk review must not satisfy users/jayantk rule");
+        let body = parse_message(&err);
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Reviews);
+    }
+
+    #[tokio::test]
+    async fn agent_does_not_act_as_its_user_creator_for_merger_rule() {
+        // **Phase 6 behavior change**: agent `swe` spawned by user `alice`
+        // attempting to merge with a `mergers: [users/alice]` policy is
+        // REJECTED — agents act as themselves, not their creators.
+        let store = MemoryStore::new();
+        let policy = MergePolicy {
+            reviewers: vec![],
+            mergers: Some(MergerRule {
+                any_of: vec![user("alice")],
+            }),
+        };
+        add_repo_with_policy(&store, Some(policy)).await;
+
+        // Persist an agent actor row whose creator is `alice` — even
+        // though the agent is rooted to alice, the agent's matching
+        // identity for merge-policy purposes is `agents/swe`, not
+        // `users/alice`.
+        let (agent_actor_row, _token) = crate::domain::actors::Actor::new_from_actor_id(
+            ActorId::Agent(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
+            Username::from("alice"),
+        );
+        store
+            .add_actor(agent_actor_row, &DomainActorRef::test())
+            .await
+            .expect("add agent actor");
+
+        let r = MergeAuthorizationRestriction::new();
+        let patch = make_patch_with(Vec::new(), "author");
+        let old = old_open("author");
+        let err = evaluate(&r, &store, patch, Some(old), &agent_actor("swe"))
+            .await
+            .expect_err("agent swe (creator alice) must not satisfy users/alice rule");
+        let body = parse_message(&err);
+        assert_eq!(body.blocked_at_layer, BlockedAtLayer::Mergers);
+        match &body.reasons[0] {
+            MergeBlockedReason::NotInMergers {
+                suggested_action: SuggestedAction::FileMergeRequest { assign_to_one_of },
+                ..
+            } => {
+                assert!(
+                    assign_to_one_of.iter().any(|s| s == "alice"),
+                    "suggested action must list alice so the SWE can file a merge-request; got: {assign_to_one_of:?}"
+                );
+            }
+            other => panic!("expected NotInMergers with FileMergeRequest, got {other:?}"),
+        }
     }
 
     // ---- JSON wire-shape check -----------------------------------------

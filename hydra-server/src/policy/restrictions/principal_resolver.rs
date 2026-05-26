@@ -1,22 +1,20 @@
-//! Resolves [`AssigneeRef`]s in a [`MergePolicy`] to concrete usernames at
-//! merge-attempt time.
+//! Resolves [`AssigneeRef`]s in a [`MergePolicy`] to concrete [`Principal`]s
+//! at merge-attempt time.
 //!
-//! `AssigneeRef::Static(Principal)` is the identity case (currently
-//! resolved by surfacing the principal's display name).
-//! `AssigneeRef::Dynamic(d)` is resolved against the current state of the
-//! patch — never snapshotted. See `/designs/merge-time-constraints.md`
-//! §4.4 for why resolution is live.
+//! `AssigneeRef::Static(Principal)` is the identity case — the configured
+//! principal is the resolution. `AssigneeRef::Dynamic(d)` is resolved against
+//! the current state of the patch — never snapshotted. See
+//! `/designs/merge-time-constraints.md` §4.4 for why resolution is live.
 //!
-//! Phase 5a of `/designs/actor-system-overhaul.md` widened the static
-//! arm from `User(Username)` to the shared `Principal` (gaining `Agent`
-//! and `External`). For now this resolver continues to surface only the
-//! `name` / `username` field of the static principal; tightening
-//! merger membership to match by kind (so an `Agent` config entry does
-//! not silently match a `User` actor with the same string) is tracked
-//! by Phase 6 of the design.
+//! Phase 6 of `/designs/actor-system-overhaul.md` (§4.1, §4.5): the
+//! resolved value carries the full typed [`Principal`] so downstream
+//! matching (`mergers.any_of`, reviewer-group quorum) is kind-aware —
+//! an `Agent` config entry never silently matches a `User` actor with
+//! the same string.
 
 use hydra_common::Principal;
 use hydra_common::api::v1::repositories::{AssigneeRef, DynamicRef};
+use hydra_common::api::v1::users::Username;
 
 use crate::domain::patches::Patch;
 use crate::store::ReadOnlyStore;
@@ -27,19 +25,22 @@ pub struct ResolutionContext<'a> {
     pub store: &'a dyn ReadOnlyStore,
 }
 
-/// A principal alongside the username it currently resolves to (if any).
+/// A principal alongside the [`Principal`] it currently resolves to (if any).
 ///
 /// `resolved_to` is `None` for `Dynamic` refs that cannot be resolved against
 /// the current state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedPrincipal {
     pub source: AssigneeRef,
-    pub resolved_to: Option<String>,
+    pub resolved_to: Option<Principal>,
 }
 
-/// Resolve a single [`AssigneeRef`] to a username string, or `None` if a
-/// dynamic reference cannot be resolved.
-pub fn resolve_principal(principal: &AssigneeRef, ctx: &ResolutionContext<'_>) -> Option<String> {
+/// Resolve a single [`AssigneeRef`] to a typed [`Principal`], or `None` if a
+/// dynamic reference cannot be resolved against the current patch state.
+pub fn resolve_principal(
+    principal: &AssigneeRef,
+    ctx: &ResolutionContext<'_>,
+) -> Option<Principal> {
     match principal {
         AssigneeRef::Static(p) => Some(resolve_static_principal(p)),
         AssigneeRef::Dynamic(dref) => resolve_dynamic_ref(*dref, ctx),
@@ -61,17 +62,18 @@ pub fn resolve_any_of(
         .collect()
 }
 
-fn resolve_static_principal(p: &Principal) -> String {
-    match p {
-        Principal::User { name } => name.as_str().to_string(),
-        Principal::Agent { name } => name.as_str().to_string(),
-        Principal::External { username, .. } => username.clone(),
-    }
+fn resolve_static_principal(p: &Principal) -> Principal {
+    p.clone()
 }
 
-fn resolve_dynamic_ref(dref: DynamicRef, ctx: &ResolutionContext<'_>) -> Option<String> {
+fn resolve_dynamic_ref(dref: DynamicRef, ctx: &ResolutionContext<'_>) -> Option<Principal> {
     match dref {
-        DynamicRef::PatchAuthor => Some(ctx.patch.creator.as_str().to_string()),
+        // `Patch.creator: Username` so the patch-author dynamic ref always
+        // resolves to `Principal::User` — patches today are not authored
+        // by `Agent` or `External` identities.
+        DynamicRef::PatchAuthor => Some(Principal::User {
+            name: Username::from(ctx.patch.creator.as_str()),
+        }),
     }
 }
 
@@ -120,34 +122,46 @@ mod tests {
         })
     }
 
+    fn user_principal(name: &str) -> Principal {
+        Principal::User {
+            name: ApiUsername::try_new(name).unwrap(),
+        }
+    }
+
+    fn agent_principal(name: &str) -> Principal {
+        Principal::Agent {
+            name: AgentName::try_new(name).unwrap(),
+        }
+    }
+
     #[tokio::test]
-    async fn resolves_user_principal_to_its_username() {
+    async fn resolves_user_principal_to_typed_user() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
         let c = ctx(&patch, &store);
 
         let p = user_ref("alice");
-        assert_eq!(resolve_principal(&p, &c), Some("alice".to_string()));
+        assert_eq!(resolve_principal(&p, &c), Some(user_principal("alice")));
     }
 
     #[tokio::test]
-    async fn resolves_agent_principal_to_its_agent_name() {
+    async fn resolves_agent_principal_to_typed_agent() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
         let c = ctx(&patch, &store);
 
         let p = agent_ref("swe");
-        assert_eq!(resolve_principal(&p, &c), Some("swe".to_string()));
+        assert_eq!(resolve_principal(&p, &c), Some(agent_principal("swe")));
     }
 
     #[tokio::test]
-    async fn patch_author_dynamic_ref_resolves_to_patch_creator() {
+    async fn patch_author_dynamic_ref_resolves_to_user_principal_for_creator() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
         let c = ctx(&patch, &store);
 
         let p = AssigneeRef::Dynamic(DynamicRef::PatchAuthor);
-        assert_eq!(resolve_principal(&p, &c), Some("author".to_string()));
+        assert_eq!(resolve_principal(&p, &c), Some(user_principal("author")));
     }
 
     #[tokio::test]
@@ -164,8 +178,8 @@ mod tests {
         let resolved = resolve_any_of(&principals, &c);
         assert_eq!(resolved.len(), 2);
         assert_eq!(resolved[0].source, principals[0]);
-        assert_eq!(resolved[0].resolved_to, Some("alice".to_string()));
+        assert_eq!(resolved[0].resolved_to, Some(user_principal("alice")));
         assert_eq!(resolved[1].source, principals[1]);
-        assert_eq!(resolved[1].resolved_to, Some("author".to_string()));
+        assert_eq!(resolved[1].resolved_to, Some(user_principal("author")));
     }
 }
