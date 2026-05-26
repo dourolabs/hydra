@@ -571,7 +571,25 @@ mod tests {
             out.status,
             String::from_utf8_lossy(&out.stderr),
         );
-        String::from_utf8(out.stdout).context("pg_dump output not utf-8")
+        let raw = String::from_utf8(out.stdout).context("pg_dump output not utf-8")?;
+        Ok(strip_pg_dump_restrict_tokens(&raw))
+    }
+
+    /// pg_dump 16.14+ emits a fresh random token on each invocation in the
+    /// leading `\restrict <token>` and trailing `\unrestrict <token>` psql
+    /// meta-commands, which makes byte-wise snapshot comparison flaky. The
+    /// payload between those lines is deterministic; drop the wrapper lines
+    /// so the determinism check actually compares the data.
+    fn strip_pg_dump_restrict_tokens(dump: &str) -> String {
+        let mut out = String::with_capacity(dump.len());
+        for line in dump.lines() {
+            if line.starts_with("\\restrict ") || line.starts_with("\\unrestrict ") {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
     }
 
     /// Run `seed_baseline` twice against freshly-reset databases and
