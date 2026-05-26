@@ -1,10 +1,11 @@
 //! `hydra graph log` — implementation.
 //!
-//! Selects nodes via the same flag surface as `hydra graph search`/`diff`,
-//! then for each node walks its version history and emits a `created` or
-//! `updated` event for every version whose timestamp falls in
-//! `(--since, --until]`. Events from all matched nodes are merged and sorted
-//! most-recent-first, then truncated to `--limit`.
+//! Selects nodes via the legacy flag-mirror selection surface in
+//! [`crate::command::graph::utils`] (slated for cutover to the pipe-grammar
+//! query parser in PR 5), then for each node walks its version history and
+//! emits a `created` or `updated` event for every version whose timestamp
+//! falls in `(--since, --until]`. Events from all matched nodes are merged
+//! and sorted most-recent-first, then truncated to `--limit`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
