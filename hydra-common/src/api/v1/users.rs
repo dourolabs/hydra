@@ -152,6 +152,20 @@ impl UserSummary {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
+pub struct ListUsersResponse {
+    pub users: Vec<UserSummary>,
+}
+
+impl ListUsersResponse {
+    pub fn new(users: Vec<UserSummary>) -> Self {
+        Self { users }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
 pub struct SearchUsersQuery {
     #[serde(default)]
     pub q: Option<String>,

@@ -5,6 +5,7 @@ use crate::{
     },
     store::{ReadOnlyStore, StoreError},
 };
+use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{SessionId, api::v1 as api};
 use octocrab::Octocrab;
 use serde::Deserialize;
@@ -199,6 +200,15 @@ impl AppState {
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
         store.get_user(username, false).await.map(|user| user.item)
+    }
+
+    pub async fn list_users(&self, query: &SearchUsersQuery) -> Result<Vec<User>, StoreError> {
+        let store = self.store.as_ref();
+        let rows = store.list_users(query).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(_, versioned)| versioned.item)
+            .collect())
     }
 }
 

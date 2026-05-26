@@ -76,6 +76,7 @@ export type { ListIssueVersionsResponse } from "./generated/ListIssueVersionsRes
 export type { ListIssuesResponse } from "./generated/ListIssuesResponse";
 export type { ListSessionVersionsResponse } from "./generated/ListSessionVersionsResponse";
 export type { ListSessionsResponse } from "./generated/ListSessionsResponse";
+export type { ListUsersResponse } from "./generated/ListUsersResponse";
 export type { ListLabelsResponse } from "./generated/ListLabelsResponse";
 export type { ListPatchVersionsResponse } from "./generated/ListPatchVersionsResponse";
 export type { ListPatchesResponse } from "./generated/ListPatchesResponse";
