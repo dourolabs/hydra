@@ -177,18 +177,12 @@ pub async fn seed_baseline(pool: &PgPool) -> Result<()> {
     .context("insert conversation")?;
 
     let events: &[(&str, &str)] = &[
-        (
-            "user_message",
-            r#"{"role":"user","content":"hello"}"#,
-        ),
+        ("user_message", r#"{"role":"user","content":"hello"}"#),
         (
             "assistant_message",
             r#"{"role":"assistant","content":"hi"}"#,
         ),
-        (
-            "system_event",
-            r#"{"note":"agent attached"}"#,
-        ),
+        ("system_event", r#"{"note":"agent attached"}"#),
     ];
     for (i, (event_type, data)) in events.iter().enumerate() {
         sqlx::query(
@@ -208,7 +202,8 @@ pub async fn seed_baseline(pool: &PgPool) -> Result<()> {
     // --- tasks_v2: one row per SessionMode variant -----------------------
     let headless_mount = r#"{"working_dir":"repo","mounts":[{"type":"bundle","target":"repo","bundle":"none","session_id":"s-headless"}]}"#;
     let interactive_mount = r#"{"working_dir":"repo","mounts":[{"type":"bundle","target":"repo","bundle":"none","session_id":"s-interactive"}]}"#;
-    let agent_cfg = r#"{"agent_name":"reviewer","model":null,"system_prompt":null,"mcp_config":null}"#;
+    let agent_cfg =
+        r#"{"agent_name":"reviewer","model":null,"system_prompt":null,"mcp_config":null}"#;
 
     let tasks: &[(&str, Option<&str>, &str, &str)] = &[
         (
@@ -269,8 +264,20 @@ pub async fn seed_baseline(pool: &PgPool) -> Result<()> {
             "issue",
             "child-of",
         ),
-        ("i-bare-user", "issue", "p-bare-author", "patch", "has-patch"),
-        ("i-bare-user", "issue", "d-baseline", "document", "refers-to"),
+        (
+            "i-bare-user",
+            "issue",
+            "p-bare-author",
+            "patch",
+            "has-patch",
+        ),
+        (
+            "i-bare-user",
+            "issue",
+            "d-baseline",
+            "document",
+            "refers-to",
+        ),
     ];
     for (src, src_kind, tgt, tgt_kind, rel) in rels {
         sqlx::query(
@@ -346,7 +353,7 @@ mod tests {
             out.status,
             String::from_utf8_lossy(&out.stderr),
         );
-        Ok(String::from_utf8(out.stdout).context("pg_dump output not utf-8")?)
+        String::from_utf8(out.stdout).context("pg_dump output not utf-8")
     }
 
     /// Run `seed_baseline` twice against freshly-reset databases and assert
@@ -371,7 +378,10 @@ mod tests {
         let snap_b = pg_dump_snapshot(&dsn)?;
         pool_b.close().await;
 
-        assert_eq!(snap_a, snap_b, "seed_baseline produced non-deterministic output");
+        assert_eq!(
+            snap_a, snap_b,
+            "seed_baseline produced non-deterministic output"
+        );
         Ok(())
     }
 }

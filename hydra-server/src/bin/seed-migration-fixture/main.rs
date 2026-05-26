@@ -128,12 +128,10 @@ async fn run(cli: Cli) -> Result<()> {
         .context("run postgres migrations")?;
     info!("applied migrations to HEAD");
 
-    let baseline_version: i64 = sqlx::query_scalar(
-        "SELECT MAX(version) FROM _sqlx_migrations",
-    )
-    .fetch_one(&pool)
-    .await
-    .context("read max migration version from _sqlx_migrations")?;
+    let baseline_version: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .context("read max migration version from _sqlx_migrations")?;
     info!(baseline_version, "captured baseline pin");
 
     hydra_server::test_seed::seed_baseline(&pool)
@@ -158,8 +156,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .with_context(|| format!("create parent dir for {}", cli.out.display()))?;
         }
     }
-    fs::write(&cli.out, body)
-        .with_context(|| format!("write fixture to {}", cli.out.display()))?;
+    fs::write(&cli.out, body).with_context(|| format!("write fixture to {}", cli.out.display()))?;
     info!(path = %cli.out.display(), "wrote migration baseline fixture");
 
     eprintln!(
@@ -250,9 +247,8 @@ async fn ensure_db_empty_or_force(pool: &sqlx::PgPool, force: bool) -> Result<()
                 return Ok(());
             }
             bail!(
-                "refusing to operate on populated DB: metis.{} contains rows. \
-                 Pass --force to drop the metis schema anyway.",
-                table
+                "refusing to operate on populated DB: metis.{table} contains rows. \
+                 Pass --force to drop the metis schema anyway."
             );
         }
     }
