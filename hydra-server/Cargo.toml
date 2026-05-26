@@ -22,6 +22,11 @@ path = "src/main.rs"
 name = "hydra-migrate-sessions"
 path = "src/bin/hydra-migrate-sessions/main.rs"
 
+[[bin]]
+name = "seed-migration-fixture"
+path = "src/bin/seed-migration-fixture/main.rs"
+required-features = ["postgres"]
+
 [dependencies]
 aes-gcm = "0.10"
 anyhow = "1.0"
