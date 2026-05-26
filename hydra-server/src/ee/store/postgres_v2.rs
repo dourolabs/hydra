@@ -1272,6 +1272,159 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
         })
     }
+
+    // -------------------------------------------------------------------------
+    // Test-seed helpers
+    // -------------------------------------------------------------------------
+    //
+    // Used by `bin/seed-migration-fixture` to populate the metis schema
+    // deterministically. The standard `Store::add_*` paths mint random IDs
+    // via `rand::thread_rng()` and rely on `created_at` / `updated_at`
+    // defaulting to `NOW()`; both make the resulting `pg_dump` non-stable
+    // across runs. These helpers let the seed pass explicit IDs (so a
+    // seeded PRNG drives ID generation) and pin every timestamp post-insert
+    // (`seed_pin_timestamps`). They are intentionally narrow — production
+    // code goes through the `Store` trait.
+
+    /// Inserts an issue at version 1 with a caller-supplied ID. Validates
+    /// dependencies and syncs `object_relationships` exactly like
+    /// `add_issue`.
+    #[doc(hidden)]
+    pub async fn seed_insert_issue(
+        &self,
+        id: &IssueId,
+        issue: &Issue,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+        let actor_json = actor_to_json(actor);
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_issue_in_tx(&mut *tx, id, 1, issue, Some(&actor_json)).await?;
+        Self::sync_issue_relationships_in_tx(&mut tx, id, issue).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Inserts a patch at version 1 with a caller-supplied ID.
+    #[doc(hidden)]
+    pub async fn seed_insert_patch(
+        &self,
+        id: &PatchId,
+        patch: &Patch,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        let actor_json = actor_to_json(actor);
+        self.insert_patch(id, 1, patch, Some(&actor_json)).await
+    }
+
+    /// Inserts a document at version 1 with a caller-supplied ID.
+    #[doc(hidden)]
+    pub async fn seed_insert_document(
+        &self,
+        id: &DocumentId,
+        document: &Document,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        let actor_json = actor_to_json(actor);
+        self.insert_document(id, 1, document, Some(&actor_json))
+            .await
+    }
+
+    /// Inserts a session at version 1 with a caller-supplied ID. Stamps the
+    /// passed `creation_time` so the `tasks_v2.creation_time` column is
+    /// deterministic alongside the trigger-pinned `created_at` /
+    /// `updated_at`.
+    #[doc(hidden)]
+    pub async fn seed_insert_session(
+        &self,
+        id: &SessionId,
+        mut session: Session,
+        creation_time: DateTime<Utc>,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        if let Some(issue_id) = session.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+        session.creation_time = Some(creation_time);
+        let actor_json = actor_to_json(actor);
+        self.insert_session(id, 1, &session, Some(&actor_json))
+            .await
+    }
+
+    /// Inserts a conversation at version 1 with a caller-supplied ID.
+    #[doc(hidden)]
+    pub async fn seed_insert_conversation(
+        &self,
+        id: &ConversationId,
+        conversation: &Conversation,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        let actor_json = actor_to_json(actor);
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_conversation_in_tx(&mut *tx, id, 1, conversation, Some(&actor_json)).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Pins every `created_at` / `updated_at` / `tasks_v2.creation_time`
+    /// in the `metis.*` schema to `ts` so `pg_dump --data-only` produces
+    /// byte-identical output across consecutive seed runs. The columns
+    /// (and the tables that own them) are discovered from
+    /// `information_schema` so new tables / new timestamp columns added
+    /// by future migrations are picked up automatically.
+    ///
+    /// The `metis.touch_updated_at` BEFORE-UPDATE triggers would
+    /// otherwise overwrite `updated_at` with `NOW()` on every post-insert
+    /// UPDATE, so the helper runs inside a transaction with
+    /// `session_replication_role = 'replica'` to bypass user-defined
+    /// triggers for the duration of the pin.
+    #[doc(hidden)]
+    pub async fn seed_pin_timestamps(&self, ts: DateTime<Utc>) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query("SET LOCAL session_replication_role = 'replica'")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // Discover every `metis.*` table column that is a timestamp we
+        // want to pin. We deliberately scope to a small allowlist of
+        // names so other timestamptz columns (e.g. `tasks_v2.start_time`)
+        // are left untouched.
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT table_name, column_name \
+             FROM information_schema.columns \
+             WHERE table_schema = 'metis' \
+               AND column_name IN ('created_at', 'updated_at', 'creation_time') \
+             ORDER BY table_name, column_name",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let mut grouped: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (table, column) in rows {
+            grouped.entry(table).or_default().push(column);
+        }
+
+        for (table, columns) in grouped {
+            let assignments: Vec<String> = columns.iter().map(|c| format!("{c} = $1")).collect();
+            let sql = format!(
+                "UPDATE metis.\"{}\" SET {}",
+                table.replace('"', "\"\""),
+                assignments.join(", "),
+            );
+            sqlx::query(&sql)
+                .bind(ts)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+        }
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(())
+    }
 }
 
 // -----------------------------------------------------------------------------

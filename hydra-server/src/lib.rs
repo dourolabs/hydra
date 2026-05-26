@@ -11,8 +11,6 @@ pub mod migration_tool;
 pub mod policy;
 pub mod routes;
 pub mod store;
-#[cfg(feature = "postgres")]
-pub mod test_seed;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
