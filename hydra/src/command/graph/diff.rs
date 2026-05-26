@@ -14,7 +14,6 @@ use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
-use hydra_common::graph::query::parse as parse_query;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::time::HydraTime;
 use hydra_common::versioning::VersionNumber;
@@ -23,6 +22,7 @@ use serde_json::Value;
 
 use crate::client::HydraClientInterface;
 use crate::command::graph::dispatch::{fetch_versions, VersionView, VersionedNode};
+use crate::command::graph::query::parse as parse_query;
 use crate::command::graph::resolver::{resolve, Resolved};
 use crate::command::graph::DEFAULT_HYDRATION_CONCURRENCY;
 use crate::command::output::{CommandContext, ResolvedOutputFormat};

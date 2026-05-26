@@ -1,13 +1,14 @@
 //! `hydra graph` — query the knowledge graph (nodes, with version-aware views).
 //!
 //! Exposed subcommands: `search`, `diff`, and `log` all consume the
-//! positional pipe-grammar query parsed in `hydra_common::graph::query` and
-//! walked by [`resolver`]. Per-kind hydration and version-history fetching
-//! live in [`dispatch`].
+//! positional pipe-grammar query parsed in [`query`] and walked by
+//! [`resolver`]. Per-kind hydration and version-history fetching live in
+//! [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
 pub mod log;
+pub mod query;
 pub mod resolver;
 pub mod search;
 pub mod utils;

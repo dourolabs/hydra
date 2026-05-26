@@ -4,14 +4,10 @@
 //! `hydra graph` subcommands link against. The grammar, semantics, and
 //! lowering rules are specified in `/designs/hydra-graph-query-language.md`.
 //!
-//! The parser is **dead code** until the subcommand cutovers wire it into
-//! `hydra/src/command/graph/` — landing it as its own crate change keeps the
-//! diff in one place and lets the three cutover PRs ship in parallel.
-//!
 //! # Example
 //!
 //! ```ignore
-//! use hydra_common::graph::query::{parse, LoweredStage};
+//! use hydra::command::graph::query::{parse, LoweredStage};
 //!
 //! let q = parse("i-abcdef | children rel=child-of transitive | kind=issue").unwrap();
 //! let lowered = q.lower();
@@ -25,8 +21,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::HydraId;
-use crate::graph::view::ObjectKind;
+use hydra_common::graph::ObjectKind;
+use hydra_common::HydraId;
 
 // -- AST ----------------------------------------------------------------
 
@@ -1362,12 +1358,11 @@ hint: queries must start with a source id (e.g., 'i-abcdef | scope')";
     fn fails_ancestors_without_rel() {
         let err = parse("i-abcd | ancestors").unwrap_err();
         assert_eq!(err.message, "'ancestors' requires 'rel='");
-        assert!(
-            err.hint
-                .as_deref()
-                .unwrap()
-                .contains("ancestors rel=child-of")
-        );
+        assert!(err
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("ancestors rel=child-of"));
     }
 
     #[test]
