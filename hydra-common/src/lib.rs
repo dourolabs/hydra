@@ -89,12 +89,12 @@ mod ts_export {
         crate::ActorId::export_all(&cfg).expect("ActorId");
         crate::ActorRef::export_all(&cfg).expect("ActorRef");
         crate::ExternalSystem::export_all(&cfg).expect("ExternalSystem");
-        // Exported as `ActorPrincipal.ts` in Phase 1 to avoid a TS-file
-        // collision with `repositories::Principal` (which currently
-        // owns `Principal.ts`). Phase 5/6 of
-        // `/designs/actor-system-overhaul.md` unifies the two types and
-        // the rename can be removed then.
-        crate::principal::Principal::export_all(&cfg).expect("ActorPrincipal");
+        // Phase 5a of `/designs/actor-system-overhaul.md` finished the
+        // unification: the merge-policy `Principal` is now a wrapper
+        // (`AssigneeRef`) that uses the shared `Principal` for its
+        // static case, so the Phase-1 `rename = "ActorPrincipal"`
+        // workaround is dropped and this type owns `Principal.ts`.
+        crate::principal::Principal::export_all(&cfg).expect("Principal");
         crate::Versioned::<()>::export_all(&cfg).expect("Versioned");
 
         // Activity log
@@ -254,7 +254,7 @@ mod ts_export {
 
         // API v1: repositories
         crate::repositories::DynamicRef::export_all(&cfg).expect("DynamicRef");
-        crate::repositories::Principal::export_all(&cfg).expect("Principal");
+        crate::repositories::AssigneeRef::export_all(&cfg).expect("AssigneeRef");
         crate::repositories::ReviewerGroup::export_all(&cfg).expect("ReviewerGroup");
         crate::repositories::MergerRule::export_all(&cfg).expect("MergerRule");
         crate::repositories::MergePolicy::export_all(&cfg).expect("MergePolicy");

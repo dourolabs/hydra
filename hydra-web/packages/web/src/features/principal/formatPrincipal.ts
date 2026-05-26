@@ -1,14 +1,16 @@
-import type { ActorPrincipal } from "@hydra/api";
+import type { Principal } from "@hydra/api";
 
 /**
  * Phase 4b of the actor-system overhaul moved attribution fields like
  * `Issue.assignee` from bare strings (`"alice"`) to typed
- * [`ActorPrincipal`] objects (`{kind, name}` etc.). UI code that used to
- * read `assignee` directly now goes through these helpers.
+ * [`Principal`] objects (`{kind, name}` etc.). UI code that used to
+ * read `assignee` directly now goes through these helpers. (Phase 5a
+ * dropped the temporary `ActorPrincipal` rename — this type is now
+ * exported as `Principal`.)
  */
 
-/** Render an [`ActorPrincipal`] as its canonical path form. */
-export function formatPrincipalPath(principal: ActorPrincipal): string {
+/** Render a [`Principal`] as its canonical path form. */
+export function formatPrincipalPath(principal: Principal): string {
   switch (principal.kind) {
     case "user":
       return `users/${principal.name}`;
@@ -20,12 +22,12 @@ export function formatPrincipalPath(principal: ActorPrincipal): string {
 }
 
 /**
- * Return the user-facing display name for an [`ActorPrincipal`] — the
+ * Return the user-facing display name for a [`Principal`] — the
  * username component without the `users/` / `agents/` / `external/<sys>/`
  * prefix. Used wherever the UI previously rendered the bare string
  * `Issue.assignee`.
  */
-export function principalDisplayName(principal: ActorPrincipal): string {
+export function principalDisplayName(principal: Principal): string {
   switch (principal.kind) {
     case "user":
     case "agent":
@@ -41,7 +43,7 @@ export function principalDisplayName(principal: ActorPrincipal): string {
  * `"agent"`, so external principals fall through to `"human"`.
  */
 export function principalAvatarKind(
-  principal: ActorPrincipal,
+  principal: Principal,
 ): "human" | "agent" {
   switch (principal.kind) {
     case "user":

@@ -767,11 +767,12 @@ mod merge_check_tests {
     use axum::http::StatusCode;
     use chrono::Utc;
     use hydra_common::ActorRef as CommonActorRef;
+    use hydra_common::Principal as ApiPrincipal;
     use hydra_common::api::v1::merge_check::{
         BlockedAtLayer, MergeBlockedError, MergeBlockedReason, MergeCheckResponse,
     };
     use hydra_common::api::v1::repositories::{
-        MergePolicy, MergerRule, Principal as ApiPrincipal, ReviewerGroup,
+        AssigneeRef, MergePolicy, MergerRule, ReviewerGroup,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
     use hydra_common::{RepoName, Repository};
@@ -780,8 +781,10 @@ mod merge_check_tests {
         RepoName::new("octo", "repo").expect("valid repo name")
     }
 
-    fn user_principal(name: &str) -> ApiPrincipal {
-        ApiPrincipal::User(ApiUsername::from(name))
+    fn user_principal(name: &str) -> AssigneeRef {
+        AssigneeRef::Static(ApiPrincipal::User {
+            name: ApiUsername::try_new(name).unwrap_or_else(|_| ApiUsername::from(name)),
+        })
     }
 
     fn actor_for(username: &str) -> Actor {

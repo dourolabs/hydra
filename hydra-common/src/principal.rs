@@ -122,14 +122,15 @@ impl AsRef<str> for ExternalSystem {
 /// **Path form** (canonical, used in URLs, CLI args, and indexed DB
 /// columns): `users/<x>` / `agents/<x>` / `external/<system>/<username>`.
 ///
-/// **TS export rename:** this type is exported as `ActorPrincipal` in
-/// Phase 1 to avoid a TS-file collision with the existing
-/// [`crate::api::v1::repositories::Principal`] (which currently owns
-/// `Principal.ts`). Phase 5/6 of the design unifies the two types and
-/// the rename can be removed then.
+/// Phase 5a of `/designs/actor-system-overhaul.md` unifies this with the
+/// merge-policy principal: `crate::api::v1::repositories::Principal`
+/// (the old bare-string wire enum) is gone, replaced by an `AssigneeRef`
+/// wrapper that stores `Principal` for its static case. The Phase 1
+/// `rename = "ActorPrincipal"` workaround is dropped here so the shared
+/// type takes back ownership of `Principal.ts`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, rename = "ActorPrincipal"))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Principal {
     User {

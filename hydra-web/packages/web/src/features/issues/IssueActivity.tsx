@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge, issueTypeDisplayLabel } from "@hydra/ui";
-import type { ActorPrincipal, IssueVersionRecord } from "@hydra/api";
+import type { Principal, IssueVersionRecord } from "@hydra/api";
 import { formatPrincipalPath } from "../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { apiClient } from "../../api/client";
@@ -9,13 +9,13 @@ import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
 import styles from "../activity/ActivityTimeline.module.css";
 
-function principalLabel(principal: ActorPrincipal | null | undefined): string {
+function principalLabel(principal: Principal | null | undefined): string {
   return principal ? formatPrincipalPath(principal) : "unassigned";
 }
 
 function principalsEqual(
-  a: ActorPrincipal | null | undefined,
-  b: ActorPrincipal | null | undefined,
+  a: Principal | null | undefined,
+  b: Principal | null | undefined,
 ): boolean {
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
