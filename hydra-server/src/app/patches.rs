@@ -1049,7 +1049,10 @@ mod tests {
     /// soft cutover. Phase 5b §8.2: the row migration rewrites
     /// stored blobs, but until it has touched every row the runtime
     /// deserializer applies the same `parse_legacy_assignee`
-    /// heuristic.
+    /// heuristic. Also doubles as a smoke test for the
+    /// `review_author_legacy_decode` warn-log soak (design §11
+    /// row 7) — the path must run without panicking and yield the
+    /// expected typed Principal.
     #[test]
     fn review_deserialize_accepts_legacy_string_author_as_user() {
         let json = r#"{
