@@ -58,7 +58,7 @@ use crate::config::DatabaseSection;
 
 pub type PgStorePool = Pool<Postgres>;
 
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Establish a Postgres connection pool using the provided configuration.
 ///
