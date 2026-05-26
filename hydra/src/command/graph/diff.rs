@@ -1,9 +1,9 @@
 //! `hydra graph diff` — implementation.
 //!
-//! Selects nodes via the same flag surface as `hydra graph search`, then for
-//! each node renders the delta between its versions at `--since` and `--until`
-//! projected through the kind's `view_lN`. Output is JSONL: `added` /
-//! `removed` / `modified` records.
+//! Selects nodes via the pipe-DSL resolver (shared with `search`/`log`), then
+//! for each node renders the delta between its versions at `--since` and
+//! `--until` projected through the kind's `view_lN`. Output is JSONL:
+//! `added` / `removed` / `modified` records.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
+use hydra_common::graph::query::parse as parse_query;
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::time::HydraTime;
 use hydra_common::versioning::VersionNumber;
@@ -22,17 +23,21 @@ use serde_json::Value;
 
 use crate::client::HydraClientInterface;
 use crate::command::graph::dispatch::{fetch_versions, VersionView, VersionedNode};
-use crate::command::graph::utils::{resolve_node_ids, validate, Selection};
-use crate::command::graph::{KindArg, DEFAULT_HYDRATION_CONCURRENCY};
+use crate::command::graph::resolver::{resolve, Resolved};
+use crate::command::graph::DEFAULT_HYDRATION_CONCURRENCY;
 use crate::command::output::{CommandContext, ResolvedOutputFormat};
 use crate::output_writer::write_stdout;
 
 /// Selection and rendering inputs for `hydra graph diff`.
 #[derive(Debug, Clone)]
 pub struct DiffParams {
+    /// Pipe-grammar query string. Parsed at the top of [`run_diff`]; a parse
+    /// error exits with code 2 and the caret-quoted message.
+    pub query: String,
     pub since: HydraTime,
     pub until: HydraTime,
-    pub selection: Selection,
+    pub verbosity: VerbosityLevel,
+    pub max_nodes: usize,
 }
 
 /// One classified diff record for a single node.
@@ -80,28 +85,34 @@ pub async fn run_diff(
         process::exit(2);
     }
 
-    if let Err(msg) = validate(&params.selection) {
-        eprintln!("error: {msg}");
-        process::exit(2);
-    }
+    let query = match parse_query(&params.query) {
+        Ok(q) => q,
+        Err(err) => {
+            eprintln!("{err}");
+            process::exit(2);
+        }
+    };
 
-    let node_ids = resolve_node_ids(client, &params.selection).await?;
-    if node_ids.len() > params.selection.max_nodes {
+    let Resolved {
+        node_ids,
+        kind_filters,
+    } = resolve(client, query.lower()).await?;
+    if node_ids.len() > params.max_nodes {
         eprintln!(
             "error: matched node set ({}) exceeds --max-nodes ({}); narrow your selection (use --max-nodes to raise)",
             node_ids.len(),
-            params.selection.max_nodes,
+            params.max_nodes,
         );
         process::exit(2);
     }
 
-    let filter = build_kind_filter(&params.selection.kinds);
+    let filter = build_kind_filter(&kind_filters);
     let records = diff_all(
         client,
         node_ids,
         params.since.into_inner(),
         params.until.into_inner(),
-        params.selection.verbosity,
+        params.verbosity,
         &filter,
     )
     .await?;
@@ -120,12 +131,27 @@ pub(crate) fn check_window(since: HydraTime, until: HydraTime) -> Result<(), Str
     Ok(())
 }
 
-fn build_kind_filter(kinds: &[KindArg]) -> Option<std::collections::HashSet<ObjectKind>> {
-    if kinds.is_empty() {
-        None
-    } else {
-        Some(kinds.iter().map(|k| k.as_object_kind()).collect())
+/// Intersect the kind post-filter lists from the resolver into a single set.
+///
+/// Each list in `kind_filters` comes from one `| kind=...` stage in the
+/// original query; their intersection mirrors the parser's
+/// "consecutive `Kind` stages collapse to one" lowering rule for the
+/// non-consecutive case. Returns `None` when no kind filter was specified
+/// (all hydrated nodes pass through unchanged).
+fn build_kind_filter(
+    kind_filters: &[Vec<ObjectKind>],
+) -> Option<std::collections::HashSet<ObjectKind>> {
+    if kind_filters.is_empty() {
+        return None;
     }
+    let mut iter = kind_filters.iter();
+    let first: std::collections::HashSet<ObjectKind> =
+        iter.next().expect("non-empty").iter().copied().collect();
+    let intersected = iter.fold(first, |acc, ks| {
+        let next: std::collections::HashSet<ObjectKind> = ks.iter().copied().collect();
+        acc.intersection(&next).copied().collect()
+    });
+    Some(intersected)
 }
 
 /// Concurrently fetch version histories for each id and produce diff records.

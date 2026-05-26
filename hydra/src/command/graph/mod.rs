@@ -2,12 +2,14 @@
 //!
 //! Exposed subcommands: `search` (PR 3), `diff` (PR 4), and `log` (PR 5).
 //! Selection-flag parsing, validation, and node-id resolution live in
-//! [`utils`]; per-kind hydration and version-history fetching live in
-//! [`dispatch`].
+//! [`utils`]; the pipe-DSL resolver (used by `diff` after PR 4 and by
+//! `search`/`log` after PRs 3/5) lives in [`resolver`]; per-kind hydration
+//! and version-history fetching live in [`dispatch`].
 
 pub mod diff;
 pub mod dispatch;
 pub mod log;
+pub mod resolver;
 pub mod search;
 pub mod utils;
 
@@ -79,6 +81,23 @@ pub enum GraphCommand {
     },
     /// Show what changed between two timestamps for the matched nodes.
     Diff {
+        /// Pipe-grammar query (see `hydra graph --help` for syntax).
+        ///
+        /// Examples:
+        ///   i-abc123                                # single node
+        ///   'i-abc123 | scope'                      # i-abc123 + descendants + patches + documents
+        ///   'i-abc123 | children rel=child-of'      # i-abc123 + direct children
+        ///   'i-abc123 | scope | kind=patch'         # patches in scope, post-filtered
+        ///
+        /// Grammar: SOURCE (`|` STAGE)*, where SOURCE is one or more
+        /// comma-separated ids and STAGE is one of `parents`, `children`,
+        /// `neighbors`, `ancestors rel=R`, `descendants rel=R`, `scope`, or
+        /// `kind=K[,K…]`. Relation stages default to inclusive
+        /// (V ∪ traversal(V)); add the bare `exclusive` keyword to drop the
+        /// seeds. Quote the query in your shell to protect `|`.
+        #[arg(value_name = "QUERY")]
+        query: String,
+
         /// Start of the time window (RFC 3339 timestamp, '-Nh'/'-Nd'
         /// relative duration, or 'now'). Optional; when omitted, defaults to
         /// the Unix epoch (i.e. "from the beginning of time").
@@ -98,36 +117,6 @@ pub enum GraphCommand {
             allow_hyphen_values = true
         )]
         until: HydraTime,
-
-        /// Filter by source object ID.
-        #[arg(long, value_name = "ID")]
-        source: Option<HydraId>,
-
-        /// Filter by target object ID.
-        #[arg(long, value_name = "ID")]
-        target: Option<HydraId>,
-
-        /// Show all relations where this object is source or target.
-        #[arg(long, value_name = "ID")]
-        object: Option<HydraId>,
-
-        /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
-        #[arg(long, value_name = "TYPE")]
-        rel_type: Option<String>,
-
-        /// Follow transitive edges (requires --source or --target plus --rel-type).
-        #[arg(long)]
-        transitive: bool,
-
-        /// Convenience: include the issue plus all transitively-reachable
-        /// child issues plus all attached patches and documents. Mutually
-        /// exclusive with --source/--target/--object.
-        #[arg(long, value_name = "ID")]
-        scope: Option<HydraId>,
-
-        /// Post-filter the diffed nodes to one or more kinds (repeatable).
-        #[arg(long = "kind", value_enum, value_name = "KIND")]
-        kinds: Vec<KindArg>,
 
         /// Verbosity level (1 = terse, 2 = intermediate, 3 = full).
         #[arg(long, value_name = "LEVEL", default_value = "1")]
@@ -275,34 +264,20 @@ pub async fn run(
             .await
         }
         GraphCommand::Diff {
+            query,
             since,
             until,
-            source,
-            target,
-            object,
-            rel_type,
-            transitive,
-            scope,
-            kinds,
             verbosity,
             max_nodes,
         } => {
             diff::run_diff(
                 client,
                 diff::DiffParams {
+                    query,
                     since,
                     until,
-                    selection: utils::Selection {
-                        source,
-                        target,
-                        object,
-                        rel_type,
-                        transitive,
-                        scope,
-                        kinds,
-                        verbosity: verbosity.0,
-                        max_nodes,
-                    },
+                    verbosity: verbosity.0,
+                    max_nodes,
                 },
                 context,
             )
@@ -381,13 +356,50 @@ mod tests {
 
     #[test]
     fn diff_default_since_is_unix_epoch() {
-        let cmd = parse_graph(&["diff"]);
+        let cmd = parse_graph(&["diff", "i-abcdef"]);
         match cmd {
             GraphCommand::Diff { since, .. } => {
                 assert_eq!(since.into_inner(), epoch());
             }
             other => panic!("expected Diff, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn diff_takes_positional_query() {
+        let cmd = parse_graph(&["diff", "i-abcdef | scope"]);
+        match cmd {
+            GraphCommand::Diff { query, .. } => {
+                assert_eq!(query, "i-abcdef | scope");
+            }
+            other => panic!("expected Diff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_rejects_removed_selection_flags() {
+        use clap::Parser;
+        for flag in [
+            "--source",
+            "--target",
+            "--object",
+            "--rel-type",
+            "--scope",
+            "--kind",
+        ] {
+            let result =
+                Cli::try_parse_from(["hydra", "graph", "diff", "i-abcdef", flag, "i-other"]);
+            assert!(
+                result.is_err(),
+                "expected clap to reject removed flag '{flag}' on `graph diff`",
+            );
+        }
+        // --transitive is a bare bool, parse without value:
+        let result = Cli::try_parse_from(["hydra", "graph", "diff", "i-abcdef", "--transitive"]);
+        assert!(
+            result.is_err(),
+            "expected clap to reject removed flag '--transitive' on `graph diff`",
+        );
     }
 
     #[test]

@@ -87,7 +87,7 @@ hydra graph search \
 hydra graph search --scope i-root
 
 # What changed in the i-root subtree over the last day, full record.
-hydra graph diff --since -1d --scope i-root --verbosity 3
+hydra graph diff 'i-root | scope' --since -1d --verbosity 3
 
 # Last 50 created/updated events on i-root and its bundle.
 hydra graph log --since -7d --limit 50 --scope i-root

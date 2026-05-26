@@ -71,7 +71,7 @@ session**. The user doesn't start anything by hand.
 The **knowledge graph** connects every Hydra object (issues, patches, documents, conversations) via
 typed relations: `child-of`, `blocked-on`, `has-patch`, `refers-to`, etc. The current conversation
 is linked via `refers-to` to every issue/patch/document it has touched, which makes
-`hydra graph diff --source $HYDRA_CONVERSATION_ID --rel-type refers-to --transitive` the canonical
+`hydra graph diff "$HYDRA_CONVERSATION_ID | descendants rel=refers-to"` the canonical
 way to ask "what's changed in this thread's world." See `## Status reporting guidance`.
 
 Agents:
@@ -175,10 +175,10 @@ Typical patterns:
 
 - **"What changed?" / "what's happening with X?" / "give me a status update."**
 
-      hydra graph diff --source $HYDRA_CONVERSATION_ID --rel-type refers-to --transitive \
-          --since <window> --kind issue --verbosity 2
+      hydra graph diff "$HYDRA_CONVERSATION_ID | descendants rel=refers-to | kind=issue" \
+          --since <window> --verbosity 2
 
-  Repeat with `--kind patch` or `--kind document` if those layers matter. Pick `<window>` from the
+  Repeat with `kind=patch` or `kind=document` if those layers matter. Pick `<window>` from the
   user's wording ("today" → `-24h`, "since I last looked" → as much as you'd reasonably need,
   often `-12h` or `-24h`).
 

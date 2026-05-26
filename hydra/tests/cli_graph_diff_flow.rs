@@ -47,7 +47,11 @@ async fn diff_emits_modified_record_when_issue_status_changes_in_window() -> Res
     user.update_issue_status(&_child, IssueStatus::InProgress)
         .await?;
 
-    // -1h covers any version timestamps from the in-memory store.
+    // -1h covers any version timestamps from the in-memory store. The
+    // DSL form `<id> | neighbors` mirrors the pre-cutover `--object <id>`
+    // semantics with an additional inclusive seed (parent appears in the
+    // result by the new default).
+    let query = format!("{} | neighbors", parent.as_ref());
     let output = user
         .cli(&[
             "--output-format",
@@ -56,8 +60,7 @@ async fn diff_emits_modified_record_when_issue_status_changes_in_window() -> Res
             "diff",
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
+            &query,
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -87,6 +90,7 @@ async fn diff_emits_added_for_issue_created_inside_window() -> Result<()> {
     let parent = user.create_issue("d-parent").await?;
     let child = user.create_child_issue(&parent, "d-child").await?;
 
+    let query = format!("{} | neighbors", parent.as_ref());
     let output = user
         .cli(&[
             "--output-format",
@@ -95,8 +99,7 @@ async fn diff_emits_added_for_issue_created_inside_window() -> Result<()> {
             "diff",
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
+            &query,
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -135,6 +138,7 @@ async fn diff_classifies_soft_deleted_issue_at_l3() -> Result<()> {
     let child = user.create_child_issue(&parent, "rm-child").await?;
     client.delete_issue(&child).await?;
 
+    let query = format!("{} | neighbors", parent.as_ref());
     let output = user
         .cli(&[
             "--output-format",
@@ -143,8 +147,7 @@ async fn diff_classifies_soft_deleted_issue_at_l3() -> Result<()> {
             "diff",
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
+            &query,
             "--verbosity",
             "3",
         ])
@@ -196,6 +199,7 @@ async fn diff_conversation_modified_uses_event_fold() -> Result<()> {
         .await?;
     client.close_conversation(&conv.conversation_id).await?;
 
+    let query = format!("{} | neighbors | kind=conversation", parent.as_ref());
     let output = user
         .cli(&[
             "--output-format",
@@ -204,10 +208,7 @@ async fn diff_conversation_modified_uses_event_fold() -> Result<()> {
             "diff",
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
-            "--kind",
-            "conversation",
+            &query,
         ])
         .await?;
     let records = parse_jsonl(&output.stdout);
@@ -264,6 +265,7 @@ async fn diff_l1_hides_change_visible_only_at_l3() -> Result<()> {
         .update_issue(&issue, &UpsertIssueRequest::new(updated, None))
         .await?;
 
+    let query = format!("{} | neighbors", issue.as_ref());
     let output_l1 = user
         .cli(&[
             "--output-format",
@@ -272,8 +274,7 @@ async fn diff_l1_hides_change_visible_only_at_l3() -> Result<()> {
             "diff",
             "--since",
             "-1h",
-            "--object",
-            issue.as_ref(),
+            &query,
             "--verbosity",
             "1",
         ])
@@ -300,6 +301,7 @@ async fn diff_max_nodes_one_exits_code_two() -> Result<()> {
     let parent = user.create_issue("mn-parent").await?;
     let _child = user.create_child_issue(&parent, "mn-child").await?;
 
+    let query = format!("{} | neighbors", parent.as_ref());
     let output = user
         .cli_expect_failure(&[
             "--output-format",
@@ -308,8 +310,7 @@ async fn diff_max_nodes_one_exits_code_two() -> Result<()> {
             "diff",
             "--since",
             "-1h",
-            "--object",
-            parent.as_ref(),
+            &query,
             "--max-nodes",
             "1",
         ])
@@ -333,15 +334,9 @@ async fn diff_without_since_defaults_to_epoch() -> Result<()> {
 
     // No --since: should succeed (epoch default covers all history) and
     // surface the parent as an Added record.
+    let query = format!("{} | neighbors", parent.as_ref());
     let output = user
-        .cli(&[
-            "--output-format",
-            "jsonl",
-            "graph",
-            "diff",
-            "--object",
-            parent.as_ref(),
-        ])
+        .cli(&["--output-format", "jsonl", "graph", "diff", &query])
         .await?;
     let records = parse_jsonl(&output.stdout);
     let record = find_record(&records, parent.as_ref())
@@ -356,6 +351,7 @@ async fn diff_since_after_until_exits_code_two() -> Result<()> {
     let user = harness.default_user();
     let parent = user.create_issue("sau-parent").await?;
 
+    let query = parent.as_ref().to_string();
     let output = user
         .cli_expect_failure(&[
             "graph",
@@ -364,8 +360,7 @@ async fn diff_since_after_until_exits_code_two() -> Result<()> {
             "2026-05-15T13:00:00Z",
             "--until",
             "2026-05-15T12:00:00Z",
-            "--object",
-            parent.as_ref(),
+            &query,
         ])
         .await?;
     assert_eq!(output.status.code(), Some(2));
@@ -377,19 +372,281 @@ async fn diff_since_after_until_exits_code_two() -> Result<()> {
     Ok(())
 }
 
+/// Calling `graph diff` with no positional argument exits at clap parse time
+/// (the `<QUERY>` argument is required).
 #[tokio::test]
-async fn diff_empty_selection_exits_code_two() -> Result<()> {
+async fn diff_missing_query_exits_code_two() -> Result<()> {
     let harness = harness::TestHarness::new().await?;
     let user = harness.default_user();
     let output = user
         .cli_expect_failure(&["graph", "diff", "--since", "-1h"])
         .await?;
     assert_eq!(output.status.code(), Some(2));
+    let stderr_lower = output.stderr.to_lowercase();
     assert!(
-        output
-            .stderr
-            .contains("at least one of --source, --target, --object, or --scope"),
-        "missing helpful message: {}",
+        stderr_lower.contains("required") || stderr_lower.contains("<query>"),
+        "expected clap missing-arg error for <QUERY>, got: {}",
+        output.stderr
+    );
+    Ok(())
+}
+
+/// Hard-cutover regression: the old node-selection flags are gone. Each one
+/// must error at clap parse time (no silent acceptance).
+#[tokio::test]
+async fn diff_removed_flags_exit_code_two() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+    let parent = user.create_issue("rmflag-parent").await?;
+    let query = parent.as_ref().to_string();
+
+    for flag in [
+        "--source",
+        "--target",
+        "--object",
+        "--rel-type",
+        "--scope",
+        "--kind",
+    ] {
+        let output = user
+            .cli_expect_failure(&["graph", "diff", &query, flag, "i-otherxx"])
+            .await?;
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "expected exit 2 for removed flag '{flag}', stderr was: {}",
+            output.stderr
+        );
+        let stderr_lower = output.stderr.to_lowercase();
+        assert!(
+            stderr_lower.contains("unexpected")
+                || stderr_lower.contains("unrecognized")
+                || stderr_lower.contains("unknown")
+                || stderr_lower.contains("found argument"),
+            "expected clap unknown-flag error for '{flag}', got: {}",
+            output.stderr
+        );
+    }
+
+    // --transitive is a bare bool (no value), so test it separately.
+    let output = user
+        .cli_expect_failure(&["graph", "diff", &query, "--transitive"])
+        .await?;
+    assert_eq!(output.status.code(), Some(2));
+    Ok(())
+}
+
+/// Inclusive-by-default contract: `<id> | children` over an issue with no
+/// children returns the seed (rather than the empty set the old `--source`
+/// form returned).
+#[tokio::test]
+async fn diff_inclusive_default_keeps_seed_with_no_children() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let lonely = user.create_issue("lonely-no-children").await?;
+    let query = format!("{} | children", lonely.as_ref());
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "diff",
+            "--since",
+            "-1h",
+            &query,
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    // Seed must appear despite no child-of edges existing.
+    assert!(
+        find_record(&records, lonely.as_ref()).is_some(),
+        "inclusive default should keep the seed in the result set: {records:?}"
+    );
+    Ok(())
+}
+
+/// `<id> | parents rel=child-of exclusive` matches the pre-cutover
+/// `--target <id> --rel-type child-of` behavior: only the issues that point
+/// at `<id>` via `child-of` (i.e. its children in the issue hierarchy)
+/// appear, and the seed is dropped.
+///
+/// Naming nuance: a child issue carries a `child-of` edge with
+/// `source = child` and `target = parent`. So in DSL terms, asking for the
+/// hierarchy's *children of `parent`* means "sources of edges whose target
+/// is `parent`", which is the `parents` stage (per the design's mapping
+/// table) — not `children`.
+#[tokio::test]
+async fn diff_exclusive_drops_seed() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let parent = user.create_issue("excl-parent").await?;
+    let child = user.create_child_issue(&parent, "excl-child").await?;
+
+    let query = format!("{} | parents rel=child-of exclusive", parent.as_ref());
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "diff",
+            "--since",
+            "-1h",
+            &query,
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    assert!(
+        find_record(&records, parent.as_ref()).is_none(),
+        "exclusive should drop the seed (parent): {records:?}"
+    );
+    assert!(
+        find_record(&records, child.as_ref()).is_some(),
+        "exclusive should keep the child issue: {records:?}"
+    );
+    Ok(())
+}
+
+/// `<id> | scope` mirrors today's `--scope <id>` fan-out (issue + descendants
+/// + has-patch + has-document, without `refers-to`).
+#[tokio::test]
+async fn diff_scope_stage_covers_descendants_patches_documents() -> Result<()> {
+    use hydra_common::documents::{Document, UpsertDocumentRequest};
+    use hydra_common::RepoName;
+    use std::str::FromStr;
+
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/graph-diff-scope")
+        .build()
+        .await?;
+    let user = harness.default_user();
+    let client = harness.client()?;
+    let repo = RepoName::from_str("acme/graph-diff-scope")?;
+
+    let parent = user.create_issue("scope-diff-parent").await?;
+    let child = user.create_child_issue(&parent, "scope-diff-child").await?;
+    let patch = user.create_patch("scope-diff-p", "x", &repo).await?;
+    client
+        .create_relation(&CreateRelationRequest {
+            source_id: child.clone().into(),
+            target_id: patch.clone().into(),
+            rel_type: "has-patch".to_string(),
+        })
+        .await?;
+    let doc = Document::new(
+        "scope-diff-doc".to_string(),
+        "body".to_string(),
+        Some("docs/x.md".to_string()),
+        false,
+    )
+    .unwrap();
+    let doc_id = client
+        .create_document(&UpsertDocumentRequest::new(doc))
+        .await?
+        .document_id;
+    client
+        .create_relation(&CreateRelationRequest {
+            source_id: child.clone().into(),
+            target_id: doc_id.clone().into(),
+            rel_type: "has-document".to_string(),
+        })
+        .await?;
+
+    let query = format!("{} | scope", parent.as_ref());
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "diff",
+            "--since",
+            "-1h",
+            &query,
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    for id in [
+        parent.as_ref(),
+        child.as_ref(),
+        patch.as_ref(),
+        doc_id.as_ref(),
+    ] {
+        assert!(
+            find_record(&records, id).is_some(),
+            "expected {id} in scope diff: {records:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `<id> | scope | kind=patch` post-filters the scope fan-out to patches only.
+#[tokio::test]
+async fn diff_scope_with_kind_filter_keeps_only_patches() -> Result<()> {
+    use hydra_common::RepoName;
+    use std::str::FromStr;
+
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/graph-diff-kind")
+        .build()
+        .await?;
+    let user = harness.default_user();
+    let client = harness.client()?;
+    let repo = RepoName::from_str("acme/graph-diff-kind")?;
+
+    let parent = user.create_issue("kf-diff-parent").await?;
+    let _child = user.create_child_issue(&parent, "kf-diff-child").await?;
+    let patch = user.create_patch("kf-diff-p", "x", &repo).await?;
+    client
+        .create_relation(&CreateRelationRequest {
+            source_id: parent.clone().into(),
+            target_id: patch.clone().into(),
+            rel_type: "has-patch".to_string(),
+        })
+        .await?;
+
+    let query = format!("{} | scope | kind=patch", parent.as_ref());
+    let output = user
+        .cli(&[
+            "--output-format",
+            "jsonl",
+            "graph",
+            "diff",
+            "--since",
+            "-1h",
+            &query,
+        ])
+        .await?;
+    let records = parse_jsonl(&output.stdout);
+    assert_eq!(
+        records.len(),
+        1,
+        "expected only patch in records: {records:?}"
+    );
+    assert_eq!(records[0]["kind"].as_str(), Some("patch"));
+    assert_eq!(records[0]["id"].as_str(), Some(patch.as_ref()));
+    Ok(())
+}
+
+/// Parse errors on the positional `<QUERY>` exit with code 2 and surface the
+/// caret-quoted error block from the parser, including the spelling hint.
+#[tokio::test]
+async fn diff_parse_error_with_caret_hint() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let output = user
+        .cli_expect_failure(&["graph", "diff", "--since", "-1h", "i-abcdef | kids"])
+        .await?;
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stderr.contains("unknown stage 'kids'"),
+        "expected unknown-stage error: {}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains("children"),
+        "expected hint pointing at 'children': {}",
         output.stderr
     );
     Ok(())
