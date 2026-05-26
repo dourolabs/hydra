@@ -5,33 +5,52 @@ use crate::domain::actors::{ActorId, ActorRef};
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::RelationshipType;
-use hydra_common::HydraId;
+use hydra_common::{HydraId, IssueId, SessionId};
 
 const AUTOMATION_NAME: &str = "link_artifacts_to_issue";
 
-/// When a session or issue actor creates or updates a patch or document, link
-/// the artifact back to the relevant issue.
+/// Load the session referenced by `sid` and return its `spawned_from` issue.
+/// Returns `None` (and warn-logs if the load failed) for any reason the
+/// caller should skip writing a link.
+async fn resolve_spawned_from(ctx: &AutomationContext<'_>, sid: &SessionId) -> Option<IssueId> {
+    match ctx.store.get_session(sid, false).await {
+        Ok(s) => s.item.spawned_from,
+        Err(e) => {
+            tracing::warn!(
+                automation = AUTOMATION_NAME,
+                session_id = %sid,
+                error = %e,
+                "failed to load session for actor; skipping link"
+            );
+            None
+        }
+    }
+}
+
+/// When a session, agent, or issue actor creates or updates a patch or
+/// document, link the artifact back to the relevant issue.
 ///
 /// Subscribes to `PatchCreated`/`PatchUpdated` and `DocumentCreated`/`DocumentUpdated`.
 /// Resolves the source issue from the event actor:
-/// - `ActorId::Session(sid)` or Phase-2 `ActorId::Adhoc(sid)`: loads
-///   the session and uses its `spawned_from` issue (no link if the
-///   session has no `spawned_from`).
+/// - `ActorId::Session(sid)` or `ActorId::Adhoc(sid)`: loads the session and
+///   uses its `spawned_from` issue (no link if the session has no
+///   `spawned_from`).
+/// - `ActorId::Agent(_)`: an agent-spawned actor doesn't carry its session
+///   id in `actor_id`, so we read `ActorRef::Authenticated.session_id` (set
+///   by `require_auth` per `/designs/actor-system-overhaul.md` §5.2), then
+///   load the session and use its `spawned_from`.
 /// - `ActorId::Issue(iid)`: uses the issue id directly.
 ///
 /// In either case, inserts a `(issue, artifact, has-patch | has-document)` row
 /// into `object_relationships`. Idempotent — the underlying insert is
 /// `INSERT OR IGNORE`.
 ///
-/// Human and service actors are intentionally ignored; callers that want a
-/// link should use `POST /v1/relations` directly.
-///
-/// `ActorId::Agent(name)` is also skipped for now: Phase 2 of
-/// `/designs/actor-system-overhaul.md` (§3.4) gives agent-spawned
-/// sessions the agent's shared `ActorId`, which doesn't carry the
-/// session-id needed to recover `spawned_from`. Phase 3 adds
-/// `ActorRef::session_id` (design §5), at which point this automation
-/// will use that to recover the agent-session's issue.
+/// Human, service, user, external, and legacy actors are intentionally
+/// ignored — they don't carry the session-or-issue context the link needs.
+/// Callers that want a link should use `POST /v1/relations` directly. The
+/// dispatch match is exhaustive on `ActorId`, so adding a new variant will
+/// force a compile-time decision here rather than silently defaulting to
+/// no-op.
 pub struct LinkArtifactsToIssueAutomation;
 
 impl LinkArtifactsToIssueAutomation {
@@ -62,35 +81,42 @@ impl Automation for LinkArtifactsToIssueAutomation {
         let actor = ctx.actor();
         let issue_id = match actor {
             ActorRef::Authenticated {
-                actor_id: ActorId::Session(sid),
-                ..
-            }
-            | ActorRef::Authenticated {
-                actor_id: ActorId::Adhoc(sid),
-                ..
-            } => {
-                let session = match ctx.store.get_session(sid, false).await {
-                    Ok(s) => s,
-                    Err(e) => {
+                actor_id,
+                session_id,
+            } => match actor_id {
+                ActorId::Session(sid) | ActorId::Adhoc(sid) => {
+                    match resolve_spawned_from(ctx, sid).await {
+                        Some(id) => id,
+                        None => return Ok(()),
+                    }
+                }
+                ActorId::Agent(_) => {
+                    let Some(sid) = session_id else {
                         tracing::warn!(
                             automation = AUTOMATION_NAME,
-                            session_id = %sid,
-                            error = %e,
-                            "failed to load session for actor; skipping link"
+                            "agent actor missing session_id; skipping link"
                         );
                         return Ok(());
+                    };
+                    match resolve_spawned_from(ctx, sid).await {
+                        Some(id) => id,
+                        None => return Ok(()),
                     }
-                };
-                match session.item.spawned_from {
-                    Some(id) => id,
-                    None => return Ok(()),
                 }
-            }
-            ActorRef::Authenticated {
-                actor_id: ActorId::Issue(iid),
-                ..
-            } => iid.clone(),
-            _ => return Ok(()),
+                ActorId::Issue(iid) => iid.clone(),
+                // Human/service/user/external/legacy actors don't carry the
+                // issue context this automation needs; callers wanting an
+                // explicit link should use `POST /v1/relations`.
+                ActorId::Username(_)
+                | ActorId::Service(_)
+                | ActorId::User(_)
+                | ActorId::External { .. }
+                | ActorId::Legacy(_) => return Ok(()),
+            },
+            // System and Automation actor refs aren't end-user principals;
+            // artifacts they produce are linked (if at all) via the wrapped
+            // `triggered_by` actor handled by sibling automations.
+            ActorRef::System { .. } | ActorRef::Automation { .. } => return Ok(()),
         };
 
         let (target_id, rel_type): (HydraId, RelationshipType) = match ctx.event {
@@ -163,6 +189,15 @@ mod tests {
         ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice").into()),
             session_id: None,
+        }
+    }
+
+    fn agent_actor(session_id: &hydra_common::SessionId) -> ActorRef {
+        ActorRef::Authenticated {
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            session_id: Some(session_id.clone()),
         }
     }
 
@@ -624,5 +659,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn links_patch_to_issue_for_agent_actor_with_session_id() {
+        let handles = test_utils::test_state_handles();
+        let issue_id = add_issue(&handles).await;
+        let session_id = add_session_to_store(&handles, Some(issue_id.clone())).await;
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &agent_actor(&session_id))
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), agent_actor(&session_id));
+        let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = issue_id.into();
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::HasPatch),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_link_for_agent_actor_without_session_id() {
+        let handles = test_utils::test_state_handles();
+        let _issue_id = add_issue(&handles).await;
+
+        // Agent actor with `session_id: None` — defensive case for an
+        // unexpected post-Phase-3 shape; must not panic and must skip.
+        let agent_actor_no_sid = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            session_id: None,
+        };
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &agent_actor_no_sid)
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), agent_actor_no_sid);
+        let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(None, Some(&target), Some(RelationshipType::HasPatch))
+            .await
+            .unwrap();
+        assert!(relations.is_empty());
     }
 }

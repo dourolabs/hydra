@@ -6,7 +6,7 @@ use crate::domain::actors::ActorId;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::{ObjectKind, RelationshipType};
-use hydra_common::{ConversationId, HydraId, IssueId};
+use hydra_common::{ConversationId, HydraId, IssueId, SessionId};
 
 const AUTOMATION_NAME: &str = "link_conversation_to_artifacts";
 
@@ -18,18 +18,54 @@ const AUTOMATION_NAME: &str = "link_conversation_to_artifacts";
 /// from the event actor:
 /// - Direct: if the actor is a session with a `conversation_id`, that
 ///   conversation is included.
-/// - Transitive: if the actor is a session spawned from an issue, or the actor
-///   is an issue itself, any conversation that already has a
-///   `(conversation, issue, RefersTo)` row is included.
+/// - Transitive: if the actor is a session spawned from an issue, an
+///   agent-spawned actor whose originating session was spawned from an
+///   issue, or the actor is an issue itself, any conversation that already
+///   has a `(conversation, issue, RefersTo)` row is included.
 ///
 /// For each conversation in the resulting set, inserts a
 /// `(conversation, artifact, RefersTo)` row into `object_relationships`.
-/// Idempotent — the underlying insert is `INSERT OR IGNORE`.
+/// Idempotent — the underlying insert is `INSERT OR IGNORE`. The
+/// actor-dispatch match is exhaustive on `ActorId`, so adding a new
+/// variant will force a compile-time decision here.
 pub struct LinkConversationToArtifactsAutomation;
 
 impl LinkConversationToArtifactsAutomation {
     pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
+    }
+
+    /// Load the session referenced by `session_id` and merge its
+    /// `conversation_id` (direct) plus any conversations referencing its
+    /// `spawned_from` issue (transitive) into `conversation_ids`. Used by
+    /// both the `Session/Adhoc` and `Agent` arms.
+    async fn merge_session_conversations(
+        ctx: &AutomationContext<'_>,
+        session_id: &SessionId,
+        conversation_ids: &mut HashSet<ConversationId>,
+    ) {
+        let session = match ctx.store.get_session(session_id, false).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    session_id = %session_id,
+                    error = %e,
+                    "failed to load session for actor; skipping link"
+                );
+                return;
+            }
+        };
+
+        if let Some(cid) = session.item.conversation_id() {
+            conversation_ids.insert(cid.clone());
+        }
+
+        if let Some(issue_id) = session.item.spawned_from.as_ref() {
+            if let Some(cids) = Self::conversations_referencing_issue(ctx, issue_id).await {
+                conversation_ids.extend(cids);
+            }
+        }
     }
 
     /// Look up conversations that already `RefersTo` the given issue.
@@ -102,46 +138,45 @@ impl Automation for LinkConversationToArtifactsAutomation {
         // artifacts created by automations (e.g. the patch workflow creating a
         // review-request issue on behalf of a session) still link back to the
         // originating conversation.
-        match actor.on_behalf_of() {
-            // Phase-2 `ActorId::Adhoc(sid)` matches the legacy
-            // `ActorId::Session(sid)` semantically (an ad-hoc session
-            // is just a session without a registered agent name). Both
-            // arms resolve the session and pull `conversation_id` /
-            // `spawned_from` off it.
-            Some(ActorId::Session(session_id)) | Some(ActorId::Adhoc(session_id)) => {
-                let session = match ctx.store.get_session(&session_id, false).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!(
-                            automation = AUTOMATION_NAME,
-                            session_id = %session_id,
-                            error = %e,
-                            "failed to load session for actor; skipping link"
-                        );
-                        return Ok(());
-                    }
-                };
-
-                if let Some(cid) = session.item.conversation_id() {
-                    conversation_ids.insert(cid.clone());
-                }
-
-                if let Some(issue_id) = session.item.spawned_from.as_ref() {
-                    if let Some(cids) = Self::conversations_referencing_issue(ctx, issue_id).await {
-                        conversation_ids.extend(cids);
-                    }
-                }
+        let Some(principal) = actor.on_behalf_of() else {
+            return Ok(());
+        };
+        match principal {
+            // `ActorId::Adhoc(sid)` matches the legacy `ActorId::Session(sid)`
+            // semantically (an ad-hoc session is just a session without a
+            // registered agent name). Both arms resolve the session and pull
+            // `conversation_id` / `spawned_from` off it.
+            ActorId::Session(session_id) | ActorId::Adhoc(session_id) => {
+                Self::merge_session_conversations(ctx, &session_id, &mut conversation_ids).await;
             }
-            Some(ActorId::Issue(issue_id)) => {
+            // Agent-spawned actors carry their originating session id on
+            // `ActorRef::Authenticated.session_id`. Walk the same chain that
+            // `on_behalf_of` did to recover it, then resolve the session as
+            // in the Session/Adhoc arm.
+            ActorId::Agent(_) => {
+                let Some(session_id) = actor.originating_session_id() else {
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        "agent actor missing session_id; skipping link"
+                    );
+                    return Ok(());
+                };
+                Self::merge_session_conversations(ctx, session_id, &mut conversation_ids).await;
+            }
+            ActorId::Issue(issue_id) => {
                 if let Some(cids) = Self::conversations_referencing_issue(ctx, &issue_id).await {
                     conversation_ids.extend(cids);
                 }
             }
-            // Phase 2 doesn't carry session_id alongside `Agent` actors;
-            // design §5 (Phase 3) adds `ActorRef::session_id` to recover
-            // it. Until then, agent-spawned writes don't link to a
-            // conversation here.
-            _ => return Ok(()),
+            // Human/service/user/external/legacy actors don't carry the
+            // session-or-issue context needed to compute a conversation
+            // set; callers wanting an explicit link should use
+            // `POST /v1/relations`.
+            ActorId::Username(_)
+            | ActorId::Service(_)
+            | ActorId::User(_)
+            | ActorId::External { .. }
+            | ActorId::Legacy(_) => return Ok(()),
         }
 
         for cid in conversation_ids {
@@ -213,6 +248,15 @@ mod tests {
         ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice").into()),
             session_id: None,
+        }
+    }
+
+    fn agent_actor(session_id: &hydra_common::SessionId) -> ActorRef {
+        ActorRef::Authenticated {
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            session_id: Some(session_id.clone()),
         }
     }
 
@@ -939,6 +983,160 @@ mod tests {
 
         let source: HydraId = cid.into();
         let target: HydraId = issue_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::RefersTo),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn links_patch_for_agent_actor_with_session_id() {
+        let handles = test_utils::test_state_handles();
+        let cid = ConversationId::new();
+        let session_id = add_session_to_store(&handles, None, Some(cid.clone())).await;
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &agent_actor(&session_id))
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), agent_actor(&session_id));
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = cid.into();
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::RefersTo),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_link_for_agent_actor_without_session_id() {
+        let handles = test_utils::test_state_handles();
+        let agent_actor_no_sid = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            session_id: None,
+        };
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &agent_actor_no_sid)
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), agent_actor_no_sid);
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(None, Some(&target), Some(RelationshipType::RefersTo))
+            .await
+            .unwrap();
+        assert!(relations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn links_patch_when_actor_is_automation_wrapping_agent() {
+        // Mirrors `links_patch_when_actor_is_automation_wrapping_session`
+        // (above) but with an Agent inner actor — proves the
+        // `originating_session_id` chain-traversal handles the same
+        // Automation wrapping that `on_behalf_of` does.
+        let handles = test_utils::test_state_handles();
+        let cid = ConversationId::new();
+        let session_id = add_session_to_store(&handles, None, Some(cid.clone())).await;
+
+        let wrapping_actor = ActorRef::Automation {
+            automation_name: "github_pr_sync".into(),
+            triggered_by: Some(Box::new(agent_actor(&session_id))),
+        };
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &wrapping_actor)
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), wrapping_actor);
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = cid.into();
+        let target: HydraId = patch_id.into();
+        let relations = handles
+            .store
+            .get_relationships(
+                Some(&source),
+                Some(&target),
+                Some(RelationshipType::RefersTo),
+            )
+            .await
+            .unwrap();
+        assert_eq!(relations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn links_patch_transitively_for_agent_actor_via_spawned_from() {
+        let handles = test_utils::test_state_handles();
+        let cid = ConversationId::new();
+        let issue_id = add_issue(&handles).await;
+        seed_conversation_references_issue(&handles, &cid, &issue_id).await;
+        let session_id = add_session_to_store(&handles, Some(issue_id.clone()), None).await;
+
+        let (patch_id, _) = handles
+            .store
+            .add_patch(make_patch(), &agent_actor(&session_id))
+            .await
+            .unwrap();
+
+        let event = patch_created_event(patch_id.clone(), agent_actor(&session_id));
+        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let source: HydraId = cid.into();
+        let target: HydraId = patch_id.into();
         let relations = handles
             .store
             .get_relationships(
