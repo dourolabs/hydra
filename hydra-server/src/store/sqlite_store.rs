@@ -2440,18 +2440,12 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT i.id, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.deleted, i.created_at
-             FROM {TABLE_ISSUES_V2} i
-             WHERE i.is_latest = 1"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_issues_predicates_sqlite(query);
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i");
+        let (mut predicates, bindings) = build_issues_predicates_sqlite(query);
+        predicates.push("i.is_latest = 1".to_string());
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
 
         let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
         for value in &bindings {
@@ -2672,18 +2666,12 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT p.id, p.status, p.is_automatic_backup, p.branch_name, p.service_repo_name, p.github, p.title, p.description, p.diff, p.deleted
-             FROM {TABLE_PATCHES_V2} p
-             WHERE p.is_latest = 1"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_patches_predicates_sqlite(query);
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_PATCHES_V2} p");
+        let (mut predicates, bindings) = build_patches_predicates_sqlite(query);
+        predicates.push("p.is_latest = 1".to_string());
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
 
         let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
         for value in &bindings {
@@ -9226,6 +9214,82 @@ mod tests {
         let query =
             hydra_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
         assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_issues_filters_by_assignee_principal() {
+        use hydra_common::api::v1::agents::AgentName;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::principal::Principal;
+
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        let mut agent_issue = sample_issue(vec![]);
+        agent_issue.assignee = Some(Principal::Agent {
+            name: AgentName::try_new("swe").unwrap(),
+        });
+        store.add_issue(agent_issue, &actor).await.unwrap();
+
+        let mut user_issue = sample_issue(vec![]);
+        user_issue.assignee = Some(Principal::User {
+            name: ApiUsername::try_new("alice").unwrap(),
+        });
+        store.add_issue(user_issue, &actor).await.unwrap();
+
+        let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            vec![],
+            Some(Principal::Agent {
+                name: AgentName::try_new("swe").unwrap(),
+            }),
+            None,
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_patches_filters_by_creator() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        let patch_a = Patch::new(
+            "patch a".to_string(),
+            "patch a".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            Username::from("alice"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        store.add_patch(patch_a, &actor).await.unwrap();
+
+        let patch_b = Patch::new(
+            "patch b".to_string(),
+            "patch b".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            Username::from("bob"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        store.add_patch(patch_b, &actor).await.unwrap();
+
+        let mut query =
+            hydra_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
+        query.creator = Some("alice".to_string());
+        assert_eq!(store.count_patches(&query).await.unwrap(), 1);
     }
 
     #[tokio::test]

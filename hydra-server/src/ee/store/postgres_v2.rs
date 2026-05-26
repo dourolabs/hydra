@@ -7909,6 +7909,83 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn count_issues_filters_by_assignee_principal_v2(pool: PgStorePool) {
+        use hydra_common::api::v1::agents::AgentName;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::principal::Principal;
+
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let mut agent_issue = sample_issue(vec![]);
+        agent_issue.assignee = Some(Principal::Agent {
+            name: AgentName::try_new("swe").unwrap(),
+        });
+        store.add_issue(agent_issue, &actor).await.unwrap();
+
+        let mut user_issue = sample_issue(vec![]);
+        user_issue.assignee = Some(Principal::User {
+            name: ApiUsername::try_new("alice").unwrap(),
+        });
+        store.add_issue(user_issue, &actor).await.unwrap();
+
+        let query = SearchIssuesQuery::new(
+            None,
+            vec![],
+            Some(Principal::Agent {
+                name: AgentName::try_new("swe").unwrap(),
+            }),
+            None,
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_patches_filters_by_creator_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let patch_a = Patch::new(
+            "patch a".to_string(),
+            "patch a".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Username::from("alice"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        store.add_patch(patch_a, &actor).await.unwrap();
+
+        let patch_b = Patch::new(
+            "patch b".to_string(),
+            "patch b".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Username::from("bob"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        store.add_patch(patch_b, &actor).await.unwrap();
+
+        let mut query = SearchPatchesQuery::new(None, None, Vec::new(), None);
+        query.creator = Some("alice".to_string());
+        assert_eq!(store.count_patches(&query).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn count_documents_returns_total_matching_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let actor = ActorRef::test();
