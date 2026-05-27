@@ -2,16 +2,15 @@
 retries = 0
 slow-timeout = { period = "30s" }
 
-# `migration_roundtrip` and `seed::tests::seed_baseline_is_deterministic`
-# (in the `seed-migration-fixture` binary) are the only `--run-ignored all`
-# tests that connect via `DATABASE_URL` directly (the postgres_v2 tests use
-# `#[sqlx::test]`, which provisions a fresh per-test DB). They both drop and
-# recreate the `metis` schema + `public._sqlx_migrations`, so running them
-# concurrently against the same shared DSN races and produces "while executing
+# `migration_roundtrip` is the only `--run-ignored all` test that connects
+# via `DATABASE_URL` directly (the postgres_v2 tests use `#[sqlx::test]`,
+# which provisions a fresh per-test DB). It drops and recreates the
+# `metis` schema + `public._sqlx_migrations`, so running concurrent copies
+# against the same shared DSN races and produces "while executing
 # migrations: relation metis.payload_schema_versions does not exist".
 [test-groups]
 shared-postgres-dsn = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'test(=migration_roundtrip) | test(=seed::tests::seed_baseline_is_deterministic)'
+filter = 'test(=migration_roundtrip)'
 test-group = 'shared-postgres-dsn'
