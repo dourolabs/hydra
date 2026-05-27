@@ -8,12 +8,12 @@
 -- Inline-SQL backfill (approach (a) in the issue): the heuristic
 -- mirrors `domain::issues::parse_assignee_as_principal` for the cases
 -- the SQL dialect can express cleanly:
---   * `users/<x>`  with valid <x> -> {"kind":"user","name":"<x>"}
---   * `agents/<x>` with valid <x> -> {"kind":"agent","name":"<x>"}
+--   * `users/<x>`  with valid <x> -> {"User": {"name":"<x>"}}
+--   * `agents/<x>` with valid <x> -> {"Agent":{"name":"<x>"}}
 --   * bare `<x>` that matches an `agents.name` row
---                                -> {"kind":"agent","name":"<x>"}
+--                                -> {"Agent":{"name":"<x>"}}
 --   * other bare `<x>` with valid <x>
---                                -> {"kind":"user","name":"<x>"}
+--                                -> {"User": {"name":"<x>"}}
 -- The `external/<sys>/<x>` case is left NULL by the migration — no
 -- real existing rows are expected to use that form yet, and the
 -- next-write dual-write path will populate it when an `external/...`
@@ -40,21 +40,21 @@ SET assignee_principal = CASE
         WHEN substring(assignee FROM 1 FOR 6) = 'users/'
              AND length(assignee) > 6
              AND substring(assignee FROM 7) !~ '[/[:space:]]'
-            THEN jsonb_build_object('kind', 'user', 'name', substring(assignee FROM 7))
+            THEN jsonb_build_object('User', jsonb_build_object('name', substring(assignee FROM 7)))
         -- agents/<x>
         WHEN substring(assignee FROM 1 FOR 7) = 'agents/'
              AND length(assignee) > 7
              AND substring(assignee FROM 8) !~ '[/[:space:]]'
-            THEN jsonb_build_object('kind', 'agent', 'name', substring(assignee FROM 8))
+            THEN jsonb_build_object('Agent', jsonb_build_object('name', substring(assignee FROM 8)))
         -- bare <name> matching a known agent
         WHEN assignee <> ''
              AND assignee !~ '[/[:space:]]'
              AND EXISTS (SELECT 1 FROM metis.agents WHERE name = issues_v2.assignee)
-            THEN jsonb_build_object('kind', 'agent', 'name', assignee)
+            THEN jsonb_build_object('Agent', jsonb_build_object('name', assignee))
         -- bare <username>
         WHEN assignee <> ''
              AND assignee !~ '[/[:space:]]'
-            THEN jsonb_build_object('kind', 'user', 'name', assignee)
+            THEN jsonb_build_object('User', jsonb_build_object('name', assignee))
         ELSE NULL
     END
 WHERE assignee IS NOT NULL AND assignee_principal IS NULL;

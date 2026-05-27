@@ -106,19 +106,19 @@ impl AsRef<str> for ExternalSystem {
 /// would dangle once the session ends, and `Legacy` exists only as a
 /// read-only deserialization fallback.
 ///
-/// **Wire form** is internally-tagged JSON per design §3.3:
+/// **Wire form** is externally-tagged JSON (ts-rs / serde default):
 ///
 /// ```jsonc
-/// { "kind": "user",     "name":     "alice"   }
-/// { "kind": "agent",    "name":     "swe"     }
-/// { "kind": "external", "system":   "github", "username": "jayantk" }
+/// { "User":     { "name": "alice"   } }
+/// { "Agent":    { "name": "swe"     } }
+/// { "External": { "system": "github", "username": "jayantk" } }
 /// ```
 ///
-/// We use struct variants (`User { name }`, `Agent { name }`) rather
-/// than the more concise tuple form (`User(Username)`) so the
-/// internally-tagged wire format falls out of standard serde
-/// derivation — `serde(tag = "kind")` is incompatible with tuple
-/// variants. ts-rs derives the matching TypeScript shape automatically.
+/// We keep struct variants (`User { name }`, `Agent { name }`) rather
+/// than the more concise tuple form (`User(Username)`); it's a style
+/// choice that produces a TS shape (`{ User: { name: Username } }`)
+/// close to the original internally-tagged form, keeping consumer
+/// migration mechanical.
 ///
 /// **Path form** (canonical, used in URLs, CLI args, and indexed DB
 /// columns): `users/<x>` / `agents/<x>` / `external/<system>/<username>`.
@@ -132,7 +132,6 @@ impl AsRef<str> for ExternalSystem {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Principal {
     User {
         name: Username,
@@ -413,7 +412,7 @@ mod tests {
     fn principal_user_serde_round_trip() {
         let p = alice();
         let value = serde_json::to_value(&p).unwrap();
-        assert_eq!(value, json!({"kind": "user", "name": "alice"}));
+        assert_eq!(value, json!({"User": {"name": "alice"}}));
         let back: Principal = serde_json::from_value(value).unwrap();
         assert_eq!(back, p);
     }
@@ -422,7 +421,7 @@ mod tests {
     fn principal_agent_serde_round_trip() {
         let p = swe();
         let value = serde_json::to_value(&p).unwrap();
-        assert_eq!(value, json!({"kind": "agent", "name": "swe"}));
+        assert_eq!(value, json!({"Agent": {"name": "swe"}}));
         let back: Principal = serde_json::from_value(value).unwrap();
         assert_eq!(back, p);
     }
@@ -433,25 +432,25 @@ mod tests {
         let value = serde_json::to_value(&p).unwrap();
         assert_eq!(
             value,
-            json!({"kind": "external", "system": "github", "username": "jayantk"})
+            json!({"External": {"system": "github", "username": "jayantk"}})
         );
         let back: Principal = serde_json::from_value(value).unwrap();
         assert_eq!(back, p);
     }
 
     #[test]
-    fn principal_deserialize_unknown_kind_errors() {
-        let err = serde_json::from_value::<Principal>(json!({"kind": "robot", "name": "r2"}))
-            .unwrap_err();
+    fn principal_deserialize_unknown_variant_errors() {
+        let err =
+            serde_json::from_value::<Principal>(json!({"Robot": {"name": "r2"}})).unwrap_err();
         assert!(
-            err.to_string().contains("robot"),
-            "error should mention unknown kind: {err}"
+            err.to_string().contains("Robot"),
+            "error should mention unknown variant: {err}"
         );
     }
 
     #[test]
     fn principal_deserialize_missing_field_errors() {
-        let err = serde_json::from_value::<Principal>(json!({"kind": "user"})).unwrap_err();
+        let err = serde_json::from_value::<Principal>(json!({"User": {}})).unwrap_err();
         assert!(err.to_string().contains("name"));
     }
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
-import type { RepositoryRecord } from "@hydra/api";
+import type { Principal, RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -31,15 +31,13 @@ interface IssueCreatorProps {
   assignees: IssueCreatorAssignees;
 }
 
-function parseAssigneePath(
-  path: string,
-): { kind: "agent" | "user"; name: string } | null {
+function parseAssigneePath(path: string): Principal | null {
   if (!path) return null;
   if (path.startsWith("agents/")) {
-    return { kind: "agent", name: path.slice("agents/".length) };
+    return { Agent: { name: path.slice("agents/".length) } };
   }
   if (path.startsWith("users/")) {
-    return { kind: "user", name: path.slice("users/".length) };
+    return { User: { name: path.slice("users/".length) } };
   }
   return null;
 }
@@ -64,7 +62,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
       title: string;
       description: string;
       creator: string;
-      assignee?: { kind: "agent" | "user"; name: string };
+      assignee?: Principal;
       repoName?: string;
     }) =>
       apiClient.createIssue({

@@ -1185,7 +1185,7 @@ mod tests {
                 json!({
                     "title": "Track flakiness",
                     "status": "in-progress",
-                    "assignee": {"kind": "user", "name": "bob"},
+                    "assignee": {"User": {"name": "bob"}},
                     "progress": "started",
                     "dependencies": [{
                         "type": "child-of",

@@ -5,17 +5,11 @@ export function actorIdDisplayName(id: ActorId): string {
   // Pre-migration `Legacy` rows round-trip as a bare string on the wire;
   // type-guard before any `in` test because `"x" in someString` throws.
   if (typeof id === "string") return id;
-  if ("kind" in id) {
-    switch (id.kind) {
-      case "user":
-      case "agent":
-        return id.name;
-      case "adhoc":
-        return id.session_id;
-      case "external":
-        return `external/${id.system}/${id.username}`;
-    }
-  }
+  if ("User" in id) return id.User.name;
+  if ("Agent" in id) return id.Agent.name;
+  if ("Adhoc" in id) return id.Adhoc.session_id;
+  if ("External" in id)
+    return `external/${id.External.system}/${id.External.username}`;
   if ("Username" in id) return id.Username;
   if ("Session" in id) return id.Session;
   if ("Issue" in id) return id.Issue;

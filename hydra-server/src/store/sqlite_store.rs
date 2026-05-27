@@ -6188,7 +6188,7 @@ mod tests {
                          AND substr(assignee, 7) NOT LIKE '%' || char(9) || '%'
                          AND substr(assignee, 7) NOT LIKE '%' || char(10) || '%'
                          AND substr(assignee, 7) NOT LIKE '%' || char(13) || '%'
-                        THEN json_object('kind', 'user', 'name', substr(assignee, 7))
+                        THEN json_object('User', json_object('name', substr(assignee, 7)))
                     WHEN substr(assignee, 1, 7) = 'agents/'
                          AND length(assignee) > 7
                          AND substr(assignee, 8) NOT LIKE '%/%'
@@ -6196,14 +6196,14 @@ mod tests {
                          AND substr(assignee, 8) NOT LIKE '%' || char(9) || '%'
                          AND substr(assignee, 8) NOT LIKE '%' || char(10) || '%'
                          AND substr(assignee, 8) NOT LIKE '%' || char(13) || '%'
-                        THEN json_object('kind', 'agent', 'name', substr(assignee, 8))
+                        THEN json_object('Agent', json_object('name', substr(assignee, 8)))
                     WHEN assignee != ''
                          AND assignee NOT LIKE '%/%'
                          AND assignee NOT LIKE '% %'
                          AND assignee NOT LIKE '%' || char(9) || '%'
                          AND assignee NOT LIKE '%' || char(10) || '%'
                          AND assignee NOT LIKE '%' || char(13) || '%'
-                        THEN json_object('kind', 'user', 'name', assignee)
+                        THEN json_object('User', json_object('name', assignee))
                     ELSE NULL
                 END
             WHERE assignee IS NOT NULL AND assignee_principal IS NULL
@@ -11476,11 +11476,11 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-swe").await,
-            Some(r#"{"kind":"agent","name":"swe"}"#.to_string())
+            Some(r#"{"Agent":{"name":"swe"}}"#.to_string())
         );
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-reviewer").await,
-            Some(r#"{"kind":"agent","name":"reviewer"}"#.to_string())
+            Some(r#"{"Agent":{"name":"reviewer"}}"#.to_string())
         );
     }
 
@@ -11496,7 +11496,7 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-alice").await,
-            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+            Some(r#"{"User":{"name":"alice"}}"#.to_string())
         );
     }
 
@@ -11517,15 +11517,15 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-user-path").await,
-            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+            Some(r#"{"User":{"name":"alice"}}"#.to_string())
         );
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-agent-path").await,
-            Some(r#"{"kind":"agent","name":"swe"}"#.to_string())
+            Some(r#"{"Agent":{"name":"swe"}}"#.to_string())
         );
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-user-swe-path").await,
-            Some(r#"{"kind":"user","name":"swe"}"#.to_string())
+            Some(r#"{"User":{"name":"swe"}}"#.to_string())
         );
     }
 
@@ -11543,11 +11543,11 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-swe").await,
-            Some(r#"{"kind":"user","name":"swe"}"#.to_string())
+            Some(r#"{"User":{"name":"swe"}}"#.to_string())
         );
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-alice").await,
-            Some(r#"{"kind":"user","name":"alice"}"#.to_string())
+            Some(r#"{"User":{"name":"alice"}}"#.to_string())
         );
     }
 
@@ -11593,7 +11593,7 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-upper").await,
-            Some(r#"{"kind":"user","name":"SWE"}"#.to_string())
+            Some(r#"{"User":{"name":"SWE"}}"#.to_string())
         );
     }
 
@@ -11619,7 +11619,7 @@ mod tests {
 
         assert_eq!(
             fetch_assignee_principal(&pool, "issue-retired").await,
-            Some(r#"{"kind":"agent","name":"retired"}"#.to_string())
+            Some(r#"{"Agent":{"name":"retired"}}"#.to_string())
         );
     }
 
@@ -11759,11 +11759,11 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-reviewer").await),
-            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+            vec![serde_json::json!({"Agent": {"name": "reviewer"}})],
         );
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-swe").await),
-            vec![serde_json::json!({"kind": "agent", "name": "swe"})],
+            vec![serde_json::json!({"Agent": {"name": "swe"}})],
         );
     }
 
@@ -11784,7 +11784,7 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-alice").await),
-            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+            vec![serde_json::json!({"User": {"name": "alice"}})],
         );
     }
 
@@ -11820,15 +11820,15 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-user-path").await),
-            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+            vec![serde_json::json!({"User": {"name": "alice"}})],
         );
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-agent-path").await),
-            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+            vec![serde_json::json!({"Agent": {"name": "reviewer"}})],
         );
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-user-reviewer-path").await),
-            vec![serde_json::json!({"kind": "user", "name": "reviewer"})],
+            vec![serde_json::json!({"User": {"name": "reviewer"}})],
         );
     }
 
@@ -11856,11 +11856,11 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-reviewer").await),
-            vec![serde_json::json!({"kind": "user", "name": "reviewer"})],
+            vec![serde_json::json!({"User": {"name": "reviewer"}})],
         );
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-alice").await),
-            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+            vec![serde_json::json!({"User": {"name": "alice"}})],
         );
     }
 
@@ -11925,7 +11925,7 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-mixed").await),
-            vec![serde_json::json!({"kind": "user", "name": "Reviewer"})],
+            vec![serde_json::json!({"User": {"name": "Reviewer"}})],
         );
     }
 
@@ -11956,7 +11956,7 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-retired").await),
-            vec![serde_json::json!({"kind": "agent", "name": "retired"})],
+            vec![serde_json::json!({"Agent": {"name": "retired"}})],
         );
     }
 
@@ -11971,13 +11971,13 @@ mod tests {
         insert_patch_with_reviews_json(
             &pool,
             "patch-typed-agent",
-            &single_review(serde_json::json!({"kind": "agent", "name": "reviewer"})),
+            &single_review(serde_json::json!({"Agent": {"name": "reviewer"}})),
         )
         .await;
         insert_patch_with_reviews_json(
             &pool,
             "patch-typed-user",
-            &single_review(serde_json::json!({"kind": "user", "name": "alice"})),
+            &single_review(serde_json::json!({"User": {"name": "alice"}})),
         )
         .await;
 
@@ -11985,11 +11985,11 @@ mod tests {
 
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-typed-agent").await),
-            vec![serde_json::json!({"kind": "agent", "name": "reviewer"})],
+            vec![serde_json::json!({"Agent": {"name": "reviewer"}})],
         );
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-typed-user").await),
-            vec![serde_json::json!({"kind": "user", "name": "alice"})],
+            vec![serde_json::json!({"User": {"name": "alice"}})],
         );
     }
 
@@ -12054,9 +12054,9 @@ mod tests {
         assert_eq!(
             extract_authors(&fetch_reviews_json(&pool, "patch-multi").await),
             vec![
-                serde_json::json!({"kind": "user", "name": "alice"}),
-                serde_json::json!({"kind": "agent", "name": "reviewer"}),
-                serde_json::json!({"kind": "agent", "name": "reviewer"}),
+                serde_json::json!({"User": {"name": "alice"}}),
+                serde_json::json!({"Agent": {"name": "reviewer"}}),
+                serde_json::json!({"Agent": {"name": "reviewer"}}),
                 serde_json::json!("external/github/jayantk"),
             ],
         );

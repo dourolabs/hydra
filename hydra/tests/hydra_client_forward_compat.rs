@@ -685,7 +685,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "creator": "alice",
             "progress": "blocked",
             "status": "on-hold",
-            "assignee": {"kind": "agent", "name": "robot"},
+            "assignee": {"Agent": {"name": "robot"}},
             "dependencies": [
                 { "type": "relates-to", "issue_id": dependency_id }
             ],

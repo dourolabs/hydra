@@ -39,7 +39,7 @@ VALUES
     ('p-agentauth1', 1, 'review author is agents/-prefixed', '', 'dourolabs/hydra',
      '[{"author":"agents/swe","contents":"approve","is_approved":true,"submitted_at":"2026-05-02T00:00:00Z"}]'::jsonb),
     ('p-typedauth1', 1, 'review author is already a typed Principal', '', 'dourolabs/hydra',
-     '[{"author":{"kind":"user","name":"jayantk"},"contents":"already typed","is_approved":true,"submitted_at":"2026-05-03T00:00:00Z"}]'::jsonb);
+     '[{"author":{"User":{"name":"jayantk"}},"contents":"already typed","is_approved":true,"submitted_at":"2026-05-03T00:00:00Z"}]'::jsonb);
 
 --------------------------------------------------------------------------------
 -- tasks_v2 — exercise the session-shape backfill (each mode).
@@ -158,7 +158,7 @@ VALUES
     ('p-agentrev',   1, 'review author is agents/-prefixed', '', 'dourolabs/hydra',
      '[{"author":"agents/swe","contents":"approve","is_approved":true,"submitted_at":"2026-05-02T00:00:00Z"}]'::jsonb),
     ('p-typedrev',   1, 'review author is already a typed Principal', '', 'dourolabs/hydra',
-     '[{"author":{"kind":"user","name":"jayantk"},"contents":"already typed","is_approved":true,"submitted_at":"2026-05-03T00:00:00Z"}]'::jsonb);
+     '[{"author":{"User":{"name":"jayantk"}},"contents":"already typed","is_approved":true,"submitted_at":"2026-05-03T00:00:00Z"}]'::jsonb);
 
 -- conversations_v2 — parent conversation for the §3.3 sessions / events.
 INSERT INTO metis.conversations_v2 (id, version_number, creator)

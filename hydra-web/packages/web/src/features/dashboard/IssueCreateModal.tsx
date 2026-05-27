@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
-import type { IssueType, LabelRecord } from "@hydra/api";
+import type { IssueType, LabelRecord, Principal } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -28,16 +28,20 @@ interface AssigneeView {
   kind: "agent" | "user";
 }
 
-function parseAssigneePath(
-  path: string,
-): { kind: "agent" | "user"; name: string } | null {
+function parseAssigneePath(path: string): Principal | null {
   if (!path) return null;
   if (path.startsWith("agents/")) {
-    return { kind: "agent", name: path.slice("agents/".length) };
+    return { Agent: { name: path.slice("agents/".length) } };
   }
   if (path.startsWith("users/")) {
-    return { kind: "user", name: path.slice("users/".length) };
+    return { User: { name: path.slice("users/".length) } };
   }
+  return null;
+}
+
+function principalToView(p: Principal): AssigneeView | null {
+  if ("User" in p) return { name: p.User.name, kind: "user" };
+  if ("Agent" in p) return { name: p.Agent.name, kind: "agent" };
   return null;
 }
 
@@ -149,7 +153,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
       description: string;
       creator: string;
       type: IssueType;
-      assignee?: { kind: "agent" | "user"; name: string };
+      assignee?: Principal;
       repoName?: string;
       labelNames?: string[];
     },
@@ -232,7 +236,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
 
   const assigneeView: AssigneeView | null = useMemo(() => {
     const parsed = parseAssigneePath(assignee);
-    return parsed ? { name: parsed.name, kind: parsed.kind } : null;
+    return parsed ? principalToView(parsed) : null;
   }, [assignee]);
 
   const toggleLabel = useCallback(
