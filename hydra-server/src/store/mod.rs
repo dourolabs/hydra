@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::{fmt, str::FromStr};
 
 mod memory_store;
+pub mod migrations;
 #[cfg(feature = "postgres")]
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
