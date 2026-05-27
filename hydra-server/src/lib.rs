@@ -75,6 +75,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 .await
                 .context("failed to run SQLite migrations")?;
             info!(path = %sqlite_path, "connected to SQLite and applied migrations");
+            spawn_startup_events_migration(migration_tool::Backend::Sqlite(pool.clone()));
             Arc::new(SqliteStore::new(pool))
         }
         StorageConfig::Postgres { database } => {
@@ -86,6 +87,9 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 postgres_v2::run_migrations(&postgres_pool).await?;
                 info!("connected to Postgres and applied migrations");
 
+                spawn_startup_events_migration(migration_tool::Backend::Postgres(
+                    postgres_pool.clone(),
+                ));
                 Arc::new(PostgresStoreV2::new(postgres_pool))
             }
             #[cfg(not(feature = "postgres"))]
@@ -601,6 +605,19 @@ pub async fn setup_local_auth(
 
     info!("local auth configured");
     Ok(())
+}
+
+/// Kick off the historical `conversation_events_v2` → `session_events*`
+/// migration in the background. Failures warn-log with full context and never
+/// panic; the per-session skip in `migration_tool::events` keeps repeated
+/// boots idempotent.
+fn spawn_startup_events_migration(backend: migration_tool::Backend) {
+    tokio::spawn(async move {
+        match migration_tool::events::run(&backend, /* dry_run */ false, /* up_to */ None).await {
+            Ok(plan) => info!(rows = plan.len(), "startup events migration finished",),
+            Err(e) => warn!("startup events migration failed: {e:#}"),
+        }
+    });
 }
 
 async fn health_check() -> Json<serde_json::Value> {
