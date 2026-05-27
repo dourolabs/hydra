@@ -125,8 +125,7 @@ fn baselines_dir() -> PathBuf {
 
 fn load_baselines(dir: impl AsRef<Path>) -> Result<Vec<Baseline>> {
     let dir = dir.as_ref();
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?;
+    let entries = std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?;
     let mut baselines = Vec::new();
     for entry in entries {
         let entry = entry.with_context(|| format!("read entry under {}", dir.display()))?;
@@ -156,11 +155,13 @@ fn parse_baseline_filename(name: &str) -> Result<u64> {
     let stem = name
         .strip_suffix(".sql")
         .with_context(|| format!("baseline '{name}' must end in `.sql`"))?;
-    let (version, desc) = stem.split_once("__").with_context(|| {
-        format!("baseline '{name}' must match `<version>__<description>.sql`")
-    })?;
+    let (version, desc) = stem
+        .split_once("__")
+        .with_context(|| format!("baseline '{name}' must match `<version>__<description>.sql`"))?;
     if desc.is_empty() {
-        bail!("baseline '{name}' has an empty description (expected `<version>__<description>.sql`)");
+        bail!(
+            "baseline '{name}' has an empty description (expected `<version>__<description>.sql`)"
+        );
     }
     version
         .parse::<u64>()
