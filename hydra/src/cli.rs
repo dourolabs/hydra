@@ -301,7 +301,9 @@ pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandConte
         Commands::Repos { command } => {
             command::repos::run(client.as_ref(), command, context).await?
         }
-        Commands::Users { command } => command::users::run(client.as_ref(), command).await?,
+        Commands::Users { command } => {
+            command::users::run(client.as_ref(), command, context).await?
+        }
         Commands::Conversations { command } => {
             command::conversations::run(client.as_ref(), command, context).await?
         }

@@ -58,7 +58,7 @@ use hydra_common::{
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
         SessionVersionRecord, WorkerContext,
     },
-    users::UserSummary,
+    users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
     ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
     RepoName, SessionId,
@@ -305,8 +305,12 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.whoami().await
     }
 
-    async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
-        self.inner.get_user_info(username).await
+    async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse> {
+        self.inner.list_users(query).await
+    }
+
+    async fn get_user(&self, username: &str) -> Result<UserSummary> {
+        self.inner.get_user(username).await
     }
 
     async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse> {
