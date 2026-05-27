@@ -11,9 +11,6 @@ pub mod policy;
 pub mod routes;
 pub mod store;
 
-// Backcompat shim removed in PR-D.
-pub use crate::store::migrations as migration_tool;
-
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 

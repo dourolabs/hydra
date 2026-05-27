@@ -18,20 +18,5 @@
 - All routes must emit `info!` level logs that let us trace an HTTP request from ingress through response. At a minimum log the handler name, identifiers (e.g. repo, job, user), and the decision taken or status returned.
 - Every background job invocation must log at `info!` when it starts (including job name and key parameters) and again when it finishes, capturing whether it succeeded and any high-level outcome so operators can understand what happened in that run.
 
-## Migration baseline
-The `seed-migration-fixture` binary regenerates `hydra-server/tests/fixtures/migration_baseline.sql`, the populated fixture that PR-1's `migration_roundtrip` test reads. It applies every migration on the current checkout to a fresh Postgres, runs the deterministic seed in `src/bin/seed-migration-fixture/seed.rs` (driving every insert through `PostgresStoreV2` and a seeded `StdRng`), then writes a single file whose header records the pin (`-- baseline-version: <N>`) and a sha256 of the migrations tree (`-- migrations-hash: <hex>`). The body is `pg_dump --data-only --inserts --column-inserts --schema=metis` of the seeded DB. Pass `--scale N` to fan the catalogue out by `N`× without changing the kinds of rows produced. See `/designs/pre-prod-deploy-test-plan.md` §5 for the long-form description.
-
-Run this once per release-cut, from a fresh checkout of the release tag, against a dedicated empty Postgres:
-
-```
-docker run -d --name pg-seed -e POSTGRES_PASSWORD=test -p 5432:5432 postgres:16
-DATABASE_URL=postgres://postgres:test@localhost:5432/postgres \
-    cargo run -p hydra-server --features postgres --bin seed-migration-fixture -- \
-        --database-url $DATABASE_URL --force
-docker rm -f pg-seed
-git add hydra-server/tests/fixtures/migration_baseline.sql
-git diff --cached  # human-review the fixture diff
-git commit -m "Roll migration baseline to vX.Y.Z"
-```
-
-The tool refuses to overwrite an existing fixture whose `-- migrations-hash:` does not match the current tree, or to drop a populated `metis` schema — pass `--force` only when you are deliberately re-running from the right checkout.
+## Migration baselines
+Versioned baseline fixtures live in `hydra-server/tests/fixtures/migration_baselines/<version>__<description>.sql`. Each file is named after the sqlx migration version where its INSERT shapes are valid. Baselines are **immutable once committed**: do not edit a checked-in baseline. Add a new baseline when a migration introduces a new source shape that no existing baseline exercises. See `/designs/migration-testing-redesign.md` for the test loop's exact semantics.

@@ -11,9 +11,8 @@ Only when the work cannot live anywhere better:
 - A schema change that fits `sqlx`'s `migrations/` folder belongs there. It runs
   on server boot and is the boring path.
 - A data migration that can run idempotently on startup belongs in
-  `hydra-server::run` (see the sibling PR that moves `hydra-migrate-sessions`
-  there). Prefer that over a CLI any time the rewrite is cheap, deterministic,
-  and safe to re-run.
+  `hydra-server::run`. Prefer that over a CLI any time the rewrite is cheap,
+  deterministic, and safe to re-run.
 - An ad-hoc one-shot data fix, a backfill that is too large for startup, or
   exploratory debugging that needs the prod DB — that is what this doc is for.
 
@@ -36,9 +35,9 @@ Two practical constraints fall out of that shape:
 
 1. The published `ghcr.io/dourolabs/hydra-server` image is built with
    `cargo build --bin hydra-server` (see `images/hydra-server.Dockerfile`). It
-   does **not** contain the workspace's other binaries (`hydra-migrate-sessions`,
-   `seed-migration-fixture`, the `hydra` CLI). Any option that "uses the same
-   image" only works for tools that are also baked into that image.
+   does **not** contain the workspace's other binaries (the `hydra` CLI, etc.).
+   Any option that "uses the same image" only works for tools that are also
+   baked into that image.
 2. The cluster is GitOps-managed. Imperative `kubectl apply` works for one-off
    resources, but anything left around will not be reconciled — and anything
    that lives in `metis-cluster` will be reconciled forever.
@@ -68,7 +67,7 @@ spec:
       containers:
         - name: cli
           image: ghcr.io/dourolabs/hydra-server:vX.Y.Z
-          command: ["hydra-migrate-sessions"]
+          command: ["<cli-tool>"]
           args: ["--database-url", "$(DATABASE_URL)"]
           envFrom: [{ secretRef: { name: hydra-server-env } }]
 ```
@@ -79,7 +78,7 @@ makes future Jobs trivial) or build a bespoke image first.
 
 ### 2. `kubectl exec` into a running hydra-server pod
 
-`kubectl -n metis exec -it deploy/hydra-server -- hydra-migrate-sessions ...`.
+`kubectl -n metis exec -it deploy/hydra-server -- <cli-tool> ...`.
 No new pod, no new manifest, `DATABASE_URL` is already in the pod's env. The
 fastest path for tools that are baked into the image.
 
