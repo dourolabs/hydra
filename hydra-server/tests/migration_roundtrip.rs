@@ -1,11 +1,14 @@
-//! Migration roundtrip integration test (PR-1 + PR-2 of the migration test
-//! harness; see `/designs/pre-prod-deploy-test-plan.md`).
+//! Migration roundtrip integration test.
 //!
-//! Applies sqlx migrations to a baseline-shaped Postgres database, executes
-//! the hand-curated `migration_baseline.sql` fixture, rolls the remaining
-//! migrations forward, runs the external `migrate-events` pass through the
-//! same library entry point the server's startup migration uses, and
-//! asserts:
+//! Enumerates the versioned baseline fixtures under
+//! `tests/fixtures/migration_baselines/`, interleaving each baseline's
+//! INSERTs with `postgres_v2::run_migrations(&pool, Some(version))` so every
+//! migration with a higher version sees the file's rows. After the loop, a
+//! final `run_migrations(&pool, None)` rolls to HEAD (and runs any Rust
+//! migrations whose version sits beyond the last baseline). See
+//! `/designs/migration-testing-redesign.md` §3, §4, §7 for the algorithm.
+//!
+//! Asserts:
 //!
 //! 1. (§3.1) schema invariants — columns / tables added / dropped / tightened
 //!    by this release's migrations.
@@ -17,9 +20,7 @@
 //!    cycle exercises the post-migration write paths.
 //!
 //! Gated behind the `postgres` Cargo feature to match the rest of
-//! `hydra-server`'s postgres-specific code (`migration_tool/mod.rs:17`,
-//! `ee/store/postgres_v2.rs`, etc.). PR-5 will give the test a dedicated CI
-//! workflow.
+//! `hydra-server`'s postgres-specific code.
 
 #![cfg(feature = "postgres")]
 
@@ -37,12 +38,10 @@ use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::Username;
 use hydra_server::store::postgres_v2::{self, MIGRATOR, PostgresStoreV2};
 use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
-use sqlx::migrate::Migrate;
 use sqlx::{PgPool, Row};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
-
-const FIXTURE_SQL: &str = include_str!("fixtures/migration_baseline.sql");
 
 #[tokio::test]
 #[ignore]
@@ -58,23 +57,34 @@ async fn migration_roundtrip() -> Result<()> {
 
     reset_database(&pool).await?;
 
-    let baseline_pin = parse_baseline_pin(FIXTURE_SQL)?;
-    run_migrations_up_to(&pool, baseline_pin)
-        .await
-        .with_context(|| format!("apply migrations up to baseline pin {baseline_pin}"))?;
-    sqlx::raw_sql(FIXTURE_SQL)
-        .execute(&pool)
-        .await
-        .context("load migration_baseline.sql fixture")?;
+    let baselines = load_baselines(baselines_dir())?;
+    let mut prev: Option<u64> = None;
+    for b in &baselines {
+        if let Some(p) = prev {
+            assert!(
+                b.version > p,
+                "baselines out of order: {} after {p}",
+                b.version
+            );
+        }
+        assert!(
+            MIGRATOR.iter().any(|m| m.version as u64 == b.version),
+            "baseline {} has no matching sqlx migration on this checkout",
+            b.version
+        );
+        postgres_v2::run_migrations(&pool, Some(b.version))
+            .await
+            .with_context(|| format!("apply migrations up to baseline {}", b.version))?;
+        sqlx::raw_sql(&b.body)
+            .execute(&pool)
+            .await
+            .with_context(|| format!("execute baseline {}", b.version))?;
+        prev = Some(b.version);
+    }
 
-    let _pre = capture_pre_rollforward_counts(&pool).await?;
-
-    // Single unified call that interleaves the remaining SQL migrations
-    // with the events Rust migration. Replaces the old `MIGRATOR.run` +
-    // `run_external_migrations` pair (see PR-B / design §7).
     postgres_v2::run_migrations(&pool, None)
         .await
-        .context("apply remaining migrations (SQL + Rust) past the baseline pin")?;
+        .context("apply remaining migrations (SQL + Rust) past the last baseline")?;
 
     assert_schema_invariants(&pool).await?;
     assert_data_shape_invariants(&pool).await?;
@@ -86,7 +96,7 @@ async fn migration_roundtrip() -> Result<()> {
 }
 
 /// Drop and recreate the `metis` schema, and drop the sqlx migration tracking
-/// table so the next `MIGRATOR.run*` replays from scratch.
+/// table so the next `run_migrations` call replays from scratch.
 async fn reset_database(pool: &PgPool) -> Result<()> {
     sqlx::raw_sql(
         "DROP SCHEMA IF EXISTS metis CASCADE; \
@@ -99,93 +109,62 @@ async fn reset_database(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-/// sqlx 0.7.4's `Migrator` does not expose a `run_to` method. We mirror the
-/// fallback described in `/designs/pre-prod-deploy-test-plan.md` §9: filter
-/// `MIGRATOR.iter()` by version, then drive `Migrate::apply` directly.
-async fn run_migrations_up_to(pool: &PgPool, target: u64) -> Result<()> {
-    let target = i64::try_from(target).context("baseline pin overflows i64")?;
-    let mut conn = pool
-        .acquire()
-        .await
-        .context("acquire connection for baseline migration apply")?;
-    let conn: &mut sqlx::PgConnection = &mut conn;
+// ---------------------------------------------------------------------------
+// Baseline directory enumeration
+// ---------------------------------------------------------------------------
 
-    conn.ensure_migrations_table()
-        .await
-        .context("ensure _sqlx_migrations table")?;
-    if let Some(version) = conn.dirty_version().await? {
-        bail!("database is in a dirty state at migration version {version}");
-    }
-    let applied: HashSet<i64> = conn
-        .list_applied_migrations()
-        .await?
-        .into_iter()
-        .map(|m| m.version)
-        .collect();
-
-    for migration in MIGRATOR.iter() {
-        if migration.migration_type.is_down_migration() {
-            continue;
-        }
-        if migration.version > target {
-            break;
-        }
-        if applied.contains(&migration.version) {
-            continue;
-        }
-        conn.apply(migration)
-            .await
-            .with_context(|| format!("apply migration {}", migration.version))?;
-    }
-    Ok(())
+#[derive(Debug)]
+struct Baseline {
+    version: u64,
+    body: String,
 }
 
-/// Parse the `-- baseline-version: <N>` SQL comment on the first line of the
-/// fixture. The pin is consumed by `Migrator::run_to` to stop migrations at the
-/// version representing the prior release.
-fn parse_baseline_pin(text: &str) -> Result<u64> {
-    let line = text
-        .lines()
-        .next()
-        .context("fixture is empty; expected `-- baseline-version: <N>` on line 1")?;
-    let suffix = line.strip_prefix("-- baseline-version:").with_context(|| {
-        format!(
-            "fixture line 1 must start with `-- baseline-version:`; got `{line}`. \
-             See the regen tool in PR-3 (designs/pre-prod-deploy-test-plan.md §5)."
-        )
+fn baselines_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/migration_baselines")
+}
+
+fn load_baselines(dir: impl AsRef<Path>) -> Result<Vec<Baseline>> {
+    let dir = dir.as_ref();
+    let entries =
+        std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?;
+    let mut baselines = Vec::new();
+    for entry in entries {
+        let entry = entry.with_context(|| format!("read entry under {}", dir.display()))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .with_context(|| format!("baseline filename is not UTF-8: {}", path.display()))?;
+        let version = parse_baseline_filename(name)
+            .with_context(|| format!("parse baseline filename '{name}'"))?;
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read baseline {}", path.display()))?;
+        baselines.push(Baseline { version, body });
+    }
+    baselines.sort_by_key(|b| b.version);
+    Ok(baselines)
+}
+
+/// Parse `<version>__<description>.sql` into the leading `u64` version. The
+/// description after `__` is human-readable and not validated against
+/// anything. Filenames not matching the pattern are rejected so typos and
+/// leftover files surface loudly. (§3, §4 of `/designs/migration-testing-redesign.md`.)
+fn parse_baseline_filename(name: &str) -> Result<u64> {
+    let stem = name
+        .strip_suffix(".sql")
+        .with_context(|| format!("baseline '{name}' must end in `.sql`"))?;
+    let (version, desc) = stem.split_once("__").with_context(|| {
+        format!("baseline '{name}' must match `<version>__<description>.sql`")
     })?;
-    let raw = suffix.trim();
-    raw.parse::<u64>().with_context(|| {
-        format!("`-- baseline-version:` value `{raw}` is not a u64 migration version")
-    })
-}
-
-async fn capture_pre_rollforward_counts(pool: &PgPool) -> Result<BTreeMap<&'static str, i64>> {
-    // Only tables that exist at the baseline pin (i.e. before this release's
-    // additions); `session_events_v2` and `session_state_v2` show up later and
-    // are not counted here.
-    let tables: &[&str] = &[
-        "issues_v2",
-        "patches_v2",
-        "tasks_v2",
-        "conversations_v2",
-        "conversation_events_v2",
-        "object_relationships",
-        "auth_tokens",
-        "repositories_v2",
-        "documents_v2",
-    ];
-    let mut out = BTreeMap::new();
-    for &table in tables {
-        let q = format!("SELECT COUNT(*) FROM metis.{table}");
-        let row = sqlx::query(&q)
-            .fetch_one(pool)
-            .await
-            .with_context(|| format!("count rows in {table}"))?;
-        let n: i64 = row.get(0);
-        out.insert(table, n);
+    if desc.is_empty() {
+        bail!("baseline '{name}' has an empty description (expected `<version>__<description>.sql`)");
     }
-    Ok(out)
+    version
+        .parse::<u64>()
+        .with_context(|| format!("baseline '{name}' version prefix '{version}' is not a u64"))
 }
 
 // ---------------------------------------------------------------------------
@@ -461,18 +440,17 @@ async fn expect_first_review_author(
 // ---------------------------------------------------------------------------
 // §3.3 store / domain-level smoke
 //
-// The §3.2 assertions above verify SQL-level shapes of the migrated rows. PR-2
-// of `/designs/pre-prod-deploy-test-plan.md` adds this third layer: read the
-// migrated rows back through the live `Store` trait and assert the typed
-// domain objects (Principal, SessionMode, Review, SessionEvent, refers-to
-// relationship) deserialize cleanly, then exercise a create→read-back cycle on
-// the same APIs so any post-migration write path that diverged from the read
-// path fails loud here instead of at first prod traffic.
+// The §3.2 assertions above verify SQL-level shapes of the migrated rows. This
+// third layer reads them back through the live `Store` trait and asserts the
+// typed domain objects (Principal, SessionMode, Review, SessionEvent,
+// refers-to relationship) deserialize cleanly, then exercises a
+// create→read-back cycle on the same APIs so any post-migration write path
+// that diverged from the read path fails loud here instead of at first prod
+// traffic.
 //
-// The store-level rows used here live in the fixture's "§3.3 store-level
-// smoke" block — they mirror the earlier `i-bare000001` / `p-bareauth01`
-// rows but use all-alphabetic id suffixes so the Rust `IssueId` / `PatchId` /
-// `SessionId` newtypes (which reject digits) can parse them.
+// Preserved verbatim — this is the round-2 acceptance criterion from the
+// prior design. See memory rule `migration-test-read-migrated` and design
+// §3.3 / §7.
 // ---------------------------------------------------------------------------
 
 async fn assert_store_level_smoke(pool: &PgPool) -> Result<()> {
@@ -835,45 +813,64 @@ fn parse_session_id(s: &str) -> Result<SessionId> {
 }
 
 // ---------------------------------------------------------------------------
-// parse_baseline_pin unit tests
+// parse_baseline_filename unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    use super::parse_baseline_pin;
+    use super::parse_baseline_filename;
 
     #[test]
-    fn parses_well_formed_header() {
-        let s = "-- baseline-version: 20260519000000\nINSERT INTO ...\n";
-        assert_eq!(parse_baseline_pin(s).unwrap(), 20_260_519_000_000);
-    }
-
-    #[test]
-    fn errors_when_header_missing() {
-        let s = "INSERT INTO ...\n";
-        let err = parse_baseline_pin(s).unwrap_err().to_string();
-        assert!(
-            err.contains("baseline-version"),
-            "error should mention the expected header; got: {err}"
+    fn parses_well_formed_filename() {
+        assert_eq!(
+            parse_baseline_filename("20260519000000__pre_actor_overhaul.sql").unwrap(),
+            20_260_519_000_000
         );
     }
 
     #[test]
-    fn errors_on_empty_input() {
-        let err = parse_baseline_pin("").unwrap_err().to_string();
+    fn parses_minimal_description() {
+        assert_eq!(parse_baseline_filename("42__x.sql").unwrap(), 42);
+    }
+
+    #[test]
+    fn rejects_missing_sql_suffix() {
+        let err = parse_baseline_filename("20260519000000__pre_actor_overhaul")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(".sql"), "expected `.sql` mention; got: {err}");
+    }
+
+    #[test]
+    fn rejects_missing_double_underscore() {
+        let err = parse_baseline_filename("20260519000000_pre_actor_overhaul.sql")
+            .unwrap_err()
+            .to_string();
         assert!(
-            err.contains("empty"),
-            "error should mention empty fixture; got: {err}"
+            err.contains("<version>__<description>"),
+            "expected the filename-shape mention; got: {err}"
         );
     }
 
     #[test]
-    fn errors_on_malformed_version() {
-        let s = "-- baseline-version: not-a-number\nINSERT INTO ...\n";
-        let err = parse_baseline_pin(s).unwrap_err().to_string();
+    fn rejects_empty_description() {
+        let err = parse_baseline_filename("20260519000000__.sql")
+            .unwrap_err()
+            .to_string();
         assert!(
-            err.contains("not-a-number"),
-            "error should include the bad value; got: {err}"
+            err.contains("empty description"),
+            "expected empty-description mention; got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_numeric_version() {
+        let err = parse_baseline_filename("not_a_number__desc.sql")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not a u64"),
+            "expected u64 parse failure; got: {err}"
         );
     }
 }

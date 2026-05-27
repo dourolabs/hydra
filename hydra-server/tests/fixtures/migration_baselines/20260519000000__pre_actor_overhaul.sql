@@ -1,19 +1,16 @@
 -- baseline-version: 20260519000000
--- Hand-curated baseline fixture for the migration roundtrip test. The header
--- comment on line 1 must be `-- baseline-version: <N>`; the test parses it via
--- `parse_baseline_pin` to decide which sqlx migrations to apply before loading
--- the body below. The remainder is `INSERT` statements valid against the
--- `hydra-server` schema at that pin (i.e. just after
--- `20260519000000_add_task_usage.sql` and before the actor-overhaul /
--- sessions-orthogonality / merge-policy / created-by-drops / refers-to-rename
--- batch of migrations this release validates).
+-- Pre-actor-overhaul baseline shapes: bare-string / `users/`-prefixed /
+-- `agents/`-prefixed assignees on issues_v2, bare and typed review authors on
+-- patches_v2, conversation_events_v2 rows the events Rust migration moves into
+-- session_events_v2, snake_case `refers_to` relationships, legacy auth_tokens.
+-- INSERTs are valid against the schema state at version `20260519000000`
+-- (immediately after `20260519000000_add_task_usage.sql` applies, and before
+-- the actor-overhaul / sessions-orthogonality / merge-policy / created-by-drops
+-- / refers-to-rename batch of migrations this release validates).
 --
 -- Each row exercises a source shape that one of the migrations under test
 -- rewrites or relies on; the corresponding destination assertion lives in
 -- `hydra-server/tests/migration_roundtrip.rs`.
---
--- PR-3's regen tool will replace this hand-curated file with a `pg_dump`
--- equivalent and add a `-- migrations-hash: <hex>` line on the next release.
 
 --------------------------------------------------------------------------------
 -- issues_v2 — assignee source shapes for the assignee_principal backfill
