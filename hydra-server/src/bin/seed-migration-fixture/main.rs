@@ -137,7 +137,7 @@ async fn run(cli: Cli) -> Result<()> {
         .context("reset metis schema")?;
     info!("reset metis schema");
 
-    hydra_server::store::postgres_v2::run_migrations(&pool)
+    hydra_server::store::postgres_v2::run_migrations(&pool, None)
         .await
         .context("run postgres migrations")?;
     info!("applied migrations to HEAD");

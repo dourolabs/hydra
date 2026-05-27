@@ -46,76 +46,55 @@
 //! monotonic and assigned at insert time, so we can't match source rows to
 //! target rows by version alone. Instead we check, per target session:
 //! if `session_events*` already has any rows for that session, we skip the
-//! whole session (every plan entry for it becomes `skipped` / `would-skip`).
-//! This is the property the server's startup hook relies on so that repeated
-//! boots against the same database don't re-process already-migrated rows.
-//!
-//! ## `up_to` cut-over
-//!
-//! With `up_to = Some(t)` only rows whose `created_at < t` are migrated;
-//! anything `>= t` is left for the dual-write path. The startup hook always
-//! passes `None`; the cut-over knob is preserved for the integration test
-//! and any future callers.
+//! whole session. This is the property the server's startup hook relies on
+//! so that repeated boots against the same database don't re-process
+//! already-migrated rows.
 
-use super::Backend;
-use anyhow::{Context, Result};
+use super::{Backend, RustMigration};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use hydra_common::{ActorId, ActorRef};
 use std::collections::HashMap;
 
-/// Status of a single `conversation_events_v2` row in the migration plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EventPlanAction {
-    /// Dry-run: a write that *would* happen if we re-ran without `--dry-run`.
-    WouldWrite,
-    /// Dry-run: the target session already has `session_events*` rows; would
-    /// be skipped per the idempotency rule.
-    WouldSkip,
-    /// Live run: row was inserted into `session_events*`.
-    Wrote,
-    /// Live run: skipped because the target session already had rows.
-    Skipped,
-}
+/// The sqlx migration version this Rust step must run *after*. Both target
+/// tables (`session_events` / `metis.session_events_v2`) landed well before
+/// PR-B was authored; pinning to the highest existing SQL migration version
+/// at PR-B time keeps the events backfill as the final post-SQL step, which
+/// is where it ran historically under the old `tokio::spawn` startup hook.
+pub const EVENTS_MIGRATION_VERSION: u64 = 20_260_601_000_000;
 
-/// One row of the migrate-events plan. Serialized as JSON Lines on stdout.
-///
-/// Field order matches the issue spec: greppable
-/// `(source_conversation_id, source_event_id, target_session_id, source_created_at)`.
-/// `source_version_number` is the per-conversation event id (the
-/// `(conversation_id, version_number)` unique key on `conversation_events*`).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EventPlanEntry {
-    pub source_conversation_id: String,
-    pub source_version_number: i64,
-    pub target_session_id: String,
-    pub source_created_at: DateTime<Utc>,
-    pub action: EventPlanAction,
-}
+/// Backfill historical `conversation_events*` user/assistant message rows
+/// into the per-session `session_events*` tables. Idempotent: the
+/// per-session skip rule in [`run`] keeps repeat runs as no-ops, which is
+/// what the server's startup hook (and the migration roundtrip test) rely
+/// on.
+pub struct EventsMigration;
 
-/// Run the migrate-events pass against `backend`. With `dry_run = true`
-/// no writes happen and every plan entry is a `would-*`. With `dry_run =
-/// false`, rows are appended to `session_events*` (skipping any whose
-/// target session already has rows, so re-runs are no-ops). With
-/// `up_to = Some(t)`, only source rows whose `created_at < t` are
-/// processed.
-pub async fn run(
-    backend: &Backend,
-    dry_run: bool,
-    up_to: Option<DateTime<Utc>>,
-) -> Result<Vec<EventPlanEntry>> {
-    match backend {
-        Backend::Sqlite(pool) => sqlite::run(pool, dry_run, up_to).await,
-        #[cfg(feature = "postgres")]
-        Backend::Postgres(pool) => postgres::run(pool, dry_run, up_to).await,
+#[async_trait::async_trait]
+impl RustMigration for EventsMigration {
+    fn version(&self) -> u64 {
+        EVENTS_MIGRATION_VERSION
+    }
+
+    fn name(&self) -> &'static str {
+        "migrate-events"
+    }
+
+    async fn run(&self, backend: &Backend) -> Result<()> {
+        run(backend).await
     }
 }
 
-/// Emit a single plan entry to stdout as one JSON line.
-pub fn emit_jsonl(entry: &EventPlanEntry) -> Result<()> {
-    let line = serde_json::to_string(entry).context("serializing plan entry")?;
-    println!("{line}");
-    Ok(())
+/// Free-function entry point retained for callers that already hold a
+/// [`Backend`]. Equivalent to `EventsMigration.run(backend)`. Kept public
+/// so the integration test and ad-hoc reruns can invoke the pass without
+/// going through the trait object.
+pub async fn run(backend: &Backend) -> Result<()> {
+    match backend {
+        Backend::Sqlite(pool) => sqlite::run(pool).await,
+        #[cfg(feature = "postgres")]
+        Backend::Postgres(pool) => postgres::run(pool).await,
+    }
 }
 
 /// Extract the session id from a stored `ActorRef` JSON value, if the
@@ -218,11 +197,7 @@ mod sqlite {
     use anyhow::{Context, anyhow};
     use sqlx::{Row, SqlitePool};
 
-    pub async fn run(
-        pool: &SqlitePool,
-        dry_run: bool,
-        up_to: Option<DateTime<Utc>>,
-    ) -> Result<Vec<EventPlanEntry>> {
+    pub async fn run(pool: &SqlitePool) -> Result<()> {
         // Conversations to process: any with at least one message event.
         let conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT id FROM conversation_events \
@@ -233,20 +208,13 @@ mod sqlite {
         .await
         .context("listing conversations with message events")?;
 
-        let mut plan = Vec::new();
         for conv_id in conv_ids {
-            let entries = process_conversation(pool, &conv_id, dry_run, up_to).await?;
-            plan.extend(entries);
+            process_conversation(pool, &conv_id).await?;
         }
-        Ok(plan)
+        Ok(())
     }
 
-    async fn process_conversation(
-        pool: &SqlitePool,
-        conv_id: &str,
-        dry_run: bool,
-        up_to: Option<DateTime<Utc>>,
-    ) -> Result<Vec<EventPlanEntry>> {
+    async fn process_conversation(pool: &SqlitePool, conv_id: &str) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
         if sessions.is_empty() {
             // No linked sessions but messages exist — fail loud, don't
@@ -260,19 +228,8 @@ mod sqlite {
 
         let rows = load_message_rows(pool, conv_id).await?;
 
-        let mut plan = Vec::with_capacity(rows.len());
-        // Map session_id -> Vec of (plan-index, row), preserving the
-        // source-order traversal so we insert in created_at order per session.
-        let mut per_session: HashMap<String, Vec<usize>> = HashMap::new();
-
+        let mut per_session: HashMap<String, Vec<&MessageRowSqlite>> = HashMap::new();
         for row in &rows {
-            if let Some(cutoff) = up_to
-                && row.created_at >= cutoff
-            {
-                // Honor --up-to cut-over: leave the row to the dual-write path.
-                continue;
-            }
-
             let target = assign_to_window(&windows, row.created_at).ok_or_else(|| {
                 anyhow!(
                     "conversation {conv_id} version {ver} (created_at {ts}) falls outside every \
@@ -282,20 +239,10 @@ mod sqlite {
                     ts = row.created_at,
                 )
             })?;
-
-            let idx = plan.len();
-            plan.push(EventPlanEntry {
-                source_conversation_id: conv_id.to_string(),
-                source_version_number: row.source_version_number,
-                target_session_id: target.to_string(),
-                source_created_at: row.created_at,
-                action: EventPlanAction::WouldWrite, // placeholder; set below
-            });
-            per_session.entry(target.to_string()).or_default().push(idx);
+            per_session.entry(target.to_string()).or_default().push(row);
         }
 
-        // Per-session idempotency check + insert.
-        for (session_id, indices) in &per_session {
+        for (session_id, rows) in &per_session {
             let existing: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
                     .bind(session_id)
@@ -305,30 +252,16 @@ mod sqlite {
                         format!("checking existing session_events for {session_id}")
                     })?;
 
-            let session_has_data = existing > 0;
-            for &idx in indices {
-                let entry = &mut plan[idx];
-                let row = rows
-                    .iter()
-                    .find(|r| r.source_version_number == entry.source_version_number)
-                    .expect("plan entry must trace back to a loaded row");
+            if existing > 0 {
+                continue;
+            }
 
-                entry.action = if session_has_data {
-                    if dry_run {
-                        EventPlanAction::WouldSkip
-                    } else {
-                        EventPlanAction::Skipped
-                    }
-                } else if dry_run {
-                    EventPlanAction::WouldWrite
-                } else {
-                    insert_row(pool, session_id, row).await?;
-                    EventPlanAction::Wrote
-                };
+            for row in rows {
+                insert_row(pool, session_id, row).await?;
             }
         }
 
-        Ok(plan)
+        Ok(())
     }
 
     async fn load_sessions_in_chain(
@@ -504,11 +437,7 @@ mod postgres {
     use anyhow::{Context, anyhow};
     use sqlx::{PgPool, Row};
 
-    pub async fn run(
-        pool: &PgPool,
-        dry_run: bool,
-        up_to: Option<DateTime<Utc>>,
-    ) -> Result<Vec<EventPlanEntry>> {
+    pub async fn run(pool: &PgPool) -> Result<()> {
         let conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT conversation_id FROM metis.conversation_events_v2 \
              WHERE event_type IN ('user_message', 'assistant_message') \
@@ -518,20 +447,13 @@ mod postgres {
         .await
         .context("listing conversations with message events")?;
 
-        let mut plan = Vec::new();
         for conv_id in conv_ids {
-            let entries = process_conversation(pool, &conv_id, dry_run, up_to).await?;
-            plan.extend(entries);
+            process_conversation(pool, &conv_id).await?;
         }
-        Ok(plan)
+        Ok(())
     }
 
-    async fn process_conversation(
-        pool: &PgPool,
-        conv_id: &str,
-        dry_run: bool,
-        up_to: Option<DateTime<Utc>>,
-    ) -> Result<Vec<EventPlanEntry>> {
+    async fn process_conversation(pool: &PgPool, conv_id: &str) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
         if sessions.is_empty() {
             anyhow::bail!(
@@ -544,16 +466,8 @@ mod postgres {
 
         let rows = load_message_rows(pool, conv_id).await?;
 
-        let mut plan = Vec::with_capacity(rows.len());
-        let mut per_session: HashMap<String, Vec<usize>> = HashMap::new();
-
+        let mut per_session: HashMap<String, Vec<&MessageRowPostgres>> = HashMap::new();
         for row in &rows {
-            if let Some(cutoff) = up_to
-                && row.created_at >= cutoff
-            {
-                continue;
-            }
-
             let target = assign_to_window(&windows, row.created_at).ok_or_else(|| {
                 anyhow!(
                     "conversation {conv_id} version {ver} (created_at {ts}) falls outside every \
@@ -563,19 +477,10 @@ mod postgres {
                     ts = row.created_at,
                 )
             })?;
-
-            let idx = plan.len();
-            plan.push(EventPlanEntry {
-                source_conversation_id: conv_id.to_string(),
-                source_version_number: row.source_version_number,
-                target_session_id: target.to_string(),
-                source_created_at: row.created_at,
-                action: EventPlanAction::WouldWrite,
-            });
-            per_session.entry(target.to_string()).or_default().push(idx);
+            per_session.entry(target.to_string()).or_default().push(row);
         }
 
-        for (session_id, indices) in &per_session {
+        for (session_id, rows) in &per_session {
             let existing: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM metis.session_events_v2 WHERE session_id = $1",
             )
@@ -584,30 +489,16 @@ mod postgres {
             .await
             .with_context(|| format!("checking existing session_events_v2 for {session_id}"))?;
 
-            let session_has_data = existing > 0;
-            for &idx in indices {
-                let entry = &mut plan[idx];
-                let row = rows
-                    .iter()
-                    .find(|r| r.source_version_number == entry.source_version_number)
-                    .expect("plan entry must trace back to a loaded row");
+            if existing > 0 {
+                continue;
+            }
 
-                entry.action = if session_has_data {
-                    if dry_run {
-                        EventPlanAction::WouldSkip
-                    } else {
-                        EventPlanAction::Skipped
-                    }
-                } else if dry_run {
-                    EventPlanAction::WouldWrite
-                } else {
-                    insert_row(pool, session_id, row).await?;
-                    EventPlanAction::Wrote
-                };
+            for row in rows {
+                insert_row(pool, session_id, row).await?;
             }
         }
 
-        Ok(plan)
+        Ok(())
     }
 
     async fn load_sessions_in_chain(pool: &PgPool, conv_id: &str) -> Result<Vec<SessionInChain>> {
@@ -921,12 +812,7 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let plan = run(&backend, false, None).await.unwrap();
-        assert_eq!(plan.len(), 3);
-        for entry in &plan {
-            assert_eq!(entry.target_session_id, *sess.as_ref());
-            assert_eq!(entry.action, EventPlanAction::Wrote);
-        }
+        run(&backend).await.unwrap();
         let written = read_session_events(&pool, &sess).await;
         assert_eq!(written.len(), 3);
         assert_eq!(written[0].0, 1);
@@ -1030,18 +916,7 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let plan = run(&backend, false, None).await.unwrap();
-        assert_eq!(plan.len(), 6, "6 message rows, 2 suspending rows skipped");
-
-        let by_session = |id: &SessionId| {
-            plan.iter()
-                .filter(|p| p.target_session_id == *id.as_ref())
-                .map(|p| p.source_version_number)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(by_session(&sess_a), vec![1, 2]);
-        assert_eq!(by_session(&sess_b), vec![4, 5]);
-        assert_eq!(by_session(&sess_c), vec![7, 8]);
+        run(&backend).await.unwrap();
 
         // session_events for each session: 2 rows each, monotonic versions 1..=2.
         for sess in [&sess_a, &sess_b, &sess_c] {
@@ -1086,16 +961,11 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let plan = run(&backend, false, None).await.unwrap();
-        let targets: Vec<_> = plan.iter().map(|p| p.target_session_id.clone()).collect();
-        assert_eq!(
-            targets,
-            vec![
-                sess_a.as_ref().to_string(),
-                sess_b.as_ref().to_string(),
-                sess_b.as_ref().to_string()
-            ]
-        );
+        run(&backend).await.unwrap();
+        let a_events = read_session_events(&pool, &sess_a).await;
+        let b_events = read_session_events(&pool, &sess_b).await;
+        assert_eq!(a_events.len(), 1, "A owns the early row");
+        assert_eq!(b_events.len(), 2, "B owns the on-tie and after rows");
     }
 
     #[tokio::test]
@@ -1149,24 +1019,16 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let plan = run(&backend, false, None).await.unwrap();
-        // 3 message rows: 1 to A, 2 to B (including ghost).
-        let a_rows: Vec<_> = plan
-            .iter()
-            .filter(|p| p.target_session_id == *sess_a.as_ref())
-            .map(|p| p.source_version_number)
-            .collect();
-        let b_rows: Vec<_> = plan
-            .iter()
-            .filter(|p| p.target_session_id == *sess_b.as_ref())
-            .map(|p| p.source_version_number)
-            .collect();
-        assert_eq!(a_rows, vec![1]);
-        assert_eq!(b_rows, vec![3, 5]);
+        run(&backend).await.unwrap();
+
+        let a_rows = read_session_events(&pool, &sess_a).await;
+        let b_rows = read_session_events(&pool, &sess_b).await;
+        assert_eq!(a_rows.len(), 1, "A owns the single pre-suspend row");
+        assert_eq!(b_rows.len(), 2, "B owns its message + the ghost row");
     }
 
     #[tokio::test]
-    async fn dry_run_matches_live_plan_and_is_idempotent() {
+    async fn repeat_run_is_idempotent() {
         let pool = fresh_pool().await;
         let conv = ConversationId::new();
         let sess = SessionId::new();
@@ -1196,99 +1058,15 @@ mod tests {
 
         let backend = Backend::Sqlite(pool.clone());
 
-        let dry = run(&backend, true, None).await.unwrap();
-        assert_eq!(dry.len(), 2);
-        for entry in &dry {
-            assert_eq!(entry.action, EventPlanAction::WouldWrite);
-            assert_eq!(entry.target_session_id, *sess.as_ref());
-        }
-        assert!(read_session_events(&pool, &sess).await.is_empty());
+        run(&backend).await.unwrap();
+        let first = read_session_events(&pool, &sess).await;
+        assert_eq!(first.len(), 2);
 
-        let live = run(&backend, false, None).await.unwrap();
-        assert_eq!(live.len(), 2);
-        for entry in &live {
-            assert_eq!(entry.action, EventPlanAction::Wrote);
-            assert_eq!(entry.target_session_id, *sess.as_ref());
-        }
-        // (source_version_number, target_session_id, source_created_at)
-        // tuples agree between dry-run and live.
-        let key = |e: &EventPlanEntry| {
-            (
-                e.source_version_number,
-                e.target_session_id.clone(),
-                e.source_created_at,
-            )
-        };
-        assert_eq!(
-            dry.iter().map(key).collect::<Vec<_>>(),
-            live.iter().map(key).collect::<Vec<_>>(),
-        );
-
-        let rerun = run(&backend, false, None).await.unwrap();
-        assert_eq!(rerun.len(), 2);
-        for entry in &rerun {
-            assert_eq!(entry.action, EventPlanAction::Skipped);
-        }
-        assert_eq!(read_session_events(&pool, &sess).await.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn up_to_cutoff_excludes_newer_rows() {
-        let pool = fresh_pool().await;
-        let conv = ConversationId::new();
-        let sess = SessionId::new();
-        // Round to millisecond precision up-front so the cutoff round-trips
-        // through sqlite's RFC3339 storage without sub-ms drift skewing the
-        // boundary-case assertion below.
-        let t0 = DateTime::parse_from_rfc3339(
-            &(Utc::now() - Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        )
-        .unwrap()
-        .with_timezone(&Utc);
-        let cutoff = t0 + Duration::minutes(5);
-
-        insert_conversation(&pool, &conv, "frank").await;
-        insert_session(&pool, &sess, &conv, "frank", t0).await;
-        insert_message_event(
-            &pool,
-            &conv,
-            1,
-            "user_message",
-            "old",
-            t0 + Duration::minutes(1),
-            t0 + Duration::minutes(1),
-        )
-        .await;
-        insert_message_event(
-            &pool,
-            &conv,
-            2,
-            "assistant_message",
-            "old2",
-            t0 + Duration::minutes(4),
-            t0 + Duration::minutes(4),
-        )
-        .await;
-        insert_message_event(
-            &pool,
-            &conv,
-            3,
-            "user_message",
-            "new",
-            t0 + Duration::minutes(6),
-            t0 + Duration::minutes(6),
-        )
-        .await;
-        // Boundary case: created_at == cutoff is EXCLUDED (cutoff is
-        // exclusive — dual-write owns anything at or after the cut-over).
-        insert_message_event(&pool, &conv, 4, "assistant_message", "edge", cutoff, cutoff).await;
-
-        let backend = Backend::Sqlite(pool.clone());
-        let plan = run(&backend, false, Some(cutoff)).await.unwrap();
-        assert_eq!(plan.len(), 2, "only versions 1 and 2 are < cutoff");
-        let versions: Vec<i64> = plan.iter().map(|p| p.source_version_number).collect();
-        assert_eq!(versions, vec![1, 2]);
-        assert_eq!(read_session_events(&pool, &sess).await.len(), 2);
+        // Second run is a no-op — the per-session skip rule sees the
+        // existing rows and bails out before any further INSERT.
+        run(&backend).await.unwrap();
+        let second = read_session_events(&pool, &sess).await;
+        assert_eq!(second, first, "repeat run must not duplicate rows");
     }
 
     #[tokio::test]
@@ -1316,7 +1094,7 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let err = run(&backend, true, None).await.unwrap_err();
+        let err = run(&backend).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("falls outside every linked session's window"),
@@ -1341,7 +1119,7 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let err = run(&backend, true, None).await.unwrap_err();
+        let err = run(&backend).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("no linked session in tasks_v2"),
