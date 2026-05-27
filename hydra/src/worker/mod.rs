@@ -1,4 +1,5 @@
 pub mod claude;
+mod claude_formatter;
 pub mod codex;
 pub mod model_selector;
 pub(crate) mod reaper;
