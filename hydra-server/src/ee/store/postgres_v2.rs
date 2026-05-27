@@ -8738,8 +8738,8 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, mount_spec, agent_config, mode, is_latest)
-                 VALUES ($1, 1, '{{}}'::jsonb, 'complete', false, '{{\"working_dir\":\"repo\",\"mounts\":[]}}'::jsonb, '{{}}'::jsonb, '{{\"type\":\"headless\",\"prompt\":\"\"}}'::jsonb, true)"
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, creator, mount_spec, agent_config, mode, is_latest)
+                 VALUES ($1, 1, '{{}}'::jsonb, 'complete', false, '', '{{\"working_dir\":\"repo\",\"mounts\":[]}}'::jsonb, '{{}}'::jsonb, '{{\"type\":\"headless\",\"prompt\":\"\"}}'::jsonb, true)"
             ))
             .bind(&id)
             .execute(&store.pool)
