@@ -47,15 +47,15 @@
 //! target rows by version alone. Instead we check, per target session:
 //! if `session_events*` already has any rows for that session, we skip the
 //! whole session (every plan entry for it becomes `skipped` / `would-skip`).
-//! This is conservative — it relies on the operator running this pass
-//! BEFORE enabling dual-writes (PR-1, `i-aankjvnz`), so the only existing
-//! rows on a re-run came from a previous run of this same tool.
+//! This is the property the server's startup hook relies on so that repeated
+//! boots against the same database don't re-process already-migrated rows.
 //!
-//! ## `--up-to` cut-over
+//! ## `up_to` cut-over
 //!
-//! With `--up-to <T>` only rows whose `created_at < T` are migrated;
-//! anything `>= T` is left for the dual-write path. Without the flag,
-//! every message row is processed.
+//! With `up_to = Some(t)` only rows whose `created_at < t` are migrated;
+//! anything `>= t` is left for the dual-write path. The startup hook always
+//! passes `None`; the cut-over knob is preserved for the integration test
+//! and any future callers.
 
 use super::Backend;
 use anyhow::{Context, Result};

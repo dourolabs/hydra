@@ -19,10 +19,6 @@ name = "hydra-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "hydra-migrate-sessions"
-path = "src/bin/hydra-migrate-sessions/main.rs"
-
-[[bin]]
 name = "seed-migration-fixture"
 path = "src/bin/seed-migration-fixture/main.rs"
 required-features = ["postgres"]

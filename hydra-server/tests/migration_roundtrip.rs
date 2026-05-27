@@ -4,7 +4,7 @@
 //! Applies sqlx migrations to a baseline-shaped Postgres database, executes
 //! the hand-curated `migration_baseline.sql` fixture, rolls the remaining
 //! migrations forward, runs the external `migrate-events` pass through the
-//! same library entry point the `hydra-migrate-sessions` binary uses, and
+//! same library entry point the server's startup migration uses, and
 //! asserts:
 //!
 //! 1. (§3.1) schema invariants — columns / tables added / dropped / tightened
@@ -88,10 +88,9 @@ async fn migration_roundtrip() -> Result<()> {
 }
 
 /// External-migration hook. `events::run` is the exact library entry point
-/// the `hydra-migrate-sessions migrate-events` binary at
-/// `hydra-server/src/bin/hydra-migrate-sessions/main.rs` invokes — calling it
-/// here with the same `dry_run = false`, `up_to = None` arguments mirrors the
-/// production deploy step in `/playbooks/deploy-hydra.md`. ORDER MATTERS:
+/// the server's startup migration in `hydra-server/src/lib.rs` invokes —
+/// calling it here with the same `dry_run = false`, `up_to = None` arguments
+/// mirrors the work the server performs on each boot. ORDER MATTERS:
 /// `MIGRATOR.run` must complete first so `session_events_v2` exists; the
 /// later §3.3 assertions then exercise the rows this pass moved.
 async fn run_external_migrations(pool: &PgPool) -> Result<()> {

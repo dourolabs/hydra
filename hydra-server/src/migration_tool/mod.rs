@@ -1,13 +1,16 @@
-//! One-off Rust migration helpers for the sessions-orthogonality redesign
-//! (`/designs/sessions-orthogonality-redesign.md` §3.5). Backs the
-//! `hydra-migrate-sessions` binary.
+//! Rust migration helpers for the sessions-orthogonality redesign
+//! (`/designs/sessions-orthogonality-redesign.md` §3.5). Invoked from the
+//! server's startup hook (`build_app_state`) on every boot and from the
+//! `migration_roundtrip` integration test.
 //!
 //! See `events.rs` for the `migrate-events` pass which partitions
 //! `conversation_events_v2` user/assistant message rows by the active session
 //! at write time and writes them to `session_events*` (design §3.5 step 3).
 //!
 //! The original `migrate-state` pass (`state.rs`) was removed once Phase E
-//! step 19 dropped its source table / column.
+//! step 19 dropped its source table / column. The standalone
+//! `hydra-migrate-sessions` CLI binary that previously wrapped these helpers
+//! was retired once the events pass moved onto server startup.
 
 pub mod events;
 
