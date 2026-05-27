@@ -1,5 +1,4 @@
 use super::users::Username;
-use crate::domain::actors::UNKNOWN_CREATOR;
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use hydra_common::RepoName;
@@ -7,11 +6,6 @@ use hydra_common::api::v1 as api;
 use hydra_common::principal::Principal;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
-
-/// Serde default for backward compatibility with v1 JSONB payloads that lack the creator field.
-fn default_patch_creator() -> Username {
-    Username::from(UNKNOWN_CREATOR)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatchStatus {
@@ -284,8 +278,6 @@ pub struct Patch {
     #[serde(default)]
     pub is_automatic_backup: bool,
     /// The resolved username of the human/agent that authored the patch.
-    /// Uses a serde default for backward compatibility with v1 JSONB payloads that lack the field.
-    #[serde(default = "default_patch_creator")]
     pub creator: Username,
     #[serde(default)]
     pub reviews: Vec<Review>,
