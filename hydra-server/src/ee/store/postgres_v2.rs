@@ -373,9 +373,9 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
             })?;
-        // Phase 4b soak: keep the legacy `assignee TEXT` column populated
-        // from the typed Principal's canonical path form so out-of-band
-        // readers keep working. Phase 7 drops the column.
+        // Keep the legacy `assignee TEXT` column populated from the
+        // typed Principal's canonical path form so out-of-band readers
+        // keep working.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         let query = format!(
             "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback)
@@ -485,9 +485,9 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
-        // Phase 4b read path: `assignee_principal` is the source of truth
-        // for `Issue.assignee`. The legacy `assignee TEXT` column is still
-        // dual-written but no longer read here.
+        // `assignee_principal` is the source of truth for `Issue.assignee`.
+        // The legacy `assignee TEXT` column is still dual-written but no
+        // longer read here.
         let assignee = row
             .assignee_principal
             .as_ref()
@@ -1189,12 +1189,10 @@ impl PostgresStoreV2 {
 
         let creator_str = actor.creator.to_string();
 
-        // The `auth_token_hash` / `auth_token_salt` columns are vestigial:
-        // Phase 3b of the actor-system overhaul (§9, §8.4) removed the
-        // matching `Actor` fields and the `verify_auth_token` consumer.
-        // We write empty strings to keep the NOT-NULL DB schema satisfied
-        // until a follow-up migration drops the columns after a release
-        // of soak.
+        // The `auth_token_hash` / `auth_token_salt` columns are vestigial
+        // (the matching `Actor` fields and `verify_auth_token` consumer
+        // are gone). We write empty strings to keep the NOT-NULL DB
+        // schema satisfied until a follow-up migration drops the columns.
         let query = format!(
             "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
              VALUES ($1, $2, '', '', $3, $4, $5)"
@@ -1294,10 +1292,10 @@ impl PostgresStoreV2 {
                     "failed to deserialize conversation session_settings: {e}"
                 ))
             })?;
-        // Phase 2: re-validate the persisted `agent_name` on read.
-        // SQLite + Postgres columns stay `TEXT`; the type-tightening
-        // happens at the Rust boundary so malformed legacy values
-        // surface as an internal error rather than silently passing.
+        // Re-validate the persisted `agent_name` on read. SQLite +
+        // Postgres columns stay `TEXT`; the type-tightening happens at
+        // the Rust boundary so malformed legacy values surface as an
+        // internal error rather than silently passing.
         let agent_name = row
             .agent_name
             .as_ref()
@@ -1368,11 +1366,10 @@ struct IssueRow {
     creator: String,
     progress: String,
     status: String,
-    /// Legacy `assignee TEXT` column. Phase 4b reads
-    /// `assignee_principal` as the source of truth; this field is still
-    /// selected so the dual-written column round-trips through
-    /// `sqlx::FromRow`, but is no longer consumed at the Rust layer.
-    /// Phase 7 drops the column.
+    /// Legacy `assignee TEXT` column. `assignee_principal` is the source
+    /// of truth; this field is still selected so the dual-written column
+    /// round-trips through `sqlx::FromRow`, but is no longer consumed
+    /// at the Rust layer.
     #[allow(dead_code)]
     assignee: Option<String>,
     #[sqlx(default)]
@@ -1646,10 +1643,9 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
     }
 
     if let Some(assignee) = query.assignee.as_ref() {
-        // Phase 4b: filter against the typed `assignee_principal` JSONB
-        // column using canonical serialization. The TEXT-column LIKE
-        // search continues to participate in the `q` free-text predicate
-        // below (Phase 4b §5).
+        // Filter against the typed `assignee_principal` JSONB column
+        // using canonical serialization. The TEXT-column LIKE search
+        // continues to participate in the `q` free-text predicate below.
         let serialized = serde_json::to_string(assignee).unwrap_or_default();
         predicates.push(format!(
             "assignee_principal = ${}::jsonb",
@@ -7445,11 +7441,10 @@ mod tests {
         assert!(missing.is_none());
     }
 
-    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): the postgres
-    /// implementation must default new rows to `is_revoked = false`,
-    /// flip exactly the rows for the given session id on
-    /// `revoke_auth_tokens_for_session`, and be idempotent on
-    /// repeated calls / no-match calls.
+    /// The postgres implementation must default new rows to
+    /// `is_revoked = false`, flip exactly the rows for the given
+    /// session id on `revoke_auth_tokens_for_session`, and be
+    /// idempotent on repeated calls / no-match calls.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn revoke_auth_tokens_for_session_v2(pool: PgStorePool) {

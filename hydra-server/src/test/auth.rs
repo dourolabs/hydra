@@ -4,7 +4,7 @@ use crate::test_utils::{
     register_actor_and_token, spawn_test_server, spawn_test_server_with_state,
     test_client_without_auth, test_state_handles,
 };
-use hydra_common::SessionId;
+use hydra_common::{ActorId, SessionId};
 use reqwest::{Client, StatusCode, header};
 
 fn client_with_token(token: &str) -> Client {
@@ -54,15 +54,18 @@ async fn public_routes_accept_requests_without_auth() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Phase 3b (`/designs/actor-system-overhaul.md` §7.4 + §9): a token
-/// row that has been flipped to `is_revoked = true` must be rejected by
-/// `require_auth` exactly like an unknown token — a 401 with the
+/// A token row that has been flipped to `is_revoked = true` must be rejected
+/// by `require_auth` exactly like an unknown token — a 401 with the
 /// `authorization invalid` body.
 #[tokio::test]
 async fn revoked_session_token_returns_401() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let session_id = SessionId::new();
-    let (actor, auth_token) = Actor::new_for_session(session_id.clone(), Username::from("creator"));
+    let (actor, auth_token) = Actor::new_from_actor_id(
+        ActorId::Session(session_id.clone()),
+        Username::from("creator"),
+        None,
+    );
     register_actor_and_token(
         handles.store.as_ref(),
         &actor,

@@ -30,9 +30,9 @@ fn issue(
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
 ) -> Issue {
-    // Phase 4b: server-side `principal_exists` validation rejects unknown
-    // User/Agent assignees, so the test fixture defaults to a
-    // `Principal::External` (which is format-checked only, no DB lookup).
+    // Server-side `principal_exists` validation rejects unknown User/Agent
+    // assignees, so this fixture defaults to a `Principal::External`
+    // (format-checked only, no DB lookup).
     use hydra_common::principal::{ExternalSystem, Principal};
     let assignee_principal = assignee.map(|name| Principal::External {
         system: ExternalSystem::try_new("test").expect("static external system"),

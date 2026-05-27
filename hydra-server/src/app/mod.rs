@@ -129,7 +129,6 @@ pub enum RepositoryError {
     AlreadyExists(RepoName),
     #[error("repository '{0}' not found")]
     NotFound(RepoName),
-    /// Phase 5a (`/designs/actor-system-overhaul.md` §4.2 / §4.5):
     /// `principal_exists` validation at repo-config write time rejected
     /// a static `Principal` in `merge_policy.{reviewers,mergers}.any_of`
     /// that does not resolve to a real User or Agent row. External

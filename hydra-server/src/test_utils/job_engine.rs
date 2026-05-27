@@ -254,9 +254,10 @@ mod tests {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
         let hydra_id = SessionId::new();
-        let (actor, _) = crate::domain::actors::Actor::new_for_session(
-            SessionId::new(),
+        let (actor, _) = crate::domain::actors::Actor::new_from_actor_id(
+            crate::domain::actors::ActorId::Session(SessionId::new()),
             crate::domain::users::Username::from("creator"),
+            None,
         );
 
         engine

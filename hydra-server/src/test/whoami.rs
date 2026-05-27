@@ -70,7 +70,11 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
 async fn whoami_returns_task_identity() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task_id = SessionId::new();
-    let (actor, auth_token) = Actor::new_for_session(task_id.clone(), Username::from("creator"));
+    let (actor, auth_token) = Actor::new_from_actor_id(
+        ActorId::Session(task_id.clone()),
+        Username::from("creator"),
+        None,
+    );
     crate::test_utils::register_actor_and_token(
         handles.store.as_ref(),
         &actor,
@@ -113,15 +117,9 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------
-// Phase 2 of `/designs/actor-system-overhaul.md` (§3.4): once
-// `create_actor_for_job` routes through `actor_id_of`, the actor
-// stamped on the auth token has the new typed `Agent` / `Adhoc`
-// variants — and `whoami` must surface them on the wire rather than
-// rejecting the request as a "phase-1 invariant violation". The tests
-// below exercise both arms end-to-end through the HTTP handler so
-// any future regression in the route mapping is caught.
-// ---------------------------------------------------------------------
+// `whoami` must surface the typed `Agent` / `Adhoc` variants stamped by
+// `create_actor_for_job` rather than rejecting the request. The tests
+// below exercise both arms end-to-end through the HTTP handler.
 
 #[tokio::test]
 async fn whoami_returns_agent_identity_for_agent_session() -> anyhow::Result<()> {

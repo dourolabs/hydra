@@ -132,10 +132,10 @@ impl AgentQueue {
             }
         };
 
-        // The `agents` domain object holds the name as a free `String`
-        // today; Phase 4+ retypes that to `AgentName`. Validate here so a
-        // malformed stored name surfaces immediately rather than silently
-        // producing a session whose `agent_config.agent_name` is empty.
+        // The `agents` domain object holds the name as a free `String`.
+        // Validate here so a malformed stored name surfaces immediately
+        // rather than silently producing a session whose
+        // `agent_config.agent_name` is empty.
         let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
             .with_context(|| {
                 format!("agent '{}' has invalid name in the store", self.agent.name)
@@ -285,7 +285,7 @@ impl AgentQueue {
     ) -> anyhow::Result<SpawnResult> {
         let has_feedback = issue.feedback.is_some();
 
-        // Phase 4b assignment check: compare against the typed
+        // Assignment check: compare against the typed
         // `Principal::Agent { name }` — bare-string matching is gone.
         // Issues assigned to a `Principal::User { name == agent.name }`
         // (the typo direction) are deliberately NOT picked up.
@@ -613,8 +613,8 @@ mod tests {
     }
 
     /// Construct a `Principal::Agent` from a `&str` for test fixtures.
-    /// Phase 4b's assignment check is typed-equality, so test issues need
-    /// a `Principal::Agent { name: "..." }` value (not a bare string) to
+    /// The assignment check is typed-equality, so test issues need a
+    /// `Principal::Agent { name: "..." }` value (not a bare string) to
     /// be picked up by the matching agent's queue.
     fn test_agent_principal(name: &str) -> hydra_common::principal::Principal {
         hydra_common::principal::Principal::Agent {

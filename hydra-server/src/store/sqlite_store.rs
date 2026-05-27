@@ -293,10 +293,10 @@ struct IssueRow {
     creator: String,
     progress: String,
     status: String,
-    /// Legacy `assignee TEXT` column. Phase 4b reads `assignee_principal`
-    /// as the source of truth; this field is still selected so the
-    /// dual-written column round-trips through `sqlx::FromRow`, but is no
-    /// longer consumed at the Rust layer. Phase 7 drops the column.
+    /// Legacy `assignee TEXT` column. `assignee_principal` is the source
+    /// of truth; this field is still selected so the dual-written column
+    /// round-trips through `sqlx::FromRow`, but is no longer consumed at
+    /// the Rust layer.
     #[allow(dead_code)]
     assignee: Option<String>,
     #[sqlx(default)]
@@ -749,12 +749,10 @@ impl SqliteStore {
 
         // Insert the new version with is_latest = 1.
         //
-        // The `auth_token_hash` / `auth_token_salt` columns are vestigial:
-        // Phase 3b of the actor-system overhaul (§9, §8.4) removed the
-        // matching `Actor` fields and the `verify_auth_token` consumer.
-        // We write empty strings to keep the NOT-NULL DB schema satisfied
-        // until a follow-up migration drops the columns after a release
-        // of soak.
+        // The `auth_token_hash` / `auth_token_salt` columns are vestigial
+        // (the matching `Actor` fields and `verify_auth_token` consumer
+        // are gone). We write empty strings to keep the NOT-NULL DB
+        // schema satisfied until a follow-up migration drops the columns.
         sqlx::query(
             "INSERT INTO actors_v2 (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, is_latest)
              VALUES (?1, ?2, '', '', ?3, ?4, ?5, 1)"
@@ -855,9 +853,9 @@ impl SqliteStore {
                     "failed to deserialize conversation session_settings: {e}"
                 ))
             })?;
-        // Phase 2: re-validate the persisted `agent_name` on read. The
-        // SQLite column stays `TEXT`; the type-tightening happens at the
-        // Rust boundary so malformed legacy values surface as an internal
+        // Re-validate the persisted `agent_name` on read. The SQLite
+        // column stays `TEXT`; the type-tightening happens at the Rust
+        // boundary so malformed legacy values surface as an internal
         // error rather than silently passing through as `String`.
         let agent_name = row
             .agent_name
@@ -999,9 +997,9 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize assignee_principal: {e}"))
             })?;
-        // Phase 4b soak: dual-write the legacy `assignee TEXT` column from
-        // the typed Principal's canonical path form so out-of-band readers
-        // of the old column keep working. Phase 7 drops the column.
+        // Dual-write the legacy `assignee TEXT` column from the typed
+        // Principal's canonical path form so out-of-band readers of the
+        // old column keep working.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         sqlx::query(
             "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, is_latest)
@@ -1605,10 +1603,9 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize form_response: {e}"))
             })?;
-        // Phase 4b read path: `assignee_principal` is now the source of
-        // truth for `Issue.assignee`. The legacy `assignee TEXT` column is
-        // still dual-written for soak (Phase 7 drops it) but is no longer
-        // read here.
+        // `assignee_principal` is the source of truth for `Issue.assignee`.
+        // The legacy `assignee TEXT` column is still dual-written for soak
+        // but is no longer read here.
         let assignee = row
             .assignee_principal
             .as_deref()
@@ -1846,10 +1843,10 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
     }
 
     if let Some(assignee) = query.assignee.as_ref() {
-        // Phase 4b: filter against the typed `assignee_principal` column
-        // (JSON text) using canonical serialization, not lowercased
-        // free-text against the legacy `assignee TEXT`. The serialization
-        // is fixed by serde so a binary `=` predicate is sufficient.
+        // Filter against the typed `assignee_principal` column (JSON
+        // text) using canonical serialization, not lowercased free-text
+        // against the legacy `assignee TEXT`. The serialization is fixed
+        // by serde so a binary `=` predicate is sufficient.
         let serialized = serde_json::to_string(assignee).unwrap_or_default();
         bindings.push(serialized);
         predicates.push(format!("assignee_principal = ?{}", bindings.len()));
@@ -6291,9 +6288,8 @@ mod tests {
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item.assignee, Some(alice));
 
-        // Phase 4b soak: the legacy `assignee TEXT` column is still
-        // populated with the canonical path form so out-of-band readers
-        // keep working until Phase 7 drops the column.
+        // The legacy `assignee TEXT` column is still populated with the
+        // canonical path form so out-of-band readers keep working.
         let assignee_text: Option<String> =
             sqlx::query_scalar("SELECT assignee FROM issues_v2 WHERE id = ?1")
                 .bind(issue_id.as_ref())
@@ -8692,8 +8688,7 @@ mod tests {
         assert!(row.is_none());
     }
 
-    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): fresh rows
-    /// must come back with `is_revoked = false`, and
+    /// Fresh rows must come back with `is_revoked = false`, and
     /// `revoke_auth_tokens_for_session` must flip exactly the rows
     /// matching the given session id without touching siblings.
     #[tokio::test]
@@ -11430,9 +11425,9 @@ mod tests {
         assert_eq!(agent_config["model"], "gpt-4o");
     }
 
-    // ---- assignee_principal backfill (Phase 4a fix) ----
+    // ---- assignee_principal backfill ----
 
-    /// Apply the Phase 4a `assignee_principal` backfill migration to a
+    /// Apply the `assignee_principal` backfill migration to a
     /// pre-migration schema. The test fixture creates `agents` and
     /// `issues_v2` (without `assignee_principal`) so the migration's
     /// `ALTER TABLE` runs against a realistic starting state.
@@ -11519,10 +11514,9 @@ mod tests {
 
     #[tokio::test]
     async fn assignee_principal_backfill_classifies_bare_agent_names_as_agent() {
-        // Bare-name agents (the Phase 4a conflation bug): with the
-        // `agents` table populated, the legacy `assignee = "swe"` row
-        // should backfill to `Principal::Agent { name: "swe" }`, not
-        // `Principal::User`.
+        // Bare-name agents: with the `agents` table populated, the legacy
+        // `assignee = "swe"` row should backfill to
+        // `Principal::Agent { name: "swe" }`, not `Principal::User`.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
         setup_pre_assignee_principal_schema(&pool).await;
 
@@ -11682,10 +11676,10 @@ mod tests {
         );
     }
 
-    // ---- review_author_principal backfill (Phase 5b fix) ----
+    // ---- review_author_principal backfill ----
 
-    /// Apply the Phase 5b `review_author_principal` backfill migration
-    /// to a pre-migration schema. The test fixture creates `agents` and
+    /// Apply the `review_author_principal` backfill migration to a
+    /// pre-migration schema. The test fixture creates `agents` and
     /// `patches_v2` so the migration's `UPDATE` over each row's
     /// `reviews` JSON array runs against a realistic starting state.
     async fn apply_review_author_principal_backfill_migration(pool: &SqlitePool) {
@@ -11792,10 +11786,9 @@ mod tests {
 
     #[tokio::test]
     async fn review_author_backfill_classifies_bare_agent_names_as_agent() {
-        // Bare-name agents (the Phase 5b conflation bug): with the
-        // `agents` table populated, a legacy review `author = "reviewer"`
-        // should backfill to `Principal::Agent { name: "reviewer" }`,
-        // not `Principal::User`.
+        // Bare-name agents: with the `agents` table populated, a legacy
+        // review `author = "reviewer"` should backfill to
+        // `Principal::Agent { name: "reviewer" }`, not `Principal::User`.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
         setup_pre_review_author_principal_schema(&pool).await;
 

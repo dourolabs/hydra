@@ -27,11 +27,6 @@ pub async fn whoami(
             creator: actor.creator.clone(),
         },
         ActorId::Service(service_name) => ActorIdentity::Service { service_name },
-        // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4):
-        // `create_actor_for_job` now routes through `actor_id_of` and
-        // mints `Agent` / `Adhoc` actors for sessions. Map them onto
-        // the matching `ActorIdentity` variants so `whoami` surfaces
-        // the new wire form.
         ActorId::Agent(name) => ActorIdentity::Agent {
             name,
             creator: actor.creator.clone(),
@@ -40,14 +35,13 @@ pub async fn whoami(
             session_id,
             creator: actor.creator.clone(),
         },
-        // `User` / `External` are introduced in later phases (login
-        // and GitHub-poller flows) — Phase 2 still treats them as
-        // protocol bugs to keep the diff focused. `Legacy` is the
-        // read-only deserialization catch-all and should never reach
-        // an authenticated request path.
+        // `User` / `External` are not produced on the authenticated
+        // request path (they're login / GitHub-poller flows). `Legacy`
+        // is the read-only deserialization catch-all and should never
+        // reach an authenticated request path.
         other => {
             return Err(ApiError::internal(format!(
-                "phase-2 invariant violated: authenticated actor has unsupported variant {other:?}"
+                "whoami invariant violated: authenticated actor has unsupported variant {other:?}"
             )));
         }
     };

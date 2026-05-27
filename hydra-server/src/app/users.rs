@@ -127,10 +127,7 @@ impl AppState {
             }
         }
 
-        // Store the new token hash in the auth_tokens table so multiple
-        // devices can be logged in simultaneously. User logins are not
-        // session-scoped, so session_id is None
-        // (`/designs/actor-system-overhaul.md` §5.2 / §7.3).
+        // User logins are not session-scoped, so session_id is None.
         let token_hash = Actor::hash_auth_token(
             auth_token
                 .strip_prefix(&format!("{}:", actor.name()))
@@ -151,15 +148,9 @@ impl AppState {
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_session(&task_id).await?;
         let creator = task.creator.clone();
-        // Phase 2 (`/designs/actor-system-overhaul.md` §3.4): drive the
-        // session's actor identity off `agent_config.agent_name` via
-        // `actor_id_of`. Agent-spawned sessions become
-        // `ActorId::Agent(name)` (shared across all sessions for an
-        // agent — matches the prior `Issue`-shared semantics); ad-hoc
-        // sessions become `ActorId::Adhoc(session_id)`. The
-        // `spawned_from`-vs-not branch is gone.
         let actor_id = crate::domain::sessions::actor_id_of(&task, &task_id);
-        let (actor, auth_token) = Actor::new_from_actor_id(actor_id, creator);
+        let (actor, auth_token) =
+            Actor::new_from_actor_id(actor_id, creator, Some(task_id.clone()));
         if let Err(err) = self
             .store
             .add_actor(actor.clone(), lifecycle_actor.clone())
@@ -175,11 +166,6 @@ impl AppState {
             }
         }
 
-        // Store the new token hash in the auth_tokens table so multiple
-        // sessions for the same actor can authenticate independently.
-        // Phase 3a (`/designs/actor-system-overhaul.md` §7.3): record the
-        // minting session so `require_auth` can hydrate the
-        // `ActorRef::Authenticated.session_id` on every request.
         let token_hash = Actor::hash_auth_token(
             auth_token
                 .strip_prefix(&format!("{}:", actor.name()))
@@ -376,11 +362,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4):
-    // `create_actor_for_job` now reads
-    // `session.agent_config.agent_name` via `actor_id_of` and mints an
-    // `Agent` (when set) or `Adhoc` (when `None`) actor. The
-    // `spawned_from`-vs-not branch is gone.
+    // `create_actor_for_job` reads `session.agent_config.agent_name` via
+    // `actor_id_of` and mints an `Agent` (when set) or `Adhoc` (when
+    // `None`) actor.
     // -----------------------------------------------------------------
 
     fn session_with_agent(

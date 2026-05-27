@@ -6,8 +6,7 @@
 //! the current state of the patch — never snapshotted. See
 //! `/designs/merge-time-constraints.md` §4.4 for why resolution is live.
 //!
-//! Phase 6 of `/designs/actor-system-overhaul.md` (§4.1, §4.5): the
-//! resolved value carries the full typed [`Principal`] so downstream
+//! The resolved value carries the full typed [`Principal`] so downstream
 //! matching (`mergers.any_of`, reviewer-group quorum) is kind-aware —
 //! an `Agent` config entry never silently matches a `User` actor with
 //! the same string.

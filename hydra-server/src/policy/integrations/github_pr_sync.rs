@@ -190,11 +190,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 })?;
                 issue.item.creator
             }
-            // For agent-spawned sessions (Phase 2) the shared agent
-            // actor row carries the creator on the underlying `Actor`
-            // struct — no per-session lookup is needed because the
-            // patch event already came from an authenticated agent
-            // session. Match the legacy `Service` arm's pattern.
+            // The shared agent actor row carries the creator on the
+            // underlying `Actor` struct — no per-session lookup is
+            // needed because the patch event already came from an
+            // authenticated agent session. Match the legacy `Service`
+            // arm's pattern.
             ActorId::Service(_) | ActorId::Agent(_) => {
                 let actor = ctx
                     .store
@@ -207,16 +207,15 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     })?;
                 actor.item.creator
             }
-            // `User` / `External` / `Legacy` aren't constructed by
-            // any hydra-server call site that emits patch events yet
-            // (Phases 4–6 add the relevant flows). Treat as
+            // `User` / `External` / `Legacy` aren't constructed by any
+            // hydra-server call site that emits patch events. Treat as
             // unsupported with a warning so a misconfigured deployment
             // doesn't silently 500.
             ActorId::User(_) | ActorId::External { .. } | ActorId::Legacy(_) => {
                 warn!(
                     patch_id = %patch_id,
                     actor_id = %actor_id,
-                    "github_pr_sync: phase-1 ActorId variant not yet supported, skipping"
+                    "github_pr_sync: ActorId variant not supported, skipping"
                 );
                 return Ok(());
             }
@@ -347,10 +346,10 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Persist the updated GitHub metadata via AppState (store is read-only
         // in the automation context, so we must go through AppState for writes).
-        // Phase 5b: this is a server-internal automation path — the patch
-        // already carries its existing typed `Principal` review authors, so
-        // we go through the domain-shape `upsert_patch` directly rather than
-        // the wire-shape `upsert_patch_from_request`, which would drop the
+        // This is a server-internal automation path — the patch already
+        // carries its existing typed `Principal` review authors, so we go
+        // through the domain-shape `upsert_patch` directly rather than the
+        // wire-shape `upsert_patch_from_request`, which would drop the
         // authors on the round-trip through `UpsertPatch`.
         ctx.app_state
             .upsert_patch(

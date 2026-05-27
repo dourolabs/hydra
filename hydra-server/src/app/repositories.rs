@@ -64,11 +64,11 @@ impl AppState {
         config: Repository,
         actor: ActorRef,
     ) -> Result<RepositoryRecord, RepositoryError> {
-        // Phase 5a: validate every static `Principal` in the incoming
-        // merge_policy via `Store::principal_exists` BEFORE persisting
-        // the row, per design §4.2 / §4.5. Validation runs only on the
-        // new/incoming value — old configs are not retroactively checked,
-        // which matches `upsert_issue`'s assignee-validation behaviour.
+        // Validate every static `Principal` in the incoming merge_policy
+        // via `Store::principal_exists` BEFORE persisting the row.
+        // Validation runs only on the new/incoming value — old configs
+        // are not retroactively checked, which matches `upsert_issue`'s
+        // assignee-validation behaviour.
         self.validate_merge_policy_principals(config.merge_policy.as_ref())
             .await?;
 
@@ -229,10 +229,10 @@ mod tests {
             .unwrap();
     }
 
-    /// Phase 5a §4.2 footgun: a config that writes `Principal::User { name: "swe" }`
-    /// when `swe` is in fact an agent must fail with 400. The validation runs on
-    /// the User table, not the Agent table, so the agent's existence does not
-    /// rescue the wrong-kind reference.
+    /// A config that writes `Principal::User { name: "swe" }` when `swe` is
+    /// in fact an agent must fail with 400. The validation runs on the User
+    /// table, not the Agent table, so the agent's existence does not rescue
+    /// the wrong-kind reference.
     #[tokio::test]
     async fn create_repository_rejects_user_principal_when_only_agent_with_that_name_exists() {
         let state = test_state();

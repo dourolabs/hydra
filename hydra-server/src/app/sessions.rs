@@ -222,14 +222,15 @@ impl AppState {
             req_agent_config.agent_name.clone();
 
         if let Some(agent) = resolved_agent.as_ref() {
-            // The `agents` domain object keys agent identity by free string
-            // today (Phase 2 only retypes `AgentConfig.agent_name`, not the
-            // agent record itself — Phase 4+). The agent record is the
+            // The `agents` domain object keys agent identity by free
+            // string today (only `AgentConfig.agent_name` is typed, not
+            // the agent record itself). The agent record is the
             // authoritative source for the canonical name, and the
-            // `resolve_conversation_agent` path already round-trips through
-            // `AgentName` validation when invoked with a name. Defensively
-            // re-validate here so a malformed stored agent name surfaces as a
-            // 500 rather than silently producing an invalid `AgentName`.
+            // `resolve_conversation_agent` path already round-trips
+            // through `AgentName` validation when invoked with a name.
+            // Defensively re-validate here so a malformed stored agent
+            // name surfaces as a 500 rather than silently producing an
+            // invalid `AgentName`.
             if agent_name.is_none() {
                 agent_name = Some(
                     hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone()).map_err(

@@ -36,7 +36,7 @@ pub async fn require_auth(
         }
     };
 
-    let mut actor = match state.get_actor(auth_token.actor_name()).await {
+    let stored_actor = match state.get_actor(auth_token.actor_name()).await {
         Ok(actor) => actor,
         Err(error) => {
             let message = auth_failure_message(&error);
@@ -45,13 +45,6 @@ pub async fn require_auth(
         }
     };
 
-    // Phase 3a (`/designs/actor-system-overhaul.md` §5.3) routes auth
-    // through a hash-keyed `auth_tokens` lookup; Phase 3b (§7.4, §9)
-    // makes that table the single source of truth: no fallback to the
-    // (now-removed) `Actor::verify_auth_token` and a `is_revoked = true`
-    // row rejects the request immediately. The matched `session_id` is
-    // hydrated onto `Actor.session_id` so `ActorRef::from(&actor)`
-    // carries it into every downstream mutation.
     let token_hash = Actor::hash_auth_token(auth_token.raw_token());
     let matched_row = state
         .store()
@@ -83,7 +76,11 @@ pub async fn require_auth(
         return Err(ApiError::unauthorized(message));
     }
 
-    actor.session_id = matched_row.session_id;
+    let actor = Actor {
+        actor_id: stored_actor.actor_id,
+        creator: stored_actor.creator,
+        session_id: matched_row.session_id,
+    };
     info!(actor = %actor.name(), "authorization accepted");
     request.extensions_mut().insert(actor);
     Ok(next.run(request).await)
