@@ -7,27 +7,25 @@ import { actorIdDisplayName } from "./actors";
 // pin between the hand-rolled serde impl in
 // `hydra-common/src/actor_ref.rs` and the TS binding — if the Rust
 // wire form drifts from the binding, this test catches it.
-describe("actorIdDisplayName — Phase-1 internally-tagged variants", () => {
+describe("actorIdDisplayName — Phase-1 externally-tagged variants", () => {
   it("renders User as the bare username", () => {
-    const id: ActorId = { kind: "user", name: "alice" };
+    const id: ActorId = { User: { name: "alice" } };
     expect(actorIdDisplayName(id)).toBe("alice");
   });
 
   it("renders Agent as the bare agent name", () => {
-    const id: ActorId = { kind: "agent", name: "swe" };
+    const id: ActorId = { Agent: { name: "swe" } };
     expect(actorIdDisplayName(id)).toBe("swe");
   });
 
   it("renders Adhoc as the session id", () => {
-    const id: ActorId = { kind: "adhoc", session_id: "s-abcdef" };
+    const id: ActorId = { Adhoc: { session_id: "s-abcdef" } };
     expect(actorIdDisplayName(id)).toBe("s-abcdef");
   });
 
   it("renders External as external/<system>/<username>", () => {
     const id: ActorId = {
-      kind: "external",
-      system: "github",
-      username: "jayantk",
+      External: { system: "github", username: "jayantk" },
     };
     expect(actorIdDisplayName(id)).toBe("external/github/jayantk");
   });
@@ -70,24 +68,19 @@ describe("ActorId wire-form contract", () => {
   // JSON.stringify of each variant matches what Rust's hand-rolled
   // Serialize impl emits (see `actor_id_*_serde_round_trip` tests in
   // `hydra-common/src/actor_ref.rs`).
-  it("User serializes to {kind, name}", () => {
-    const id: ActorId = { kind: "user", name: "alice" };
+  it("User serializes to {User: {name}}", () => {
+    const id: ActorId = { User: { name: "alice" } };
     expect(JSON.parse(JSON.stringify(id))).toEqual({
-      kind: "user",
-      name: "alice",
+      User: { name: "alice" },
     });
   });
 
-  it("External serializes to {kind, system, username}", () => {
+  it("External serializes to {External: {system, username}}", () => {
     const id: ActorId = {
-      kind: "external",
-      system: "github",
-      username: "jayantk",
+      External: { system: "github", username: "jayantk" },
     };
     expect(JSON.parse(JSON.stringify(id))).toEqual({
-      kind: "external",
-      system: "github",
-      username: "jayantk",
+      External: { system: "github", username: "jayantk" },
     });
   });
 

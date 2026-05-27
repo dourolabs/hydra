@@ -8,12 +8,12 @@
 -- Inline-SQL backfill (approach (a) in the issue): the heuristic
 -- mirrors `domain::issues::parse_assignee_as_principal` for the cases
 -- the SQL dialect can express cleanly:
---   * `users/<x>`  with valid <x> -> {"kind":"user","name":"<x>"}
---   * `agents/<x>` with valid <x> -> {"kind":"agent","name":"<x>"}
+--   * `users/<x>`  with valid <x> -> {"User": {"name":"<x>"}}
+--   * `agents/<x>` with valid <x> -> {"Agent":{"name":"<x>"}}
 --   * bare `<x>` that matches an `agents.name` row
---                                -> {"kind":"agent","name":"<x>"}
+--                                -> {"Agent":{"name":"<x>"}}
 --   * other bare `<x>` with valid <x>
---                                -> {"kind":"user","name":"<x>"}
+--                                -> {"User": {"name":"<x>"}}
 -- The `external/<sys>/<x>` case is left NULL by the migration — no
 -- real existing rows are expected to use that form yet, and the
 -- next-write dual-write path will populate it when an `external/...`
@@ -40,7 +40,7 @@ SET assignee_principal = CASE
              AND substr(assignee, 7) NOT LIKE '%' || char(9) || '%'
              AND substr(assignee, 7) NOT LIKE '%' || char(10) || '%'
              AND substr(assignee, 7) NOT LIKE '%' || char(13) || '%'
-            THEN json_object('kind', 'user', 'name', substr(assignee, 7))
+            THEN json_object('User', json_object('name', substr(assignee, 7)))
         -- agents/<x>
         WHEN substr(assignee, 1, 7) = 'agents/'
              AND length(assignee) > 7
@@ -49,7 +49,7 @@ SET assignee_principal = CASE
              AND substr(assignee, 8) NOT LIKE '%' || char(9) || '%'
              AND substr(assignee, 8) NOT LIKE '%' || char(10) || '%'
              AND substr(assignee, 8) NOT LIKE '%' || char(13) || '%'
-            THEN json_object('kind', 'agent', 'name', substr(assignee, 8))
+            THEN json_object('Agent', json_object('name', substr(assignee, 8)))
         -- bare <name> matching a known agent
         WHEN assignee != ''
              AND assignee NOT LIKE '%/%'
@@ -58,7 +58,7 @@ SET assignee_principal = CASE
              AND assignee NOT LIKE '%' || char(10) || '%'
              AND assignee NOT LIKE '%' || char(13) || '%'
              AND EXISTS (SELECT 1 FROM agents WHERE agents.name = issues_v2.assignee)
-            THEN json_object('kind', 'agent', 'name', assignee)
+            THEN json_object('Agent', json_object('name', assignee))
         -- bare <username>
         WHEN assignee != ''
              AND assignee NOT LIKE '%/%'
@@ -66,7 +66,7 @@ SET assignee_principal = CASE
              AND assignee NOT LIKE '%' || char(9) || '%'
              AND assignee NOT LIKE '%' || char(10) || '%'
              AND assignee NOT LIKE '%' || char(13) || '%'
-            THEN json_object('kind', 'user', 'name', assignee)
+            THEN json_object('User', json_object('name', assignee))
         ELSE NULL
     END
 WHERE assignee IS NOT NULL AND assignee_principal IS NULL;

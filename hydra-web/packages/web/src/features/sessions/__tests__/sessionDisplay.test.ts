@@ -34,7 +34,7 @@ function issueRecord(id: string, title: string, assignee?: string | null): Issue
       status: "in-progress",
       // Phase 4b: tests pass a bare username; wrap as `Principal::Agent`
       // since sessions historically used the assignee as the agent name.
-      assignee: assignee ? { kind: "agent", name: assignee } : null,
+      assignee: assignee ? { Agent: { name: assignee } } : null,
       progress: "",
       dependencies: [],
       patches: [],

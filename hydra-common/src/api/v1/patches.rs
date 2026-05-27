@@ -1232,13 +1232,13 @@ mod tests {
                         {
                             "contents": "looks good",
                             "is_approved": true,
-                            "author": {"kind": "user", "name": "bob"},
+                            "author": {"User": {"name": "bob"}},
                             "submitted_at": null,
                         },
                         {
                             "contents": "needs changes",
                             "is_approved": false,
-                            "author": {"kind": "user", "name": "carol"},
+                            "author": {"User": {"name": "carol"}},
                             "submitted_at": null,
                         },
                     ],

@@ -33,18 +33,18 @@ use std::str::FromStr;
 ///   rows aren't corrupted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-// ActorId has a hand-rolled serde impl (below) that mixes
-// externally-tagged legacy variants with internally-tagged
-// (`kind`-keyed) Phase-1 variants and a bare-string Legacy fallback.
-// ts-rs only knows how to emit a uniform externally-tagged union, so
-// we override the TS body to match the actual wire form. The
-// referenced newtypes (`Username`, `AgentName`, `SessionId`,
+// ActorId has a hand-rolled serde impl (below) that emits the
+// externally-tagged form for every variant except `Legacy(String)`,
+// which round-trips as a bare JSON string. ts-rs derives the
+// externally-tagged union for us; we override the TS body only to
+// append the `| string` fallback that models the bare-string
+// `Legacy` payload (ts-rs has no way to express that automatically).
+// The referenced newtypes (`Username`, `AgentName`, `SessionId`,
 // `IssueId`, `ExternalSystem`) are all `type X = string;` aliases
-// today, so plain `string` is the accurate TS shape — keeping them
-// as named imports isn't possible because ts-rs zeroes out the
-// dependency set whenever `type =` is used. The Rust serde tests in
-// this file pin the wire form on the Rust side; the matching TS-side
-// fixture test lives in `hydra-web/packages/web/src/utils/actors.test.ts`.
+// today, so plain `string` is the accurate TS shape. The Rust serde
+// tests in this file pin the wire form on the Rust side; the matching
+// TS-side fixture test lives in
+// `hydra-web/packages/web/src/utils/actors.test.ts`.
 #[cfg_attr(
     feature = "ts",
     ts(
@@ -54,10 +54,10 @@ use std::str::FromStr;
 | { Session: string } \
 | { Issue: string } \
 | { Service: string } \
-| { kind: \"user\"; name: string } \
-| { kind: \"agent\"; name: string } \
-| { kind: \"adhoc\"; session_id: string } \
-| { kind: \"external\"; system: string; username: string } \
+| { User: { name: string } } \
+| { Agent: { name: string } } \
+| { Adhoc: { session_id: string } } \
+| { External: { system: string; username: string } } \
 | string"
     )
 )]
@@ -406,20 +406,21 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
 // -------------------------------------------------------------------------
 // Serde — bespoke impls.
 //
-// Wire format:
-// - Existing variants keep their externally-tagged form:
-//     {"Username": "alice"}, {"Session": "s-..."}, etc.
-//   This preserves backwards compatibility with on-disk JSON blobs and
-//   any TS consumers that still know that shape.
-// - New Phase-1 variants use an internally-tagged form per design §3.3:
-//     {"kind": "user",     "name":       "alice"}
-//     {"kind": "agent",    "name":       "swe"}
-//     {"kind": "adhoc",    "session_id": "s-..."}
-//     {"kind": "external", "system":     "github", "username": "jayantk"}
-// - `Legacy(raw)` round-trips as a bare string. Any payload the
-//   deserializer can't interpret (unknown `kind`, unknown
-//   externally-tagged variant, free string, …) lands in `Legacy(...)`
-//   so pre-migration rows survive a load → save cycle untouched.
+// Wire format (externally-tagged for every typed variant; `Legacy`
+// round-trips as a bare string):
+//   {"Username": "alice"}
+//   {"Session":  "s-..."}
+//   {"Issue":    "i-..."}
+//   {"Service":  "bff"}
+//   {"User":     {"name":       "alice"}}
+//   {"Agent":    {"name":       "swe"}}
+//   {"Adhoc":    {"session_id": "s-..."}}
+//   {"External": {"system":     "github", "username": "jayantk"}}
+//   "raw-legacy-blob"
+//
+// Any payload the deserializer can't interpret (unknown variant tag,
+// free string, …) lands in `Legacy(...)` so pre-migration rows
+// survive a load → save cycle untouched.
 // -------------------------------------------------------------------------
 
 impl Serialize for ActorId {
@@ -449,28 +450,29 @@ impl Serialize for ActorId {
                 m.end()
             }
             ActorId::User(u) => {
-                let mut m = serializer.serialize_map(Some(2))?;
-                m.serialize_entry("kind", "user")?;
-                m.serialize_entry("name", u.as_str())?;
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("User", &serde_json::json!({ "name": u.as_str() }))?;
                 m.end()
             }
             ActorId::Agent(a) => {
-                let mut m = serializer.serialize_map(Some(2))?;
-                m.serialize_entry("kind", "agent")?;
-                m.serialize_entry("name", a.as_str())?;
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Agent", &serde_json::json!({ "name": a.as_str() }))?;
                 m.end()
             }
             ActorId::Adhoc(s) => {
-                let mut m = serializer.serialize_map(Some(2))?;
-                m.serialize_entry("kind", "adhoc")?;
-                m.serialize_entry("session_id", &s.to_string())?;
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry("Adhoc", &serde_json::json!({ "session_id": s.to_string() }))?;
                 m.end()
             }
             ActorId::External { system, username } => {
-                let mut m = serializer.serialize_map(Some(3))?;
-                m.serialize_entry("kind", "external")?;
-                m.serialize_entry("system", system.as_str())?;
-                m.serialize_entry("username", username)?;
+                let mut m = serializer.serialize_map(Some(1))?;
+                m.serialize_entry(
+                    "External",
+                    &serde_json::json!({
+                        "system": system.as_str(),
+                        "username": username,
+                    }),
+                )?;
                 m.end()
             }
             ActorId::Legacy(raw) => serializer.serialize_str(raw),
@@ -493,7 +495,7 @@ impl<'de> Visitor<'de> for ActorIdVisitor {
     type Value = ActorId;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("an ActorId map (typed `kind` form or legacy externally-tagged form), or a string (read-only Legacy fallback)")
+        f.write_str("an ActorId map (externally-tagged), or a string (read-only Legacy fallback)")
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -525,31 +527,18 @@ impl<'de> Visitor<'de> for ActorIdVisitor {
         A: MapAccess<'de>,
     {
         // Collect every key/value entry up-front so we can route by the
-        // `kind` tag (new variants) or by single-entry shape (legacy
-        // externally-tagged variants) without committing to a particular
-        // ordering.
+        // single-entry tag (externally-tagged form) without committing
+        // to a particular ordering.
         let mut entries: Vec<(String, serde_json::Value)> = Vec::new();
         while let Some(key) = map.next_key::<String>()? {
             let value: serde_json::Value = map.next_value()?;
             entries.push((key, value));
         }
 
-        let lookup = |name: &str| -> Option<&serde_json::Value> {
-            entries.iter().find(|(k, _)| k == name).map(|(_, v)| v)
-        };
-
-        // Internally-tagged Phase-1 form.
-        if let Some(kind_value) = lookup("kind") {
-            let kind = kind_value
-                .as_str()
-                .ok_or_else(|| A::Error::custom("'kind' must be a string"))?;
-            return parse_tagged(kind, &entries).map_err(A::Error::custom);
-        }
-
-        // Externally-tagged legacy form: exactly one entry, key = variant name.
+        // Externally-tagged form: exactly one entry, key = variant name.
         if entries.len() == 1 {
             let (tag, value) = &entries[0];
-            if let Some(parsed) = try_parse_legacy_external(tag, value).transpose() {
+            if let Some(parsed) = try_parse_external(tag, value).transpose() {
                 return parsed.map_err(A::Error::custom);
             }
         }
@@ -559,54 +548,15 @@ impl<'de> Visitor<'de> for ActorIdVisitor {
     }
 }
 
-fn parse_tagged(kind: &str, entries: &[(String, serde_json::Value)]) -> Result<ActorId, String> {
-    let lookup = |name: &str| -> Option<&serde_json::Value> {
-        entries.iter().find(|(k, _)| k == name).map(|(_, v)| v)
-    };
-    let str_field = |name: &'static str| -> Result<&str, String> {
-        let value = lookup(name).ok_or_else(|| format!("missing field '{name}'"))?;
-        value
-            .as_str()
+fn try_parse_external(tag: &str, value: &serde_json::Value) -> Result<Option<ActorId>, String> {
+    let str_field = |obj: &serde_json::Value, name: &'static str| -> Result<String, String> {
+        let v = obj
+            .get(name)
+            .ok_or_else(|| format!("missing field '{name}'"))?;
+        v.as_str()
+            .map(|s| s.to_string())
             .ok_or_else(|| format!("field '{name}' must be a string"))
     };
-
-    match kind {
-        "user" => {
-            let name = str_field("name")?;
-            let u = Username::try_new(name).map_err(|e| e.to_string())?;
-            Ok(ActorId::User(u))
-        }
-        "agent" => {
-            let name = str_field("name")?;
-            let a = AgentName::try_new(name).map_err(|e| e.to_string())?;
-            Ok(ActorId::Agent(a))
-        }
-        "adhoc" => {
-            let sid_str = str_field("session_id")?;
-            let sid = SessionId::from_str(sid_str).map_err(|e| e.to_string())?;
-            Ok(ActorId::Adhoc(sid))
-        }
-        "external" => {
-            let system_str = str_field("system")?;
-            let username = str_field("username")?;
-            let sys = ExternalSystem::try_new(system_str).map_err(|e| e.to_string())?;
-            if username.is_empty() {
-                return Err("'username' must not be empty".to_string());
-            }
-            Ok(ActorId::External {
-                system: sys,
-                username: username.to_string(),
-            })
-        }
-        // Unknown kind: fall through to Legacy via the caller.
-        _ => Ok(ActorId::Legacy(entries_to_legacy_string(entries))),
-    }
-}
-
-fn try_parse_legacy_external(
-    tag: &str,
-    value: &serde_json::Value,
-) -> Result<Option<ActorId>, String> {
     match tag {
         "Username" => {
             let s = value
@@ -633,6 +583,33 @@ fn try_parse_legacy_external(
                 .as_str()
                 .ok_or_else(|| "'Service' must be a string".to_string())?;
             Ok(Some(ActorId::Service(s.to_string())))
+        }
+        "User" => {
+            let name = str_field(value, "name")?;
+            let u = Username::try_new(&name).map_err(|e| e.to_string())?;
+            Ok(Some(ActorId::User(u)))
+        }
+        "Agent" => {
+            let name = str_field(value, "name")?;
+            let a = AgentName::try_new(&name).map_err(|e| e.to_string())?;
+            Ok(Some(ActorId::Agent(a)))
+        }
+        "Adhoc" => {
+            let sid_str = str_field(value, "session_id")?;
+            let sid = SessionId::from_str(&sid_str).map_err(|e| e.to_string())?;
+            Ok(Some(ActorId::Adhoc(sid)))
+        }
+        "External" => {
+            let system_str = str_field(value, "system")?;
+            let username = str_field(value, "username")?;
+            let sys = ExternalSystem::try_new(&system_str).map_err(|e| e.to_string())?;
+            if username.is_empty() {
+                return Err("'username' must not be empty".to_string());
+            }
+            Ok(Some(ActorId::External {
+                system: sys,
+                username,
+            }))
         }
         _ => Ok(None),
     }
@@ -1143,7 +1120,7 @@ mod tests {
     fn actor_id_user_serde_round_trip() {
         let id = alice_user();
         let value = serde_json::to_value(&id).unwrap();
-        assert_eq!(value, json!({"kind": "user", "name": "alice"}));
+        assert_eq!(value, json!({"User": {"name": "alice"}}));
         let back: ActorId = serde_json::from_value(value).unwrap();
         assert_eq!(back, id);
     }
@@ -1152,7 +1129,7 @@ mod tests {
     fn actor_id_agent_serde_round_trip() {
         let id = swe_agent();
         let value = serde_json::to_value(&id).unwrap();
-        assert_eq!(value, json!({"kind": "agent", "name": "swe"}));
+        assert_eq!(value, json!({"Agent": {"name": "swe"}}));
         let back: ActorId = serde_json::from_value(value).unwrap();
         assert_eq!(back, id);
     }
@@ -1161,7 +1138,7 @@ mod tests {
     fn actor_id_adhoc_serde_round_trip() {
         let id = adhoc_session();
         let value = serde_json::to_value(&id).unwrap();
-        assert_eq!(value, json!({"kind": "adhoc", "session_id": "s-abcdef"}));
+        assert_eq!(value, json!({"Adhoc": {"session_id": "s-abcdef"}}));
         let back: ActorId = serde_json::from_value(value).unwrap();
         assert_eq!(back, id);
     }
@@ -1172,7 +1149,7 @@ mod tests {
         let value = serde_json::to_value(&id).unwrap();
         assert_eq!(
             value,
-            json!({"kind": "external", "system": "github", "username": "jayantk"})
+            json!({"External": {"system": "github", "username": "jayantk"}})
         );
         let back: ActorId = serde_json::from_value(value).unwrap();
         assert_eq!(back, id);
@@ -1209,9 +1186,9 @@ mod tests {
     }
 
     #[test]
-    fn actor_id_unknown_kind_falls_back_to_legacy() {
-        // Unknown tagged form — captured losslessly as Legacy(raw JSON).
-        let payload = json!({"kind": "robot", "name": "r2"});
+    fn actor_id_unknown_tagged_falls_back_to_legacy() {
+        // Unknown externally-tagged form — captured losslessly as Legacy(raw JSON).
+        let payload = json!({"Robot": {"name": "r2"}});
         let id: ActorId = serde_json::from_value(payload.clone()).unwrap();
         let raw = match &id {
             ActorId::Legacy(raw) => raw.clone(),
@@ -1230,8 +1207,18 @@ mod tests {
 
     #[test]
     fn actor_id_unknown_map_shape_falls_back_to_legacy() {
-        // Multiple keys but no `kind` — neither tagged nor single-entry external.
+        // Multiple keys — not a single-entry externally-tagged map.
         let payload = json!({"a": 1, "b": 2});
+        let id: ActorId = serde_json::from_value(payload).unwrap();
+        assert!(matches!(id, ActorId::Legacy(_)), "got {id:?}");
+    }
+
+    #[test]
+    fn actor_id_old_internally_tagged_form_falls_back_to_legacy() {
+        // The pre-Phase-1-cleanup wire form (`{"kind": "user", ...}`) is
+        // no longer a recognised ActorId shape. It has multiple keys so
+        // it isn't a single-entry external-tag map, and lands in Legacy.
+        let payload = json!({"kind": "user", "name": "alice"});
         let id: ActorId = serde_json::from_value(payload).unwrap();
         assert!(matches!(id, ActorId::Legacy(_)), "got {id:?}");
     }
@@ -1269,11 +1256,11 @@ mod tests {
     }
 
     #[test]
-    fn typed_kind_form_deserializes_to_user_not_username() {
-        // The wire form `{"kind": "user", ...}` is unambiguous: it must
+    fn typed_external_form_deserializes_to_user_not_username() {
+        // The wire form `{"User": {...}}` is unambiguous: it must
         // produce ActorId::User, never ActorId::Username — the legacy
-        // externally-tagged form is `{"Username": ...}`.
-        let id: ActorId = serde_json::from_value(json!({"kind": "user", "name": "alice"})).unwrap();
+        // externally-tagged form is `{"Username": "..."}`.
+        let id: ActorId = serde_json::from_value(json!({"User": {"name": "alice"}})).unwrap();
         assert_eq!(id, alice_user());
         assert!(!matches!(id, ActorId::Username(_)));
     }

@@ -148,8 +148,8 @@ function buildIssueTrees(set: CollectedSet): {
         assignedToUser: !!(
           set.username &&
           child.issue.assignee &&
-          child.issue.assignee.kind === "user" &&
-          child.issue.assignee.name === set.username
+          "User" in child.issue.assignee &&
+          child.issue.assignee.User.name === set.username
         ),
       });
     }

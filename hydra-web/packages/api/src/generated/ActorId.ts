@@ -29,8 +29,8 @@ export type ActorId =
   | { Session: string }
   | { Issue: string }
   | { Service: string }
-  | { kind: "user"; name: string }
-  | { kind: "agent"; name: string }
-  | { kind: "adhoc"; session_id: string }
-  | { kind: "external"; system: string; username: string }
+  | { User: { name: string } }
+  | { Agent: { name: string } }
+  | { Adhoc: { session_id: string } }
+  | { External: { system: string; username: string } }
   | string;

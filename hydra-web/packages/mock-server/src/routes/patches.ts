@@ -35,7 +35,7 @@ function stampReviewAuthors(
   incoming: UpsertReviewRequest[],
   prior: Review[],
 ): Review[] {
-  const defaultAuthor: Principal = { kind: "user", name: DEV_USERNAME };
+  const defaultAuthor: Principal = { User: { name: DEV_USERNAME } };
   return incoming.map((req) => {
     const match = prior.find(
       (existing) =>

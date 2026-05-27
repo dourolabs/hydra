@@ -109,19 +109,19 @@ describe("Issue list filtering", () => {
     store.create(
       "issues",
       "i-1",
-      makeIssue({ assignee: { kind: "user", name: "alice" } }),
+      makeIssue({ assignee: { User: { name: "alice" } } }),
       "issue",
     );
     store.create(
       "issues",
       "i-2",
-      makeIssue({ assignee: { kind: "user", name: "bob" } }),
+      makeIssue({ assignee: { User: { name: "bob" } } }),
       "issue",
     );
     store.create(
       "issues",
       "i-3",
-      makeIssue({ assignee: { kind: "user", name: "alice" } }),
+      makeIssue({ assignee: { User: { name: "alice" } } }),
       "issue",
     );
     const data = await listIssues({ assignee: "users/alice" });
@@ -151,19 +151,19 @@ describe("Issue list filtering", () => {
     store.create(
       "issues",
       "i-1",
-      makeIssue({ status: "open", assignee: { kind: "user", name: "alice" } }),
+      makeIssue({ status: "open", assignee: { User: { name: "alice" } } }),
       "issue",
     );
     store.create(
       "issues",
       "i-2",
-      makeIssue({ status: "closed", assignee: { kind: "user", name: "alice" } }),
+      makeIssue({ status: "closed", assignee: { User: { name: "alice" } } }),
       "issue",
     );
     store.create(
       "issues",
       "i-3",
-      makeIssue({ status: "open", assignee: { kind: "user", name: "bob" } }),
+      makeIssue({ status: "open", assignee: { User: { name: "bob" } } }),
       "issue",
     );
     const data = await listIssues({ status: "open", assignee: "users/alice" });

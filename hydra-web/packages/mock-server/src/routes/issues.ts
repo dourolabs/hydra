@@ -165,11 +165,11 @@ export function createIssueRoutes(store: Store): Hono {
         const p = entry.data.assignee;
         if (!p) return false;
         const path =
-          p.kind === "user"
-            ? `users/${p.name}`
-            : p.kind === "agent"
-              ? `agents/${p.name}`
-              : `external/${p.system}/${p.username}`;
+          "User" in p
+            ? `users/${p.User.name}`
+            : "Agent" in p
+              ? `agents/${p.Agent.name}`
+              : `external/${p.External.system}/${p.External.username}`;
         return path === assignee;
       });
     }

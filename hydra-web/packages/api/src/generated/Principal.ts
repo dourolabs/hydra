@@ -12,19 +12,19 @@ import type { Username } from "./Username";
  * would dangle once the session ends, and `Legacy` exists only as a
  * read-only deserialization fallback.
  *
- * **Wire form** is internally-tagged JSON per design §3.3:
+ * **Wire form** is externally-tagged JSON (ts-rs / serde default):
  *
  * ```jsonc
- * { "kind": "user",     "name":     "alice"   }
- * { "kind": "agent",    "name":     "swe"     }
- * { "kind": "external", "system":   "github", "username": "jayantk" }
+ * { "User":     { "name": "alice"   } }
+ * { "Agent":    { "name": "swe"     } }
+ * { "External": { "system": "github", "username": "jayantk" } }
  * ```
  *
- * We use struct variants (`User { name }`, `Agent { name }`) rather
- * than the more concise tuple form (`User(Username)`) so the
- * internally-tagged wire format falls out of standard serde
- * derivation — `serde(tag = "kind")` is incompatible with tuple
- * variants. ts-rs derives the matching TypeScript shape automatically.
+ * We keep struct variants (`User { name }`, `Agent { name }`) rather
+ * than the more concise tuple form (`User(Username)`); it's a style
+ * choice that produces a TS shape (`{ User: { name: Username } }`)
+ * close to the original internally-tagged form, keeping consumer
+ * migration mechanical.
  *
  * **Path form** (canonical, used in URLs, CLI args, and indexed DB
  * columns): `users/<x>` / `agents/<x>` / `external/<system>/<username>`.
@@ -37,6 +37,6 @@ import type { Username } from "./Username";
  * type takes back ownership of `Principal.ts`.
  */
 export type Principal =
-  | { kind: "user"; name: Username }
-  | { kind: "agent"; name: AgentName }
-  | { kind: "external"; system: ExternalSystem; username: string };
+  | { User: { name: Username } }
+  | { Agent: { name: AgentName } }
+  | { External: { system: ExternalSystem; username: string } };

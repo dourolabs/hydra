@@ -7,12 +7,12 @@
 -- The heuristic mirrors `domain::patches::legacy_author_to_principal`
 -- / `Principal::parse_legacy_assignee` for the syntactic forms the
 -- SQLite JSON1 dialect can express cleanly:
---   * "users/<x>"    with valid <x> -> {"kind":"user", "name":"<x>"}
---   * "agents/<x>"   with valid <x> -> {"kind":"agent","name":"<x>"}
+--   * "users/<x>"    with valid <x> -> {"User": {"name":"<x>"}}
+--   * "agents/<x>"   with valid <x> -> {"Agent":{"name":"<x>"}}
 --   * bare "<x>" matching `agents.name`
---                                   -> {"kind":"agent","name":"<x>"}
+--                                   -> {"Agent":{"name":"<x>"}}
 --   * other bare "<x>" with valid <x>
---                                   -> {"kind":"user", "name":"<x>"}
+--                                   -> {"User": {"name":"<x>"}}
 -- The `"external/<sys>/<x>"` case is left unchanged by the
 -- migration -- no real existing rows are expected to use that form
 -- yet, and the runtime poller (re-)writes typed `External`
@@ -45,8 +45,7 @@ SET reviews = (
                 'false'
             )),
             'author', CASE
-                -- Already typed (Phase 5b shape: object with `kind`):
-                -- leave the value untouched.
+                -- Already typed (Phase 5b shape: object): leave untouched.
                 WHEN json_type(value, '$.author') = 'object'
                     THEN json(json_extract(value, '$.author'))
                 -- `users/<x>` with a syntactically-valid <x>.
@@ -59,8 +58,8 @@ SET reviews = (
                      AND substr(json_extract(value, '$.author'), 7) NOT LIKE '%' || char(10) || '%'
                      AND substr(json_extract(value, '$.author'), 7) NOT LIKE '%' || char(13) || '%'
                     THEN json_object(
-                        'kind', 'user',
-                        'name', substr(json_extract(value, '$.author'), 7)
+                        'User',
+                        json_object('name', substr(json_extract(value, '$.author'), 7))
                     )
                 -- `agents/<x>` with a syntactically-valid <x>.
                 WHEN json_type(value, '$.author') = 'text'
@@ -72,8 +71,8 @@ SET reviews = (
                      AND substr(json_extract(value, '$.author'), 8) NOT LIKE '%' || char(10) || '%'
                      AND substr(json_extract(value, '$.author'), 8) NOT LIKE '%' || char(13) || '%'
                     THEN json_object(
-                        'kind', 'agent',
-                        'name', substr(json_extract(value, '$.author'), 8)
+                        'Agent',
+                        json_object('name', substr(json_extract(value, '$.author'), 8))
                     )
                 -- Bare `<x>` matching a known agent.
                 WHEN json_type(value, '$.author') = 'text'
@@ -88,8 +87,8 @@ SET reviews = (
                          WHERE agents.name = json_extract(value, '$.author')
                      )
                     THEN json_object(
-                        'kind', 'agent',
-                        'name', json_extract(value, '$.author')
+                        'Agent',
+                        json_object('name', json_extract(value, '$.author'))
                     )
                 -- Bare `<username>` (most pre-Phase-5b reviews).
                 WHEN json_type(value, '$.author') = 'text'
@@ -100,8 +99,8 @@ SET reviews = (
                      AND json_extract(value, '$.author') NOT LIKE '%' || char(10) || '%'
                      AND json_extract(value, '$.author') NOT LIKE '%' || char(13) || '%'
                     THEN json_object(
-                        'kind', 'user',
-                        'name', json_extract(value, '$.author')
+                        'User',
+                        json_object('name', json_extract(value, '$.author'))
                     )
                 -- Anything else (empty, embedded whitespace, exotic):
                 -- keep the original raw value. The Rust-side custom

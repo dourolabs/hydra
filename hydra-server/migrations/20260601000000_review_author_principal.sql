@@ -6,12 +6,12 @@
 --
 -- The heuristic mirrors `domain::patches::legacy_author_to_principal`
 -- / `Principal::parse_legacy_assignee`:
---   * "users/<x>"    with valid <x> -> {"kind":"user", "name":"<x>"}
---   * "agents/<x>"   with valid <x> -> {"kind":"agent","name":"<x>"}
+--   * "users/<x>"    with valid <x> -> {"User": {"name":"<x>"}}
+--   * "agents/<x>"   with valid <x> -> {"Agent":{"name":"<x>"}}
 --   * bare "<x>" matching `metis.agents.name`
---                                   -> {"kind":"agent","name":"<x>"}
+--                                   -> {"Agent":{"name":"<x>"}}
 --   * other bare "<x>" with valid <x>
---                                   -> {"kind":"user", "name":"<x>"}
+--                                   -> {"User": {"name":"<x>"}}
 -- "external/<sys>/<x>" is left unchanged; the runtime poller
 -- (re-)writes typed `External` principals on next sync.
 --
@@ -48,8 +48,8 @@ SET reviews = COALESCE(
                          AND length(elem ->> 'author') > 6
                          AND substring(elem ->> 'author' FROM 7) !~ '[/[:space:]]'
                         THEN jsonb_build_object(
-                            'kind', 'user',
-                            'name', substring(elem ->> 'author' FROM 7)
+                            'User',
+                            jsonb_build_object('name', substring(elem ->> 'author' FROM 7))
                         )
                     -- `agents/<x>` with a syntactically-valid <x>.
                     WHEN jsonb_typeof(elem -> 'author') = 'string'
@@ -57,8 +57,8 @@ SET reviews = COALESCE(
                          AND length(elem ->> 'author') > 7
                          AND substring(elem ->> 'author' FROM 8) !~ '[/[:space:]]'
                         THEN jsonb_build_object(
-                            'kind', 'agent',
-                            'name', substring(elem ->> 'author' FROM 8)
+                            'Agent',
+                            jsonb_build_object('name', substring(elem ->> 'author' FROM 8))
                         )
                     -- Bare `<x>` matching a known agent.
                     WHEN jsonb_typeof(elem -> 'author') = 'string'
@@ -69,16 +69,16 @@ SET reviews = COALESCE(
                              WHERE name = elem ->> 'author'
                          )
                         THEN jsonb_build_object(
-                            'kind', 'agent',
-                            'name', elem ->> 'author'
+                            'Agent',
+                            jsonb_build_object('name', elem ->> 'author')
                         )
                     -- Bare `<username>` (most pre-Phase-5b reviews).
                     WHEN jsonb_typeof(elem -> 'author') = 'string'
                          AND (elem ->> 'author') <> ''
                          AND (elem ->> 'author') !~ '[/[:space:]]'
                         THEN jsonb_build_object(
-                            'kind', 'user',
-                            'name', elem ->> 'author'
+                            'User',
+                            jsonb_build_object('name', elem ->> 'author')
                         )
                     -- Anything else: leave as-is; runtime deserializer
                     -- will warn and fall through `parse_legacy_assignee`.

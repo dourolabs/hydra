@@ -318,19 +318,19 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
     expect_assignee_principal(
         pool,
         "i-bare000001",
-        Some(serde_json::json!({"kind": "user", "name": "jayantk"})),
+        Some(serde_json::json!({"User": {"name": "jayantk"}})),
     )
     .await?;
     expect_assignee_principal(
         pool,
         "i-userpfx0001",
-        Some(serde_json::json!({"kind": "user", "name": "jayantk"})),
+        Some(serde_json::json!({"User": {"name": "jayantk"}})),
     )
     .await?;
     expect_assignee_principal(
         pool,
         "i-agentpfx001",
-        Some(serde_json::json!({"kind": "agent", "name": "swe"})),
+        Some(serde_json::json!({"Agent": {"name": "swe"}})),
     )
     .await?;
     // external/<sys>/<x> is intentionally left NULL by the SQL backfill.
@@ -341,20 +341,20 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
     expect_first_review_author(
         pool,
         "p-bareauth01",
-        serde_json::json!({"kind": "user", "name": "jayantk"}),
+        serde_json::json!({"User": {"name": "jayantk"}}),
     )
     .await?;
     expect_first_review_author(
         pool,
         "p-agentauth1",
-        serde_json::json!({"kind": "agent", "name": "swe"}),
+        serde_json::json!({"Agent": {"name": "swe"}}),
     )
     .await?;
     // Already-typed author must pass through the rewrite untouched.
     expect_first_review_author(
         pool,
         "p-typedauth1",
-        serde_json::json!({"kind": "user", "name": "jayantk"}),
+        serde_json::json!({"User": {"name": "jayantk"}}),
     )
     .await?;
 

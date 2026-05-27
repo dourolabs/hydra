@@ -66,7 +66,7 @@ describe("IssueDetailsTab", () => {
     render(
       <IssueDetailsTab
         record={makeRecord({
-          assignee: { kind: "user", name: "bob" },
+          assignee: { User: { name: "bob" } },
           type: "feature",
         })}
         onOpenStatusModal={() => {}}
