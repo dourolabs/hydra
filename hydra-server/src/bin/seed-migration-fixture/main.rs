@@ -130,11 +130,22 @@ async fn run(cli: Cli) -> Result<()> {
 
     // Reset the schema even when --force: the migrator expects to run
     // against an empty `metis`, and partial state from a previous run
-    // would otherwise produce a non-deterministic dump.
-    sqlx::query("DROP SCHEMA IF EXISTS metis CASCADE; CREATE SCHEMA metis;")
-        .execute(&pool)
-        .await
-        .context("reset metis schema")?;
+    // would otherwise produce a non-deterministic dump. Also drop
+    // `public._sqlx_migrations` so a repeat invocation against the same
+    // DSN replays migrations from scratch instead of finding them
+    // "already applied" against the freshly-recreated empty schema.
+    //
+    // `raw_sql` (not `sqlx::query`) is required because Postgres prepared
+    // statements reject multi-command strings ("cannot insert multiple
+    // commands into a prepared statement").
+    sqlx::raw_sql(
+        "DROP SCHEMA IF EXISTS metis CASCADE; \
+         CREATE SCHEMA metis; \
+         DROP TABLE IF EXISTS public._sqlx_migrations;",
+    )
+    .execute(&pool)
+    .await
+    .context("reset metis schema and sqlx migration tracking table")?;
     info!("reset metis schema");
 
     hydra_server::store::postgres_v2::run_migrations(&pool)
@@ -278,13 +289,25 @@ fn quote_ident(ident: &str) -> String {
 }
 
 /// Shell out to `pg_dump --data-only --inserts --column-inserts
-/// --schema=metis <dsn>` and return stdout.
+/// --schema=metis <dsn>` and return stdout with psql meta-commands stripped.
+///
+/// pg_dump 16.14+ wraps its output in `\restrict <token>` / `\unrestrict
+/// <token>` psql meta-commands; loading the fixture back through
+/// `sqlx::raw_sql` (as the migration_roundtrip test does) rejects those
+/// lines with a syntax error, so drop them here. The tokens are random
+/// per invocation, so stripping them also keeps the fixture diff stable.
 fn run_pg_dump(dsn: &str) -> Result<String> {
+    // `--on-conflict-do-nothing` makes the dumped INSERTs idempotent against
+    // rows the migrations themselves seed (e.g. `metis.payload_schema_versions`).
+    // The migration_roundtrip test applies migrations first and then loads this
+    // fixture, so a plain INSERT for those rows would collide on the primary
+    // key.
     let out = Command::new("pg_dump")
         .args([
             "--data-only",
             "--inserts",
             "--column-inserts",
+            "--on-conflict-do-nothing",
             "--schema=metis",
             dsn,
         ])
@@ -297,7 +320,20 @@ fn run_pg_dump(dsn: &str) -> Result<String> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    String::from_utf8(out.stdout).context("pg_dump output not utf-8")
+    let raw = String::from_utf8(out.stdout).context("pg_dump output not utf-8")?;
+    Ok(strip_pg_dump_restrict_tokens(&raw))
+}
+
+fn strip_pg_dump_restrict_tokens(dump: &str) -> String {
+    let mut out = String::with_capacity(dump.len());
+    for line in dump.lines() {
+        if line.starts_with("\\restrict ") || line.starts_with("\\unrestrict ") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Stable sha256 of the migrations tree: sort entries by filename, then
