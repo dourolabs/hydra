@@ -134,9 +134,22 @@ hydra graph log 'i-root | scope' --since -7d --limit 50
 
 ## Output format
 
-`hydra graph` honors the global `--output-format` flag. Pretty output
-renders a table; `jsonl` emits one record per line (with `kind` and `id`
-fields plus the verbosity-projected view merged in).
+`hydra graph` honors the global `--output-format` flag. For `search`,
+pretty output emits a block per record — a `{kind} {id}` header line
+followed by indented `key: value` lines for the verbosity-projected view
+fields, with a blank line between records (heterogeneous result kinds
+render side-by-side; verbosity controls what shows up in each body).
+`jsonl` emits one record per line as an envelope of the form
+`{"id": "...", "kind": "...", "object": {...}}`, where `object` is the
+verbosity-projected view for the node's kind. `id` and `kind` are not
+duplicated inside `object`. Empty result sets print `No nodes found.`
+in pretty mode and emit nothing in `jsonl`.
+
+`diff` and `log` pretty output is unchanged: each record begins with a
+header line that carries kind, id, and version (plus event/change-class
+markers), followed by indented view fields or before/after field diffs.
+Their bodies are already driven by `--verbosity` via the per-kind
+`view_lN` projection.
 
 ## See also
 

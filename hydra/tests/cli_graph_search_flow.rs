@@ -84,6 +84,21 @@ async fn graph_search_bare_id_hydrates_seed_only() -> Result<()> {
     );
     assert_eq!(records[0]["id"].as_str(), Some(parent.as_ref()));
     assert_eq!(records[0]["kind"].as_str(), Some("issue"));
+    assert!(
+        records[0]["object"].is_object(),
+        "envelope must wrap the view under object: {:?}",
+        records[0],
+    );
+    assert!(
+        records[0]["object"]["title"].is_string(),
+        "title moves under object: {:?}",
+        records[0],
+    );
+    assert!(
+        records[0].get("title").is_none(),
+        "id/kind stay at top level; view fields do not: {:?}",
+        records[0],
+    );
     Ok(())
 }
 
@@ -126,14 +141,23 @@ async fn graph_search_neighbors_exclusive_matches_object_semantics() -> Result<(
     );
     for record in &records {
         assert_eq!(record["kind"].as_str(), Some("issue"));
-        assert!(record.get("title").is_some(), "L1 missing title: {record}");
         assert!(
-            record.get("status").is_some(),
+            record["object"].is_object(),
+            "object envelope should be an object: {record}",
+        );
+        let object = &record["object"];
+        assert!(object.get("title").is_some(), "L1 missing title: {record}");
+        assert!(
+            object.get("status").is_some(),
             "L1 missing status: {record}"
         );
         assert!(
-            record.get("dependencies").is_none(),
+            object.get("dependencies").is_none(),
             "L3-only field should not appear at L1: {record}",
+        );
+        assert!(
+            record.get("title").is_none(),
+            "title must live under object, not at top level: {record}",
         );
     }
     Ok(())
@@ -499,11 +523,16 @@ async fn graph_search_verbosity_three_emits_full_struct() -> Result<()> {
         .expect("parent record present at L3");
 
     assert!(
-        parent_record.get("description").is_some(),
+        parent_record["object"].is_object(),
+        "object envelope should be an object: {parent_record}",
+    );
+    let object = &parent_record["object"];
+    assert!(
+        object.get("description").is_some(),
         "L3 should include full Issue.description: {parent_record}",
     );
     assert!(
-        parent_record.get("creator").is_some(),
+        object.get("creator").is_some(),
         "L3 should include creator: {parent_record}",
     );
     Ok(())

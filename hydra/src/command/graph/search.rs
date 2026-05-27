@@ -24,6 +24,7 @@ use hydra_common::HydraId;
 use serde_json::Value;
 
 use crate::client::HydraClientInterface;
+use crate::command::graph::diff::write_view_fields;
 use crate::command::graph::dispatch::{hydrate_by_id, HydratedNode};
 use crate::command::graph::query::parse;
 use crate::command::graph::resolver::{resolve, Resolved};
@@ -153,27 +154,11 @@ fn render_jsonl(
 }
 
 fn json_record(node: &HydratedNode, level: VerbosityLevel) -> Value {
-    let mut obj = serde_json::Map::new();
-    obj.insert(
-        "kind".to_string(),
-        Value::String(node.kind().as_str().to_string()),
-    );
-    obj.insert(
-        "id".to_string(),
-        Value::String(node.id().as_ref().to_string()),
-    );
-    let view = node.render(level);
-    if let Value::Object(fields) = view {
-        for (k, v) in fields {
-            obj.insert(k, v);
-        }
-    } else {
-        // view_lN returns an object today; if a kind ever returns a non-object
-        // (e.g. an array), preserve it under a "view" key so callers still get
-        // structured data.
-        obj.insert("view".to_string(), view);
-    }
-    Value::Object(obj)
+    serde_json::json!({
+        "id": node.id().as_ref(),
+        "kind": node.kind().as_str(),
+        "object": node.render(level),
+    })
 }
 
 fn render_pretty(
@@ -187,57 +172,188 @@ fn render_pretty(
         return Ok(());
     }
 
-    let rows: Vec<(String, &'static str, String, String)> = nodes
-        .iter()
-        .map(|node| {
-            let id = node.id().as_ref().to_string();
-            let kind = node.kind().as_str();
-            let view = node.render(level);
-            let title = view
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let status = view
-                .get("status")
-                .map(|v| match v {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                })
-                .unwrap_or_else(|| {
-                    // Documents have no status — fall back to path if present.
-                    view.get("path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string()
-                });
-            (id, kind, title, status)
-        })
-        .collect();
-
-    let id_w = rows.iter().map(|r| r.0.len()).max().unwrap_or(2).max(2);
-    let kind_w = rows.iter().map(|r| r.1.len()).max().unwrap_or(4).max(4);
-    let title_w = rows.iter().map(|r| r.2.len()).max().unwrap_or(5).max(5);
-
-    writeln!(
-        writer,
-        "{:<id_w$}  {:<kind_w$}  {:<title_w$}  STATUS",
-        "ID", "KIND", "TITLE",
-    )?;
-    writeln!(
-        writer,
-        "{:<id_w$}  {:<kind_w$}  {:<title_w$}  {}",
-        "-".repeat(id_w),
-        "-".repeat(kind_w),
-        "-".repeat(title_w),
-        "-".repeat(6),
-    )?;
-    for (id, kind, title, status) in &rows {
-        writeln!(
-            writer,
-            "{id:<id_w$}  {kind:<kind_w$}  {title:<title_w$}  {status}"
-        )?;
+    for (index, node) in nodes.iter().enumerate() {
+        writeln!(writer, "{} {}", node.kind().as_str(), node.id().as_ref())?;
+        let view = node.render(level);
+        write_view_fields(writer, &view)?;
+        if index + 1 < nodes.len() {
+            writeln!(writer)?;
+        }
     }
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, TimeZone, Utc};
+    use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use hydra_common::api::v1::patches::{Patch, PatchStatus, PatchVersionRecord};
+    use hydra_common::issues::IssueVersionRecord;
+    use hydra_common::users::Username;
+    use hydra_common::{IssueId, PatchId};
+
+    fn ts() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap()
+    }
+
+    fn sample_issue_node(id: &str, title: &str) -> HydratedNode {
+        let issue_id: IssueId = id.parse().unwrap();
+        let issue = Issue::new(
+            IssueType::Task,
+            title.to_string(),
+            "long-form description body".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            Some(SessionSettings::default()),
+            Vec::new(),
+            Vec::new(),
+            false,
+            None,
+            None,
+            None,
+        );
+        let record = IssueVersionRecord::new(issue_id, 1, ts(), issue, None, ts(), Vec::new());
+        HydratedNode::Issue(Box::new(record))
+    }
+
+    fn sample_patch_node(id: &str, title: &str) -> HydratedNode {
+        let patch_id: PatchId = id.parse().unwrap();
+        let patch = Patch::new(
+            title.to_string(),
+            "patch description".to_string(),
+            String::new(),
+            PatchStatus::Open,
+            false,
+            Username::from("creator"),
+            Vec::new(),
+            "org/repo".parse().unwrap(),
+            None,
+            false,
+            Some("feature/fix".to_string()),
+            None,
+            Some("main".to_string()),
+        );
+        let record = PatchVersionRecord::new(patch_id, 1, ts(), patch, None, ts(), Vec::new());
+        HydratedNode::Patch(record)
+    }
+
+    #[test]
+    fn render_jsonl_uses_envelope_with_id_kind_object() {
+        let nodes = vec![sample_issue_node("i-aaaaaa", "an issue")];
+        let mut buf = Vec::new();
+        render_jsonl(&nodes, VerbosityLevel::L1, &mut buf).unwrap();
+        let line = String::from_utf8(buf).unwrap();
+        let value: Value = serde_json::from_str(line.trim()).expect("valid jsonl");
+        assert_eq!(value["id"], "i-aaaaaa");
+        assert_eq!(value["kind"], "issue");
+        assert!(
+            value["object"].is_object(),
+            "object envelope should be an object: {value}",
+        );
+        assert_eq!(value["object"]["title"], "an issue");
+        assert!(
+            value.get("title").is_none(),
+            "title must live under object, not at top level: {value}",
+        );
+        assert!(
+            value["object"].get("id").is_none(),
+            "id must not be duplicated inside object: {value}",
+        );
+        assert!(
+            value["object"].get("kind").is_none(),
+            "kind must not be duplicated inside object: {value}",
+        );
+    }
+
+    #[test]
+    fn render_jsonl_envelope_carries_verbosity_projection_at_l3() {
+        let nodes = vec![sample_issue_node("i-aaaaaa", "an issue")];
+        let mut buf = Vec::new();
+        render_jsonl(&nodes, VerbosityLevel::L3, &mut buf).unwrap();
+        let value: Value =
+            serde_json::from_str(String::from_utf8(buf).unwrap().trim()).expect("valid jsonl");
+        let object = &value["object"];
+        assert!(
+            object.get("description").is_some(),
+            "L3 should include description under object: {value}",
+        );
+        assert!(
+            object.get("creator").is_some(),
+            "L3 should include creator under object: {value}",
+        );
+    }
+
+    #[test]
+    fn render_pretty_single_kind_l1_emits_per_record_block() {
+        let nodes = vec![sample_issue_node("i-aaaaaa", "first issue")];
+        let mut buf = Vec::new();
+        render_pretty(&nodes, VerbosityLevel::L1, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.starts_with("issue i-aaaaaa\n"), "got: {out}");
+        assert!(out.contains("  title: \"first issue\""), "got: {out}");
+        assert!(out.contains("  status: \"open\""), "got: {out}");
+        assert!(
+            !out.contains("description"),
+            "L1 should not include description: {out}",
+        );
+        assert!(!out.contains("ID  "), "no table header expected: {out}");
+    }
+
+    #[test]
+    fn render_pretty_single_kind_l3_includes_l3_only_fields() {
+        let nodes = vec![sample_issue_node("i-aaaaaa", "first issue")];
+        let mut buf = Vec::new();
+        render_pretty(&nodes, VerbosityLevel::L3, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-aaaaaa\n"), "got: {out}");
+        assert!(
+            out.contains("  description:"),
+            "L3 missing description: {out}"
+        );
+        assert!(out.contains("  creator:"), "L3 missing creator: {out}");
+    }
+
+    #[test]
+    fn render_pretty_mixed_kinds_l1_emits_blank_line_between_blocks() {
+        let nodes = vec![
+            sample_issue_node("i-aaaaaa", "issue title"),
+            sample_patch_node("p-bbbbbb", "patch title"),
+        ];
+        let mut buf = Vec::new();
+        render_pretty(&nodes, VerbosityLevel::L1, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("issue i-aaaaaa\n"), "got: {out}");
+        assert!(out.contains("patch p-bbbbbb\n"), "got: {out}");
+        assert!(
+            out.contains("  title: \"issue title\""),
+            "issue title missing: {out}",
+        );
+        assert!(
+            out.contains("  title: \"patch title\""),
+            "patch title missing: {out}",
+        );
+        let issue_pos = out.find("issue i-aaaaaa").unwrap();
+        let patch_pos = out.find("patch p-bbbbbb").unwrap();
+        assert!(issue_pos < patch_pos, "ordering mismatch: {out}");
+        let between = &out[issue_pos..patch_pos];
+        assert!(
+            between.contains("\n\n"),
+            "expected blank line between records: {out}",
+        );
+        assert!(
+            !out.ends_with("\n\n"),
+            "trailing blank line should be omitted: {out:?}",
+        );
+    }
+
+    #[test]
+    fn render_pretty_empty_set_prints_placeholder() {
+        let mut buf = Vec::new();
+        render_pretty(&[], VerbosityLevel::L1, &mut buf).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "No nodes found.\n");
+    }
 }
