@@ -2,11 +2,10 @@
 //! user/assistant message rows by "active session at write time" and write
 //! them to `session_events` (sqlite) / `metis.session_events_v2` (postgres).
 //!
-//! ## Partitioning rule (per §3.5 step 3 of
-//! `designs/sessions-orthogonality-redesign.md`)
+//! ## Partitioning rule
 //!
-//! For each conversation, walk the linked sessions in `creation_time` order.
-//! Each session owns the half-open window
+//! For each conversation, walk the linked sessions in `(creation_time ASC,
+//! id ASC)` order. Each session owns the half-open window
 //!
 //! ```text
 //! [creation_time,  min(suspend_or_closed_ts, next_session.creation_time))
@@ -19,25 +18,22 @@
 //!   * `next_session.creation_time` comes from the next session in the
 //!     creation-time-ordered chain (or `+∞` if this is the last session).
 //!
-//! Each `user_message` / `assistant_message` row is assigned to the session
-//! whose window contains the row's `created_at`. We skip `suspending`,
-//! `resumed`, and `closed` rows (design §3.5 step 5 leaves them on
-//! `conversation_events*`).
+//! We skip `suspending`, `resumed`, and `closed` rows (design §3.5 step 5
+//! leaves them on `conversation_events*`). For each remaining `user_message`
+//! / `assistant_message` row, the assignment is tolerant of the two real-DB
+//! inconsistencies we have seen in practice:
 //!
-//! ## Edge case — last session in chain is suspended but never resumed
+//!   * **before all sessions** → first session.
+//!   * **inside a session's window** → that session.
+//!   * **in a gap between session N and session N+1** → session N+1
+//!     (the *subsequent* session — NOT N).
+//!   * **after the last session ends** → the last session.
 //!
-//! The literal "earlier of" rule above would cut the last session's window
-//! at its `Suspending` timestamp, leaving any post-suspend message rows
-//! unassigned. Such rows shouldn't exist in practice (a worker doesn't
-//! emit messages after suspending), but the issue spec requires the tool
-//! to "not panic". So we override: when the LAST session in the chain has
-//! a `Suspending` / `Closed` event AND no successor session, we extend its
-//! window to `+∞` so any stray rows still land somewhere instead of failing.
-//!
-//! Other gap scenarios (e.g., middle-session `Suspending` at `T1`,
-//! next-session creation at `T2 > T1`, with a stray row in `[T1, T2)`)
-//! fail loud — per the SWE note, "prefer failing-loud if a row can't be
-//! assigned (e.g., no session active in the window) over guessing."
+//! A conversation that has message events but no linked sessions at all is
+//! NOT a fatal condition: the rows are silently dropped and a `warn!` log
+//! records the conversation id and dropped count so operators can spot the
+//! orphan in retrospect. Re-running the migration on a fixed source is still
+//! a no-op because the per-session skip rule (below) is unchanged.
 //!
 //! ## Idempotency
 //!
@@ -133,17 +129,13 @@ struct Window {
 /// Compute per-session windows per the partitioning rule documented at the
 /// top of this module. `sessions` MUST be sorted by `(creation_time ASC,
 /// id ASC)` — we rely on the order to break sub-millisecond ties between
-/// overlapping sessions (issue spec edge case 3).
+/// overlapping sessions, and the fallback rule in [`assign_event`] depends
+/// on `windows[i].start` being non-decreasing in `i`.
 fn build_windows(sessions: &[SessionInChain]) -> Vec<Window> {
     let mut windows = Vec::with_capacity(sessions.len());
     for (i, s) in sessions.iter().enumerate() {
         let next_creation = sessions.get(i + 1).map(|n| n.creation_time);
-        let is_last = i + 1 == sessions.len();
         let end = match (s.suspend_or_close_ts, next_creation) {
-            // Edge case 4: last session is suspended-and-never-resumed.
-            // Extend the window to +∞ so stray post-suspend rows still
-            // land on the suspended session instead of failing loud.
-            (Some(_), None) if is_last => None,
             (Some(suspend), Some(next)) => Some(suspend.min(next)),
             (Some(suspend), None) => Some(suspend),
             (None, Some(next)) => Some(next),
@@ -158,13 +150,33 @@ fn build_windows(sessions: &[SessionInChain]) -> Vec<Window> {
     windows
 }
 
-/// Assign `event_ts` to the first window that contains it, or `None` if
-/// no window matches.
-fn assign_to_window(windows: &[Window], event_ts: DateTime<Utc>) -> Option<&str> {
-    windows
+/// Pick the session that should own `event_ts` per the partitioning rule:
+/// inside a window → that session; before all sessions → first session; in
+/// a gap between sessions N and N+1 → session N+1; past the last session's
+/// end → last session. Panics if `windows` is empty — callers must check
+/// `sessions.is_empty()` ahead of this and short-circuit.
+fn assign_event(windows: &[Window], event_ts: DateTime<Utc>) -> &str {
+    debug_assert!(!windows.is_empty(), "assign_event called with no windows");
+    if let Some(w) = windows
         .iter()
         .find(|w| w.start <= event_ts && w.end.is_none_or(|e| event_ts < e))
-        .map(|w| w.session_id.as_str())
+    {
+        return w.session_id.as_str();
+    }
+    // Not inside any window: either before the first, in a gap, or past the
+    // last window's finite end. `windows` is sorted by start, so the first
+    // window whose start exceeds `event_ts` is either windows[0] (before
+    // everything) or the subsequent session of a gap.
+    if let Some(w) = windows.iter().find(|w| w.start > event_ts) {
+        return w.session_id.as_str();
+    }
+    // All starts are <= event_ts and no window contains it: every window has
+    // a finite `end` and event_ts is past all of them. Land on the last.
+    windows
+        .last()
+        .expect("debug_assert above guarantees non-empty")
+        .session_id
+        .as_str()
 }
 
 /// One message row to migrate. Owned-string form to keep the partitioning
@@ -216,29 +228,27 @@ mod sqlite {
 
     async fn process_conversation(pool: &SqlitePool, conv_id: &str) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
+        let rows = load_message_rows(pool, conv_id).await?;
+
         if sessions.is_empty() {
-            // No linked sessions but messages exist — fail loud, don't
-            // silently drop history.
-            anyhow::bail!(
-                "conversation {conv_id} has message events in conversation_events but no \
-                 linked session in tasks_v2 — cannot partition; investigate manually"
-            );
+            // No linked sessions: drop the message events rather than fail
+            // the migration. Real production data has orphan conversations
+            // (no row in tasks_v2 at all) and blocking startup on them is
+            // worse than losing the history.
+            if !rows.is_empty() {
+                tracing::warn!(
+                    conversation_id = %conv_id,
+                    dropped = rows.len(),
+                    "events migration: conversation has no linked sessions; dropping message events",
+                );
+            }
+            return Ok(());
         }
         let windows = build_windows(&sessions);
 
-        let rows = load_message_rows(pool, conv_id).await?;
-
         let mut per_session: HashMap<String, Vec<&MessageRowSqlite>> = HashMap::new();
         for row in &rows {
-            let target = assign_to_window(&windows, row.created_at).ok_or_else(|| {
-                anyhow!(
-                    "conversation {conv_id} version {ver} (created_at {ts}) falls outside every \
-                     linked session's window — refuse to guess; fix the data or extend the \
-                     partitioning rule",
-                    ver = row.source_version_number,
-                    ts = row.created_at,
-                )
-            })?;
+            let target = assign_event(&windows, row.created_at);
             per_session.entry(target.to_string()).or_default().push(row);
         }
 
@@ -434,7 +444,7 @@ mod sqlite {
 #[cfg(feature = "postgres")]
 mod postgres {
     use super::*;
-    use anyhow::{Context, anyhow};
+    use anyhow::Context;
     use sqlx::{PgPool, Row};
 
     pub async fn run(pool: &PgPool) -> Result<()> {
@@ -455,28 +465,23 @@ mod postgres {
 
     async fn process_conversation(pool: &PgPool, conv_id: &str) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
+        let rows = load_message_rows(pool, conv_id).await?;
+
         if sessions.is_empty() {
-            anyhow::bail!(
-                "conversation {conv_id} has message events in metis.conversation_events_v2 \
-                 but no linked session in metis.tasks_v2 — cannot partition; investigate \
-                 manually"
-            );
+            if !rows.is_empty() {
+                tracing::warn!(
+                    conversation_id = %conv_id,
+                    dropped = rows.len(),
+                    "events migration: conversation has no linked sessions; dropping message events",
+                );
+            }
+            return Ok(());
         }
         let windows = build_windows(&sessions);
 
-        let rows = load_message_rows(pool, conv_id).await?;
-
         let mut per_session: HashMap<String, Vec<&MessageRowPostgres>> = HashMap::new();
         for row in &rows {
-            let target = assign_to_window(&windows, row.created_at).ok_or_else(|| {
-                anyhow!(
-                    "conversation {conv_id} version {ver} (created_at {ts}) falls outside every \
-                     linked session's window — refuse to guess; fix the data or extend the \
-                     partitioning rule",
-                    ver = row.source_version_number,
-                    ts = row.created_at,
-                )
-            })?;
+            let target = assign_event(&windows, row.created_at);
             per_session.entry(target.to_string()).or_default().push(row);
         }
 
@@ -1070,9 +1075,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_loud_when_row_falls_in_gap_between_sessions() {
+    async fn gap_event_assigned_to_subsequent_session() {
         // A suspends at t0+5m. B doesn't start until t0+10m.
-        // A message row at t0+7m falls in [5m, 10m) — no session active.
+        // A message row at t0+7m falls in the [5m, 10m) gap — under the
+        // tolerant rule it lands on B (the subsequent session), not A.
         let pool = fresh_pool().await;
         let conv = ConversationId::new();
         let sess_a = SessionId::new();
@@ -1094,16 +1100,21 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let err = run(&backend).await.unwrap_err();
-        let msg = format!("{err:#}");
+        run(&backend).await.unwrap();
+        let a_rows = read_session_events(&pool, &sess_a).await;
+        let b_rows = read_session_events(&pool, &sess_b).await;
         assert!(
-            msg.contains("falls outside every linked session's window"),
-            "expected fail-loud error, got: {msg}"
+            a_rows.is_empty(),
+            "A must not own the gap event: {a_rows:?}"
         );
+        assert_eq!(b_rows.len(), 1, "B owns the gap event: {b_rows:?}");
+        assert_eq!(b_rows[0].1, "user_message");
     }
 
     #[tokio::test]
-    async fn missing_linked_session_for_message_events_fails_loud() {
+    async fn missing_linked_session_drops_events_silently() {
+        // A conversation with message events but no tasks_v2 rows. The
+        // migration must succeed (not bail), leaving session_events empty.
         let pool = fresh_pool().await;
         let conv = ConversationId::new();
         insert_conversation(&pool, &conv, "henry").await;
@@ -1119,11 +1130,48 @@ mod tests {
         .await;
 
         let backend = Backend::Sqlite(pool.clone());
-        let err = run(&backend).await.unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("no linked session in tasks_v2"),
-            "expected linked-session fail-loud error, got: {msg}"
+        run(&backend).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "no sessions exist for this conversation; no rows should be written",
         );
+    }
+
+    #[tokio::test]
+    async fn event_before_all_sessions_assigned_to_first_session() {
+        // Sessions A (created t0+10m) and B (created t0+20m). A message at
+        // t0+5m predates both. Under the tolerant rule it lands on A (the
+        // first session), not on a "no window" failure.
+        let pool = fresh_pool().await;
+        let conv = ConversationId::new();
+        let sess_a = SessionId::new();
+        let sess_b = SessionId::new();
+        let t0 = Utc::now() - Duration::hours(1);
+        insert_conversation(&pool, &conv, "ivy").await;
+        insert_session(&pool, &sess_a, &conv, "ivy", t0 + Duration::minutes(10)).await;
+        insert_session(&pool, &sess_b, &conv, "ivy", t0 + Duration::minutes(20)).await;
+        insert_message_event(
+            &pool,
+            &conv,
+            1,
+            "user_message",
+            "early-bird",
+            t0 + Duration::minutes(5),
+            t0 + Duration::minutes(5),
+        )
+        .await;
+
+        let backend = Backend::Sqlite(pool.clone());
+        run(&backend).await.unwrap();
+        let a_rows = read_session_events(&pool, &sess_a).await;
+        let b_rows = read_session_events(&pool, &sess_b).await;
+        assert_eq!(a_rows.len(), 1, "A owns the pre-A event: {a_rows:?}");
+        assert!(b_rows.is_empty(), "B must not own anything: {b_rows:?}");
+        assert_eq!(a_rows[0].1, "user_message");
     }
 }

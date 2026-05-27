@@ -88,6 +88,9 @@ async fn migration_roundtrip() -> Result<()> {
 
     assert_schema_invariants(&pool).await?;
     assert_data_shape_invariants(&pool).await?;
+    assert_events_migration_edge_cases(&pool)
+        .await
+        .context("events migration edge-case partitioning assertions")?;
     assert_store_level_smoke(&pool)
         .await
         .context("§3.3 store / domain-level smoke")?;
@@ -434,6 +437,68 @@ async fn expect_first_review_author(
         .with_context(|| format!("decode reviews[0].author JSON for {patch_id}"))?;
     if got != expected_author {
         bail!("patch {patch_id}: expected reviews[0].author={expected_author}; got {got}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Events migration partitioning edge cases.
+//
+// The baseline fixture seeds four conversations that exercise the tolerant
+// assignment rules added to `src/store/migrations/events.rs`:
+//
+//   * `c-convnoses`  — conversation has message events but zero linked
+//                      sessions: migration must NOT bail; events are dropped.
+//   * `c-convbefore` — single session whose creation_time is AFTER the only
+//                      message event; event lands on the first session.
+//   * `c-convgap`    — two sessions with a gap; event in the gap lands on
+//                      the subsequent session.
+//   * `c-convafter`  — two sessions where the last suspends; event past the
+//                      suspend timestamp lands on the last session.
+// ---------------------------------------------------------------------------
+
+async fn assert_events_migration_edge_cases(pool: &PgPool) -> Result<()> {
+    // 1. c-convnoses: no linked sessions, so no session_events for it.
+    //    The real check is that the migration ran to completion above.
+    let row = sqlx::query(
+        "SELECT COUNT(*) FROM metis.session_events_v2 se \
+         JOIN metis.tasks_v2 t ON t.id = se.session_id \
+         WHERE t.conversation_id = 'c-convnoses'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count session_events for c-convnoses")?;
+    let count: i64 = row.get(0);
+    if count != 0 {
+        bail!("expected 0 session_events for c-convnoses (no sessions exist); got {count}");
+    }
+
+    // 2. c-convbefore: the single message event predating s-beforeone's
+    //    creation_time must still land on s-beforeone.
+    expect_session_event_count(pool, "s-beforeone", 1).await?;
+
+    // 3. c-convgap: the gap event must land on s-gaptwo (subsequent
+    //    session), NOT s-gapone.
+    expect_session_event_count(pool, "s-gapone", 0).await?;
+    expect_session_event_count(pool, "s-gaptwo", 1).await?;
+
+    // 4. c-convafter: the post-suspend event on the last session lands on
+    //    s-aftertwo. s-afterone owns nothing (no events in its window).
+    expect_session_event_count(pool, "s-afterone", 0).await?;
+    expect_session_event_count(pool, "s-aftertwo", 1).await?;
+
+    Ok(())
+}
+
+async fn expect_session_event_count(pool: &PgPool, session_id: &str, expected: i64) -> Result<()> {
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.session_events_v2 WHERE session_id = $1")
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("count session_events_v2 for {session_id}"))?;
+    let got: i64 = row.get(0);
+    if got != expected {
+        bail!("session {session_id}: expected {expected} session_events; got {got}");
     }
     Ok(())
 }

@@ -198,3 +198,104 @@ VALUES
 INSERT INTO metis.object_relationships (source_id, source_kind, target_id, target_kind, rel_type)
 VALUES
     ('i-bareasgn', 'issue', 'i-userpath', 'issue', 'refers_to');
+
+--------------------------------------------------------------------------------
+-- migrate-events partitioning edge cases. These exercise the tolerant
+-- assignment rules added in `events.rs`:
+--
+--   * `c-convnoses`  — conversation has message events but no linked
+--                      sessions in tasks_v2. Migration must NOT bail; the
+--                      message rows are dropped with a WARN log.
+--   * `c-convbefore` — single session with an event whose `created_at`
+--                      predates the session's `creation_time`. The event
+--                      lands on the first (and only) session.
+--   * `c-convgap`    — two sessions with a gap between A's suspend and B's
+--                      creation; an event in that gap lands on B (the
+--                      subsequent session), NOT A.
+--   * `c-convafter`  — two sessions where the LAST one is suspended; an
+--                      event past the suspend timestamp lands on the last
+--                      session.
+--
+-- Matching assertions live in `assert_events_migration_edge_cases` in
+-- `tests/migration_roundtrip.rs`. SessionIds use all-alphabetic suffixes
+-- so they parse through the Rust `SessionId` newtype if any future smoke
+-- assertion wants to read them back via the Store API.
+--------------------------------------------------------------------------------
+
+-- 1. No-sessions conversation. Parent row in conversations_v2 keeps the FK
+--    alive; the message event is what the migration must tolerate.
+INSERT INTO metis.conversations_v2 (id, version_number, creator)
+VALUES ('c-convnoses', 1, 'jayantk');
+INSERT INTO metis.conversation_events_v2 (conversation_id, version_number, event_type, event_data, created_at)
+VALUES
+    ('c-convnoses', 1, 'user_message',
+     '{"type":"user_message","content":"orphan hello","timestamp":"2026-05-10T15:00:00Z"}'::jsonb,
+     '2026-05-10T15:00:00Z');
+
+-- 2. Events-before-all-sessions: the single session s-beforeone starts at
+--    16:00; the message at 15:30 falls before its window and must still
+--    land on s-beforeone.
+INSERT INTO metis.conversations_v2 (id, version_number, creator)
+VALUES ('c-convbefore', 1, 'jayantk');
+INSERT INTO metis.tasks_v2 (id, version_number, prompt, context, interactive, conversation_id, conversation_resume_from, creation_time)
+VALUES
+    ('s-beforeone', 1, 'chat',
+     '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
+     true,  'c-convbefore', NULL, '2026-05-10T16:00:00Z');
+INSERT INTO metis.conversation_events_v2 (conversation_id, version_number, event_type, event_data, created_at)
+VALUES
+    ('c-convbefore', 1, 'user_message',
+     '{"type":"user_message","content":"early bird","timestamp":"2026-05-10T15:30:00Z"}'::jsonb,
+     '2026-05-10T15:30:00Z');
+
+-- 3. Gap-between-sessions: s-gapone created at 17:00 then suspended at
+--    17:30; s-gaptwo created at 18:00; the event at 17:45 sits in the
+--    [17:30, 18:00) gap and must land on s-gaptwo (the subsequent session).
+--    The `actor` JSON shape mirrors what
+--    `serde_json::to_string(&ActorRef::Authenticated { actor_id:
+--     ActorId::Session(SessionId("s-gapone")), session_id: None })`
+--    produces (externally-tagged Principal/ActorRef wire shape).
+INSERT INTO metis.conversations_v2 (id, version_number, creator)
+VALUES ('c-convgap', 1, 'jayantk');
+INSERT INTO metis.tasks_v2 (id, version_number, prompt, context, interactive, conversation_id, conversation_resume_from, creation_time)
+VALUES
+    ('s-gapone', 1, 'chat',
+     '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
+     true,  'c-convgap', NULL, '2026-05-10T17:00:00Z'),
+    ('s-gaptwo', 1, 'chat resumed',
+     '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
+     true,  'c-convgap', 1,    '2026-05-10T18:00:00Z');
+INSERT INTO metis.conversation_events_v2 (conversation_id, version_number, event_type, event_data, actor, created_at)
+VALUES
+    ('c-convgap', 1, 'suspending',
+     '{"type":"suspending","reason":"test","timestamp":"2026-05-10T17:30:00Z"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Session":"s-gapone"}}}'::jsonb,
+     '2026-05-10T17:30:00Z'),
+    ('c-convgap', 2, 'user_message',
+     '{"type":"user_message","content":"in the gap","timestamp":"2026-05-10T17:45:00Z"}'::jsonb,
+     NULL,
+     '2026-05-10T17:45:00Z');
+
+-- 4. Event-after-last-session: s-afterone created at 19:00, s-aftertwo at
+--    20:00; s-aftertwo suspends at 20:30. The event at 20:45 sits past the
+--    last session's suspend and must land on s-aftertwo (the last session).
+INSERT INTO metis.conversations_v2 (id, version_number, creator)
+VALUES ('c-convafter', 1, 'jayantk');
+INSERT INTO metis.tasks_v2 (id, version_number, prompt, context, interactive, conversation_id, conversation_resume_from, creation_time)
+VALUES
+    ('s-afterone', 1, 'chat',
+     '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
+     true,  'c-convafter', NULL, '2026-05-10T19:00:00Z'),
+    ('s-aftertwo', 1, 'chat resumed',
+     '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
+     true,  'c-convafter', 1,    '2026-05-10T20:00:00Z');
+INSERT INTO metis.conversation_events_v2 (conversation_id, version_number, event_type, event_data, actor, created_at)
+VALUES
+    ('c-convafter', 1, 'suspending',
+     '{"type":"suspending","reason":"test","timestamp":"2026-05-10T20:30:00Z"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Session":"s-aftertwo"}}}'::jsonb,
+     '2026-05-10T20:30:00Z'),
+    ('c-convafter', 2, 'user_message',
+     '{"type":"user_message","content":"past the end","timestamp":"2026-05-10T20:45:00Z"}'::jsonb,
+     NULL,
+     '2026-05-10T20:45:00Z');
