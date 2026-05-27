@@ -7,7 +7,7 @@ use crate::domain::conversations::{Conversation, ConversationEvent, Conversation
 use crate::store::status_to_db_str;
 use crate::{
     domain::{
-        actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
+        actors::{Actor, ActorId, ActorRef},
         agents::Agent,
         documents::Document,
         issues::{
@@ -723,7 +723,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
+        let creator = Username::from(row.creator.as_str());
 
         Ok(Patch {
             title: row.title.clone(),
@@ -917,7 +917,7 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         Ok(Session {
-            creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            creator: Username::from(row.creator.as_str()),
             spawned_from,
             resumed_from,
             agent_config,
@@ -1218,7 +1218,7 @@ impl PostgresStoreV2 {
 
         Ok(Actor {
             actor_id,
-            creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            creator: Username::from(row.creator.as_str()),
             session_id: None,
         })
     }
@@ -1408,7 +1408,7 @@ struct PatchRow {
     deleted: bool,
     branch_name: Option<String>,
     commit_range: Option<Value>,
-    creator: Option<String>,
+    creator: String,
     base_branch: Option<String>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -1435,7 +1435,7 @@ struct TaskRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
-    creator: Option<String>,
+    creator: String,
     secrets: Option<Value>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
@@ -1574,7 +1574,7 @@ struct ActorRow {
     id: String,
     version_number: i64,
     actor_id: Value,
-    creator: Option<String>,
+    creator: String,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]

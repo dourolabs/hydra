@@ -1,6 +1,6 @@
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
-    actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
+    actors::{Actor, ActorId, ActorRef},
     agents::Agent,
     documents::Document,
     issues::{
@@ -172,7 +172,7 @@ struct ActorRow {
     id: String,
     version_number: i64,
     actor_id: String,
-    creator: Option<String>,
+    creator: String,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -327,7 +327,7 @@ struct PatchRow {
     diff: String,
     status: String,
     is_automatic_backup: bool,
-    creator: Option<String>,
+    creator: String,
     base_branch: Option<String>,
     branch_name: Option<String>,
     commit_range: Option<String>,
@@ -372,7 +372,7 @@ struct TaskRow {
     last_message: Option<String>,
     error: Option<String>,
     secrets: Option<String>,
-    creator: Option<String>,
+    creator: String,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -779,7 +779,7 @@ impl SqliteStore {
 
         Ok(Actor {
             actor_id,
-            creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
+            creator: Username::from(row.creator.as_str()),
             session_id: None,
         })
     }
@@ -1205,7 +1205,7 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
+        let creator = Username::from(row.creator.as_str());
 
         Ok(Patch {
             title: row.title.clone(),
@@ -1483,7 +1483,7 @@ impl SqliteStore {
                 )));
             }
         };
-        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
+        let creator = Username::from(row.creator.as_str());
 
         let creation_time = row
             .creation_time
@@ -10378,8 +10378,8 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, mount_spec, agent_config, mode, is_latest)
-                 VALUES (?1, 1, '{{}}', 'complete', 0, '{{\"working_dir\":\"repo\",\"mounts\":[]}}', '{{}}', '{{\"type\":\"headless\",\"prompt\":\"\"}}', 1)"
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, creator, mount_spec, agent_config, mode, is_latest)
+                 VALUES (?1, 1, '{{}}', 'complete', 0, '', '{{\"working_dir\":\"repo\",\"mounts\":[]}}', '{{}}', '{{\"type\":\"headless\",\"prompt\":\"\"}}', 1)"
             ))
             .bind(&id)
             .execute(&store.pool)
