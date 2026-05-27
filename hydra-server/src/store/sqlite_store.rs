@@ -101,9 +101,9 @@ pub async fn run_migrations(pool: &SqlitePool, up_to: Option<u64>) -> anyhow::Re
         match step {
             MigrationStep::Sql(migration) => {
                 if !applied.contains(&migration.version) {
-                    conn.apply(migration).await.with_context(|| {
-                        format!("apply sqlite migration {}", migration.version)
-                    })?;
+                    conn.apply(migration)
+                        .await
+                        .with_context(|| format!("apply sqlite migration {}", migration.version))?;
                     applied.insert(migration.version);
                 }
             }
