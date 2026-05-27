@@ -1,17 +1,20 @@
 use super::utils::resolve_username;
 use crate::client::HydraClientInterface;
-use crate::output_writer::with_stdout;
+use crate::command::output::{render, CommandContext, UserRecords};
+use crate::output_writer::write_stdout;
 use anyhow::{bail, Context, Result};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
+use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::whoami::ActorIdentity;
-use std::io::Write;
 
 #[derive(Debug, Subcommand)]
 pub enum UsersCommand {
     /// Log in with GitHub device flow.
     Login,
-    /// Show information about a user.
-    Info {
+    /// List users.
+    List(ListUsersArgs),
+    /// Get details for a user.
+    Get {
         /// Username to look up. Defaults to the current logged-in user.
         #[arg(value_name = "USERNAME")]
         username: Option<String>,
@@ -21,6 +24,17 @@ pub enum UsersCommand {
         #[command(subcommand)]
         command: SecretsCommand,
     },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ListUsersArgs {
+    /// Filter users by a free-text query (case-insensitive substring match).
+    #[arg(long = "q", value_name = "QUERY")]
+    pub q: Option<String>,
+
+    /// Include soft-deleted users in the results.
+    #[arg(long = "include-deleted")]
+    pub include_deleted: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -44,24 +58,52 @@ pub enum SecretsCommand {
     },
 }
 
-pub async fn run(client: &dyn HydraClientInterface, command: UsersCommand) -> Result<()> {
+pub async fn run(
+    client: &dyn HydraClientInterface,
+    command: UsersCommand,
+    context: &CommandContext,
+) -> Result<()> {
+    let mut buffer = Vec::new();
     match command {
         UsersCommand::Login => {
             // Login is handled during client initialization in main.rs.
             // By the time we reach here, login has already succeeded.
         }
-        UsersCommand::Info { username } => {
-            show_user_info(client, username).await?;
+        UsersCommand::List(args) => {
+            let users = list_users(client, args).await?;
+            render(UserRecords(&users), context.output_format, &mut buffer)?;
+        }
+        UsersCommand::Get { username } => {
+            let user = get_user(client, username).await?;
+            render(UserRecords(&[user]), context.output_format, &mut buffer)?;
         }
         UsersCommand::Secrets { command } => {
             run_secrets(client, command).await?;
         }
     }
+    if !buffer.is_empty() {
+        write_stdout(&buffer)?;
+    }
 
     Ok(())
 }
 
-async fn show_user_info(client: &dyn HydraClientInterface, username: Option<String>) -> Result<()> {
+async fn list_users(
+    client: &dyn HydraClientInterface,
+    args: ListUsersArgs,
+) -> Result<Vec<hydra_common::users::UserSummary>> {
+    let query = SearchUsersQuery::new(args.q, args.include_deleted.then_some(true));
+    let response = client
+        .list_users(&query)
+        .await
+        .context("failed to list users")?;
+    Ok(response.users)
+}
+
+async fn get_user(
+    client: &dyn HydraClientInterface,
+    username: Option<String>,
+) -> Result<hydra_common::users::UserSummary> {
     let target_username = match username {
         Some(name) => name,
         None => {
@@ -81,21 +123,10 @@ async fn show_user_info(client: &dyn HydraClientInterface, username: Option<Stri
         }
     };
 
-    let user_info = client
-        .get_user_info(&target_username)
+    client
+        .get_user(&target_username)
         .await
-        .with_context(|| format!("failed to fetch user info for '{target_username}'"))?;
-
-    with_stdout(|stdout| {
-        writeln!(stdout, "username: {}", user_info.username)?;
-        match user_info.github_user_id {
-            Some(id) => writeln!(stdout, "github_user_id: {id}")?,
-            None => writeln!(stdout, "github_user_id: N/A")?,
-        }
-        Ok(())
-    })?;
-
-    Ok(())
+        .with_context(|| format!("failed to fetch user info for '{target_username}'"))
 }
 
 async fn run_secrets(client: &dyn HydraClientInterface, command: SecretsCommand) -> Result<()> {
@@ -141,9 +172,13 @@ async fn run_secrets(client: &dyn HydraClientInterface, command: SecretsCommand)
 mod tests {
     use super::*;
     use crate::client::HydraClient;
+    use crate::command::output::{render, ResolvedOutputFormat, UserRecords};
     use httpmock::prelude::*;
     use hydra_common::{
-        api::v1::{secrets::ListSecretsResponse, users::Username},
+        api::v1::{
+            secrets::ListSecretsResponse,
+            users::{ListUsersResponse, Username},
+        },
         users::UserSummary,
         whoami::WhoAmIResponse,
     };
@@ -158,7 +193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn show_user_info_displays_user_details() -> Result<()> {
+    async fn get_user_displays_user_details() -> Result<()> {
         let server = MockServer::start();
         let user_summary = UserSummary::new(Username::from("testuser"), Some(12345));
         let user_summary_clone = user_summary.clone();
@@ -169,14 +204,15 @@ mod tests {
         });
 
         let client = mock_client(&server);
-        show_user_info(&client, Some("testuser".to_string())).await?;
+        let user = get_user(&client, Some("testuser".to_string())).await?;
 
         mock.assert();
+        assert_eq!(user, user_summary);
         Ok(())
     }
 
     #[tokio::test]
-    async fn show_user_info_uses_current_user_when_no_username_provided() -> Result<()> {
+    async fn get_user_uses_current_user_when_no_username_provided() -> Result<()> {
         let server = MockServer::start();
         let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
             username: Username::from("currentuser"),
@@ -195,15 +231,16 @@ mod tests {
         });
 
         let client = mock_client(&server);
-        show_user_info(&client, None).await?;
+        let user = get_user(&client, None).await?;
 
         whoami_mock.assert();
         user_info_mock.assert();
+        assert_eq!(user.username.as_str(), "currentuser");
         Ok(())
     }
 
     #[tokio::test]
-    async fn show_user_info_fails_when_actor_is_task() {
+    async fn get_user_fails_when_actor_is_session() {
         let server = MockServer::start();
         let task_id = hydra_common::SessionId::new();
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
@@ -217,7 +254,7 @@ mod tests {
         });
 
         let client = mock_client(&server);
-        let error = show_user_info(&client, None).await.unwrap_err();
+        let error = get_user(&client, None).await.unwrap_err();
 
         whoami_mock.assert();
         assert!(
@@ -227,7 +264,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn show_user_info_reports_user_not_found() {
+    async fn get_user_reports_user_not_found() {
         let server = MockServer::start();
 
         let mock = server.mock(move |when, then| {
@@ -237,7 +274,7 @@ mod tests {
         });
 
         let client = mock_client(&server);
-        let error = show_user_info(&client, Some("nonexistent".to_string()))
+        let error = get_user(&client, Some("nonexistent".to_string()))
             .await
             .unwrap_err();
 
@@ -246,6 +283,140 @@ mod tests {
             error.to_string().contains("failed to fetch user info"),
             "error should mention fetch failure: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn get_user_pretty_output_shows_user_details() -> Result<()> {
+        let user = UserSummary::new(Username::from("alice"), Some(42));
+        let mut output = Vec::new();
+        render(
+            UserRecords(&[user]),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert!(output.contains("alice"));
+        assert!(output.contains("github_user_id: 42"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_user_jsonl_output_emits_one_record() -> Result<()> {
+        let user = UserSummary::new(Username::from("alice"), Some(42));
+        let mut output = Vec::new();
+        render(
+            UserRecords(&[user]),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert!(output.contains("\"username\":\"alice\""));
+        assert_eq!(output.lines().count(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_fetches_users_and_prints_jsonl() -> Result<()> {
+        let server = MockServer::start();
+        let list_response = ListUsersResponse::new(vec![
+            UserSummary::new(Username::from("alice"), Some(1)),
+            UserSummary::new(Username::from("bob"), None),
+        ]);
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET).path("/v1/users");
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        let client = mock_client(&server);
+        let users = list_users(
+            &client,
+            ListUsersArgs {
+                q: None,
+                include_deleted: false,
+            },
+        )
+        .await?;
+        mock.assert();
+
+        let mut output = Vec::new();
+        render(
+            UserRecords(&users),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert!(output.contains("\"username\":\"alice\""));
+        assert!(output.contains("\"username\":\"bob\""));
+        assert_eq!(output.lines().count(), 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_prints_pretty_format() -> Result<()> {
+        let users = vec![
+            UserSummary::new(Username::from("alice"), Some(1)),
+            UserSummary::new(Username::from("bob"), None),
+        ];
+        let mut output = Vec::new();
+
+        render(
+            UserRecords(&users),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+
+        assert!(output.contains("alice"));
+        assert!(output.contains("github_user_id: 1"));
+        assert!(output.contains("bob"));
+        assert!(output.contains("github_user_id: N/A"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_empty_pretty_shows_message() -> Result<()> {
+        let users: Vec<UserSummary> = Vec::new();
+        let mut output = Vec::new();
+        render(
+            UserRecords(&users),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert!(output.contains("No users found."));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_passes_q_and_include_deleted() -> Result<()> {
+        let server = MockServer::start();
+        let list_response =
+            ListUsersResponse::new(vec![UserSummary::new(Username::from("alice"), Some(1))]);
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/users")
+                .query_param("q", "alice")
+                .query_param("include_deleted", "true");
+            then.status(200).json_body_obj(&list_response);
+        });
+
+        let client = mock_client(&server);
+        let users = list_users(
+            &client,
+            ListUsersArgs {
+                q: Some("alice".to_string()),
+                include_deleted: true,
+            },
+        )
+        .await?;
+        mock.assert();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].username.as_str(), "alice");
+        Ok(())
     }
 
     fn mock_whoami(server: &MockServer) {

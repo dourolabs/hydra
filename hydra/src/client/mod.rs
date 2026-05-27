@@ -49,7 +49,7 @@ use hydra_common::{
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
         SessionVersionRecord, WorkerContext,
     },
-    users::UserSummary,
+    users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
     ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
     RepoName, SessionId,
@@ -302,7 +302,8 @@ pub trait HydraClientInterface: Send + Sync {
     ) -> Result<UpsertRepositoryResponse>;
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
-    async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
+    async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse>;
+    async fn get_user(&self, username: &str) -> Result<UserSummary>;
     async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse>;
     async fn set_user_secret(&self, username: &str, name: &str, value: &str) -> Result<()>;
     async fn delete_user_secret(&self, username: &str, name: &str) -> Result<()>;
@@ -1475,8 +1476,31 @@ impl HydraClient {
             .context("failed to decode whoami response")
     }
 
+    /// Call `GET /v1/users` to list users with optional filters.
+    pub async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse> {
+        let url = self.endpoint("/v1/users")?;
+        let mut builder = self.authed(self.http.get(url));
+        if let Some(ref q) = query.q {
+            builder = builder.query(&[("q", q.as_str())]);
+        }
+        if let Some(include_deleted) = query.include_deleted {
+            builder = builder.query(&[("include_deleted", include_deleted.to_string())]);
+        }
+        let response = builder
+            .send()
+            .await
+            .context("failed to fetch users list")?
+            .error_for_status_with_body("hydra-server returned an error while listing users")
+            .await?;
+
+        response
+            .json::<ListUsersResponse>()
+            .await
+            .context("failed to decode list users response")
+    }
+
     /// Call `GET /v1/users/:username` to fetch public user info.
-    pub async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
+    pub async fn get_user(&self, username: &str) -> Result<UserSummary> {
         let path = format!("/v1/users/{username}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2416,8 +2440,12 @@ impl HydraClientInterface for HydraClient {
         HydraClient::whoami(self).await
     }
 
-    async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
-        HydraClient::get_user_info(self, username).await
+    async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse> {
+        HydraClient::list_users(self, query).await
+    }
+
+    async fn get_user(&self, username: &str) -> Result<UserSummary> {
+        HydraClient::get_user(self, username).await
     }
 
     async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse> {
@@ -2778,7 +2806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_user_info_returns_user_summary() -> Result<()> {
+    async fn get_user_returns_user_summary() -> Result<()> {
         let server = MockServer::start();
         let username = "testuser";
         let expected_auth_header = format!("Bearer {TEST_HYDRA_TOKEN}");
@@ -2795,7 +2823,7 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
 
-        let response = client.get_user_info(username).await?;
+        let response = client.get_user(username).await?;
 
         mock.assert();
         assert_eq!(response, user_summary);
@@ -2806,7 +2834,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_user_info_returns_error_for_not_found() -> Result<()> {
+    async fn get_user_returns_error_for_not_found() -> Result<()> {
         let server = MockServer::start();
         let expected_auth_header = format!("Bearer {TEST_HYDRA_TOKEN}");
 
@@ -2821,7 +2849,7 @@ mod tests {
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
 
-        let error = client.get_user_info("nonexistent").await.unwrap_err();
+        let error = client.get_user("nonexistent").await.unwrap_err();
 
         mock.assert();
         let message = format!("{error:#}");
@@ -2830,6 +2858,61 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("404"), "{message}");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_returns_user_summaries() -> Result<()> {
+        let server = MockServer::start();
+        let expected_auth_header = format!("Bearer {TEST_HYDRA_TOKEN}");
+        let response = ListUsersResponse::new(vec![
+            UserSummary::new(Username::from("alice"), Some(1)),
+            UserSummary::new(Username::from("bob"), None),
+        ]);
+        let response_clone = response.clone();
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/users")
+                .header("authorization", expected_auth_header.as_str());
+            then.status(200).json_body_obj(&response_clone);
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let actual = client.list_users(&SearchUsersQuery::default()).await?;
+
+        mock.assert();
+        assert_eq!(actual, response);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_users_passes_query_filters() -> Result<()> {
+        let server = MockServer::start();
+        let response =
+            ListUsersResponse::new(vec![UserSummary::new(Username::from("alice"), Some(1))]);
+        let response_clone = response.clone();
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/users")
+                .query_param("q", "alice")
+                .query_param("include_deleted", "true");
+            then.status(200).json_body_obj(&response_clone);
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let query = SearchUsersQuery::new(Some("alice".to_string()), Some(true));
+        let actual = client.list_users(&query).await?;
+
+        mock.assert();
+        assert_eq!(actual, response);
 
         Ok(())
     }
@@ -2855,7 +2938,7 @@ mod tests {
         };
         let client = HydraClient::new(server.base_url(), TEST_HYDRA_TOKEN, &timeouts)?;
 
-        let error = client.get_user_info(username).await.unwrap_err();
+        let error = client.get_user(username).await.unwrap_err();
 
         let timed_out = error.chain().any(|cause| {
             cause
