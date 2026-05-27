@@ -25,7 +25,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::claude_formatter::StreamFormatter;
+use super::claude_formatter::StreamFormatter;
 use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
 
 /// Grace period after the main process exits before killing the process group.

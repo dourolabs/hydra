@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod build_cache;
-mod claude_formatter;
 pub mod cli;
 pub mod client;
 pub mod command;
