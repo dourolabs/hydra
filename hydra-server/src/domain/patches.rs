@@ -55,20 +55,17 @@ impl FromStr for PatchStatus {
     }
 }
 
-/// Stored review record (Phase 5b: `author` is the shared
-/// [`Principal`], not a bare string).
+/// Stored review record. `author` is the typed [`Principal`].
 ///
-/// Deserialization is back-compat with the pre-Phase-5b on-disk shape
-/// via [`legacy_author_to_principal`]: a string-typed `author` is
-/// rewritten in flight using the Phase 4a heuristic. This keeps
-/// running through the soft-cutover window even before the row
-/// migration touches every patch.
+/// Deserialization is back-compat with the legacy on-disk shape via
+/// [`legacy_author_to_principal`]: a string-typed `author` is rewritten
+/// in flight using the legacy-assignee heuristic. This keeps running
+/// through the soft-cutover window even before the row migration
+/// touches every patch.
 ///
 /// Each bare-string hit emits a `tracing::warn!` on the
 /// `review_author_legacy_decode` target so we can release-soak the
-/// fallback and confirm zero unmigrated-row traffic before deleting
-/// it (design §8.2, §11 row 7). The same instrumentation mirrors the
-/// `ActorId::Legacy` warn-log added in p-qtlpckuo.
+/// fallback and confirm zero unmigrated-row traffic before deleting it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Review {
     pub contents: String,
@@ -111,15 +108,15 @@ impl<'de> Deserialize<'de> for Review {
 
         let raw = RawReview::deserialize(deserializer)?;
         let author = match raw.author {
-            // Typed (Phase 5b) wire form: `{ "kind": ..., ... }`.
+            // Typed wire form: `{ "kind": ..., ... }`.
             serde_json::Value::Object(_) => {
                 serde_json::from_value(raw.author).map_err(de::Error::custom)?
             }
             // Legacy v1 wire form: bare string. Backfilled via the same
-            // syntactic heuristic as `Issue.assignee` (Phase 4a); the row
-            // migration rewrites stored blobs offline, but we have to keep
-            // accepting unmigrated rows on read until the migration has
-            // touched every row.
+            // syntactic heuristic as `Issue.assignee`; the row migration
+            // rewrites stored blobs offline, but we have to keep accepting
+            // unmigrated rows on read until the migration has touched
+            // every row.
             serde_json::Value::String(raw_author) => {
                 tracing::warn!(
                     target: "review_author_legacy_decode",
@@ -148,14 +145,12 @@ impl<'de> Deserialize<'de> for Review {
     }
 }
 
-/// Apply the Phase 4a legacy-assignee heuristic to a bare
-/// `Review.author` string from a pre-Phase-5b stored blob. Per
-/// design §12, the cutover accepts the breaking-change posture:
-/// bare strings that don't look like a typed path are wrapped as
-/// `Principal::User { name }` via [`Principal::parse_legacy_assignee`].
-/// Anything that can't even validate as a [`Username`] (e.g. empty
-/// string) returns `None` so the deserializer can surface the
-/// problem.
+/// Apply the legacy-assignee heuristic to a bare `Review.author`
+/// string from a legacy stored blob. Bare strings that don't look
+/// like a typed path are wrapped as `Principal::User { name }` via
+/// [`Principal::parse_legacy_assignee`]. Anything that can't even
+/// validate as a [`Username`] (e.g. empty string) returns `None` so
+/// the deserializer can surface the problem.
 fn legacy_author_to_principal(raw: &str) -> Option<Principal> {
     Principal::parse_legacy_assignee(raw)
 }

@@ -7,7 +7,7 @@ use crate::{
     },
 };
 pub use hydra_common::{ActorId, ActorRef, parse_actor_name};
-use hydra_common::{IssueId, SessionId, api::v1::ApiError, github::GithubTokenResponse};
+use hydra_common::{SessionId, api::v1::ApiError, github::GithubTokenResponse};
 use reqwest::{
     Client, StatusCode,
     header::{ACCEPT, USER_AGENT},
@@ -67,14 +67,10 @@ impl AuthToken {
 pub struct Actor {
     pub actor_id: ActorId,
     pub creator: Username,
-    /// Session that minted the request's authenticating token, when the
-    /// `Actor` was produced by [`crate::routes::auth::require_auth`].
+    /// Session that minted the request's authenticating token.
     ///
     /// Runtime-only: `#[serde(skip)]` keeps the persisted `Actor` row
-    /// shape unchanged. `require_auth` sets this from the matched
-    /// `auth_tokens.session_id` so that `ActorRef::from(&actor)` carries
-    /// the session id into every downstream mutation
-    /// (`/designs/actor-system-overhaul.md` §5.2).
+    /// shape unchanged.
     #[serde(skip)]
     pub session_id: Option<SessionId>,
 }
@@ -83,58 +79,44 @@ impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
         let creator = username.clone();
         let actor_id = ActorId::Username(username.into());
-        Self::new_with_token(actor_id, creator)
+        Self::new_with_token(actor_id, creator, None)
     }
 
     pub fn name(&self) -> String {
         self.actor_id.to_string()
     }
 
-    pub fn new_for_session(session_id: SessionId, creator: Username) -> (Actor, String) {
-        Self::new_with_token(ActorId::Session(session_id), creator)
-    }
-
-    pub fn new_for_service(service_name: String, creator: Username) -> (Actor, String) {
-        Self::new_with_token(ActorId::Service(service_name), creator)
-    }
-
-    pub fn new_for_issue(issue_id: IssueId, creator: Username) -> (Actor, String) {
-        Self::new_with_token(ActorId::Issue(issue_id), creator)
-    }
-
     /// Build a new `Actor` from an already-constructed [`ActorId`].
-    ///
-    /// Phase 2 of the actor-system overhaul
-    /// (`/designs/actor-system-overhaul.md` §3.4) routes
-    /// `create_actor_for_job` through
-    /// [`crate::domain::sessions::actor_id_of`]; this constructor accepts
-    /// the resulting `ActorId` directly so the agent-vs-adhoc discriminant
-    /// stays in one place. It's the typed replacement for
-    /// `new_for_session` / `new_for_issue` on the job-spawn path.
     ///
     /// `ActorId::Legacy` is rejected at debug time: new writes must not
     /// produce that variant (see `ActorId` docs).
-    pub fn new_from_actor_id(actor_id: ActorId, creator: Username) -> (Actor, String) {
+    pub fn new_from_actor_id(
+        actor_id: ActorId,
+        creator: Username,
+        session_id: Option<SessionId>,
+    ) -> (Actor, String) {
         debug_assert!(
             !matches!(actor_id, ActorId::Legacy(_)),
             "Actor::new_from_actor_id must never be called with ActorId::Legacy"
         );
-        Self::new_with_token(actor_id, creator)
+        Self::new_with_token(actor_id, creator, session_id)
     }
 
     /// Build a fresh `Actor` paired with a `"<actor_name>:<raw_token>"`
     /// authentication string. The caller is responsible for persisting
     /// the actor *and* inserting `Self::hash_auth_token(raw_token)` into
-    /// the `auth_tokens` table — Phase 3b (`/designs/actor-system-overhaul.md`
-    /// §9) deleted the legacy single-token hash on the actor row, so
-    /// `auth_tokens` is now the only source of truth for verifying the
-    /// returned string at the auth middleware.
-    fn new_with_token(actor_id: ActorId, creator: Username) -> (Actor, String) {
+    /// the `auth_tokens` table — `auth_tokens` is the source of truth for
+    /// verifying the returned string at the auth middleware.
+    fn new_with_token(
+        actor_id: ActorId,
+        creator: Username,
+        session_id: Option<SessionId>,
+    ) -> (Actor, String) {
         let raw_token = Uuid::new_v4().to_string();
         let actor = Actor {
             actor_id,
             creator,
-            session_id: None,
+            session_id,
         };
         let auth_token = format!("{}:{raw_token}", actor.name());
         (actor, auth_token)
@@ -436,34 +418,39 @@ mod tests {
     }
 
     #[test]
-    fn new_for_session_returns_session_actor() {
+    fn new_from_actor_id_formats_actor_names() {
+        let issue_id = hydra_common::IssueId::from_str("i-abcdef").unwrap();
         let session_id = SessionId::new();
-        let (actor, auth_token) =
-            Actor::new_for_session(session_id.clone(), Username::from("creator"));
-        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
+        let cases: Vec<(ActorId, String)> = vec![
+            (ActorId::Issue(issue_id.clone()), "a-i-abcdef".to_string()),
+            (ActorId::Service("bff".to_string()), "svc-bff".to_string()),
+            (
+                ActorId::Session(session_id.clone()),
+                format!("w-{session_id}"),
+            ),
+        ];
 
-        assert_eq!(actor.actor_id, ActorId::Session(session_id));
-        assert_eq!(parsed.actor_name(), actor.name());
+        for (actor_id, expected_name) in cases {
+            let (actor, auth_token) =
+                Actor::new_from_actor_id(actor_id.clone(), Username::from("creator"), None);
+            assert_eq!(actor.actor_id, actor_id);
+            assert_eq!(actor.name(), expected_name);
+            assert_eq!(actor.session_id, None);
+
+            let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
+            assert_eq!(parsed.actor_name(), actor.name());
+        }
     }
 
     #[test]
-    fn new_for_issue_creates_issue_actor() {
-        let issue_id = IssueId::from_str("i-abcdef").unwrap();
-        let (actor, auth_token) = Actor::new_for_issue(issue_id.clone(), Username::from("creator"));
-
-        assert!(!auth_token.is_empty());
-        assert_eq!(actor.actor_id, ActorId::Issue(issue_id));
-        assert_eq!(actor.name(), "a-i-abcdef");
-
-        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
-        assert_eq!(parsed.actor_name(), actor.name());
-    }
-
-    #[test]
-    fn actor_name_returns_a_prefix_for_issue() {
-        let issue_id = IssueId::from_str("i-abcdef").unwrap();
-        let (actor, _) = Actor::new_for_issue(issue_id, Username::from("creator"));
-        assert_eq!(actor.name(), "a-i-abcdef");
+    fn new_from_actor_id_carries_session_id() {
+        let session_id = SessionId::new();
+        let (actor, _) = Actor::new_from_actor_id(
+            ActorId::Service("bff".to_string()),
+            Username::from("admin"),
+            Some(session_id.clone()),
+        );
+        assert_eq!(actor.session_id, Some(session_id));
     }
 
     #[test]
@@ -482,33 +469,18 @@ mod tests {
 
     #[test]
     fn from_actor_ref_propagates_session_id() {
-        let mut actor = Actor {
+        let sid = SessionId::new();
+        let actor = Actor {
             actor_id: ActorId::Agent(
                 hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
             ),
             creator: Username::from("creator"),
-            session_id: None,
+            session_id: Some(sid.clone()),
         };
-        let sid = SessionId::new();
-        actor.session_id = Some(sid.clone());
         let actor_ref = ActorRef::from(&actor);
         match actor_ref {
             ActorRef::Authenticated { session_id, .. } => assert_eq!(session_id, Some(sid)),
             other => panic!("expected Authenticated, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn new_for_service_creates_service_actor() {
-        let (actor, auth_token) =
-            Actor::new_for_service("bff".to_string(), Username::from("admin"));
-
-        assert!(!auth_token.is_empty());
-        assert_eq!(actor.actor_id, ActorId::Service("bff".to_string()));
-        assert_eq!(actor.name(), "svc-bff");
-        assert_eq!(actor.creator, Username::from("admin"));
-
-        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
-        assert_eq!(parsed.actor_name(), actor.name());
     }
 }

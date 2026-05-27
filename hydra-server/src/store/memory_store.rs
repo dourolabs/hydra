@@ -67,7 +67,7 @@ pub struct MemoryStore {
     label_objects: DashMap<LabelId, HashSet<HydraId>>,
     /// Maps actor_name to `(token_hash, session_id, is_revoked)` entries for
     /// that actor. `is_revoked` is flipped by
-    /// [`Self::revoke_auth_tokens_for_session`] (Phase 3b, §7.4).
+    /// [`Self::revoke_auth_tokens_for_session`].
     auth_tokens: DashMap<String, Vec<(String, Option<SessionId>, bool)>>,
     /// Maps (username, secret_name, internal) to encrypted_value
     user_secrets: DashMap<(Username, String, bool), Vec<u8>>,
@@ -4676,10 +4676,9 @@ mod tests {
         assert!(row.is_none());
     }
 
-    /// Phase 3b (`/designs/actor-system-overhaul.md` §7.4): same
-    /// contract as the sqlite/postgres equivalents — revoking by
-    /// session id flips exactly the rows for that session and leaves
-    /// other tokens untouched.
+    /// Revoking by session id flips exactly the rows for that session
+    /// and leaves other tokens untouched (matches the sqlite/postgres
+    /// equivalents).
     #[tokio::test]
     async fn revoke_auth_tokens_flips_only_target_session() {
         let store = MemoryStore::new();
@@ -5489,8 +5488,8 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, assigned_issue_id);
 
-        // Phase 4b: equality is typed, not case-insensitive. A different
-        // principal kind never matches even if the underlying name does.
+        // Equality is typed, not case-insensitive. A different principal
+        // kind never matches even if the underlying name does.
         let agent_alice = hydra_common::principal::Principal::Agent {
             name: hydra_common::api::v1::agents::AgentName::try_new("alice").unwrap(),
         };

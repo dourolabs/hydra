@@ -37,8 +37,7 @@ async fn resolve_spawned_from(ctx: &AutomationContext<'_>, sid: &SessionId) -> O
 ///   `spawned_from`).
 /// - `ActorId::Agent(_)`: an agent-spawned actor doesn't carry its session
 ///   id in `actor_id`, so we read `ActorRef::Authenticated.session_id` (set
-///   by `require_auth` per `/designs/actor-system-overhaul.md` §5.2), then
-///   load the session and use its `spawned_from`.
+///   by `require_auth`), then load the session and use its `spawned_from`.
 /// - `ActorId::Issue(iid)`: uses the issue id directly.
 ///
 /// In either case, inserts a `(issue, artifact, has-patch | has-document)` row

@@ -508,12 +508,9 @@ pub async fn setup_local_auth(
         info!("local auth actor created");
     }
 
-    // Phase 3b (`/designs/actor-system-overhaul.md` §9) made the
-    // `auth_tokens` table the single source of truth for verifying
-    // bearer tokens — the legacy `Actor::verify_auth_token` fallback is
-    // gone. Always rotate: clear any tokens still associated with this
-    // actor and insert the freshly generated one. This keeps the
-    // re-init story tidy (stale tokens from a previous run can never
+    // Always rotate: clear any tokens still associated with this actor
+    // and insert the freshly generated one. This keeps the re-init
+    // story tidy (stale tokens from a previous run can never
     // authenticate after `setup_local_auth` regenerates the file).
     let raw_token = auth_token
         .strip_prefix(&format!("{actor_name}:"))

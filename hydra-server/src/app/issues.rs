@@ -182,8 +182,8 @@ impl AppState {
             ..
         } = request;
         let issue: Issue = issue.into();
-        // Phase 4b: validate that the typed assignee actually exists.
-        // Unknown User / Agent principals are rejected with 400. External
+        // Validate that the typed assignee actually exists. Unknown
+        // User / Agent principals are rejected with 400. External
         // principals are not validated (no DB lookup is meaningful).
         if let Some(ref principal) = issue.assignee {
             let exists = self

@@ -273,12 +273,9 @@ async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
 /// Persist `actor` and register `auth_token`'s hashed raw token in the
 /// `auth_tokens` table.
 ///
-/// Phase 3b of `/designs/actor-system-overhaul.md` (§9) made the
-/// `auth_tokens` table the only source of truth the auth middleware
-/// consults, removing the legacy `Actor::verify_auth_token` fallback.
 /// Tests that `add_actor` without inserting the matching `auth_tokens`
-/// row now get `401 authorization invalid` on every authenticated call,
-/// so this helper bundles the two writes that always have to happen
+/// row get `401 authorization invalid` on every authenticated call, so
+/// this helper bundles the two writes that always have to happen
 /// together.
 ///
 /// `session_id` records which session minted the token; pass `None` for

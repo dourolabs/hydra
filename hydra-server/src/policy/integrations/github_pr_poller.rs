@@ -346,12 +346,12 @@ async fn select_github_installation_client(
 }
 
 /// Convert raw GitHub-side review / comment payloads into typed
-/// [`Review`] entries. Per Phase 5b §4.4, each review's `author` is
-/// looked up by GitHub login: a matching Hydra user yields
-/// `Principal::User { name }`, otherwise `Principal::External {
-/// system: "github", username }`. The users table is **not** mutated
-/// when no Hydra account matches — un-mapped GitHub logins surface
-/// only as `External` principals on read.
+/// [`Review`] entries. Each review's `author` is looked up by GitHub
+/// login: a matching Hydra user yields `Principal::User { name }`,
+/// otherwise `Principal::External { system: "github", username }`.
+/// The users table is **not** mutated when no Hydra account matches —
+/// un-mapped GitHub logins surface only as `External` principals on
+/// read.
 async fn build_review_entries(
     store: &dyn crate::store::ReadOnlyStore,
     reviews: Vec<PullRequestReview>,
@@ -1328,9 +1328,9 @@ mod tests {
         assert_eq!(result[2].author, github_external_principal("charlie"));
     }
 
-    /// Phase 5b §4.4: a GitHub login that matches a Hydra user
-    /// (case-insensitively) is rewritten to `Principal::User`; an
-    /// unmapped login falls back to `Principal::External`.
+    /// A GitHub login that matches a Hydra user (case-insensitively)
+    /// is rewritten to `Principal::User`; an unmapped login falls back
+    /// to `Principal::External`.
     #[tokio::test]
     async fn build_review_entries_maps_known_user_to_principal_user() {
         let handles = test_state_handles();
@@ -1416,7 +1416,7 @@ mod tests {
     async fn build_and_filter_end_to_end() {
         let handles = test_state_handles();
         // Seed "alice" so her GitHub login resolves to `Principal::User`,
-        // which is what `filter_reviews_by_creator` keys on (per Phase 5b).
+        // which is what `filter_reviews_by_creator` keys on.
         handles
             .store
             .as_ref()

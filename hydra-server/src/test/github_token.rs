@@ -17,7 +17,7 @@ use crate::{
 };
 use chrono::Utc;
 use httpmock::prelude::*;
-use hydra_common::{SessionId, github::GithubTokenResponse};
+use hydra_common::{ActorId, SessionId, github::GithubTokenResponse};
 use reqwest::{Client, header};
 use std::collections::HashMap;
 
@@ -134,7 +134,8 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         .store
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
-    let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
+    let (actor, auth_token) =
+        Actor::new_from_actor_id(ActorId::Session(task_id), Username::from("creator"), None);
     crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
         .await?;
 
@@ -265,7 +266,8 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         .store
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
-    let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
+    let (actor, auth_token) =
+        Actor::new_from_actor_id(ActorId::Session(task_id), Username::from("creator"), None);
     crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
         .await?;
 
@@ -366,7 +368,8 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         .store
         .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
-    let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
+    let (actor, auth_token) =
+        Actor::new_from_actor_id(ActorId::Session(task_id), Username::from("creator"), None);
     crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
         .await?;
 
@@ -392,7 +395,8 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
 async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task_id = SessionId::new();
-    let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
+    let (actor, auth_token) =
+        Actor::new_from_actor_id(ActorId::Session(task_id), Username::from("creator"), None);
     crate::test_utils::register_actor_and_token(handles.store.as_ref(), &actor, &auth_token, None)
         .await?;
 

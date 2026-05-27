@@ -13,7 +13,7 @@ use crate::{
 };
 use chrono::Utc;
 use hydra_common::{
-    SessionId,
+    ActorId, SessionId,
     api::v1::{self, secrets::ListSecretsResponse},
 };
 use reqwest::{Client, StatusCode, header};
@@ -303,8 +303,11 @@ async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<(
     // Build a session actor whose creator matches TEST_USERNAME but whose
     // actor_id is a SessionId — the route should still reject it because user
     // secrets are gated on Username-typed actors only.
-    let (session_actor, auth_token) =
-        Actor::new_for_session(SessionId::new(), Username::from(TEST_USERNAME));
+    let (session_actor, auth_token) = Actor::new_from_actor_id(
+        ActorId::Session(SessionId::new()),
+        Username::from(TEST_USERNAME),
+        None,
+    );
     crate::test_utils::register_actor_and_token(
         handles.store.as_ref(),
         &session_actor,

@@ -329,13 +329,12 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<Principal> {
 /// should match against `mergers.any_of`. Returns `None` when no
 /// principal can be derived — the caller treats that as "not in mergers".
 ///
-/// Phase 6 of `/designs/actor-system-overhaul.md`: an agent acts **as the
-/// agent**, not as its creator. So an `ActorId::Agent("swe")` resolves to
-/// `Principal::Agent { name: "swe" }` — a policy that wants the agent's
-/// creator to merge needs to name that creator (or the specific agent)
-/// explicitly. Session / Adhoc / Issue actors still resolve to their
-/// `User` creator since those are session-bound identities, not
-/// first-class principals.
+/// An agent acts **as the agent**, not as its creator. So an
+/// `ActorId::Agent("swe")` resolves to `Principal::Agent { name: "swe" }` —
+/// a policy that wants the agent's creator to merge needs to name that
+/// creator (or the specific agent) explicitly. Session / Adhoc / Issue
+/// actors still resolve to their `User` creator since those are
+/// session-bound identities, not first-class principals.
 async fn actor_principal(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<Principal> {
     let actor_id = actor.on_behalf_of()?;
     match actor_id {
@@ -441,8 +440,8 @@ mod tests {
         Review::new(
             "LGTM".to_string(),
             true,
-            // Phase 5b: review authors are typed `Principal`s; assume User
-            // for these in-file test fixtures.
+            // Review authors are typed `Principal`s; assume User for
+            // these in-file test fixtures.
             ApiPrincipal::User {
                 name: ApiUsername::try_new(author)
                     .unwrap_or_else(|_| ApiUsername::from(author.to_string())),
@@ -837,7 +836,7 @@ mod tests {
         assert!(r.evaluate(&ctx).await.is_ok());
     }
 
-    // ---- Phase 6: kind-aware matching ----------------------------------
+    // ---- Kind-aware matching -------------------------------------------
 
     fn agent_ref_static(name: &str) -> AssigneeRef {
         AssigneeRef::Static(ApiPrincipal::Agent {
@@ -986,9 +985,9 @@ mod tests {
 
     #[tokio::test]
     async fn agent_does_not_act_as_its_user_creator_for_merger_rule() {
-        // **Phase 6 behavior change**: agent `swe` spawned by user `alice`
-        // attempting to merge with a `mergers: [users/alice]` policy is
-        // REJECTED — agents act as themselves, not their creators.
+        // Agent `swe` spawned by user `alice` attempting to merge with a
+        // `mergers: [users/alice]` policy is REJECTED — agents act as
+        // themselves, not their creators.
         let store = MemoryStore::new();
         let policy = MergePolicy {
             reviewers: vec![],
@@ -1005,6 +1004,7 @@ mod tests {
         let (agent_actor_row, _token) = crate::domain::actors::Actor::new_from_actor_id(
             ActorId::Agent(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
             Username::from("alice"),
+            None,
         );
         store
             .add_actor(agent_actor_row, &DomainActorRef::test())

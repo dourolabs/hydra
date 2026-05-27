@@ -817,11 +817,15 @@ mod tests {
 
     // ── Integration tests using configurable spawn command ───────────
 
-    use crate::domain::actors::Actor;
+    use crate::domain::actors::{Actor, ActorId};
     use crate::domain::users::Username;
 
     fn make_actor() -> (Actor, String) {
-        Actor::new_for_session(SessionId::new(), Username::from("test-user"))
+        Actor::new_from_actor_id(
+            ActorId::Session(SessionId::new()),
+            Username::from("test-user"),
+            None,
+        )
     }
 
     fn dummy_env() -> HashMap<String, String> {

@@ -475,7 +475,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
-    // Phase 1: create, exchange messages, then simulate idle-suspend.
+    // Step 1: create, exchange messages, then simulate idle-suspend.
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
         .json(&CreateConversationRequest {
@@ -536,7 +536,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     )
     .await?;
 
-    // Phase 2: resume the conversation. A new session is created with
+    // Step 2: resume the conversation. A new session is created with
     // conversation_resume_from set to the pre-Resumed event count.
     let resumed: Conversation = client
         .post(format!(
@@ -576,7 +576,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         "conversation_resume_from should equal pre-Resumed event count"
     );
 
-    // Phase 3: connect as the new worker, passing the real worker's value of
+    // Step 3: connect as the new worker, passing the real worker's value of
     // resume_from_event_index. The server must still return the FULL event
     // log so the new worker can reconstruct context from it.
     let mut ws2 = connect_relay(&server.base_url(), &resumed_session_id).await?;
@@ -621,7 +621,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         catch_up.events[3]
     );
 
-    // Phase 4: send a new user message and verify the worker receives it via
+    // Step 4: send a new user message and verify the worker receives it via
     // the relay (i.e. the new session is actively relaying).
     client
         .post(format!(
@@ -793,7 +793,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let msg3 = "I work on Rust projects. What's 4+4?";
     let msg4 = "What's my name and what do I work on?";
 
-    // Phase 1: create the conversation with msg1; this also creates the
+    // Step 1: create the conversation with msg1; this also creates the
     // initial interactive session.
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
@@ -809,7 +809,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let conversation_id = created.conversation_id.clone();
     let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
 
-    // Phase 2: connect fake-worker #1 and exchange three full turns.
+    // Step 2: connect fake-worker #1 and exchange three full turns.
     let mut ws1 = connect_relay(&server.base_url(), &initial_session_id).await?;
     let catch_up = worker_handshake(
         &mut ws1,
@@ -907,7 +907,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     )
     .await?;
 
-    // Phase 3: suspend worker #1 (Suspending + SessionStateUpload), close the
+    // Step 3: suspend worker #1 (Suspending + SessionStateUpload), close the
     // WS, and wait for the conversation to settle into Idle.
     send_worker_message(
         &mut ws1,
@@ -941,7 +941,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     )
     .await?;
 
-    // Phase 4: explicitly /close the conversation (the "End Chat" path).
+    // Step 4: explicitly /close the conversation (the "End Chat" path).
     let closed: Conversation = client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/close",
@@ -969,7 +969,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "Closed event should be appended by /close, got {events_after_close:?}"
     );
 
-    // Phase 5: /resume; a new session is created and a Resumed event is
+    // Step 5: /resume; a new session is created and a Resumed event is
     // appended.
     let resumed: Conversation = client
         .post(format!(
@@ -987,7 +987,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "resume must create a brand-new session"
     );
 
-    // Phase 6: connect fake-worker #2 and handshake as Fresh with the
+    // Step 6: connect fake-worker #2 and handshake as Fresh with the
     // resume_from_event_index value the real worker would send (the
     // conversation_resume_from on the resumed session). The server must
     // ignore that value and return the full prior event log so the new
@@ -1056,7 +1056,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         catch_up2.events[8]
     );
 
-    // Phase 7: send msg4 and verify the resumed relay forwards ONLY this new
+    // Step 7: send msg4 and verify the resumed relay forwards ONLY this new
     // message — not a replay of msg1/msg2/msg3.
     client
         .post(format!(
@@ -1182,7 +1182,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     let server = spawn_test_server_with_state(state, store.clone()).await?;
     let client = test_client();
 
-    // Phase 1: create the conversation and exchange one full user/assistant turn.
+    // Step 1: create the conversation and exchange one full user/assistant turn.
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
         .json(&CreateConversationRequest {
@@ -1219,7 +1219,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     // the worker being killed by /close.
     drop(ws);
 
-    // Phase 2: /close the conversation. No session_state is uploaded.
+    // Step 2: /close the conversation. No session_state is uploaded.
     let closed: Conversation = client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/close",
@@ -1238,7 +1238,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         "no SessionStateUpload was ever sent, so session_state must be None"
     );
 
-    // Phase 3: /resume creates a new session with conversation_resume_from
+    // Step 3: /resume creates a new session with conversation_resume_from
     // set to the event count snapshotted at /resume time.
     let resumed: Conversation = client
         .post(format!(
@@ -1266,7 +1266,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         .conversation_resume_from()
         .expect("conversation_resume_from must be set on a session created by /resume");
 
-    // Phase 4: connect fake-worker #2 with the real worker's
+    // Step 4: connect fake-worker #2 with the real worker's
     // resume_from_event_index value. The server must return the FULL event
     // log including the prior UserMessage + AssistantMessage so the new
     // worker can rebuild context.
@@ -1725,7 +1725,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
 
-    // Phase 1: create conversation with a first user message.
+    // Step 1: create conversation with a first user message.
     let created: Conversation = client
         .post(format!("{}/v1/conversations", server.base_url()))
         .json(&CreateConversationRequest {
@@ -1740,7 +1740,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     let conversation_id = created.conversation_id.clone();
     let s1 = find_session_for_conversation(&store, &conversation_id).await;
 
-    // Phase 2: connect as worker #1, exchange one assistant turn, then
+    // Step 2: connect as worker #1, exchange one assistant turn, then
     // suspend with a session-state upload.
     let mut ws = connect_relay(&server.base_url(), &s1).await?;
     let _ = worker_handshake(
@@ -1804,7 +1804,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     )
     .await?;
 
-    // Phase 3: /resume — automation spawns session #2 and appends Resumed.
+    // Step 3: /resume — automation spawns session #2 and appends Resumed.
     let _ = client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/resume",
@@ -1815,7 +1815,7 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
         .error_for_status()?;
     let s2 = find_new_session_for_conversation(&store, &conversation_id, &s1).await;
 
-    // Phase 4: /close — emits Closed lifecycle event.
+    // Step 4: /close — emits Closed lifecycle event.
     let _ = client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/close",

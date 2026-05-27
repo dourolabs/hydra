@@ -69,12 +69,11 @@ pub enum UpsertPatchError {
         branch_name: String,
     },
     /// The authenticated actor is not eligible to author a (newly-submitted)
-    /// review on a patch upsert request. Phase 5b of
-    /// `/designs/actor-system-overhaul.md` (§4.1, §4.3, §6): only durable
-    /// principals (`Principal::User`, `Principal::Agent`) can be stamped as
-    /// review authors; `Adhoc` sessions, `External` actors, `Legacy`
-    /// identifiers, and server-internal `System`/`Automation` actors fail
-    /// here with HTTP 400.
+    /// review on a patch upsert request. Only durable principals
+    /// (`Principal::User`, `Principal::Agent`) can be stamped as review
+    /// authors; `Adhoc` sessions, `External` actors, `Legacy` identifiers,
+    /// and server-internal `System`/`Automation` actors fail here with
+    /// HTTP 400.
     #[error("{reason}")]
     InvalidActorForReview {
         actor: Box<ActorRef>,
@@ -132,8 +131,7 @@ impl AppState {
     /// Convert + stamp + persist in a single call: the route-handler
     /// entry point for `POST /v1/patches` and `PUT /v1/patches/:id`.
     ///
-    /// Per Phase 5b of `/designs/actor-system-overhaul.md` (§6), the
-    /// embedded review payload (`UpsertReviewRequest`) carries no
+    /// The embedded review payload (`UpsertReviewRequest`) carries no
     /// author — for each incoming review the server either preserves
     /// the existing stored author (matched against the stored patch by
     /// `(contents, is_approved, submitted_at)`) or stamps the author
@@ -231,12 +229,10 @@ impl AppState {
     /// `reviews` array, matched by
     /// `(contents, is_approved, submitted_at)`) are stamped with the
     /// authenticated actor's `Principal`; the rest keep their stored
-    /// author. Per Phase 5b of `/designs/actor-system-overhaul.md` §6,
-    /// only [`Principal`]-eligible actors (User, Agent, plus the
-    /// pre-Phase-1 `Username` variant) can stamp new reviews —
-    /// `Adhoc`, `External`, `Legacy`, and server-internal
-    /// `System`/`Automation` actors all return
-    /// [`UpsertPatchError::InvalidActorForReview`].
+    /// author. Only [`Principal`]-eligible actors (User, Agent, plus
+    /// the legacy `Username` variant) can stamp new reviews — `Adhoc`,
+    /// `External`, `Legacy`, and server-internal `System`/`Automation`
+    /// actors all return [`UpsertPatchError::InvalidActorForReview`].
     async fn build_patch_from_upsert(
         &self,
         actor: &ActorRef,
@@ -323,9 +319,8 @@ impl AppState {
 }
 
 /// Derive the [`Principal`] to stamp on a newly-submitted review
-/// from the authenticated actor. Phase 5b of
-/// `/designs/actor-system-overhaul.md` §6 / §4.1: only durable
-/// principals can author reviews.
+/// from the authenticated actor. Only durable principals can author
+/// reviews.
 #[allow(clippy::result_large_err)]
 fn principal_for_review_author(actor: &ActorRef) -> Result<Principal, UpsertPatchError> {
     let invalid = |reason: &str| UpsertPatchError::InvalidActorForReview {
@@ -753,8 +748,11 @@ mod tests {
             .as_ref()
             .add_session(task, Utc::now(), &ActorRef::test())
             .await?;
-        let (actor, _auth_token) =
-            Actor::new_for_session(task_id.clone(), creator_username.clone());
+        let (actor, _auth_token) = Actor::new_from_actor_id(
+            crate::domain::actors::ActorId::Session(task_id.clone()),
+            creator_username.clone(),
+            None,
+        );
         handles
             .store
             .as_ref()
@@ -792,7 +790,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 5b: review-author stamping & rejection tests
+    // Review-author stamping & rejection tests
     // -----------------------------------------------------------------
 
     use crate::app::patches::UpsertPatchError;
@@ -810,6 +808,7 @@ mod tests {
         Actor::new_from_actor_id(
             DomainActorId::Agent(hydra_common::api::v1::agents::AgentName::try_new(name).unwrap()),
             Username::from(name),
+            None,
         )
         .0
     }
@@ -819,6 +818,7 @@ mod tests {
         Actor::new_from_actor_id(
             DomainActorId::Adhoc(session_id),
             Username::from("ad-hoc-creator"),
+            None,
         )
         .0
     }
@@ -1044,15 +1044,13 @@ mod tests {
         assert_eq!(back, review);
     }
 
-    /// Backfill heuristic mirror: the on-disk legacy shape
-    /// (bare `author: "string"`) must still deserialize after a
-    /// soft cutover. Phase 5b §8.2: the row migration rewrites
+    /// The on-disk legacy shape (bare `author: "string"`) must still
+    /// deserialize after a soft cutover. The row migration rewrites
     /// stored blobs, but until it has touched every row the runtime
-    /// deserializer applies the same `parse_legacy_assignee`
-    /// heuristic. Also doubles as a smoke test for the
-    /// `review_author_legacy_decode` warn-log soak (design §11
-    /// row 7) — the path must run without panicking and yield the
-    /// expected typed Principal.
+    /// deserializer applies the same `parse_legacy_assignee` heuristic.
+    /// Also doubles as a smoke test for the
+    /// `review_author_legacy_decode` warn-log soak — the path must
+    /// run without panicking and yield the expected typed Principal.
     #[test]
     fn review_deserialize_accepts_legacy_string_author_as_user() {
         let json = r#"{

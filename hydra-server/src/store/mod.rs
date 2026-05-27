@@ -154,14 +154,10 @@ pub struct ObjectRelationship {
 
 /// An `auth_tokens` row resolved by token hash.
 ///
-/// Phase 3a (`/designs/actor-system-overhaul.md` §7.2 + §5.3) replaces
-/// the `get_auth_token_hashes(actor_name).contains(hash)` linear scan
-/// with a hash-keyed lookup that also returns the session id (if any)
-/// that minted the token.
-///
-/// Phase 3b (§7.4) adds `is_revoked`: `sessions/kill` flips it on for
-/// every token from the killed session, and `require_auth` rejects any
-/// matched row whose `is_revoked` is true.
+/// `session_id` records the session that minted the token (if any).
+/// `is_revoked` is flipped on by `sessions/kill` for every token from
+/// the killed session, and `require_auth` rejects any matched row whose
+/// `is_revoked` is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTokenRow {
     pub actor_name: String,
@@ -570,15 +566,13 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Look up a Hydra user from a raw GitHub login (case-insensitive).
     ///
-    /// Phase 5b of `/designs/actor-system-overhaul.md` (§4.4): the
-    /// GitHub PR poller maps `pr_review.user.login` to
+    /// The GitHub PR poller maps `pr_review.user.login` to
     /// `Principal::User { name }` when a Hydra account exists for
     /// that login, and falls back to
     /// `Principal::External { system: "github", username }` otherwise.
     /// The users table does not carry a separate `github_login`
-    /// column today (only `github_user_id`), so per the design we
-    /// treat the Hydra username as the GitHub login and match
-    /// case-insensitively.
+    /// column today (only `github_user_id`), so we treat the Hydra
+    /// username as the GitHub login and match case-insensitively.
     ///
     /// Default implementation: try a direct (case-sensitive)
     /// [`Self::get_user`] first as the fast path, then fall back to
@@ -613,7 +607,6 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Returns whether the given [`Principal`] exists in the store.
     ///
-    /// Phase 4b of `/designs/actor-system-overhaul.md` (§4.5):
     /// - `Principal::User { name }` → checks the users table
     ///   (`include_deleted = false`).
     /// - `Principal::Agent { name }` → checks the agents table.
@@ -841,10 +834,9 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Looks up an auth-token row by its hashed token.
     ///
-    /// Phase 3a of `/designs/actor-system-overhaul.md` (§5.3) uses this
-    /// in `require_auth` to replace the per-actor linear scan and to
-    /// recover the session id that minted the token (when any) so the
-    /// resulting `ActorRef::Authenticated` carries it into mutations.
+    /// `require_auth` uses this to recover the session id that minted
+    /// the token (when any) so the resulting `ActorRef::Authenticated`
+    /// carries it into mutations.
     async fn get_auth_token_by_hash(
         &self,
         token_hash: &str,
@@ -1204,10 +1196,9 @@ pub trait Store: ReadOnlyStore {
 
     /// Adds a token hash for the given actor.
     ///
-    /// `session_id` records the session that minted the token
-    /// (`/designs/actor-system-overhaul.md` §7.2). It is `Some` for the
-    /// session-spawn path in `create_actor_for_job` and `None` for user
-    /// logins or any other non-session token issuance.
+    /// `session_id` records the session that minted the token. It is
+    /// `Some` for the session-spawn path in `create_actor_for_job` and
+    /// `None` for user logins or any other non-session token issuance.
     async fn add_auth_token(
         &self,
         actor_name: &str,
@@ -1220,12 +1211,10 @@ pub trait Store: ReadOnlyStore {
 
     /// Marks every auth token minted by `session_id` as revoked.
     ///
-    /// Phase 3b of `/designs/actor-system-overhaul.md` (§7.4): called from
-    /// `sessions/kill` so the killed session's container fails at the
-    /// auth layer (401) instead of slipping past until the application
-    /// hits the now-deleted `RunningJobValidationRestriction`. The update
-    /// is idempotent — a second call against the same session is a no-op
-    /// because every matching row is already `is_revoked = true`.
+    /// Called from `sessions/kill` so the killed session's container
+    /// fails at the auth layer (401). The update is idempotent — a
+    /// second call against the same session is a no-op because every
+    /// matching row is already `is_revoked = true`.
     async fn revoke_auth_tokens_for_session(
         &self,
         session_id: &SessionId,

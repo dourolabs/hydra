@@ -11,7 +11,7 @@ use crate::{
 };
 use chrono::Utc;
 use hydra_common::{
-    DocumentId, SessionId,
+    ActorId, DocumentId, SessionId,
     api::v1::documents::{
         Document, DocumentVersionRecord, ListDocumentPathsResponse, ListDocumentVersionsResponse,
         ListDocumentsResponse, SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
@@ -165,9 +165,7 @@ fn empty_doc() -> Document {
     Document::new("Doc".to_string(), "body".to_string(), None, false).unwrap()
 }
 
-/// Phase 3b (`/designs/actor-system-overhaul.md` §7.4, §9) replaced the
-/// `RunningJobValidationRestriction` policy gate with per-token revocation:
-/// once a session is killed, every auth token minted by that session is
+/// Once a session is killed, every auth token minted by that session is
 /// flagged `is_revoked = TRUE` and `require_auth` rejects them with 401.
 ///
 /// This regression test pins that contract end-to-end. We seed an actor
@@ -181,7 +179,8 @@ async fn killed_session_token_is_rejected_at_auth() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let creator = Username::from("test-creator");
     let session_id = SessionId::new();
-    let (actor, auth_token) = Actor::new_for_session(session_id.clone(), creator);
+    let (actor, auth_token) =
+        Actor::new_from_actor_id(ActorId::Session(session_id.clone()), creator, None);
     // Issue an auth-token row bound to the session — same shape that
     // `create_actor_for_job` writes in production.
     crate::test_utils::register_actor_and_token(

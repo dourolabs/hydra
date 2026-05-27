@@ -117,10 +117,9 @@ fn map_repository_error(err: RepositoryError) -> ApiError {
             ApiError::not_found(format!("repository '{name}' not found"))
         }
         RepositoryError::UnknownPrincipal { principal } => {
-            // Phase 5a: render in the canonical path form
-            // (`users/<x>` / `agents/<x>` / `external/<sys>/<x>`) via
-            // `Principal::Display`. Matches the error message shape
-            // documented in `/designs/actor-system-overhaul.md` §4.5.
+            // Render in the canonical path form (`users/<x>` /
+            // `agents/<x>` / `external/<sys>/<x>`) via
+            // `Principal::Display`.
             error!(principal = %principal, "merge_policy references unknown actor");
             ApiError::bad_request(format!("unknown actor '{principal}'"))
         }

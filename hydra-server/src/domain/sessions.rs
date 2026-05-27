@@ -28,11 +28,9 @@ pub struct InteractiveOptions {
 /// Per-session knobs handed to the model wrapper. Mirrors
 /// [`api::sessions::AgentConfig`].
 ///
-/// Phase 2 of the actor-system overhaul
-/// (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
-/// to `Option<AgentName>` so the agent-vs-adhoc discriminant on a
-/// session is a validated type. `actor_id_of` reads this field to
-/// build the `ActorId` for the session.
+/// `agent_name` is `Option<AgentName>` so the agent-vs-adhoc
+/// discriminant on a session is a validated type. `actor_id_of` reads
+/// this field to build the `ActorId` for the session.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -165,18 +163,15 @@ pub struct Session {
 /// Build the [`ActorId`] for a session from its embedded
 /// [`AgentConfig`] and the session's own id.
 ///
-/// Per the actor-system overhaul design
-/// (`/designs/actor-system-overhaul.md` §3.4), the agent-vs-adhoc
-/// discriminant lives on `session.agent_config.agent_name`:
+/// The agent-vs-adhoc discriminant lives on
+/// `session.agent_config.agent_name`:
 ///
 /// - `Some(name)` → agent-spawned session, attributed to `Agent(name)`.
 /// - `None`       → ad-hoc session, attributed to `Adhoc(session_id)`.
 ///
 /// Pure function — no DB, no I/O. The `session_id` is passed
 /// alongside the `Session` value because `Session` is keyed by id in
-/// the store and does not carry its own id as a field. This helper is
-/// the Phase-2 replacement for the legacy `spawned_from`-vs-not
-/// branch in `create_actor_for_job` (see `hydra-server/src/app/users.rs`).
+/// the store and does not carry its own id as a field.
 pub fn actor_id_of(session: &Session, session_id: &SessionId) -> ActorId {
     match &session.agent_config.agent_name {
         Some(name) => ActorId::Agent(name.clone()),
@@ -742,11 +737,9 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Phase 2 (`/designs/actor-system-overhaul.md` §3.4):
-    // `actor_id_of(session, session_id)` is the pure helper that
-    // discriminates agent-spawned vs ad-hoc sessions off
-    // `agent_config.agent_name`. These tests pin its behaviour for both
-    // arms.
+    // `actor_id_of(session, session_id)` discriminates agent-spawned
+    // vs ad-hoc sessions off `agent_config.agent_name`. These tests pin
+    // its behaviour for both arms.
     // ---------------------------------------------------------------------
 
     fn session_with(agent_name: Option<AgentName>) -> Session {
