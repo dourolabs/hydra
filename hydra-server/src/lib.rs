@@ -73,11 +73,15 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             let pool = SqliteStore::init_pool(&db_url)
                 .await
                 .context("failed to initialize SQLite pool")?;
-            SqliteStore::run_migrations(&pool)
+            // Runs SQL + Rust migrations inline. The events Rust pass is
+            // idempotent and fast on already-migrated data, so blocking
+            // startup is acceptable today. If a future Rust migration is
+            // long-running, the spawn-and-forget mode would need to come
+            // back — see `/designs/migration-testing-redesign.md` §10.
+            crate::store::sqlite_store::run_migrations(&pool, None)
                 .await
                 .context("failed to run SQLite migrations")?;
             info!(path = %sqlite_path, "connected to SQLite and applied migrations");
-            spawn_startup_events_migration(crate::store::migrations::Backend::Sqlite(pool.clone()));
             Arc::new(SqliteStore::new(pool))
         }
         StorageConfig::Postgres { database } => {
@@ -86,12 +90,11 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 let postgres_pool = postgres_v2::init_pool(database)
                     .await?
                     .context("database.url is required for postgres storage backend")?;
-                postgres_v2::run_migrations(&postgres_pool).await?;
+                // Runs SQL + Rust migrations inline; see the sqlite branch
+                // above for the startup-blocking caveat.
+                postgres_v2::run_migrations(&postgres_pool, None).await?;
                 info!("connected to Postgres and applied migrations");
 
-                spawn_startup_events_migration(crate::store::migrations::Backend::Postgres(
-                    postgres_pool.clone(),
-                ));
                 Arc::new(PostgresStoreV2::new(postgres_pool))
             }
             #[cfg(not(feature = "postgres"))]
@@ -607,25 +610,6 @@ pub async fn setup_local_auth(
 
     info!("local auth configured");
     Ok(())
-}
-
-/// Kick off the historical `conversation_events_v2` → `session_events*`
-/// migration in the background. Failures warn-log with full context and never
-/// panic; the per-session skip in `store::migrations::events` keeps repeated
-/// boots idempotent.
-fn spawn_startup_events_migration(backend: crate::store::migrations::Backend) {
-    tokio::spawn(async move {
-        match crate::store::migrations::events::run(
-            &backend,
-            /* dry_run */ false,
-            /* up_to */ None,
-        )
-        .await
-        {
-            Ok(plan) => info!(rows = plan.len(), "startup events migration finished",),
-            Err(e) => warn!("startup events migration failed: {e:#}"),
-        }
-    });
 }
 
 async fn health_check() -> Json<serde_json::Value> {

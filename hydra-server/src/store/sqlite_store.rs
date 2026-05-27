@@ -62,6 +62,62 @@ const TABLE_SESSION_STATE: &str = "session_state";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
+/// Run the combined SQL+Rust migration sequence against `pool` up to (and
+/// including) `up_to`, or to HEAD when `up_to == None`. The production
+/// startup path calls this with `None`; the integration test passes
+/// per-baseline pins. See `store/migrations/mod.rs` for the planning
+/// helper and `/designs/migration-testing-redesign.md` §6 for the
+/// semantics. Note for future migration authors: SQLite migrations that
+/// reorder columns must NOT `INSERT INTO new_table SELECT * FROM
+/// old_table` — column order in `SELECT *` is unstable across schema
+/// changes and silently corrupts data ([[migrations]] memory).
+pub async fn run_migrations(pool: &SqlitePool, up_to: Option<u64>) -> anyhow::Result<()> {
+    use crate::store::migrations::{Backend, MigrationStep, plan_migrations, rust_migrations};
+    use anyhow::Context;
+    use sqlx::migrate::Migrate;
+
+    let steps = plan_migrations(&MIGRATOR, rust_migrations(), up_to);
+
+    let mut conn = pool
+        .acquire()
+        .await
+        .context("acquire sqlite connection for migrations")?;
+    let conn: &mut sqlx::SqliteConnection = &mut conn;
+
+    conn.ensure_migrations_table()
+        .await
+        .context("ensure _sqlx_migrations table")?;
+    if let Some(version) = conn.dirty_version().await? {
+        anyhow::bail!("sqlite database is in a dirty state at migration version {version}");
+    }
+    let mut applied: HashSet<i64> = conn
+        .list_applied_migrations()
+        .await?
+        .into_iter()
+        .map(|m| m.version)
+        .collect();
+
+    for step in steps {
+        match step {
+            MigrationStep::Sql(migration) => {
+                if !applied.contains(&migration.version) {
+                    conn.apply(migration).await.with_context(|| {
+                        format!("apply sqlite migration {}", migration.version)
+                    })?;
+                    applied.insert(migration.version);
+                }
+            }
+            MigrationStep::Rust(rust) => {
+                let name = rust.name();
+                rust.run(&Backend::Sqlite(pool.clone()))
+                    .await
+                    .with_context(|| format!("apply rust migration {name}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct SqliteStore {
     pool: SqlitePool,
@@ -437,6 +493,9 @@ impl SqliteStore {
         Ok(pool)
     }
 
+    /// Apply the SQL-only migration sequence. Kept for tests that need a
+    /// fast schema-only bootstrap; production startup calls the free
+    /// function [`run_migrations`] below to also drive Rust migrations.
     pub async fn run_migrations(pool: &SqlitePool) -> Result<(), anyhow::Error> {
         MIGRATOR.run(pool).await?;
         Ok(())

@@ -548,7 +548,7 @@ mod tests {
         )
         .await
         .context("reset metis schema and sqlx migration tracking table")?;
-        hydra_server::store::postgres_v2::run_migrations(&pool).await?;
+        hydra_server::store::postgres_v2::run_migrations(&pool, None).await?;
         Ok(pool)
     }
 

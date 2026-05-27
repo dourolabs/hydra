@@ -92,12 +92,56 @@ pub async fn init_pool(config: &DatabaseSection) -> Result<Option<PgStorePool>> 
     Ok(Some(pool))
 }
 
-/// Run embedded SQLx migrations against the provided pool.
-pub async fn run_migrations(pool: &PgStorePool) -> Result<()> {
-    MIGRATOR
-        .run(pool)
+/// Run the combined SQL+Rust migration sequence against `pool` up to (and
+/// including) `up_to`, or to HEAD when `up_to == None`. Replaces the prior
+/// `MIGRATOR.run(pool)` + background events-backfill spawn with a single
+/// interleaved sequence. See `store/migrations/mod.rs` for the planning
+/// helper and `/designs/migration-testing-redesign.md` §6 for the
+/// semantics.
+pub async fn run_migrations(pool: &PgStorePool, up_to: Option<u64>) -> Result<()> {
+    use crate::store::migrations::{Backend, MigrationStep, plan_migrations, rust_migrations};
+    use sqlx::migrate::Migrate;
+
+    let steps = plan_migrations(&MIGRATOR, rust_migrations(), up_to);
+
+    let mut conn = pool
+        .acquire()
         .await
-        .context("failed to apply Postgres migrations")
+        .context("acquire postgres connection for migrations")?;
+    let conn: &mut sqlx::PgConnection = &mut conn;
+
+    conn.ensure_migrations_table()
+        .await
+        .context("ensure _sqlx_migrations table")?;
+    if let Some(version) = conn.dirty_version().await? {
+        anyhow::bail!("postgres database is in a dirty state at migration version {version}");
+    }
+    let mut applied: HashSet<i64> = conn
+        .list_applied_migrations()
+        .await?
+        .into_iter()
+        .map(|m| m.version)
+        .collect();
+
+    for step in steps {
+        match step {
+            MigrationStep::Sql(migration) => {
+                if !applied.contains(&migration.version) {
+                    conn.apply(migration).await.with_context(|| {
+                        format!("apply postgres migration {}", migration.version)
+                    })?;
+                    applied.insert(migration.version);
+                }
+            }
+            MigrationStep::Rust(rust) => {
+                let name = rust.name();
+                rust.run(&Backend::Postgres(pool.clone()))
+                    .await
+                    .with_context(|| format!("apply rust migration {name}"))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 const TABLE_ISSUES_V2: &str = "metis.issues_v2";

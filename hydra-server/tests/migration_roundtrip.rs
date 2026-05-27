@@ -35,7 +35,7 @@ use hydra_server::domain::patches::{Patch, PatchStatus, Review};
 use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, SessionMode};
 use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::Username;
-use hydra_server::store::postgres_v2::{MIGRATOR, PostgresStoreV2};
+use hydra_server::store::postgres_v2::{self, MIGRATOR, PostgresStoreV2};
 use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
 use sqlx::migrate::Migrate;
 use sqlx::{PgPool, Row};
@@ -69,14 +69,12 @@ async fn migration_roundtrip() -> Result<()> {
 
     let _pre = capture_pre_rollforward_counts(&pool).await?;
 
-    MIGRATOR
-        .run(&pool)
+    // Single unified call that interleaves the remaining SQL migrations
+    // with the events Rust migration. Replaces the old `MIGRATOR.run` +
+    // `run_external_migrations` pair (see PR-B / design §7).
+    postgres_v2::run_migrations(&pool, None)
         .await
-        .context("apply remaining sqlx migrations past the baseline pin")?;
-
-    run_external_migrations(&pool)
-        .await
-        .context("run external migrations (migrate-events pass)")?;
+        .context("apply remaining migrations (SQL + Rust) past the baseline pin")?;
 
     assert_schema_invariants(&pool).await?;
     assert_data_shape_invariants(&pool).await?;
@@ -84,25 +82,6 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("§3.3 store / domain-level smoke")?;
 
-    Ok(())
-}
-
-/// External-migration hook. `events::run` is the exact library entry point
-/// the server's startup migration in `hydra-server/src/lib.rs` invokes —
-/// calling it here with the same `dry_run = false`, `up_to = None` arguments
-/// mirrors the work the server performs on each boot. ORDER MATTERS:
-/// `MIGRATOR.run` must complete first so `session_events_v2` exists; the
-/// later §3.3 assertions then exercise the rows this pass moved.
-async fn run_external_migrations(pool: &PgPool) -> Result<()> {
-    use hydra_server::migration_tool::{Backend, events};
-
-    let _ = events::run(
-        &Backend::Postgres(pool.clone()),
-        /* dry_run */ false,
-        /* up_to */ None,
-    )
-    .await
-    .context("migrate-events pass against the migrated baseline pool")?;
     Ok(())
 }
 
