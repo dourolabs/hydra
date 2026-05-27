@@ -15,6 +15,7 @@ For frontend development and visual testing, see `hydra-web/AGENTS.md`.
 
 ## Documentation Guidelines
 - Do not add CLI command details to `README.md` unless explicitly requested; the README has tight space and should stay focused on top-level orientation, so keep command-specific docs elsewhere.
+- For running one-off CLI tools against production, see `docs/operations/running-cli-tools-against-prod.md`.
 
 ## Coding Style & Naming Conventions
 Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` before submitting. Modules and files use snake_case; types and traits use UpperCamelCase; constants are SCREAMING_SNAKE_CASE. Keep each CLI subcommand isolated per file under `hydra/src/command` and prefer thin synchronous wrappers around async helpers. Document only non-obvious public behavior with `///` comments.
