@@ -10,7 +10,6 @@ export type BadgeStatus =
   | "blocked"
   | "merged"
   | "changes-requested"
-  | "rejected"
   | "approved"
   | "created"
   | "pending"
@@ -37,7 +36,6 @@ const statusLabels: Record<BadgeStatus, string> = {
   blocked: "Blocked",
   merged: "Merged",
   "changes-requested": "Changes requested",
-  rejected: "Rejected",
   approved: "Approved",
   created: "Created",
   pending: "Pending",
@@ -61,7 +59,6 @@ const statusTones: Record<BadgeStatus, string> = {
   blocked: "blocked",
   merged: "closed",
   "changes-requested": "rejected",
-  rejected: "rejected",
   approved: "closed",
   created: "open",
   pending: "open",

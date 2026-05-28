@@ -36,7 +36,6 @@ const STATUS_DOT_CLASS: Partial<Record<BadgeStatus, string>> = {
   running: styles.toneInProgress,
   complete: styles.toneClosed,
   "changes-requested": styles.toneRejected,
-  rejected: styles.toneRejected,
   merged: styles.toneClosed,
   "conv-active": styles.toneInProgress,
   "conv-idle": styles.toneOpen,
