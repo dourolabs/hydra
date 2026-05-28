@@ -55,7 +55,7 @@ VALUES
      'i-actissone', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
      '2026-05-10T10:00:00Z'),
     -- Multi-match parent: two distinct latest non-deleted spawned tasks
@@ -65,14 +65,14 @@ VALUES
      'i-actissmany', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
      '2026-05-10T10:00:01Z'),
     ('s-spawnmnyb', 1, 'alice', 'complete', FALSE, TRUE,
      'i-actissmany', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"User": {"name": "bob"}}}}'::jsonb,
      '2026-05-10T10:00:02Z'),
     -- Deleted spawned task: the loader's `WHERE deleted=FALSE` skips it.
@@ -80,7 +80,7 @@ VALUES
      'i-actissdel', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
      '2026-05-10T10:00:03Z'),
     -- is_latest=FALSE spawned task: post-INSERT trigger forces is_latest=TRUE
@@ -89,7 +89,7 @@ VALUES
      'i-actissold', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
      '2026-05-10T10:00:04Z'),
     -- Chained-Issue spawned task: actor itself references another Issue.
@@ -99,7 +99,7 @@ VALUES
      'i-actisschn', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated": {"actor_id": {"Issue": "i-actisstwo"}}}'::jsonb,
      '2026-05-10T10:00:05Z');
 
@@ -298,7 +298,7 @@ VALUES
      NULL, NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
      '{}'::jsonb,
-     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"type":"headless"}'::jsonb,
      '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb,
      '2026-05-10T10:30:00Z');
 

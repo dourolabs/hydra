@@ -1210,14 +1210,23 @@ async fn smoke_read_patches(store: &PostgresStoreV2) -> Result<()> {
 }
 
 async fn smoke_read_sessions(store: &PostgresStoreV2) -> Result<()> {
-    // Headless task: mode backfill -> SessionMode::Headless.
+    // Headless task: mode backfill -> unit-like SessionMode::Headless, with
+    // the legacy `prompt` column backfilled onto `agent_config.system_prompt`.
     let session = store
         .get_session(&parse_session_id("s-headalpha")?, false)
         .await
         .context("Store::get_session(s-headalpha)")?;
-    match &session.item.mode {
-        SessionMode::Headless { prompt } if prompt == "do a thing" => {}
-        other => bail!("s-headalpha: expected Headless('do a thing'); got {other:?}"),
+    if !matches!(&session.item.mode, SessionMode::Headless) {
+        bail!(
+            "s-headalpha: expected unit-like SessionMode::Headless; got {:?}",
+            session.item.mode
+        );
+    }
+    if session.item.agent_config.system_prompt.as_deref() != Some("do a thing") {
+        bail!(
+            "s-headalpha: expected agent_config.system_prompt='do a thing'; got {:?}",
+            session.item.agent_config.system_prompt
+        );
     }
 
     // Interactive task: mode backfill -> SessionMode::Interactive { conversation_id, .. }.
@@ -1381,16 +1390,14 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         Username::from("jayantk"),
         None,
         None,
-        AgentConfig::default(),
+        AgentConfig::new(None, None, Some("smoke: do a thing".to_string()), None),
         Default::default(),
         None,
         HashMap::new(),
         None,
         None,
         None,
-        SessionMode::Headless {
-            prompt: "smoke: do a thing".to_string(),
-        },
+        SessionMode::Headless,
         Status::Complete,
         None,
         None,
@@ -1403,12 +1410,20 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         .get_session(&id, false)
         .await
         .context("Store::get_session post-migration")?;
-    match &fetched.item.mode {
-        SessionMode::Headless { prompt } if prompt == "smoke: do a thing" => Ok(()),
-        other => bail!(
-            "post-migration create_session did not round-trip SessionMode::Headless; got {other:?}"
-        ),
+    if !matches!(&fetched.item.mode, SessionMode::Headless) {
+        bail!(
+            "post-migration create_session did not round-trip SessionMode::Headless; got {:?}",
+            fetched.item.mode
+        );
     }
+    if fetched.item.agent_config.system_prompt.as_deref() != Some("smoke: do a thing") {
+        bail!(
+            "post-migration create_session did not round-trip agent_config.system_prompt; \
+             got {:?}",
+            fetched.item.agent_config.system_prompt
+        );
+    }
+    Ok(())
 }
 
 async fn smoke_create_relationship(store: &PostgresStoreV2) -> Result<()> {

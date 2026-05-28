@@ -70,24 +70,22 @@ pub async fn run(
         .map(serde_json::to_string)
         .transpose()
         .context("failed to serialize MCP config")?;
-    let (prompt, interactive) = match &session.mode {
-        SessionMode::Headless { prompt } => (prompt.clone(), None),
+    let prompt = session
+        .agent_config
+        .system_prompt
+        .clone()
+        .unwrap_or_default();
+    let interactive = match &session.mode {
+        SessionMode::Headless => None,
         SessionMode::Interactive {
             conversation_id,
             idle_timeout_secs,
             conversation_resume_from,
-        } => (
-            session
-                .agent_config
-                .system_prompt
-                .clone()
-                .unwrap_or_default(),
-            Some(InteractiveOptions::new(
-                Some(conversation_id.clone()),
-                *idle_timeout_secs,
-                *conversation_resume_from,
-            )),
-        ),
+        } => Some(InteractiveOptions::new(
+            Some(conversation_id.clone()),
+            *idle_timeout_secs,
+            *conversation_resume_from,
+        )),
         // The `SessionMode` enum is `#[non_exhaustive]` across the crate
         // boundary. A future variant should crash loudly here rather than
         // silently fall through to either branch.

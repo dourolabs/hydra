@@ -51,10 +51,8 @@ fn create_session_request_with_repo_url(
         ],
     );
     CreateSessionRequest {
-        mode: SessionMode::Headless {
-            prompt: prompt.to_string(),
-        },
-        agent_config: AgentConfig::default(),
+        mode: SessionMode::Headless,
+        agent_config: AgentConfig::new(None, None, Some(prompt.to_string()), None),
         mount_spec,
         image: None,
         env_vars: HashMap::new(),

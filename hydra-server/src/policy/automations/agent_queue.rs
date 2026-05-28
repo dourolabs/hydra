@@ -141,9 +141,7 @@ impl AgentQueue {
                 format!("agent '{}' has invalid name in the store", self.agent.name)
             })?;
         let request = api::sessions::CreateSessionRequest {
-            mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            mode: api::sessions::SessionMode::Headless,
             agent_config: api::sessions::AgentConfig::new(
                 Some(agent_name),
                 session_settings.model.clone(),
@@ -172,10 +170,9 @@ impl AgentQueue {
         Ok(Some(session_id))
     }
 
-    /// Lower the issue's `session_settings` into a `MountSpec` directly so
-    /// the server-side `create_session` defaulting path doesn't need to
-    /// re-do this work. Mirrors `AppState::mount_spec_from_session_settings`
-    /// behavior for the `remote_url` / `repo_name` cases.
+    /// Lower the issue's `session_settings` into a `MountSpec` directly.
+    /// Required since PR-1: the server's `create_session` no longer derives
+    /// `mount_spec` from the linked issue.
     async fn resolve_mount_spec(
         &self,
         state: &AppState,
@@ -696,16 +693,14 @@ mod tests {
             Username::from("test-creator"),
             spawned_from,
             None,
-            AgentConfig::default(),
+            AgentConfig::new(None, None, Some(prompt.to_string()), None),
             mount_spec_from_create_request(bundle, None),
             image.map(str::to_string),
             env_vars,
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -789,13 +784,12 @@ mod tests {
                 mode,
                 spawned_from,
                 env_vars,
+                agent_config,
                 ..
             } = task;
 
-            let SessionMode::Headless { prompt } = &mode else {
-                panic!("expected headless");
-            };
-            assert_eq!(prompt, "Fix the issue");
+            assert!(matches!(&mode, SessionMode::Headless));
+            assert_eq!(agent_config.system_prompt.as_deref(), Some("Fix the issue"));
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -3168,9 +3162,7 @@ mod tests {
         env_vars_b.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id_b.to_string());
         env_vars_b.insert(AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string());
         let request_b = api::sessions::CreateSessionRequest {
-            mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            mode: api::sessions::SessionMode::Headless,
             agent_config: api::sessions::AgentConfig::new(
                 Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),
                 session_settings_b.model.clone(),

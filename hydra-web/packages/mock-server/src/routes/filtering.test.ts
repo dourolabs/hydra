@@ -43,16 +43,16 @@ function makeSession(
   overrides: Partial<Session> & { prompt?: string } = {},
 ): Session {
   // `prompt` was a top-level Session field pre-PR-2; it now lives on
-  // `mode` (headless variant). Accept it as a convenience override and
-  // funnel it into the headless mode so call sites stay terse.
+  // `agent_config.system_prompt`. Accept it as a convenience override and
+  // funnel it into the agent_config so call sites stay terse.
   const { prompt, ...rest } = overrides;
-  const mode: Session["mode"] = rest.mode ?? {
-    type: "headless",
-    prompt: prompt ?? "Default task prompt",
+  const mode: Session["mode"] = rest.mode ?? { type: "headless" };
+  const agentConfig: Session["agent_config"] = rest.agent_config ?? {
+    system_prompt: prompt ?? "Default task prompt",
   };
   return {
     creator: "testuser",
-    agent_config: {},
+    agent_config: agentConfig,
     mount_spec: { working_dir: "repo", mounts: [] },
     status: "pending" as Status,
     creation_time: new Date().toISOString(),

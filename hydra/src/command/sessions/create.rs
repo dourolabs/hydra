@@ -51,8 +51,8 @@ pub async fn run(
         None => None,
     };
     let request = CreateSessionRequest {
-        mode: SessionMode::Headless { prompt },
-        agent_config: AgentConfig::default(),
+        mode: SessionMode::Headless,
+        agent_config: AgentConfig::new(None, None, Some(prompt.clone()), None),
         mount_spec,
         image,
         env_vars,
@@ -355,9 +355,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "0".to_string(),
-            },
+            SessionMode::Headless,
             status,
             None,
             error,

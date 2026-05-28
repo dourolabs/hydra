@@ -122,8 +122,9 @@ impl AgentConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SessionMode {
-    /// One-shot headless task. The prompt drives the whole run.
-    Headless { prompt: String },
+    /// One-shot headless task. The prompt is sourced from
+    /// `Session::agent_config.system_prompt`.
+    Headless,
     /// Interactive session attached to a conversation.
     Interactive {
         conversation_id: ConversationId,
@@ -147,7 +148,7 @@ impl SessionMode {
     /// Convenience accessor for the linked conversation (`None` on headless).
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         match self {
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless => None,
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
@@ -163,7 +164,7 @@ impl SessionMode {
                 conversation_resume_from,
                 ..
             } => *conversation_resume_from,
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless => None,
         }
     }
 }
@@ -664,10 +665,11 @@ pub struct SessionSummary {
 
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
-        let raw_prompt = match &session.mode {
-            SessionMode::Headless { prompt } => prompt.as_str(),
-            SessionMode::Interactive { .. } => "",
-        };
+        let raw_prompt = session
+            .agent_config
+            .system_prompt
+            .as_deref()
+            .unwrap_or_default();
         let prompt = if raw_prompt.chars().count() > 20 {
             let mut s: String = raw_prompt.chars().take(20).collect();
             s.push_str("...");
@@ -1149,16 +1151,19 @@ mod tests {
             Username::from("alice"),
             Some(IssueId::new()),
             None,
-            AgentConfig::new(None, Some("claude-3".to_string()), None, None),
+            AgentConfig::new(
+                None,
+                Some("claude-3".to_string()),
+                Some(prompt.to_string()),
+                None,
+            ),
             test_mount_spec(),
             Some("worker:latest".to_string()),
             HashMap::from([("KEY".to_string(), "val".to_string())]),
             Some("500m".to_string()),
             Some("1Gi".to_string()),
             Some(vec!["secret".to_string()]),
-            SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            SessionMode::Headless,
             Status::Running,
             Some("last message text".to_string()),
             None,
@@ -1381,12 +1386,11 @@ mod tests {
 
     #[test]
     fn session_mode_round_trips_headless_and_interactive() {
-        let headless = SessionMode::Headless {
-            prompt: "go".to_string(),
-        };
+        let headless = SessionMode::Headless;
         let h_json = serde_json::to_value(&headless).unwrap();
         assert_eq!(h_json["type"], "headless");
-        assert_eq!(h_json["prompt"], "go");
+        // Headless is unit-like; the prompt lives on agent_config.system_prompt.
+        assert!(h_json.get("prompt").is_none());
         let parsed: SessionMode = serde_json::from_value(h_json).unwrap();
         assert_eq!(parsed, headless);
 
@@ -1514,10 +1518,8 @@ mod tests {
     #[test]
     fn create_session_request_round_trips_headless_mode() {
         let request = CreateSessionRequest {
-            mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-            },
-            agent_config: AgentConfig::default(),
+            mode: SessionMode::Headless,
+            agent_config: AgentConfig::new(None, None, Some("do stuff".to_string()), None),
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: HashMap::new(),
@@ -1530,7 +1532,9 @@ mod tests {
 
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["mode"]["type"], "headless");
-        assert_eq!(json["mode"]["prompt"], "do stuff");
+        // Headless is unit-like — no prompt field on `mode`.
+        assert!(json["mode"].get("prompt").is_none());
+        assert_eq!(json["agent_config"]["system_prompt"], "do stuff");
         // Optional/empty fields are omitted on the wire.
         assert!(json.get("spawned_from").is_none());
         assert!(json.get("resumed_from").is_none());

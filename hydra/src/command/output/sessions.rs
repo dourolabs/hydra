@@ -426,9 +426,7 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            None => SessionMode::Headless {
-                prompt: "p".to_string(),
-            },
+            None => SessionMode::Headless,
         };
         let mount_spec = MountSpec::new(
             RelativePath::new("repo").unwrap(),

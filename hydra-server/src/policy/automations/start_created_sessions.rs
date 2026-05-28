@@ -116,9 +116,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "test task".to_string(),
-            },
+            SessionMode::Headless,
             status,
             None,
             None,

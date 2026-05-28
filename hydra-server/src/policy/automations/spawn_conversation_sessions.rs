@@ -1,12 +1,14 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
 use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+use crate::policy::automations::agent_queue::AGENT_NAME_ENV_VAR;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode};
 use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
@@ -169,17 +171,75 @@ async fn spawn_session(
         }
     };
 
-    // Used only to surface failures clearly; `create_session` resolves the
-    // agent prompt itself for Interactive sessions when needed (the
-    // conversation lookup path), so we just confirm the prompt is reachable.
-    if let Err(err) = ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
-        return Err(AutomationError::Other(anyhow::anyhow!(
-            "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
-             {conversation_id} (prompt_path='{}'): {err}",
-            agent.name,
-            agent.prompt_path
-        )));
-    }
+    // The server no longer derives agent fields inside `create_session`,
+    // so this automation pre-resolves the agent's prompt, mcp_config,
+    // secrets, and validated name and stamps them onto the request.
+    let system_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
+        Ok(prompt) => prompt,
+        Err(err) => {
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
+                 {conversation_id} (prompt_path='{}'): {err}",
+                agent.name,
+                agent.prompt_path
+            )));
+        }
+    };
+
+    let mcp_config = match agent.mcp_config_path.as_deref() {
+        Some(path) => match ctx.app_state.resolve_agent_mcp_config(path).await {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                return Err(AutomationError::Other(anyhow::anyhow!(
+                    "[{AUTOMATION_NAME}] failed to resolve MCP config for agent '{}' on \
+                     conversation {conversation_id} (mcp_config_path='{path}'): {err}",
+                    agent.name,
+                )));
+            }
+        },
+        None => None,
+    };
+
+    let agent_name = AgentName::try_new(agent.name.clone()).map_err(|source| {
+        AutomationError::Other(anyhow::anyhow!(
+            "[{AUTOMATION_NAME}] agent '{}' has invalid name in the store: {source}",
+            agent.name
+        ))
+    })?;
+
+    let conversation_settings = ctx
+        .app_state
+        .apply_session_settings_defaults(conversation.session_settings.clone());
+
+    let mount_spec = match resolve_mount_spec_from_settings(ctx, &conversation_settings).await {
+        Ok(spec) => spec,
+        Err(err) => {
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve mount_spec for conversation \
+                 {conversation_id}: {err}"
+            )));
+        }
+    };
+
+    // Merge agent-level secrets with the conversation's `session_settings.secrets`.
+    let secrets = {
+        let mut seen = HashSet::new();
+        let mut merged = Vec::new();
+        for s in agent
+            .secrets
+            .iter()
+            .chain(conversation_settings.secrets.iter().flatten())
+        {
+            if seen.insert(s.clone()) {
+                merged.push(s.clone());
+            }
+        }
+        if merged.is_empty() {
+            None
+        } else {
+            Some(merged)
+        }
+    };
 
     let actor = ActorRef::Automation {
         automation_name: AUTOMATION_NAME.into(),
@@ -191,6 +251,7 @@ async fn spawn_session(
         ENV_HYDRA_CONVERSATION_ID.to_string(),
         conversation_id.to_string(),
     );
+    env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
 
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
@@ -198,13 +259,18 @@ async fn spawn_session(
             idle_timeout_secs: None,
             conversation_resume_from: None,
         },
-        agent_config: AgentConfig::default(),
-        mount_spec: MountSpec::default(),
-        image: None,
+        agent_config: AgentConfig::new(
+            Some(agent_name),
+            conversation_settings.model.clone(),
+            Some(system_prompt),
+            mcp_config,
+        ),
+        mount_spec,
+        image: conversation_settings.image.clone(),
         env_vars,
-        cpu_limit: None,
-        memory_limit: None,
-        secrets: None,
+        cpu_limit: conversation_settings.cpu_limit.clone(),
+        memory_limit: conversation_settings.memory_limit.clone(),
+        secrets,
         spawned_from: None,
         resumed_from: None,
     };
@@ -329,6 +395,63 @@ async fn spawn_session(
     );
 
     Ok(())
+}
+
+/// Lower the conversation's `session_settings` into a fully-resolved
+/// `MountSpec`. Mirrors the same `remote_url` / `repo_name` / `branch`
+/// rules the agent_queue automation uses; returns the empty default
+/// when no source is configured so the server's `create_session`
+/// falls through to a `Bundle::None` spec.
+async fn resolve_mount_spec_from_settings(
+    ctx: &AutomationContext<'_>,
+    settings: &crate::domain::issues::SessionSettings,
+) -> anyhow::Result<MountSpec> {
+    use crate::routes::sessions::mount_spec_from_create_request;
+    use hydra_common::api::v1::sessions::Bundle;
+
+    let (bundle, service_repo_name) =
+        match (settings.remote_url.as_ref(), settings.repo_name.as_ref()) {
+            (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
+                let rev = settings
+                    .branch
+                    .clone()
+                    .unwrap_or_else(|| "main".to_string());
+                let bundle = Bundle::GitRepository {
+                    url: remote_url.trim().to_string(),
+                    rev,
+                };
+                (bundle, repo_name.cloned())
+            }
+            (_, Some(repo_name)) => {
+                let repository = ctx
+                    .app_state
+                    .repository_from_store(repo_name)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("failed to load repository '{repo_name}': {err}")
+                    })?;
+                let rev = settings
+                    .branch
+                    .clone()
+                    .or_else(|| repository.default_branch.clone())
+                    .unwrap_or_else(|| "main".to_string());
+                let bundle = Bundle::GitRepository {
+                    url: repository.remote_url.clone(),
+                    rev,
+                };
+                (bundle, Some(repo_name.clone()))
+            }
+            _ => return Ok(MountSpec::default()),
+        };
+
+    let build_cache = match (
+        service_repo_name,
+        ctx.app_state.config.build_cache.to_context(),
+    ) {
+        (Some(name), Some(ctx_)) => Some((name, ctx_)),
+        _ => None,
+    };
+    Ok(mount_spec_from_create_request(bundle, build_cache))
 }
 
 /// Find the most-recently-created session linked to `conversation_id` that
@@ -550,9 +673,7 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            None => SessionMode::Headless {
-                prompt: "prompt".to_string(),
-            },
+            None => SessionMode::Headless,
         };
         Session::new(
             Username::from("creator"),

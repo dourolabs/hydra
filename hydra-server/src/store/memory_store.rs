@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
     AuthTokenRow, ConversationEventSummary, ReadOnlyStore, Session, SessionEvent,
-    SessionEventSummary, SessionMode, Status, Store, StoreError, TaskStatusLog,
+    SessionEventSummary, Status, Store, StoreError, TaskStatusLog,
 };
 use crate::domain::conversations::{Conversation, ConversationEvent};
 use crate::domain::{
@@ -483,10 +483,12 @@ impl MemoryStore {
 
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                let prompt = match &latest.item.mode {
-                    SessionMode::Headless { prompt } => prompt.as_str(),
-                    SessionMode::Interactive { .. } => "",
-                };
+                let prompt = latest
+                    .item
+                    .agent_config
+                    .system_prompt
+                    .as_deref()
+                    .unwrap_or_default();
                 let matches_prompt = prompt.to_lowercase().contains(term);
                 let matches_status = format!("{:?}", latest.item.status)
                     .to_lowercase()
@@ -2620,7 +2622,7 @@ mod tests {
             task_status::Event,
             users::{User, Username},
         },
-        store::TaskError,
+        store::{SessionMode, TaskError},
         test_utils::test_state_with_store,
     };
     use chrono::{Duration, Utc};
@@ -2651,16 +2653,14 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            AgentConfig::new(None, None, Some(prompt.to_string()), None),
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("hydra-worker:latest".to_string()),
             HashMap::new(),
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -3727,14 +3727,16 @@ mod tests {
 
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
-        let SessionMode::Headless { prompt } = &versions[0].item.mode else {
-            panic!("expected headless");
-        };
-        assert_eq!(prompt, "v1");
-        let SessionMode::Headless { prompt } = &versions[1].item.mode else {
-            panic!("expected headless");
-        };
-        assert_eq!(prompt, "v2");
+        assert!(matches!(&versions[0].item.mode, SessionMode::Headless));
+        assert_eq!(
+            versions[0].item.agent_config.system_prompt.as_deref(),
+            Some("v1")
+        );
+        assert!(matches!(&versions[1].item.mode, SessionMode::Headless));
+        assert_eq!(
+            versions[1].item.agent_config.system_prompt.as_deref(),
+            Some("v2")
+        );
     }
 
     #[tokio::test]
@@ -3784,9 +3786,8 @@ mod tests {
             .unwrap();
 
         let mut updated = task.clone();
-        updated.mode = crate::domain::sessions::SessionMode::Headless {
-            prompt: "v2".to_string(),
-        };
+        updated.mode = crate::domain::sessions::SessionMode::Headless;
+        updated.agent_config.system_prompt = Some("v2".to_string());
         store
             .update_session(&task_id, updated, &ActorRef::test())
             .await
@@ -3812,9 +3813,8 @@ mod tests {
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
         let mut running = store.get_session(&task_id, false).await.unwrap().item;
-        running.mode = crate::domain::sessions::SessionMode::Headless {
-            prompt: "v3".to_string(),
-        };
+        running.mode = crate::domain::sessions::SessionMode::Headless;
+        running.agent_config.system_prompt = Some("v3".to_string());
         store
             .update_session(&task_id, running, &ActorRef::test())
             .await
@@ -8690,9 +8690,7 @@ mod tests {
                 };
             }
             None => {
-                session.mode = crate::domain::sessions::SessionMode::Headless {
-                    prompt: String::new(),
-                };
+                session.mode = crate::domain::sessions::SessionMode::Headless;
             }
         }
         session

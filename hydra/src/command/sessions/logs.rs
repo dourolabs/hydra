@@ -130,9 +130,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    SessionMode::Headless {
-                        prompt: "demo".to_string(),
-                    },
+                    SessionMode::Headless,
                     Status::Created,
                     None,
                     None,

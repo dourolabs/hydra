@@ -1852,9 +1852,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mode: SessionMode::Headless {
-                prompt: "0".to_string(),
-            },
+            mode: SessionMode::Headless,
             status: Status::Created,
             last_message: None,
             error: None,

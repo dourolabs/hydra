@@ -386,9 +386,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "p".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
