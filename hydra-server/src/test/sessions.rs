@@ -56,7 +56,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
 
-    let SessionMode::Headless { prompt, .. } = &task.mode else {
+    let SessionMode::Headless { prompt } = &task.mode else {
         panic!("expected headless");
     };
     assert_eq!(prompt, "0");
@@ -526,7 +526,6 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "with-usage".to_string(),
-                conversation_id: None,
             },
             status: Status::Complete,
             last_message: None,
@@ -745,7 +744,6 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1024,7 +1022,6 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1107,7 +1104,6 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1211,7 +1207,6 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1272,7 +1267,6 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1316,7 +1310,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    let v1::sessions::SessionMode::Headless { prompt, .. } = &body.session.mode else {
+    let v1::sessions::SessionMode::Headless { prompt } = &body.session.mode else {
         panic!("expected Headless mode, got {:?}", body.session.mode);
     };
     assert_eq!(prompt, "0");
@@ -1352,7 +1346,6 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1411,7 +1404,6 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1569,7 +1561,6 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1628,7 +1619,6 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 secrets: None,
                 mode: SessionMode::Headless {
                     prompt: "0".to_string(),
-                    conversation_id: None,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1711,7 +1701,6 @@ fn make_session_with_service_repo(
         secrets: None,
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
-            conversation_id: None,
         },
         status: Status::Created,
         last_message: None,
@@ -1741,7 +1730,6 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         secrets: None,
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
-            conversation_id: None,
         },
         status: Status::Created,
         last_message: None,
@@ -1913,7 +1901,6 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         secrets: None,
         mode: SessionMode::Headless {
             prompt: "prompt".to_string(),
-            conversation_id: None,
         },
         status: Status::Created,
         last_message: None,

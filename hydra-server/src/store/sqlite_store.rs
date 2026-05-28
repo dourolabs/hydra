@@ -7370,7 +7370,6 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: prompt.to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,
@@ -7452,15 +7451,13 @@ mod tests {
         assert_eq!(
             versions[0].item.mode,
             SessionMode::Headless {
-                prompt: "v1".to_string(),
-                conversation_id: None
+                prompt: "v1".to_string()
             }
         );
         assert_eq!(
             versions[1].item.mode,
             SessionMode::Headless {
-                prompt: "v2".to_string(),
-                conversation_id: None
+                prompt: "v2".to_string()
             }
         );
     }
@@ -7572,7 +7569,7 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        let SessionMode::Headless { prompt, .. } = &tasks[0].1.item.mode else {
+        let SessionMode::Headless { prompt } = &tasks[0].1.item.mode else {
             panic!("expected headless");
         };
         assert_eq!(prompt, "deploy to production");
@@ -7843,7 +7840,6 @@ mod tests {
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
             SessionMode::Headless {
                 prompt: "full test".to_string(),
-                conversation_id: None,
             },
             Status::Pending,
             Some("last msg".to_string()),
@@ -10576,7 +10572,6 @@ mod tests {
                 // semantic effect (no conversation linkage).
                 session.mode = SessionMode::Headless {
                     prompt: String::new(),
-                    conversation_id: None,
                 };
             }
         }

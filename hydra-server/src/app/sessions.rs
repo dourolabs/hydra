@@ -4,7 +4,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         issues::SessionSettings,
-        sessions::{AgentConfig, SessionEvent, SessionMode},
+        sessions::{AgentConfig, SessionMode},
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
@@ -309,64 +309,8 @@ impl AppState {
             mount_spec = mount_spec_from_create_request(Bundle::None, None);
         }
 
-        let agent_config = AgentConfig::new(agent_name.clone(), model, system_prompt, mcp_config);
+        let agent_config = AgentConfig::new(agent_name, model, system_prompt, mcp_config);
         let mode: SessionMode = req_mode.into();
-
-        // PR-2 write-side: for fresh headless sessions, materialize a
-        // Conversation row up front so the new `tasks_v2.mode.conversation_id`
-        // is populated at create time. The first `SessionEvent::UserMessage`
-        // is then appended below — keyed by the just-assigned `session_id` so
-        // the worker's `get_session_events` lookup surfaces the prompt
-        // uniformly across modes (per design doc §2.2 / §5 PR-2 scope and
-        // parent issue i-ygaugkot). `Headless.prompt` is preserved vestigially
-        // so the read-side fallback that PR-2 ships continues to work; PR-3
-        // drops the field from the type along with the wire cutover.
-        //
-        // The three writes (conversation, session, session event) are not
-        // wrapped in a cross-store transaction: the per-store mutation
-        // primitives don't expose one, and adding one would balloon the PR.
-        // The headless backfill migration already handles the equivalent
-        // recovery case at boot — a partial create (e.g., conversation
-        // written but session insert failed) would simply re-trigger the
-        // backfill on the next process start, which is idempotent.
-        let (mode, headless_first_message) = match mode {
-            SessionMode::Headless {
-                prompt,
-                conversation_id,
-            } => {
-                let conversation_id = match conversation_id {
-                    Some(existing) => existing,
-                    None => {
-                        let conversation = crate::domain::conversations::Conversation {
-                            title: None,
-                            agent_name: agent_name.clone(),
-                            status: crate::domain::conversations::ConversationStatus::Active,
-                            creator: creator.clone(),
-                            session_settings: session_settings.clone().unwrap_or_default(),
-                            deleted: false,
-                        };
-                        let (id, _) = self
-                            .store
-                            .add_conversation_with_actor(conversation, actor.clone())
-                            .await
-                            .map_err(|source| CreateSessionError::Store { source })?;
-                        id
-                    }
-                };
-                let first_message = SessionEvent::UserMessage {
-                    content: prompt.clone(),
-                    timestamp: Utc::now(),
-                };
-                (
-                    SessionMode::Headless {
-                        prompt,
-                        conversation_id: Some(conversation_id),
-                    },
-                    Some(first_message),
-                )
-            }
-            other => (other, None),
-        };
 
         let mut session = Session::new(
             creator,
@@ -390,16 +334,9 @@ impl AppState {
         let creation_time = Utc::now();
         let (session_id, _version) = self
             .store
-            .add_session_with_actor(session.clone(), creation_time, actor.clone())
+            .add_session_with_actor(session.clone(), creation_time, actor)
             .await
             .map_err(|source| CreateSessionError::Store { source })?;
-
-        if let Some(event) = headless_first_message {
-            self.store
-                .append_session_event_with_actor(&session_id, event, actor)
-                .await
-                .map_err(|source| CreateSessionError::Store { source })?;
-        }
 
         // Populate the assigned creation_time so the returned `Session`
         // matches what the store now holds — saves callers a follow-up
@@ -1596,7 +1533,6 @@ mod tests {
         let headless_request = CreateSessionRequest {
             mode: SessionMode::Headless {
                 prompt: "do stuff".to_string(),
-                conversation_id: None,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1702,7 +1638,6 @@ mod tests {
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
                 prompt: "do stuff".to_string(),
-                conversation_id: None,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1723,12 +1658,10 @@ mod tests {
             !session.is_interactive(),
             "headless session should not be interactive"
         );
-        // PR-2 write-side change: fresh headless create now materializes a
-        // conversation up front and stamps its id on the session mode,
-        // matching the post-migration shape for legacy rows.
-        assert!(
-            session.conversation_id().is_some(),
-            "headless session should have a conversation_id after PR-2 create-side change"
+        assert_eq!(
+            session.conversation_id(),
+            None,
+            "headless session should have no conversation_id"
         );
 
         // Interactive session — conversation_id lives on the SessionMode.
@@ -1836,89 +1769,6 @@ mod tests {
             Some("conversation-model"),
             "session should inherit model from the linked conversation"
         );
-    }
-
-    /// PR-2 write-side acceptance criterion (parent issue i-ygaugkot):
-    /// fresh `create_session` for a `Headless` request must materialize a
-    /// Conversation row and seed its `session_events` with a
-    /// `UserMessage` carrying the prompt. The session's `mode` must
-    /// carry the new `conversation_id`. Asserted via `Store::get_session`
-    /// + `Store::get_session_events` (the same domain-typed read path
-    /// the migration test uses), per [[migration-test-read-migrated]].
-    #[tokio::test]
-    async fn create_headless_session_materializes_conversation_and_first_user_message() {
-        use crate::domain::sessions::SessionEvent;
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, CreateSessionRequest, MountSpec, SessionMode,
-        };
-
-        let state = state_with_default_model("default-model");
-        let request = CreateSessionRequest {
-            mode: SessionMode::Headless {
-                prompt: "what is the time".to_string(),
-                conversation_id: None,
-            },
-            agent_config: AgentConfig::default(),
-            mount_spec: MountSpec::default(),
-            image: None,
-            env_vars: std::collections::HashMap::new(),
-            cpu_limit: None,
-            memory_limit: None,
-            secrets: None,
-            spawned_from: None,
-            resumed_from: None,
-        };
-
-        let (session_id, _) = state
-            .create_session(request, ActorRef::test(), Username::from("creator"))
-            .await
-            .expect("fresh headless create_session should succeed");
-
-        let session = state
-            .store()
-            .get_session(&session_id, false)
-            .await
-            .expect("get_session for the newly-created headless row")
-            .item;
-
-        // 1. The mode must be the post-migration shape: prompt is
-        //    preserved vestigially (until PR-3 drops it from the type),
-        //    AND conversation_id is now `Some(_)`.
-        let conv_id = match &session.mode {
-            crate::domain::sessions::SessionMode::Headless {
-                prompt,
-                conversation_id: Some(conv_id),
-            } if prompt == "what is the time" => conv_id.clone(),
-            other => panic!("expected Headless with conversation_id, got {other:?}"),
-        };
-
-        // 2. The conversation row must exist and inherit the session's
-        //    creator. Agent name was not requested, so it stays None.
-        let conversation = state
-            .store()
-            .get_conversation(&conv_id, false)
-            .await
-            .expect("backfilled conversation should be present");
-        assert_eq!(conversation.item.creator, Username::from("creator"));
-
-        // 3. The first session event must be the UserMessage carrying
-        //    the original prompt. This is the load-bearing piece: PR-3
-        //    will read this back as the `user_message` slot of
-        //    `FirstMessage`.
-        let events = state
-            .store()
-            .get_session_events(&session_id)
-            .await
-            .expect("get_session_events for the fresh headless session");
-        let first = events
-            .first()
-            .expect("fresh headless session should have at least one session event");
-        match &first.item {
-            SessionEvent::UserMessage { content, .. } => {
-                assert_eq!(content, "what is the time");
-            }
-            other => panic!("expected first event to be a UserMessage, got {other:?}"),
-        }
     }
 
     #[test]

@@ -484,7 +484,7 @@ impl MemoryStore {
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
                 let prompt = match &latest.item.mode {
-                    SessionMode::Headless { prompt, .. } => prompt.as_str(),
+                    SessionMode::Headless { prompt } => prompt.as_str(),
                     SessionMode::Interactive { .. } => "",
                 };
                 let matches_prompt = prompt.to_lowercase().contains(term);
@@ -2660,7 +2660,6 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: prompt.to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,
@@ -3728,11 +3727,11 @@ mod tests {
 
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
-        let SessionMode::Headless { prompt, .. } = &versions[0].item.mode else {
+        let SessionMode::Headless { prompt } = &versions[0].item.mode else {
             panic!("expected headless");
         };
         assert_eq!(prompt, "v1");
-        let SessionMode::Headless { prompt, .. } = &versions[1].item.mode else {
+        let SessionMode::Headless { prompt } = &versions[1].item.mode else {
             panic!("expected headless");
         };
         assert_eq!(prompt, "v2");
@@ -3787,7 +3786,6 @@ mod tests {
         let mut updated = task.clone();
         updated.mode = crate::domain::sessions::SessionMode::Headless {
             prompt: "v2".to_string(),
-            conversation_id: None,
         };
         store
             .update_session(&task_id, updated, &ActorRef::test())
@@ -3816,7 +3814,6 @@ mod tests {
         let mut running = store.get_session(&task_id, false).await.unwrap().item;
         running.mode = crate::domain::sessions::SessionMode::Headless {
             prompt: "v3".to_string(),
-            conversation_id: None,
         };
         store
             .update_session(&task_id, running, &ActorRef::test())
@@ -8695,7 +8692,6 @@ mod tests {
             None => {
                 session.mode = crate::domain::sessions::SessionMode::Headless {
                     prompt: String::new(),
-                    conversation_id: None,
                 };
             }
         }

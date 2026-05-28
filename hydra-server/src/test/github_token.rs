@@ -124,7 +124,6 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
             None,
             SessionMode::Headless {
                 prompt: "prompt".to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,
@@ -257,7 +256,6 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
             None,
             SessionMode::Headless {
                 prompt: "prompt".to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,
@@ -360,7 +358,6 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
             None,
             SessionMode::Headless {
                 prompt: "prompt".to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,

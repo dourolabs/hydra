@@ -1854,7 +1854,6 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "0".to_string(),
-                conversation_id: None,
             },
             status: Status::Created,
             last_message: None,

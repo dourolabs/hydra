@@ -566,7 +566,6 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: prompt.to_string(),
-                conversation_id: None,
             },
             crate::store::Status::Created,
             None,

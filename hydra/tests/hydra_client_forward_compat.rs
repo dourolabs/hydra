@@ -386,7 +386,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let create_session_request = CreateSessionRequest {
         mode: ApiSessionMode::Headless {
             prompt: "test prompt".to_string(),
-            conversation_id: None,
         },
         agent_config: ApiAgentConfig::default(),
         mount_spec: ApiMountSpec::default(),
