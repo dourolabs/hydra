@@ -202,16 +202,38 @@ VALUES
 
 --------------------------------------------------------------------------------
 -- actors_v2.actor + actor_id — the bare ActorId column. The cleanup
--- walks BOTH columns on this table. We add one row per shape.
+-- walks BOTH columns on this table. `actors_v2.actor_id` is NOT NULL
+-- since `20260205000000_add_v2_tables.sql`, so the cleanup MUST emit a
+-- non-null value for every unmigratable shape — the External-legacy
+-- fallback covers that. The last two rows specifically exercise
+-- previously-NULLable paths that would have violated the NOT NULL
+-- constraint before this fix.
 --------------------------------------------------------------------------------
-INSERT INTO metis.actors_v2 (id, version_number, creator, actor_id, actor)
+-- `auth_token_hash` / `auth_token_salt` are NOT NULL on `actors_v2`
+-- (per `20260205000000_add_v2_tables.sql`) even though both fields are
+-- vestigial post-auth-token-table migration. Writes from production
+-- code already supply empty strings (see `sqlite_store.rs:756`); the
+-- fixture mirrors that pattern.
+INSERT INTO metis.actors_v2
+    (id, version_number, auth_token_hash, auth_token_salt, creator, actor_id, actor)
 VALUES
-    ('actu-aname', 1, 'alice',
+    ('actu-aname',   1, '', '', 'alice',
      '{"Username":"alice"}'::jsonb,
      '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb),
-    ('actu-asvc',  1, 'alice',
+    ('actu-asvc',    1, '', '', 'alice',
      '{"Service":"swe"}'::jsonb,
-     '{"Authenticated":{"actor_id":{"Service":"swe"}}}'::jsonb);
+     '{"Authenticated":{"actor_id":{"Service":"swe"}}}'::jsonb),
+    -- Issue with no matching tasks_v2 row: previously the cleanup
+    -- would NULL `actor_id`, violating NOT NULL. Now it falls back to
+    -- External-legacy with the issue id preserved as the username.
+    ('actu-aiss',    1, '', '', 'alice',
+     '{"Issue":"i-actisstwo"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Issue":"i-actisstwo"}}}'::jsonb),
+    -- Service with invalid AgentName: previously NULLed, now falls back
+    -- to External-legacy preserving the original `<name>`.
+    ('actu-asvcbad', 1, '', '', 'alice',
+     '{"Service":"has space"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Service":"has space"}}}'::jsonb);
 
 --------------------------------------------------------------------------------
 -- conversation_events_v2 — actor column carries an ActorRef with a
