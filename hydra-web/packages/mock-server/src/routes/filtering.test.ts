@@ -39,14 +39,8 @@ function makePatch(overrides: Partial<Patch> = {}): Patch {
   };
 }
 
-function makeSession(
-  overrides: Partial<Session> & { prompt?: string } = {},
-): Session {
-  // `prompt` was inline on the headless mode pre-PR-3; the prompt is now a
-  // conversation event. The test still accepts `prompt` for ergonomics but
-  // discards it (the mode's discriminator carries only the conversation_id).
-  const { prompt: _prompt, ...rest } = overrides;
-  const mode: Session["mode"] = rest.mode ?? {
+function makeSession(overrides: Partial<Session> = {}): Session {
+  const mode: Session["mode"] = overrides.mode ?? {
     type: "headless",
     conversation_id: null,
   };
@@ -56,7 +50,7 @@ function makeSession(
     mount_spec: { working_dir: "repo", mounts: [] },
     status: "pending" as Status,
     creation_time: new Date().toISOString(),
-    ...rest,
+    ...overrides,
     mode,
   };
 }
@@ -304,8 +298,8 @@ describe("Session list filtering", () => {
   }
 
   it("returns all sessions when no filters provided", async () => {
-    store.create("sessions", "t-1", makeSession({ prompt: "First" }), "session");
-    store.create("sessions", "t-2", makeSession({ prompt: "Second" }), "session");
+    store.create("sessions", "t-1", makeSession(), "session");
+    store.create("sessions", "t-2", makeSession(), "session");
     const data = await listSessions();
     expect(data.sessions).toHaveLength(2);
   });
@@ -332,18 +326,6 @@ describe("Session list filtering", () => {
     expect(
       data.sessions.every((j: { session: { status: string } }) => j.session.status === "running"),
     ).toBe(true);
-  });
-
-  // PR-3 removed the inline `prompt` field from SessionMode::Headless; the
-  // prompt now lives on the conversation's first UserMessage event. The
-  // free-text search-by-prompt feature this test exercised is vestigial
-  // until the search index is repointed at the conversation event log.
-  it.skip("filters by q (case-insensitive substring on prompt)", async () => {
-    store.create("sessions", "t-1", makeSession({ prompt: "Deploy the application" }), "session");
-    store.create("sessions", "t-2", makeSession({ prompt: "Run tests" }), "session");
-    store.create("sessions", "t-3", makeSession({ prompt: "deploy staging" }), "session");
-    const data = await listSessions({ q: "deploy" });
-    expect(data.sessions).toHaveLength(2);
   });
 
   it("combines filters with AND logic", async () => {
