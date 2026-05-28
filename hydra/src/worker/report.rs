@@ -10,6 +10,9 @@ use std::path::PathBuf;
 
 pub use hydra_common::sessions::TokenUsage;
 
+use crate::worker::claude::ClaudeResume;
+use crate::worker::codex::CodexResume;
+
 /// Result of one batch or interactive worker run, returned by
 /// `ModelSelector::run` / `ModelSelector::run_interactive`.
 #[derive(Debug, Clone)]
@@ -66,8 +69,60 @@ pub struct WorkerInputMessage {
 /// model-agnostic shape.
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
-    AssistantText { text: String },
-    Usage { usage: TokenUsage },
-    SessionInit { model_session_id: String },
-    Raw { value: serde_json::Value },
+    AssistantText {
+        text: String,
+    },
+    Usage {
+        usage: TokenUsage,
+    },
+    SessionInit {
+        model_session_id: String,
+    },
+    /// A tool invocation observed in the model's output stream. The
+    /// `tool_name` is the model's tool identifier (e.g. `"Bash"`); the
+    /// `payload` is the raw input passed to the tool, as JSON.
+    ToolUse {
+        tool_name: String,
+        payload: serde_json::Value,
+    },
+    Raw {
+        value: serde_json::Value,
+    },
+}
+
+/// Per-wrapper resume handle, opaque to the dispatcher. Each variant carries
+/// the wrapper-native shape so the dispatcher never needs to translate.
+///
+/// Returned by `try_materialize` on each per-model wrapper; consumed by the
+/// same wrapper's `run` / `run_interactive` to drive a resume.
+///
+/// See `designs/sessions-worker-run-interface.md` §3 — this is the
+/// `NativeResume` type that replaces the soon-to-be-removed [`SessionResume`]
+/// once PR-3 wires the wrappers' native vocabulary all the way through the
+/// dispatch layer.
+#[derive(Debug, Clone)]
+pub enum NativeResume {
+    Claude(ClaudeResume),
+    Codex(CodexResume),
+}
+
+/// Failure modes for [`crate::worker::claude::Claude::try_materialize`] and
+/// the parallel methods on other per-model wrappers.
+///
+/// The dispatcher only inspects which variant fired for logging; behavior on
+/// `Err` is identical (fall back to the transcript-replay primer path).
+#[derive(Debug, thiserror::Error)]
+pub enum MaterializeError {
+    /// The state bytes are not in this wrapper's expected format. Treat as a
+    /// cross-model handoff (or older / future encoding) and fall back to
+    /// transcript replay.
+    #[error("state bytes are not in this wrapper's expected format")]
+    WrongFormat,
+    /// The bytes parsed but writing the wrapper's on-disk artifact failed.
+    #[error("failed to write resume artifact: {0}")]
+    IoError(#[from] std::io::Error),
+    /// This wrapper does not (yet) implement native resume. Codex returns
+    /// this today; will become a real implementation when Codex resume lands.
+    #[error("native resume is not implemented for this wrapper")]
+    NotImplemented,
 }

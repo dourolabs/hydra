@@ -220,6 +220,7 @@ fn translate_claude_event(event: ClaudeEvent) -> WorkerEvent {
         ClaudeEvent::SystemInit { session_id } => WorkerEvent::SessionInit {
             model_session_id: session_id,
         },
+        ClaudeEvent::ToolUse { tool_name, payload } => WorkerEvent::ToolUse { tool_name, payload },
         ClaudeEvent::Raw { value } => WorkerEvent::Raw { value },
     }
 }
@@ -400,6 +401,26 @@ mod tests {
         match translated {
             WorkerEvent::Raw { value: v } => assert_eq!(v, value),
             other => panic!("expected Raw, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn translate_tool_use_event_to_tool_use() {
+        let payload = serde_json::json!({"command": "ls", "description": "list"});
+        let event = ClaudeEvent::ToolUse {
+            tool_name: "Bash".to_string(),
+            payload: payload.clone(),
+        };
+        let translated = translate_claude_event(event);
+        match translated {
+            WorkerEvent::ToolUse {
+                tool_name,
+                payload: p,
+            } => {
+                assert_eq!(tool_name, "Bash");
+                assert_eq!(p, payload);
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
         }
     }
 
