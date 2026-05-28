@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { MarkdownViewer, Spinner } from "@hydra/ui";
+import { Spinner } from "@hydra/ui";
+import { Markdown } from "../../components/Markdown";
 import { useDocument } from "../documents/useDocument";
 import styles from "./DocumentPreview.module.css";
 
@@ -59,7 +60,7 @@ function DocumentPreviewCard({ documentId }: DocumentPreviewCardProps) {
 
       {document.body_markdown && (
         <div className={styles.bodyPreview}>
-          <MarkdownViewer content={truncatedBody} />
+          <Markdown content={truncatedBody} />
         </div>
       )}
     </div>

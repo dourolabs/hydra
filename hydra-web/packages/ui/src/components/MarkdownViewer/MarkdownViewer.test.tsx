@@ -76,3 +76,115 @@ describe("MarkdownViewer", () => {
     expect(container.textContent).toBe("see step 3.");
   });
 });
+
+describe("MarkdownViewer Hydra ID linking", () => {
+  function Linker({ id, raw }: { id: string; raw: string }) {
+    return (
+      <a href={`/${id}`} data-testid="hydra-link" data-raw={raw}>
+        Title for {id}
+      </a>
+    );
+  }
+
+  it("renders a [[i-abc123]] token through the supplied hydraLinkComponent", () => {
+    const { container } = render(
+      <MarkdownViewer
+        content="see [[i-abcdef]] for details"
+        hydraLinkComponent={Linker}
+      />,
+    );
+    const link = container.querySelector(
+      '[data-testid="hydra-link"]',
+    ) as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe("/i-abcdef");
+    expect(link!.getAttribute("data-raw")).toBe("[[i-abcdef]]");
+    expect(container.textContent).toContain("see ");
+    expect(container.textContent).toContain(" for details");
+    expect(container.textContent).toContain("Title for i-abcdef");
+  });
+
+  it("renders literal [[id]] text when no hydraLinkComponent is supplied", () => {
+    const { container } = render(
+      <MarkdownViewer content="see [[i-abcdef]] for details" />,
+    );
+    expect(container.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(container.textContent).toBe("see [[i-abcdef]] for details");
+  });
+
+  it("leaves [[id]] inside fenced code blocks as literal text", () => {
+    const { container } = render(
+      <MarkdownViewer
+        content={"```\n[[i-abcdef]]\n```"}
+        hydraLinkComponent={Linker}
+      />,
+    );
+    expect(container.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(container.querySelector("code")?.textContent).toContain(
+      "[[i-abcdef]]",
+    );
+  });
+
+  it("leaves [[id]] inside inline code as literal text", () => {
+    const { container } = render(
+      <MarkdownViewer
+        content="run `[[i-abcdef]]` carefully"
+        hydraLinkComponent={Linker}
+      />,
+    );
+    expect(container.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(container.querySelector("code")?.textContent).toBe("[[i-abcdef]]");
+  });
+
+  it("renders malformed [[xxx]] tokens as literal text", () => {
+    // Wrong prefix
+    const { container: c1 } = render(
+      <MarkdownViewer content="see [[x-abcdef]]" hydraLinkComponent={Linker} />,
+    );
+    expect(c1.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(c1.textContent).toBe("see [[x-abcdef]]");
+
+    // Suffix too short (3 chars, min is 4)
+    const { container: c2 } = render(
+      <MarkdownViewer content="see [[i-abc]]" hydraLinkComponent={Linker} />,
+    );
+    expect(c2.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(c2.textContent).toBe("see [[i-abc]]");
+
+    // Kebab-case memory slug (not a Hydra id)
+    const { container: c3 } = render(
+      <MarkdownViewer
+        content="see [[round-2-acceptance-check]]"
+        hydraLinkComponent={Linker}
+      />,
+    );
+    expect(c3.querySelector('[data-testid="hydra-link"]')).toBeNull();
+    expect(c3.textContent).toBe("see [[round-2-acceptance-check]]");
+  });
+
+  it("renders multiple tokens in the same paragraph", () => {
+    const { container } = render(
+      <MarkdownViewer
+        content="links: [[i-abcdef]] and [[p-foobar]]"
+        hydraLinkComponent={Linker}
+      />,
+    );
+    const links = container.querySelectorAll('[data-testid="hydra-link"]');
+    expect(links).toHaveLength(2);
+    expect(links[0].getAttribute("href")).toBe("/i-abcdef");
+    expect(links[1].getAttribute("href")).toBe("/p-foobar");
+  });
+
+  it("supports every registered prefix (i,p,d,c,s,l)", () => {
+    const ids = ["i-aaaa", "p-aaaa", "d-aaaa", "c-aaaa", "s-aaaa", "l-aaaa"];
+    const content = ids.map((id) => `[[${id}]]`).join(" ");
+    const { container } = render(
+      <MarkdownViewer content={content} hydraLinkComponent={Linker} />,
+    );
+    const links = container.querySelectorAll('[data-testid="hydra-link"]');
+    expect(links).toHaveLength(ids.length);
+    ids.forEach((id, i) => {
+      expect(links[i].getAttribute("href")).toBe(`/${id}`);
+    });
+  });
+});

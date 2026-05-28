@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, DiffViewer, MarkdownViewer } from "@hydra/ui";
+import { Avatar, Badge, DiffViewer } from "@hydra/ui";
+import { Markdown } from "../../components/Markdown";
 import type { PatchVersionRecord } from "@hydra/api";
 import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -137,7 +138,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
           <div className={styles.section}>
             <span className={styles.sectionLabel}>Description</span>
             <div className={styles.prose}>
-              <MarkdownViewer content={patch.description} />
+              <Markdown content={patch.description} />
             </div>
           </div>
         )}
@@ -198,7 +199,7 @@ function ReviewsList({ reviews }: ReviewsListProps) {
           </div>
           {review.contents && (
             <div className={styles.reviewBody}>
-              <MarkdownViewer content={review.contents} />
+              <Markdown content={review.contents} />
             </div>
           )}
         </li>

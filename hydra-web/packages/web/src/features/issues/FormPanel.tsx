@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, MarkdownViewer, Select, Textarea } from "@hydra/ui";
+import { Button, Input, Select, Textarea } from "@hydra/ui";
+import { Markdown } from "../../components/Markdown";
 import type {
   Form,
   FormResponse,
@@ -354,7 +355,7 @@ export function FormPanel({ issueId, form, formResponse }: FormPanelProps) {
     <div className={styles.formPanel}>
       {/* Prompt */}
       <div className={styles.prompt}>
-        <MarkdownViewer content={form.prompt} />
+        <Markdown content={form.prompt} />
       </div>
 
       {/* Fields */}
