@@ -95,8 +95,8 @@ impl AgentQueue {
         // Pre-resolve the mount_spec via `mount_spec_from_create_request`. The
         // server-side `create_session` defaulting from `session_settings` is
         // bypassed because we send a non-empty `mount_spec` on the request.
-        let mount_spec = self
-            .resolve_mount_spec(state, &session_settings)
+        let mount_spec = state
+            .resolve_mount_spec(&session_settings)
             .await
             .context("failed to resolve mount_spec for issue task")?;
 
@@ -111,26 +111,8 @@ impl AgentQueue {
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
 
-        // Merge agent-level secrets with issue-level secrets, deduplicating.
-        let merged_secrets = {
-            let mut seen = HashSet::new();
-            let mut secrets = Vec::new();
-            for s in self
-                .agent
-                .secrets
-                .iter()
-                .chain(session_settings.secrets.iter().flatten())
-            {
-                if seen.insert(s.clone()) {
-                    secrets.push(s.clone());
-                }
-            }
-            if secrets.is_empty() {
-                None
-            } else {
-                Some(secrets)
-            }
-        };
+        let merged_secrets =
+            crate::app::sessions::merge_agent_and_settings_secrets(&self.agent, &session_settings);
 
         // The `agents` domain object holds the name as a free `String`.
         // Validate here so a malformed stored name surfaces immediately
@@ -141,9 +123,7 @@ impl AgentQueue {
                 format!("agent '{}' has invalid name in the store", self.agent.name)
             })?;
         let request = api::sessions::CreateSessionRequest {
-            mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            mode: api::sessions::SessionMode::Headless,
             agent_config: api::sessions::AgentConfig::new(
                 Some(agent_name),
                 session_settings.model.clone(),
@@ -170,59 +150,6 @@ impl AgentQueue {
             .context("failed to create session via AppState::create_session")?;
 
         Ok(Some(session_id))
-    }
-
-    /// Lower the issue's `session_settings` into a `MountSpec` directly so
-    /// the server-side `create_session` defaulting path doesn't need to
-    /// re-do this work. Mirrors `AppState::mount_spec_from_session_settings`
-    /// behavior for the `remote_url` / `repo_name` cases.
-    async fn resolve_mount_spec(
-        &self,
-        state: &AppState,
-        session_settings: &crate::domain::issues::SessionSettings,
-    ) -> anyhow::Result<api::sessions::MountSpec> {
-        use crate::routes::sessions::mount_spec_from_create_request;
-        use hydra_common::api::v1::sessions::Bundle;
-
-        let (bundle, service_repo_name) = match (
-            session_settings.remote_url.as_ref(),
-            session_settings.repo_name.as_ref(),
-        ) {
-            (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
-                let rev = session_settings
-                    .branch
-                    .clone()
-                    .unwrap_or_else(|| "main".to_string());
-                let bundle = Bundle::GitRepository {
-                    url: remote_url.trim().to_string(),
-                    rev,
-                };
-                (bundle, repo_name.cloned())
-            }
-            (_, Some(repo_name)) => {
-                let repository = state
-                    .repository_from_store(repo_name)
-                    .await
-                    .context("failed to load repository for issue task")?;
-                let rev = session_settings
-                    .branch
-                    .clone()
-                    .or_else(|| repository.default_branch.clone())
-                    .unwrap_or_else(|| "main".to_string());
-                let bundle = Bundle::GitRepository {
-                    url: repository.remote_url.clone(),
-                    rev,
-                };
-                (bundle, Some(repo_name.clone()))
-            }
-            _ => return Ok(api::sessions::MountSpec::default()),
-        };
-
-        let build_cache = match (service_repo_name, state.config.build_cache.to_context()) {
-            (Some(name), Some(ctx)) => Some((name, ctx)),
-            _ => None,
-        };
-        Ok(mount_spec_from_create_request(bundle, build_cache))
     }
 
     async fn register_spawn_attempt(
@@ -696,16 +623,14 @@ mod tests {
             Username::from("test-creator"),
             spawned_from,
             None,
-            AgentConfig::default(),
+            AgentConfig::new(None, None, Some(prompt.to_string()), None),
             mount_spec_from_create_request(bundle, None),
             image.map(str::to_string),
             env_vars,
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -789,13 +714,12 @@ mod tests {
                 mode,
                 spawned_from,
                 env_vars,
+                agent_config,
                 ..
             } = task;
 
-            let SessionMode::Headless { prompt } = &mode else {
-                panic!("expected headless");
-            };
-            assert_eq!(prompt, "Fix the issue");
+            assert!(matches!(&mode, SessionMode::Headless));
+            assert_eq!(agent_config.system_prompt.as_deref(), Some("Fix the issue"));
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -3168,9 +3092,7 @@ mod tests {
         env_vars_b.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id_b.to_string());
         env_vars_b.insert(AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string());
         let request_b = api::sessions::CreateSessionRequest {
-            mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            mode: api::sessions::SessionMode::Headless,
             agent_config: api::sessions::AgentConfig::new(
                 Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),
                 session_settings_b.model.clone(),

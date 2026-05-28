@@ -36,7 +36,6 @@ function formatMountSpec(mountSpec: MountSpec): string {
 }
 
 function promptOf(task: Session): string | null {
-  if (task.mode.type === "headless") return task.mode.prompt;
   return task.agent_config.system_prompt ?? null;
 }
 

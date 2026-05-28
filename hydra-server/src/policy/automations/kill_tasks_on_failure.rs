@@ -156,9 +156,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "test task".to_string(),
-            },
+            SessionMode::Headless,
             crate::store::Status::Created,
             None,
             None,

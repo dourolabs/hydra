@@ -3,7 +3,6 @@ use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::{ActorRef, store_github_token_secrets},
-    issues::{Issue, IssueStatus, IssueType, SessionSettings},
     patches::{Patch, PatchStatus},
     sessions::{AgentConfig, SessionMode},
     users::{User, Username},
@@ -45,7 +44,10 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let client = test_client();
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
+        .json(&json!({
+            "mode": { "type": "headless" },
+            "agent_config": { "system_prompt": "0" }
+        }))
         .send()
         .await?;
 
@@ -56,10 +58,8 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
 
-    let SessionMode::Headless { prompt } = &task.mode else {
-        panic!("expected headless");
-    };
-    assert_eq!(prompt, "0");
+    assert!(matches!(&task.mode, SessionMode::Headless));
+    assert_eq!(task.agent_config.system_prompt.as_deref(), Some("0"));
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -75,42 +75,15 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()> {
+async fn create_session_passes_through_caller_supplied_bundle() -> anyhow::Result<()> {
+    // Post-PR-1: `create_session` no longer derives mount_spec from a
+    // `spawned_from` issue's session_settings. Callers (CLI, automations)
+    // pre-lower the bundle and submit a fully-resolved `mount_spec`.
     let (repo_name, repo) = service_repository();
 
-    // Post-PR-E: route the service-repo lookup through `spawned_from`. The
-    // server-side `mount_spec_from_session_settings` resolves the repo to
-    // a fully-lowered Bundle::GitRepository and `mount_spec` carries no
-    // BuildCache (no build_cache config in this test).
     let handles = crate::test_utils::test_state_handles();
     let state2 = handles.state;
     add_repository(&state2, repo_name.clone(), repo.clone()).await?;
-    let (issue_id, _) = handles
-        .store
-        .add_issue(
-            Issue {
-                issue_type: IssueType::Task,
-                title: String::new(),
-                description: "linked to service repo".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                session_settings: SessionSettings {
-                    repo_name: Some(repo_name.clone()),
-                    branch: Some("develop".to_string()),
-                    ..Default::default()
-                },
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-                deleted: false,
-                form: None,
-                form_response: None,
-                feedback: None,
-            },
-            &ActorRef::test(),
-        )
-        .await?;
     let resolver_state2 = state2.clone();
     let check_state2 = state2.clone();
     let server2 = spawn_test_server_with_state(state2, handles.store.clone()).await?;
@@ -118,8 +91,22 @@ async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()>
     let response = client
         .post(format!("{}/v1/sessions", server2.base_url()))
         .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
-            "spawned_from": issue_id,
+            "mode": { "type": "headless" },
+            "mount_spec": {
+                "working_dir": "repo",
+                "mounts": [
+                    {
+                        "type": "bundle",
+                        "target": "repo",
+                        "bundle": {
+                            "type": "git_repository",
+                            "url": repo.remote_url.clone(),
+                            "rev": "develop",
+                        },
+                    },
+                    { "type": "documents", "target": "documents" }
+                ],
+            },
         }))
         .send()
         .await?;
@@ -151,7 +138,7 @@ async fn create_session_respects_image_override() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
+            "mode": { "type": "headless" },
             "image": "ghcr.io/example/custom:dev"
         }))
         .send()
@@ -181,7 +168,7 @@ async fn create_session_image_override_beats_repo_default() -> anyhow::Result<()
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
+            "mode": { "type": "headless" },
             "image": "ghcr.io/example/override:main"
         }))
         .send()
@@ -208,7 +195,7 @@ async fn create_session_stores_provided_variables() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
+            "mode": { "type": "headless" },
             "env_vars": { "FOO": "bar", "PROMPT": "custom prompt" }
         }))
         .send()
@@ -224,263 +211,13 @@ async fn create_session_stores_provided_variables() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn session_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let (repo_name, repo) = service_repository();
-    add_repository(&state, repo_name.clone(), repo.clone()).await?;
-    let resolver_state = state.clone();
-    let check_state = state.clone();
-
-    let session_settings = SessionSettings {
-        repo_name: Some(repo_name.clone()),
-        remote_url: Some("https://override.example.com/repo.git".to_string()),
-        image: Some("ghcr.io/example/issue:latest".to_string()),
-        model: None,
-        branch: Some("issue-branch".to_string()),
-        max_retries: None,
-        cpu_limit: Some("600m".to_string()),
-        memory_limit: Some("512Mi".to_string()),
-        secrets: None,
-    };
-
-    let (issue_id, _) = handles
-        .store
-        .add_issue(
-            Issue {
-                issue_type: IssueType::Task,
-                title: String::new(),
-                description: "use overrides".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                session_settings: session_settings.clone(),
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-                deleted: false,
-                form: None,
-                form_response: None,
-                feedback: None,
-            },
-            &ActorRef::test(),
-        )
-        .await?;
-
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
-    let client = test_client();
-    let response = client
-        .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
-            "spawned_from": issue_id,
-        }))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: CreateSessionResponse = response.json().await?;
-
-    let task = check_state.get_session(&body.session_id).await?;
-    let resolved = resolver_state.resolve_task(&task).await?;
-    assert_eq!(
-        resolved.context.bundle,
-        Bundle::GitRepository {
-            url: "https://override.example.com/repo.git".to_string(),
-            rev: "issue-branch".to_string(),
-        }
-    );
-    assert_eq!(resolved.image, "ghcr.io/example/issue:latest");
-
-    let context_response = client
-        .get(format!(
-            "{}/v1/sessions/{}/context",
-            server.base_url(),
-            body.session_id.as_ref()
-        ))
-        .send()
-        .await?;
-    assert!(context_response.status().is_success());
-    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
-    let bundle_item = worker_context
-        .session
-        .mount_spec
-        .mounts
-        .first()
-        .expect("mount_spec must have at least the bundle item");
-    let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
-        panic!("expected Bundle item first, got {bundle_item:?}");
-    };
-    assert_eq!(
-        bundle,
-        &v1::sessions::Bundle::GitRepository {
-            url: "https://override.example.com/repo.git".to_string(),
-            rev: "issue-branch".to_string(),
-        }
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let (repo_name, repo) = service_repository();
-    add_repository(&state, repo_name.clone(), repo.clone()).await?;
-    let resolver_state = state.clone();
-    let check_state = state.clone();
-
-    let session_settings = SessionSettings {
-        repo_name: Some(repo_name.clone()),
-        remote_url: None,
-        image: None,
-        model: None,
-        branch: Some("issue-branch".to_string()),
-        max_retries: None,
-        cpu_limit: None,
-        memory_limit: None,
-        secrets: None,
-    };
-
-    let (issue_id, _) = handles
-        .store
-        .add_issue(
-            Issue {
-                issue_type: IssueType::Task,
-                title: String::new(),
-                description: "use repo override".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                session_settings: session_settings.clone(),
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-                deleted: false,
-                form: None,
-                form_response: None,
-                feedback: None,
-            },
-            &ActorRef::test(),
-        )
-        .await?;
-
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
-    let client = test_client();
-    let response = client
-        .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
-            "spawned_from": issue_id,
-        }))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: CreateSessionResponse = response.json().await?;
-
-    let task = check_state.get_session(&body.session_id).await?;
-    let resolved = resolver_state.resolve_task(&task).await?;
-    assert_eq!(
-        resolved.context.bundle,
-        Bundle::GitRepository {
-            url: repo.remote_url.clone(),
-            rev: "issue-branch".to_string(),
-        }
-    );
-    // Image comes from session_settings, not from repo default_image
-    // (the resolver no longer looks up the repo via ServiceRepository
-    // because mount_spec is fully-lowered post-PR-E).
-    let _ = repo.default_image;
-
-    let context_response = client
-        .get(format!(
-            "{}/v1/sessions/{}/context",
-            server.base_url(),
-            body.session_id.as_ref()
-        ))
-        .send()
-        .await?;
-    assert!(context_response.status().is_success());
-    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
-    let bundle_item = worker_context
-        .session
-        .mount_spec
-        .mounts
-        .first()
-        .expect("mount_spec must have at least the bundle item");
-    let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
-        panic!("expected Bundle item first, got {bundle_item:?}");
-    };
-    assert_eq!(
-        bundle,
-        &v1::sessions::Bundle::GitRepository {
-            url: repo.remote_url.clone(),
-            rev: "issue-branch".to_string(),
-        }
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn create_session_rejects_unknown_service_repository() -> anyhow::Result<()> {
-    // Post-PR-E: clients send a fully-lowered Bundle::GitRepository in
-    // `mount_spec`, so the server no longer encounters
-    // `BundleSpec::ServiceRepository` with an unknown name through the
-    // request body. The equivalent failure now surfaces from the CLI's
-    // `list_repositories` lookup. This test pins the resolver path:
-    // sending a session linked (via `spawned_from`) to an issue whose
-    // `session_settings.repo_name` references an unregistered repo
-    // surfaces the same `unknown repository` error from
-    // `mount_spec_from_session_settings`.
-    let handles = crate::test_utils::test_state_handles();
-    let state = handles.state;
-    let (issue_id, _) = handles
-        .store
-        .add_issue(
-            Issue {
-                issue_type: IssueType::Task,
-                title: String::new(),
-                description: "missing service repo".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                session_settings: SessionSettings {
-                    repo_name: Some(hydra_common::RepoName::new("missing", "repo").unwrap()),
-                    ..Default::default()
-                },
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-                deleted: false,
-                form: None,
-                form_response: None,
-                feedback: None,
-            },
-            &ActorRef::test(),
-        )
-        .await?;
-    let server2 = spawn_test_server_with_state(state, handles.store.clone()).await?;
-    let client = test_client();
-    let response = client
-        .post(format!("{}/v1/sessions", server2.base_url()))
-        .json(&json!({
-            "mode": { "type": "headless", "prompt": "0" },
-            "spawned_from": issue_id,
-        }))
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-    let body: serde_json::Value = response.json().await?;
-    assert_eq!(
-        body,
-        json!({ "error": "unknown repository 'missing/repo'" })
-    );
-    Ok(())
-}
+// PR-1 removed `create_session`'s derivation from the `spawned_from`
+// issue's `session_settings`. The tests that pinned that behavior
+// (`session_settings_override_request_with_remote_url_priority`,
+// `session_settings_use_repo_name_and_branch_overrides`,
+// `create_session_rejects_unknown_service_repository`) no longer apply —
+// callers now lower the bundle / image / cpu / memory themselves before
+// calling.
 
 #[tokio::test]
 async fn list_sessions_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
@@ -524,9 +261,7 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mode: SessionMode::Headless {
-                prompt: "with-usage".to_string(),
-            },
+            mode: SessionMode::Headless,
             status: Status::Complete,
             last_message: None,
             error: None,
@@ -568,7 +303,7 @@ async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
+        .json(&json!({ "mode": { "type": "headless" } }))
         .send()
         .await?;
 
@@ -679,7 +414,7 @@ async fn session_version_endpoints_return_404s() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "mode": { "type": "headless", "prompt": "0" } }))
+        .json(&json!({ "mode": { "type": "headless" } }))
         .send()
         .await?;
 
@@ -742,9 +477,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1020,9 +753,7 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1102,9 +833,7 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1205,9 +934,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1258,16 +985,14 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_config: AgentConfig::new(None, None, Some("0".to_string()), None),
                 mount_spec: mount_spec_from_create_request(context_bundle.clone(), None),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1310,10 +1035,14 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    let v1::sessions::SessionMode::Headless { prompt } = &body.session.mode else {
-        panic!("expected Headless mode, got {:?}", body.session.mode);
-    };
-    assert_eq!(prompt, "0");
+    assert!(matches!(
+        &body.session.mode,
+        v1::sessions::SessionMode::Headless
+    ));
+    assert_eq!(
+        body.session.agent_config.system_prompt.as_deref(),
+        Some("0")
+    );
     Ok(())
 }
 
@@ -1344,9 +1073,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1402,9 +1129,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1559,9 +1284,7 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1617,9 +1340,7 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-                mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                },
+                mode: SessionMode::Headless,
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1699,9 +1420,7 @@ fn make_session_with_service_repo(
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-        },
+        mode: SessionMode::Headless,
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1728,9 +1447,7 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-        },
+        mode: SessionMode::Headless,
         status: Status::Created,
         last_message: None,
         error: None,
@@ -1899,9 +1616,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
-        mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-        },
+        mode: SessionMode::Headless,
         status: Status::Created,
         last_message: None,
         error: None,

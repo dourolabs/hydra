@@ -1,5 +1,4 @@
 use crate::{
-    app::AgentError,
     config::non_empty,
     domain::{
         actors::ActorRef,
@@ -8,13 +7,12 @@ use crate::{
         users::Username,
     },
     job_engine::{BindMount, JobEngineError, JobStatus},
-    policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
 use hydra_common::api::v1::sessions::{Bundle, MountItem, MountSpec};
 use hydra_common::{
-    ConversationId, SessionId, Versioned,
+    SessionId, Versioned,
     api::v1 as api,
     api::v1::sessions::SearchSessionsQuery,
     issues::IssueId,
@@ -34,43 +32,6 @@ pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned
 pub enum CreateSessionError {
     #[error(transparent)]
     TaskResolution(#[from] TaskResolutionError),
-    #[error("failed to load issue '{issue_id}' for session creation")]
-    IssueLookup {
-        #[source]
-        source: StoreError,
-        issue_id: IssueId,
-    },
-    #[error("failed to load conversation '{conversation_id}' for session creation")]
-    ConversationLookup {
-        #[source]
-        source: StoreError,
-        conversation_id: ConversationId,
-    },
-    #[error("conversation references unknown agent '{name}'")]
-    AgentNotFound { name: String },
-    #[error("failed to resolve agent for conversation")]
-    AgentLookup {
-        #[source]
-        source: AgentError,
-    },
-    #[error("agent '{name}' has invalid name in the store")]
-    AgentNameInvalid {
-        name: String,
-        #[source]
-        source: hydra_common::api::v1::agents::AgentNameError,
-    },
-    #[error("failed to resolve agent prompt at '{path}'")]
-    AgentPromptResolution {
-        path: String,
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("failed to resolve agent MCP config at '{path}'")]
-    AgentMcpConfigResolution {
-        path: String,
-        #[source]
-        source: anyhow::Error,
-    },
     #[error("failed to store session")]
     Store {
         #[source]
@@ -98,6 +59,32 @@ pub enum SetSessionStatusError {
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
+/// Merge agent-level secrets with the `session_settings.secrets` list,
+/// deduplicating while preserving first-seen order. Returns `None` when
+/// both inputs are empty so callers can drop the field from the
+/// `CreateSessionRequest` rather than send an explicit empty `Vec`.
+pub(crate) fn merge_agent_and_settings_secrets(
+    agent: &crate::domain::agents::Agent,
+    settings: &SessionSettings,
+) -> Option<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for s in agent
+        .secrets
+        .iter()
+        .chain(settings.secrets.iter().flatten())
+    {
+        if seen.insert(s.clone()) {
+            merged.push(s.clone());
+        }
+    }
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
+}
+
 impl AppState {
     pub async fn add_session(
         &self,
@@ -112,11 +99,17 @@ impl AppState {
         Ok(session_id)
     }
 
-    /// Create a session from the new (§2.2) request shape.
+    /// Create a session from a fully-populated `CreateSessionRequest`.
     ///
-    /// Returns the assigned `SessionId` and the persisted domain `Session` so
-    /// HTTP callers can populate `CreateSessionResponse.session` without a
-    /// follow-up `GET /v1/sessions/:id` (§2.4).
+    /// Callers own every field — `create_session` performs no derivation
+    /// from `spawned_from` / `conversation_id` and no agent / prompt
+    /// resolution. The only defaulting path is `apply_session_settings_defaults`,
+    /// invoked on a `SessionSettings` built from the request's defaultable
+    /// fields (so global config defaults still fill in e.g. `model`).
+    ///
+    /// Returns the assigned `SessionId` and the persisted domain `Session`
+    /// so HTTP callers can populate `CreateSessionResponse.session` without
+    /// a follow-up `GET /v1/sessions/:id`.
     pub async fn create_session(
         &self,
         request: api::sessions::CreateSessionRequest,
@@ -128,7 +121,7 @@ impl AppState {
             agent_config: req_agent_config,
             mount_spec: req_mount_spec,
             image: req_image,
-            env_vars: mut req_env_vars,
+            env_vars: req_env_vars,
             cpu_limit: req_cpu_limit,
             memory_limit: req_memory_limit,
             secrets: req_secrets,
@@ -137,179 +130,44 @@ impl AppState {
             ..
         } = request;
 
-        let store = self.store.as_ref();
+        // Apply global defaults via the single `SessionSettings` ->
+        // `apply_session_settings_defaults` path. Today the defaulter
+        // only fills in `model` (from `config.job.default_model`), so
+        // we only need to round-trip that field; the other request
+        // values pass through unchanged.
+        let model = self
+            .apply_session_settings_defaults(SessionSettings {
+                model: req_agent_config.model.clone(),
+                ..SessionSettings::default()
+            })
+            .model;
+        let image = req_image;
+        let cpu_limit = req_cpu_limit;
+        let memory_limit = req_memory_limit;
+        let secrets = req_secrets;
 
-        // Source of session-level defaults: for Interactive sessions, the
-        // conversation; for Headless sessions, the `spawned_from` issue.
-        // `SessionMode` carries the conversation id on the `Interactive`
-        // variant, so the cross-field validation that lived here is gone.
-        let (derived_settings, resolved_agent) = match &req_mode {
-            api::sessions::SessionMode::Interactive {
-                conversation_id, ..
-            } => {
-                let conversation = store
-                    .get_conversation(conversation_id, false)
-                    .await
-                    .map_err(|source| CreateSessionError::ConversationLookup {
-                        source,
-                        conversation_id: conversation_id.clone(),
-                    })?;
-                // §2.9: request agent_name wins over Conversation.agent_name
-                // when both are set. Warn-log on disagreement.
-                let agent_name: Option<hydra_common::api::v1::agents::AgentName> = match (
-                    req_agent_config.agent_name.as_ref(),
-                    conversation.item.agent_name.as_ref(),
-                ) {
-                    (Some(req_name), Some(conv_name)) if req_name != conv_name => {
-                        warn!(
-                            request_agent = req_name.as_str(),
-                            conversation_agent = conv_name.as_str(),
-                            "request.agent_config.agent_name overrides Conversation.agent_name"
-                        );
-                        Some(req_name.clone())
-                    }
-                    (Some(name), _) | (None, Some(name)) => Some(name.clone()),
-                    (None, None) => None,
-                };
-                let agent = self
-                    .resolve_conversation_agent(agent_name.as_ref().map(|n| n.as_str()))
-                    .await
-                    .map_err(|err| match err {
-                        AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
-                        other => CreateSessionError::AgentLookup { source: other },
-                    })?;
-                (Some(conversation.item.session_settings), agent)
-            }
-            _ => {
-                if let Some(issue_id) = spawned_from.as_ref() {
-                    let issue = store.get_issue(issue_id, false).await.map_err(|source| {
-                        CreateSessionError::IssueLookup {
-                            source,
-                            issue_id: issue_id.clone(),
-                        }
-                    })?;
-                    (Some(issue.item.session_settings), None)
-                } else {
-                    (None, None)
-                }
-            }
-        };
-
-        let session_settings = derived_settings
-            .map(|settings| self.apply_session_settings_defaults(settings))
-            .filter(|settings| !SessionSettings::is_default(settings));
-
-        // Apply settings as DEFAULTS — the request always wins.
-        let image = req_image.or_else(|| session_settings.as_ref().and_then(|s| s.image.clone()));
-        let cpu_limit =
-            req_cpu_limit.or_else(|| session_settings.as_ref().and_then(|s| s.cpu_limit.clone()));
-        let memory_limit = req_memory_limit.or_else(|| {
-            session_settings
-                .as_ref()
-                .and_then(|s| s.memory_limit.clone())
-        });
-        let mut secrets =
-            req_secrets.or_else(|| session_settings.as_ref().and_then(|s| s.secrets.clone()));
-        let model = req_agent_config
-            .model
-            .clone()
-            .or_else(|| session_settings.as_ref().and_then(|s| s.model.clone()));
-
-        // Pre-resolved fields on `agent_config` win over filesystem resolution.
-        let mut system_prompt = req_agent_config.system_prompt.clone();
-        let mut mcp_config = req_agent_config.mcp_config.clone();
-        let mut agent_name: Option<hydra_common::api::v1::agents::AgentName> =
-            req_agent_config.agent_name.clone();
-
-        if let Some(agent) = resolved_agent.as_ref() {
-            // The `agents` domain object keys agent identity by free
-            // string today (only `AgentConfig.agent_name` is typed, not
-            // the agent record itself). The agent record is the
-            // authoritative source for the canonical name, and the
-            // `resolve_conversation_agent` path already round-trips
-            // through `AgentName` validation when invoked with a name.
-            // Defensively re-validate here so a malformed stored agent
-            // name surfaces as a 500 rather than silently producing an
-            // invalid `AgentName`.
-            if agent_name.is_none() {
-                agent_name = Some(
-                    hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone()).map_err(
-                        |source| CreateSessionError::AgentNameInvalid {
-                            name: agent.name.clone(),
-                            source,
-                        },
-                    )?,
-                );
-            }
-
-            if system_prompt.is_none() {
-                system_prompt = Some(
-                    self.resolve_agent_prompt(&agent.prompt_path)
-                        .await
-                        .map_err(|source| CreateSessionError::AgentPromptResolution {
-                            path: agent.prompt_path.clone(),
-                            source,
-                        })?,
-                );
-            }
-
-            if mcp_config.is_none() {
-                if let Some(path) = agent.mcp_config_path.as_deref() {
-                    mcp_config = self
-                        .resolve_agent_mcp_config(path)
-                        .await
-                        .map_err(|source| CreateSessionError::AgentMcpConfigResolution {
-                            path: path.to_string(),
-                            source,
-                        })?;
-                }
-            }
-
-            // Merge agent-level secrets with whatever secrets resolved above.
-            let merged_secrets = {
-                let mut seen = HashSet::new();
-                let mut merged = Vec::new();
-                for s in agent.secrets.iter().chain(secrets.iter().flatten()) {
-                    if seen.insert(s.clone()) {
-                        merged.push(s.clone());
-                    }
-                }
-                if merged.is_empty() {
-                    None
-                } else {
-                    Some(merged)
-                }
-            };
-            secrets = merged_secrets;
-
-            req_env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
-        }
-
-        // Compute the final mount_spec. The request wins when non-empty;
-        // session_settings defaults only fill in an empty request mount_spec.
-        //
         // Construction-time invariant: the spec must include a Bundle mount
-        // that materializes `working_dir` on disk. A spec that arrives here
-        // empty (no `req_mount_spec`, no repo-bearing session_settings) — as
-        // happens for chat sessions and PM/breakdown sessions on a parent
-        // issue without a repository — would otherwise hand the worker a
-        // `working_dir = "repo"` that nothing creates, and `current_dir()`
-        // would ENOENT at spawn. Fall through to a Bundle::None spec via
-        // `mount_spec_from_create_request`, which the worker's `BundleMount`
-        // materializes as an empty directory at setup time.
+        // that materializes `working_dir` on disk. A request that arrives
+        // here with an empty `mount_spec` — chat sessions and PM/breakdown
+        // sessions on a parent issue without a repository — would otherwise
+        // hand the worker a `working_dir = "repo"` that nothing creates, and
+        // `current_dir()` would ENOENT at spawn. Fall through to a
+        // `Bundle::None` spec via `mount_spec_from_create_request`, which
+        // the worker's `BundleMount` materializes as an empty directory at
+        // setup time.
         use crate::routes::sessions::mount_spec_from_create_request;
-        let mut mount_spec = if !req_mount_spec.is_empty() {
-            req_mount_spec
-        } else if let Some(settings) = session_settings.as_ref() {
-            self.mount_spec_from_session_settings(settings).await?
+        let mount_spec = if req_mount_spec.is_empty() {
+            mount_spec_from_create_request(Bundle::None, None)
         } else {
             req_mount_spec
         };
-        if mount_spec.is_empty() {
-            mount_spec = mount_spec_from_create_request(Bundle::None, None);
-        }
 
-        let agent_config = AgentConfig::new(agent_name, model, system_prompt, mcp_config);
+        let agent_config = AgentConfig::new(
+            req_agent_config.agent_name,
+            model,
+            req_agent_config.system_prompt,
+            req_agent_config.mcp_config,
+        );
         let mode: SessionMode = req_mode.into();
 
         let mut session = Session::new(
@@ -346,68 +204,6 @@ impl AppState {
         Ok((session_id, session))
     }
 
-    /// Build a `MountSpec` from session-level defaults (`remote_url` /
-    /// `repo_name` / `branch`). Returns the empty default when no source
-    /// is configured — the caller is responsible for falling back to the
-    /// request's `mount_spec` in that case.
-    async fn mount_spec_from_session_settings(
-        &self,
-        settings: &SessionSettings,
-    ) -> Result<api::sessions::MountSpec, CreateSessionError> {
-        use crate::routes::sessions::mount_spec_from_create_request;
-        use hydra_common::api::v1::sessions::Bundle;
-
-        let (bundle, service_repo_name) = if let Some(remote_url) = settings.remote_url.clone() {
-            let rev = settings
-                .branch
-                .clone()
-                .unwrap_or_else(|| "main".to_string());
-            let bundle = Bundle::GitRepository {
-                url: remote_url,
-                rev,
-            };
-            (bundle, settings.repo_name.clone())
-        } else if let Some(repo_name) = settings.repo_name.clone() {
-            // Resolve the service repo to a concrete URL/branch via the
-            // repository store. `ServiceRepository` is the only path that
-            // needs the resolver; the bundle on the row is fully lowered.
-            let repository = self
-                .repository_from_store(&repo_name)
-                .await
-                .map_err(|source| match source {
-                    StoreError::RepositoryNotFound(_) => {
-                        CreateSessionError::TaskResolution(TaskResolutionError::Bundle(
-                            crate::app::BundleResolutionError::UnknownRepository(repo_name.clone()),
-                        ))
-                    }
-                    other => CreateSessionError::TaskResolution(TaskResolutionError::Bundle(
-                        crate::app::BundleResolutionError::RepositoryLookup {
-                            repo_name: repo_name.clone(),
-                            source: other,
-                        },
-                    )),
-                })?;
-            let rev = settings
-                .branch
-                .clone()
-                .or_else(|| repository.default_branch.clone())
-                .unwrap_or_else(|| "main".to_string());
-            let bundle = Bundle::GitRepository {
-                url: repository.remote_url.clone(),
-                rev,
-            };
-            (bundle, Some(repo_name))
-        } else {
-            return Ok(api::sessions::MountSpec::default());
-        };
-
-        let build_cache = match (service_repo_name, self.config.build_cache.to_context()) {
-            (Some(name), Some(ctx)) => Some((name, ctx)),
-            _ => None,
-        };
-        Ok(mount_spec_from_create_request(bundle, build_cache))
-    }
-
     pub(crate) fn apply_session_settings_defaults(
         &self,
         mut settings: SessionSettings,
@@ -421,6 +217,58 @@ impl AppState {
         }
 
         settings
+    }
+
+    /// Lower a `SessionSettings` into a fully-resolved `MountSpec`.
+    ///
+    /// Used by callers (`agent_queue::build_task`,
+    /// `spawn_conversation_sessions::spawn_session`) that own the
+    /// `CreateSessionRequest` and need to pre-populate its `mount_spec`
+    /// since `create_session` no longer derives one from session_settings.
+    ///
+    /// Empty `remote_url` / missing `repo_name` returns the default
+    /// (empty) spec; the server's `create_session` then falls through
+    /// to a `Bundle::None` spec via `mount_spec_from_create_request`.
+    pub(crate) async fn resolve_mount_spec(
+        &self,
+        settings: &SessionSettings,
+    ) -> Result<MountSpec, crate::store::StoreError> {
+        use crate::routes::sessions::mount_spec_from_create_request;
+
+        let (bundle, service_repo_name) =
+            match (settings.remote_url.as_ref(), settings.repo_name.as_ref()) {
+                (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
+                    let rev = settings
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| "main".to_string());
+                    let bundle = Bundle::GitRepository {
+                        url: remote_url.trim().to_string(),
+                        rev,
+                    };
+                    (bundle, repo_name.cloned())
+                }
+                (_, Some(repo_name)) => {
+                    let repository = self.repository_from_store(repo_name).await?;
+                    let rev = settings
+                        .branch
+                        .clone()
+                        .or_else(|| repository.default_branch.clone())
+                        .unwrap_or_else(|| "main".to_string());
+                    let bundle = Bundle::GitRepository {
+                        url: repository.remote_url.clone(),
+                        rev,
+                    };
+                    (bundle, Some(repo_name.clone()))
+                }
+                _ => return Ok(MountSpec::default()),
+            };
+
+        let build_cache = match (service_repo_name, self.config.build_cache.to_context()) {
+            (Some(name), Some(ctx)) => Some((name, ctx)),
+            _ => None,
+        };
+        Ok(mount_spec_from_create_request(bundle, build_cache))
     }
 
     pub async fn set_session_status(
@@ -1531,9 +1379,7 @@ mod tests {
         // empty `MountSpec::default()` and no session_settings to derive
         // from. Pre-fix this produced an empty `mounts: []`.
         let headless_request = CreateSessionRequest {
-            mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-            },
+            mode: SessionMode::Headless,
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
             image: None,
@@ -1636,9 +1482,7 @@ mod tests {
 
         // Headless session — no conversation lookup, no spawned_from.
         let request = CreateSessionRequest {
-            mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-            },
+            mode: SessionMode::Headless,
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
             image: None,
@@ -1712,64 +1556,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn create_session_derives_settings_from_linked_conversation() {
-        use crate::domain::{
-            conversations::{Conversation, ConversationStatus},
-            issues::SessionSettings,
-        };
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, CreateSessionRequest, MountSpec, SessionMode,
-        };
-
-        let state = state_with_default_model("default-model");
-        let settings = SessionSettings {
-            model: Some("conversation-model".to_string()),
-            ..Default::default()
-        };
-        let (conv_id, _) = state
-            .store
-            .add_conversation_with_actor(
-                Conversation {
-                    title: None,
-                    agent_name: None,
-                    status: ConversationStatus::Active,
-                    creator: Username::from("creator"),
-                    session_settings: settings,
-                    deleted: false,
-                },
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let request = CreateSessionRequest {
-            mode: SessionMode::Interactive {
-                conversation_id: conv_id,
-                idle_timeout_secs: None,
-                conversation_resume_from: None,
-            },
-            agent_config: AgentConfig::default(),
-            mount_spec: MountSpec::default(),
-            image: None,
-            env_vars: std::collections::HashMap::new(),
-            cpu_limit: None,
-            memory_limit: None,
-            secrets: None,
-            spawned_from: None,
-            resumed_from: None,
-        };
-        let (session_id, _) = state
-            .create_session(request, ActorRef::test(), Username::from("creator"))
-            .await
-            .unwrap();
-        let session = state.get_session(&session_id).await.unwrap();
-        assert_eq!(
-            session.agent_config.model.as_deref(),
-            Some("conversation-model"),
-            "session should inherit model from the linked conversation"
-        );
-    }
+    // PR-1 removed `create_session`'s derivation from the linked
+    // `Conversation`. Callers (today: `spawn_conversation_sessions`)
+    // pre-resolve the conversation's `session_settings` into request
+    // fields before calling, so this test no longer applies.
 
     #[test]
     fn apply_session_settings_defaults_sets_model() {

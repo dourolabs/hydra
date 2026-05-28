@@ -64,9 +64,7 @@ impl AgentConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionMode {
-    Headless {
-        prompt: String,
-    },
+    Headless,
     Interactive {
         conversation_id: ConversationId,
         /// Optional worker-side idle timeout override. `None` falls back to
@@ -82,7 +80,7 @@ pub enum SessionMode {
 impl SessionMode {
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         match self {
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless => None,
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
@@ -97,7 +95,7 @@ impl SessionMode {
                 conversation_resume_from,
                 ..
             } => *conversation_resume_from,
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless => None,
         }
     }
 
@@ -113,7 +111,7 @@ impl SessionMode {
                 *conversation_resume_from = value;
                 true
             }
-            SessionMode::Headless { .. } => false,
+            SessionMode::Headless => false,
         }
     }
 }
@@ -232,18 +230,13 @@ impl Session {
     }
 
     /// Returns the prompt string for the worker, regardless of mode.
-    /// Headless sessions return `mode.Headless.prompt`; Interactive
-    /// sessions return `agent_config.system_prompt` (the agent's prompt,
-    /// stamped at session-create time).
+    /// The prompt is sourced from `agent_config.system_prompt` for both
+    /// Headless and Interactive sessions.
     pub fn resolved_prompt(&self) -> &str {
-        match &self.mode {
-            SessionMode::Headless { prompt } => prompt.as_str(),
-            SessionMode::Interactive { .. } => self
-                .agent_config
-                .system_prompt
-                .as_deref()
-                .unwrap_or_default(),
-        }
+        self.agent_config
+            .system_prompt
+            .as_deref()
+            .unwrap_or_default()
     }
 }
 
@@ -323,7 +316,7 @@ impl From<AgentConfig> for api::sessions::AgentConfig {
 impl From<api::sessions::SessionMode> for SessionMode {
     fn from(value: api::sessions::SessionMode) -> Self {
         match value {
-            api::sessions::SessionMode::Headless { prompt } => SessionMode::Headless { prompt },
+            api::sessions::SessionMode::Headless => SessionMode::Headless,
             api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
@@ -341,7 +334,7 @@ impl From<api::sessions::SessionMode> for SessionMode {
 impl From<SessionMode> for api::sessions::SessionMode {
     fn from(value: SessionMode) -> Self {
         match value {
-            SessionMode::Headless { prompt } => api::sessions::SessionMode::Headless { prompt },
+            SessionMode::Headless => api::sessions::SessionMode::Headless,
             SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
@@ -621,9 +614,7 @@ mod tests {
             Some("400m".to_string()),
             Some("768Mi".to_string()),
             secrets.clone(),
-            SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -654,9 +645,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -754,9 +743,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "p".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,

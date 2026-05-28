@@ -151,8 +151,8 @@ function makeRecord(
     version: 1n,
     timestamp: "2026-03-15T10:00:00.000Z",
     session: {
-      mode: { type: "headless", prompt: "do the thing" },
-      agent_config: {},
+      mode: { type: "headless" },
+      agent_config: { system_prompt: "do the thing" },
       mount_spec: { working_dir: "repo", mounts: [] },
       creator: "swe",
       status,

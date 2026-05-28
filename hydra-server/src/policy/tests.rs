@@ -625,9 +625,7 @@ fn make_dummy_task() -> crate::store::Session {
         None,
         None,
         None,
-        SessionMode::Headless {
-            prompt: "test prompt".to_string(),
-        },
+        SessionMode::Headless,
         crate::store::Status::Created,
         None,
         None,

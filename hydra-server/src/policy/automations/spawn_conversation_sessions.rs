@@ -4,10 +4,12 @@ use std::collections::HashMap;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
 use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+use crate::policy::automations::agent_queue::AGENT_NAME_ENV_VAR;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
-use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode};
+use hydra_common::api::v1::agents::AgentName;
+use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, SessionMode};
 use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
@@ -169,17 +171,62 @@ async fn spawn_session(
         }
     };
 
-    // Used only to surface failures clearly; `create_session` resolves the
-    // agent prompt itself for Interactive sessions when needed (the
-    // conversation lookup path), so we just confirm the prompt is reachable.
-    if let Err(err) = ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
-        return Err(AutomationError::Other(anyhow::anyhow!(
-            "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
-             {conversation_id} (prompt_path='{}'): {err}",
-            agent.name,
-            agent.prompt_path
-        )));
-    }
+    // The server no longer derives agent fields inside `create_session`,
+    // so this automation pre-resolves the agent's prompt, mcp_config,
+    // secrets, and validated name and stamps them onto the request.
+    let system_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
+        Ok(prompt) => prompt,
+        Err(err) => {
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
+                 {conversation_id} (prompt_path='{}'): {err}",
+                agent.name,
+                agent.prompt_path
+            )));
+        }
+    };
+
+    let mcp_config = match agent.mcp_config_path.as_deref() {
+        Some(path) => match ctx.app_state.resolve_agent_mcp_config(path).await {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                return Err(AutomationError::Other(anyhow::anyhow!(
+                    "[{AUTOMATION_NAME}] failed to resolve MCP config for agent '{}' on \
+                     conversation {conversation_id} (mcp_config_path='{path}'): {err}",
+                    agent.name,
+                )));
+            }
+        },
+        None => None,
+    };
+
+    let agent_name = AgentName::try_new(agent.name.clone()).map_err(|source| {
+        AutomationError::Other(anyhow::anyhow!(
+            "[{AUTOMATION_NAME}] agent '{}' has invalid name in the store: {source}",
+            agent.name
+        ))
+    })?;
+
+    let conversation_settings = ctx
+        .app_state
+        .apply_session_settings_defaults(conversation.session_settings.clone());
+
+    let mount_spec = match ctx
+        .app_state
+        .resolve_mount_spec(&conversation_settings)
+        .await
+    {
+        Ok(spec) => spec,
+        Err(err) => {
+            return Err(AutomationError::Other(anyhow::anyhow!(
+                "[{AUTOMATION_NAME}] failed to resolve mount_spec for conversation \
+                 {conversation_id}: {err}"
+            )));
+        }
+    };
+
+    let secrets =
+        crate::app::sessions::merge_agent_and_settings_secrets(&agent, &conversation_settings);
 
     let actor = ActorRef::Automation {
         automation_name: AUTOMATION_NAME.into(),
@@ -191,6 +238,7 @@ async fn spawn_session(
         ENV_HYDRA_CONVERSATION_ID.to_string(),
         conversation_id.to_string(),
     );
+    env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
 
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
@@ -198,13 +246,18 @@ async fn spawn_session(
             idle_timeout_secs: None,
             conversation_resume_from: None,
         },
-        agent_config: AgentConfig::default(),
-        mount_spec: MountSpec::default(),
-        image: None,
+        agent_config: AgentConfig::new(
+            Some(agent_name),
+            conversation_settings.model.clone(),
+            Some(system_prompt),
+            mcp_config,
+        ),
+        mount_spec,
+        image: conversation_settings.image.clone(),
         env_vars,
-        cpu_limit: None,
-        memory_limit: None,
-        secrets: None,
+        cpu_limit: conversation_settings.cpu_limit.clone(),
+        memory_limit: conversation_settings.memory_limit.clone(),
+        secrets,
         spawned_from: None,
         resumed_from: None,
     };
@@ -550,9 +603,7 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            None => SessionMode::Headless {
-                prompt: "prompt".to_string(),
-            },
+            None => SessionMode::Headless,
         };
         Session::new(
             Username::from("creator"),

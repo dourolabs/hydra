@@ -1040,9 +1040,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mode: SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-            },
+            mode: SessionMode::Headless,
             status: Status::Created,
             last_message: None,
             error: None,

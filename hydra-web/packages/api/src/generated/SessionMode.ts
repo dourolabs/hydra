@@ -10,7 +10,7 @@ import type { ConversationId } from "./ConversationId";
  * `Session::resumed_from`.
  */
 export type SessionMode =
-  | { type: "headless"; prompt: string }
+  | { type: "headless" }
   | {
       type: "interactive";
       conversation_id: ConversationId;

@@ -36,8 +36,7 @@ type LegacySession = Session & {
 
 function promptOf(session: Session): string {
   const legacy = session as LegacySession;
-  if (session.mode?.type === "headless") return session.mode.prompt;
-  if (session.mode?.type === "interactive") {
+  if (session.mode?.type === "headless" || session.mode?.type === "interactive") {
     return session.agent_config?.system_prompt ?? "";
   }
   return legacy.prompt ?? "";

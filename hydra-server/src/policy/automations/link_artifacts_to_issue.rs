@@ -200,9 +200,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-            mode: SessionMode::Headless {
-                prompt: "test".to_string(),
-            },
+            mode: SessionMode::Headless,
             status: Status::Created,
             last_message: None,
             error: None,

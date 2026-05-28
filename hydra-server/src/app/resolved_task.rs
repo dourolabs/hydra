@@ -39,9 +39,8 @@ impl AppState {
 
     /// Read the resolved bundle off `session.mount_spec`. The first
     /// `MountItem::Bundle` (typically `mounts[0]`) carries the lowered git
-    /// source; service-repo lowering already happened at session-create time
-    /// (`AppState::mount_spec_from_session_settings` /
-    /// `agent_queue::resolve_mount_spec`), so this is a straight read.
+    /// source; callers lower service repos before calling `create_session`
+    /// (see `agent_queue::resolve_mount_spec`), so this is a straight read.
     fn resolve_context(session: &Session) -> ResolvedBundle {
         let bundle = session
             .mount_spec

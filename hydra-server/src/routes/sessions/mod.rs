@@ -37,64 +37,6 @@ pub async fn create_session(
         .await
         .map_err(|err| match err {
             CreateSessionError::TaskResolution(err) => ApiError::from(err),
-            CreateSessionError::IssueLookup { source, issue_id } => match source {
-                StoreError::IssueNotFound(_) => {
-                    ApiError::not_found(format!("issue '{issue_id}' not found"))
-                }
-                other => {
-                    error!(
-                        error = %other,
-                        issue_id = %issue_id,
-                        "failed to load issue for session creation"
-                    );
-                    ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
-                }
-            },
-            CreateSessionError::ConversationLookup {
-                source,
-                conversation_id,
-            } => match source {
-                StoreError::ConversationNotFound(_) => {
-                    ApiError::not_found(format!("conversation '{conversation_id}' not found"))
-                }
-                other => {
-                    error!(
-                        error = %other,
-                        conversation_id = %conversation_id,
-                        "failed to load conversation for session creation"
-                    );
-                    ApiError::internal(format!(
-                        "Failed to load conversation '{conversation_id}': {other}"
-                    ))
-                }
-            },
-            err @ CreateSessionError::AgentNotFound { .. } => {
-                ApiError::bad_request(err.to_string())
-            }
-            CreateSessionError::AgentLookup { source } => {
-                error!(error = %source, "failed to resolve agent for conversation");
-                ApiError::internal(format!("Failed to resolve agent: {source}"))
-            }
-            CreateSessionError::AgentNameInvalid { name, source } => {
-                error!(
-                    error = %source,
-                    agent_name = %name,
-                    "stored agent name failed AgentName validation"
-                );
-                ApiError::internal(format!("agent '{name}' has invalid name in the store"))
-            }
-            CreateSessionError::AgentPromptResolution { path, source } => {
-                error!(error = %source, path = %path, "failed to resolve agent prompt");
-                ApiError::internal(format!(
-                    "Failed to resolve agent prompt at '{path}': {source}"
-                ))
-            }
-            CreateSessionError::AgentMcpConfigResolution { path, source } => {
-                error!(error = %source, path = %path, "failed to resolve agent MCP config");
-                ApiError::internal(format!(
-                    "Failed to resolve agent MCP config at '{path}': {source}"
-                ))
-            }
             CreateSessionError::Store { source } => {
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))

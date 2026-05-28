@@ -2146,7 +2146,7 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         let idx_status = bindings.len();
         predicates.push(format!(
             "(LOWER(t.id) LIKE ?{idx_id} \
-             OR LOWER(COALESCE(json_extract(t.mode, '$.prompt'), '')) LIKE ?{idx_prompt} \
+             OR LOWER(COALESCE(json_extract(t.agent_config, '$.system_prompt'), '')) LIKE ?{idx_prompt} \
              OR LOWER(t.status) LIKE ?{idx_status})"
         ));
     }
@@ -7358,7 +7358,7 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            AgentConfig::new(None, None, Some(prompt.to_string()), None),
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -7368,9 +7368,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: prompt.to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -7448,17 +7446,15 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[0].item.mode, SessionMode::Headless);
         assert_eq!(
-            versions[0].item.mode,
-            SessionMode::Headless {
-                prompt: "v1".to_string()
-            }
+            versions[0].item.agent_config.system_prompt.as_deref(),
+            Some("v1")
         );
+        assert_eq!(versions[1].item.mode, SessionMode::Headless);
         assert_eq!(
-            versions[1].item.mode,
-            SessionMode::Headless {
-                prompt: "v2".to_string()
-            }
+            versions[1].item.agent_config.system_prompt.as_deref(),
+            Some("v2")
         );
     }
 
@@ -7569,10 +7565,11 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        let SessionMode::Headless { prompt } = &tasks[0].1.item.mode else {
-            panic!("expected headless");
-        };
-        assert_eq!(prompt, "deploy to production");
+        assert!(matches!(&tasks[0].1.item.mode, SessionMode::Headless));
+        assert_eq!(
+            tasks[0].1.item.agent_config.system_prompt.as_deref(),
+            Some("deploy to production")
+        );
     }
 
     #[tokio::test]
@@ -7828,7 +7825,12 @@ mod tests {
             Username::from("alice"),
             None,
             None,
-            AgentConfig::new(None, Some("claude-3".to_string()), None, Some(mcp_config)),
+            AgentConfig::new(
+                None,
+                Some("claude-3".to_string()),
+                Some("full test".to_string()),
+                Some(mcp_config),
+            ),
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -7838,9 +7840,7 @@ mod tests {
             Some("2".to_string()),
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
-            SessionMode::Headless {
-                prompt: "full test".to_string(),
-            },
+            SessionMode::Headless,
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {
@@ -10568,11 +10568,9 @@ mod tests {
             None => {
                 // Tests previously passed `None` to mean "interactive but no
                 // conversation". The new shape requires a conversation_id, so
-                // collapse this case to Headless with an empty prompt — same
-                // semantic effect (no conversation linkage).
-                session.mode = SessionMode::Headless {
-                    prompt: String::new(),
-                };
+                // collapse this case to Headless — same semantic effect (no
+                // conversation linkage).
+                session.mode = SessionMode::Headless;
             }
         }
         session
@@ -11324,7 +11322,8 @@ mod tests {
 
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "headless");
-        assert_eq!(mode["prompt"], "test prompt");
+        // Headless is unit-like — the prompt lives on agent_config.system_prompt.
+        assert!(mode.get("prompt").is_none_or(|v| v.is_null()));
 
         let mount_spec = parse_json(row.mount_spec.as_deref().expect("mount_spec is non-null"));
         assert_eq!(mount_spec["working_dir"], "repo");
@@ -11348,7 +11347,8 @@ mod tests {
                 .expect("agent_config is non-null"),
         );
         assert!(agent_config["agent_name"].is_null());
-        assert!(agent_config["system_prompt"].is_null());
+        // PR-1: `spawn_task()` puts the prompt on `agent_config.system_prompt`.
+        assert_eq!(agent_config["system_prompt"], "test prompt");
         // spawn_task() sets model: None, mcp_config: None
         assert!(agent_config["model"].is_null());
         assert!(agent_config["mcp_config"].is_null());

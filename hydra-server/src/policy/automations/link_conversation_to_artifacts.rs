@@ -253,9 +253,7 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            None => SessionMode::Headless {
-                prompt: "test".to_string(),
-            },
+            None => SessionMode::Headless,
         };
         Session {
             creator: Username::from("test-creator"),

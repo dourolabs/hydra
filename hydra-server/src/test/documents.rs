@@ -34,9 +34,7 @@ fn sample_task(status: Status) -> Session {
         None,
         None,
         None,
-        SessionMode::Headless {
-            prompt: "prompt".to_string(),
-        },
+        SessionMode::Headless,
         status,
         None,
         None,

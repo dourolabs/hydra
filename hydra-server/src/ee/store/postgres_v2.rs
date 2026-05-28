@@ -1948,7 +1948,7 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         let idx_status = bindings.len() + 3;
         predicates.push(format!(
             "(LOWER(id) LIKE ${idx_id} \
-             OR LOWER(COALESCE(mode->>'prompt', '')) LIKE ${idx_prompt} \
+             OR LOWER(COALESCE(agent_config->>'system_prompt', '')) LIKE ${idx_prompt} \
              OR LOWER(status) LIKE ${idx_status})"
         ));
         let pattern = format!("%{term}%");
@@ -5432,9 +5432,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "prompt".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -5458,9 +5456,7 @@ mod tests {
             None,
             None,
             None,
-            SessionMode::Headless {
-                prompt: "round-trip prompt".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             None,
             None,
@@ -5500,9 +5496,7 @@ mod tests {
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
-            SessionMode::Headless {
-                prompt: "full prompt".to_string(),
-            },
+            SessionMode::Headless,
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -5817,9 +5811,8 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let mut updated = fetched.item.clone();
-        updated.mode = crate::domain::sessions::SessionMode::Headless {
-            prompt: "updated prompt".to_string(),
-        };
+        updated.mode = crate::domain::sessions::SessionMode::Headless;
+        updated.agent_config.system_prompt = Some("updated prompt".to_string());
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -5830,10 +5823,14 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        let crate::domain::sessions::SessionMode::Headless { prompt } = &fetched2.item.mode else {
-            panic!("expected headless");
-        };
-        assert_eq!(prompt, "updated prompt");
+        assert!(matches!(
+            &fetched2.item.mode,
+            crate::domain::sessions::SessionMode::Headless
+        ));
+        assert_eq!(
+            fetched2.item.agent_config.system_prompt.as_deref(),
+            Some("updated prompt")
+        );
         assert_eq!(fetched2.version, 2);
     }
 
@@ -8877,9 +8874,7 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            None => SessionMode::Headless {
-                prompt: "interactive prompt".to_string(),
-            },
+            None => SessionMode::Headless,
         };
         Session::new(
             Username::from("test-creator"),
@@ -9647,7 +9642,8 @@ mod tests {
 
         let mode = mode.expect("mode is non-null");
         assert_eq!(mode["type"], "headless");
-        assert_eq!(mode["prompt"], "prompt");
+        // Headless is unit-like — no prompt field on `mode`.
+        assert!(mode.get("prompt").is_none_or(|v| v.is_null()));
 
         let mount_spec = mount_spec.expect("mount_spec is non-null");
         assert_eq!(mount_spec["working_dir"], "repo");
