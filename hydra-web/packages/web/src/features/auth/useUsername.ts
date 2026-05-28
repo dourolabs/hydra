@@ -10,12 +10,8 @@ export function useUsername(): string | null {
   switch (actor.type) {
     case "user":
       return actor.username;
-    case "session":
-    case "issue":
     case "adhoc":
     case "agent":
       return actor.creator;
-    case "service":
-      return actor.service_name;
   }
 }

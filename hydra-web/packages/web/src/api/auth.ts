@@ -4,18 +4,15 @@ import { apiFetch } from "./client";
 /** Extract a display name from any actor identity. */
 export function actorDisplayName(actor: ActorIdentity): string {
   if (actor.type === "user") return actor.username;
-  if (actor.type === "session") return actor.session_id;
   if (actor.type === "adhoc") return actor.session_id;
-  if (actor.type === "service") return actor.service_name;
-  if (actor.type === "agent") return actor.name;
-  return actor.issue_id;
+  return actor.name;
 }
 
 /**
  * Render an `ActorIdentity` as a Principal path (`users/<name>` /
  * `agents/<name>`), which is the canonical form Phase 4b uses on the wire
  * (`?assignee=…`, API body fields). Returns `null` for actors that don't
- * map cleanly onto a Principal (session, adhoc, service, issue).
+ * map cleanly onto a Principal (adhoc).
  */
 export function actorPrincipalPath(actor: ActorIdentity): string | null {
   if (actor.type === "user") return `users/${actor.username}`;
