@@ -32,7 +32,9 @@ use hydra_common::{
         ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
     },
     api::v1::merge_check::MergeCheckResponse,
-    api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
+    api::v1::relations::{
+        CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
+    },
     api::v1::secrets::ListSecretsResponse,
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -418,8 +420,12 @@ impl HydraClientInterface for RelayCallCountingClient {
             .await
     }
 
-    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<bool> {
         self.inner.create_relation(request).await
+    }
+
+    async fn remove_relation(&self, request: &RemoveRelationRequest) -> Result<bool> {
+        self.inner.remove_relation(request).await
     }
 
     async fn create_conversation(
