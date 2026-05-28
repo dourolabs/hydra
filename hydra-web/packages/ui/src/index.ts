@@ -47,7 +47,11 @@ export { LogViewer } from "./components/LogViewer";
 export type { LogViewerProps } from "./components/LogViewer";
 
 export { MarkdownViewer } from "./components/MarkdownViewer";
-export type { MarkdownViewerProps } from "./components/MarkdownViewer";
+export type {
+  MarkdownViewerProps,
+  HydraLinkComponent,
+  HydraLinkProps,
+} from "./components/MarkdownViewer";
 
 export { Toast } from "./components/Toast";
 export type { ToastProps, ToastVariant } from "./components/Toast";

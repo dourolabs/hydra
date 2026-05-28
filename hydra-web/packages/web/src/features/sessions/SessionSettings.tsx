@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { MountSpec, Session } from "@hydra/api";
-import { Badge, MarkdownViewer } from "@hydra/ui";
+import { Badge } from "@hydra/ui";
+import { Markdown } from "../../components/Markdown";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./SessionSettings.module.css";
@@ -62,7 +63,7 @@ export function SessionSettings({ task }: SessionSettingsProps) {
       label: "Prompt",
       value: (
         <div className={styles.promptContent}>
-          <MarkdownViewer content={prompt} />
+          <Markdown content={prompt} />
         </div>
       ),
       stacked: true,

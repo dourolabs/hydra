@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { MarkdownViewer } from "@hydra/ui";
 import type { SessionEvent } from "@hydra/api";
+import { Markdown } from "../../components/Markdown";
 import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./ChatMessageList.module.css";
@@ -37,7 +37,7 @@ function renderEvent(event: SessionEvent, index: number, agentName: string) {
             </span>
           </div>
           <div className={styles.agentBody}>
-            <MarkdownViewer content={event.content} />
+            <Markdown content={event.content} />
           </div>
         </div>
       );

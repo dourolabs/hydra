@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@hydra/ui";
+import { Spinner, Button, Textarea, CopyButton } from "@hydra/ui";
+import { Markdown } from "../components/Markdown";
 import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
@@ -181,7 +182,7 @@ function DocumentDetail({ record }: DocumentDetailProps) {
         </div>
       ) : (
         <div className={styles.prose}>
-          <MarkdownViewer content={record.document.body_markdown} />
+          <Markdown content={record.document.body_markdown} />
         </div>
       )}
     </div>

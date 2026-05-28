@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Button, MarkdownViewer, TypeChip } from "@hydra/ui";
+import { Badge, Button, TypeChip } from "@hydra/ui";
+import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { useIssue } from "./useIssue";
@@ -143,7 +144,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
 
           <div className={styles.description}>
             {issue.description ? (
-              <MarkdownViewer content={issue.description} />
+              <Markdown content={issue.description} />
             ) : (
               <p className={styles.descriptionEmpty}>No description.</p>
             )}
@@ -153,7 +154,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <div className={styles.section}>
               <span className={styles.sectionLabel}>Progress</span>
               <div className={styles.sectionBody}>
-                <MarkdownViewer content={issue.progress} />
+                <Markdown content={issue.progress} />
               </div>
             </div>
           )}
@@ -162,7 +163,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <div className={styles.section}>
               <span className={styles.sectionLabel}>Feedback</span>
               <div className={styles.sectionBody}>
-                <MarkdownViewer content={issue.feedback} />
+                <Markdown content={issue.feedback} />
               </div>
             </div>
           )}
