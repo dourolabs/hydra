@@ -55,6 +55,7 @@ fn default_trigger_statuses() -> Vec<IssueStatus> {
 fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
     match s.to_lowercase().as_str() {
         "dropped" => Ok(IssueStatus::Dropped),
+        // Backward-compat: old "rejected" wire values deserialize to Dropped; remove once the 2026-05-08 migration has soaked.
         "rejected" => Ok(IssueStatus::Dropped),
         "failed" => Ok(IssueStatus::Failed),
         "closed" => Ok(IssueStatus::Closed),

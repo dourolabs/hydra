@@ -79,7 +79,7 @@ Use this playbook whenever an issue requires a design document before implementa
 8. **If the review issue status is `closed` (approved):**
    - The design is approved. Proceed to Phase 4 (implementation planning).
 
-9. **If the review issue status is `failed` (rejected):**
+9. **If the review issue status is `failed`:**
    - Read the reviewer's feedback from the review issue's activity log (the form response contains their comment).
    - Revise the design document to address the feedback.
    - Publish the updated document under `/designs/`:
@@ -113,7 +113,7 @@ Use this playbook whenever an issue requires a design document before implementa
 | `open` | Review issue created, awaiting reviewer action |
 | `in-progress` | Reviewer is actively reviewing |
 | `closed` | Design **approved** — proceed with implementation |
-| `failed` | Design **rejected** — revise and re-submit |
+| `failed` | Design **not approved** — revise and re-submit |
 
 ## Notes
 

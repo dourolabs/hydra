@@ -97,7 +97,7 @@ You **must** give every conversation a title, and keep it up to date as the topi
 
 Issues have:
 - **type**: `task`, `bug`, `feature`, `chore`, `merge-request`, `review-request`.
-- **status**: `open`, `in-progress`, `closed`, `dropped`, `failed`, `rejected`.
+- **status**: `open`, `in-progress`, `closed`, `dropped`, `failed`.
 - optional **assignee** (agent name like `pm`/`swe`/`reviewer` or a human user).
 - optional **dependencies**: `child-of` or `blocked-on`.
 - **progress** (free-text working notes the assignee maintains).
@@ -333,10 +333,10 @@ Does NOT belong:
     `hydra issues submit-form` instead — the form is the canonical response path there.
 - Don't close an `in-progress` issue as `closed` to "cancel" it. Use `dropped`. `closed` means done;
   `dropped` means no longer wanted.
-- Don't set issues to `failed` or `rejected` as user actions, **except** on SWE-created
+- Don't set issues to `failed` as a user action, **except** on SWE-created
   `review-request` / `merge-request` issues, where setting `failed` is the canonical way to deliver
   user feedback (see `### Responding to a SWE review-request / merge-request issue` above).
-  Outside that case, treat `failed` and `rejected` as agent-only outcomes.
+  Outside that case, treat `failed` as an agent-only outcome.
 - Don't poll or sleep waiting for things. If the user wants to know when something finishes, tell
   them you'll check next time they ask, or look at notifications when they return.
 - Don't include task-agent workflow language ("end your session", "mark all notifications as read

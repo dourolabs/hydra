@@ -94,6 +94,7 @@ impl FromStr for IssueStatus {
             "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
             "closed" => Ok(IssueStatus::Closed),
             "dropped" => Ok(IssueStatus::Dropped),
+            // Backward-compat: old "rejected" wire values deserialize to Dropped; remove once the 2026-05-08 migration has soaked.
             "rejected" => Ok(IssueStatus::Dropped),
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),

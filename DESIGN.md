@@ -43,11 +43,11 @@ Issues additionally have a graph structure with two types of relationships `x:bl
 The system uses the combination of the status and graph structure to determine what issues can be worked on.
 Issues also have 2 inferred states: `Ready`, `NotReady`, that indicate whether or not the issue is ready to be worked on.
 `Open` issues are `Ready` unless they have a blocked-on edge to an issue that isn't `Closed`.
-`InProgress` issues are `Ready` when no child is `Ready` (checked recursively). This means a parent with no children is trivially ready, and a parent whose children are all stuck (blocked, failed, rejected, dropped, or closed) is also ready. The parent is NOT ready as long as any child can still make progress.
+`InProgress` issues are `Ready` when no child is `Ready` (checked recursively). This means a parent with no children is trivially ready, and a parent whose children are all stuck (blocked, failed, dropped, or closed) is also ready. The parent is NOT ready as long as any child can still make progress.
 `Dropped` issues are never `Ready`; they remain blocking for downstream work until users intervene.
 Whenever an issue is `Ready`, an agent may be spawned to work on it.
-When an issue is marked `Dropped`, `Rejected`, or `Failed`, its children are recursively set to `Dropped` (since the parent's work is no longer proceeding), and any tasks spawned from it are terminated immediately.
-`Rejected` and `Failed` issues do not cascade status changes to blocked-on dependents; blocking is retained (the dependent issues remain in their current status but are not ready to run).
+When an issue is marked `Dropped` or `Failed`, its children are recursively set to `Dropped` (since the parent's work is no longer proceeding), and any tasks spawned from it are terminated immediately.
+`Failed` issues do not cascade status changes to blocked-on dependents; blocking is retained (the dependent issues remain in their current status but are not ready to run).
 
 **Parent re-planning:** The readiness rule for `InProgress` issues enables recovery from child failures. If a parent issue A has children B, C, D and they all end up stuck (e.g., B failed and C is blocked on B), then no child is `Ready`, so A becomes `Ready` and an agent can be spawned for it. The agent can inspect what went wrong and create replacement tasks to recover. To prevent race conditions, a parent will not spawn while any of its children have a running or pending task, and conversely children will not spawn while their parent has a running or pending task.
 
