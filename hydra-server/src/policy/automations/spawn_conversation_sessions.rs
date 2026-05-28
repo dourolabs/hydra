@@ -552,6 +552,7 @@ mod tests {
             },
             None => SessionMode::Headless {
                 prompt: "prompt".to_string(),
+                conversation_id: None,
             },
         };
         Session::new(

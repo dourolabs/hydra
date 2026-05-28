@@ -1042,6 +1042,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "test prompt".to_string(),
+                conversation_id: None,
             },
             status: Status::Created,
             last_message: None,

@@ -198,6 +198,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         ("tasks_v2", "agent_config"),
         ("tasks_v2", "mode"),
         ("tasks_v2", "resumed_from"),
+        ("tasks_v2", "greet_user"),
         ("repositories_v2", "merge_policy"),
     ] {
         if !column_exists(pool, table, col).await? {
@@ -402,6 +403,106 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
     let resumed_from: Option<String> = row.get(0);
     if resumed_from.as_deref() != Some("s-interact01") {
         bail!("expected s-interact02.resumed_from='s-interact01'; got {resumed_from:?}");
+    }
+
+    // ---- PR-2: clear_conversation_resume_from_in_mode ----
+    // No interactive row may carry the now-redundant
+    // `conversation_resume_from` JSON key — `Session.resumed_from`
+    // supersedes it. The Rust enum field is removed in PR-3.
+    let row = sqlx::query(
+        "SELECT COUNT(*) FROM metis.tasks_v2 \
+         WHERE mode IS NOT NULL AND mode ? 'conversation_resume_from'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let count: i64 = row.get(0);
+    if count != 0 {
+        bail!(
+            "expected 0 tasks_v2 rows with mode.conversation_resume_from after PR-2 cleanup; \
+             got {count}"
+        );
+    }
+
+    // ---- PR-2: greet_user column defaults to FALSE on all rows ----
+    let row = sqlx::query(
+        "SELECT COUNT(*) FROM metis.tasks_v2 WHERE greet_user IS NULL OR greet_user = TRUE",
+    )
+    .fetch_one(pool)
+    .await?;
+    let non_default: i64 = row.get(0);
+    if non_default != 0 {
+        bail!(
+            "expected every existing tasks_v2 row to default greet_user=FALSE post-PR-2; \
+             got {non_default} non-default rows"
+        );
+    }
+
+    // ---- PR-2: headless_conversation_backfill ----
+    // Every headless row must now carry a `conversation_id` both in
+    // the `mode` JSON and on the denormalized column, and the
+    // conversation must own a first `session_events_v2` row with
+    // event_type='user_message' whose content is the original prompt.
+    for (session_id, original_prompt) in [
+        ("s-headless01", "do a thing"),
+        ("s-headalpha", "do a thing"),
+    ] {
+        let row = sqlx::query(
+            "SELECT mode::text, conversation_id FROM metis.tasks_v2 \
+             WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read backfilled mode for {session_id}"))?;
+        let mode_text: String = row.get(0);
+        let conv_id_col: Option<String> = row.get(1);
+        let mode: serde_json::Value = serde_json::from_str(&mode_text)?;
+        let conv_id_json = mode
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .with_context(|| {
+                format!("{session_id}: expected mode.conversation_id after PR-2 backfill")
+            })?;
+        if conv_id_col.as_deref() != Some(conv_id_json) {
+            bail!(
+                "{session_id}: tasks_v2.conversation_id={conv_id_col:?} must mirror \
+                 mode.conversation_id={conv_id_json}"
+            );
+        }
+        if mode.get("prompt").and_then(|v| v.as_str()) != Some(original_prompt) {
+            bail!(
+                "{session_id}: vestigial mode.prompt should still equal the original prompt \
+                 ({original_prompt:?}); got mode={mode}"
+            );
+        }
+
+        // First session_events_v2 row for this session is the migrated
+        // UserMessage whose content is the original prompt.
+        let row = sqlx::query(
+            "SELECT event_type, event_data::text FROM metis.session_events_v2 \
+             WHERE session_id = $1 ORDER BY version_number ASC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("read first session_event for {session_id}"))?
+        .with_context(|| {
+            format!("{session_id}: expected at least one session_events_v2 row after PR-2 backfill")
+        })?;
+        let event_type: String = row.get(0);
+        let event_data_text: String = row.get(1);
+        let event_data: serde_json::Value = serde_json::from_str(&event_data_text)?;
+        if event_type != "user_message" {
+            bail!(
+                "{session_id}: expected first session_event_type='user_message'; got {event_type}"
+            );
+        }
+        if event_data.get("content").and_then(|v| v.as_str()) != Some(original_prompt) {
+            bail!(
+                "{session_id}: expected first session_event.content={original_prompt:?}; \
+                 got {event_data}"
+            );
+        }
     }
 
     Ok(())
@@ -1210,15 +1311,41 @@ async fn smoke_read_patches(store: &PostgresStoreV2) -> Result<()> {
 }
 
 async fn smoke_read_sessions(store: &PostgresStoreV2) -> Result<()> {
-    // Headless task: mode backfill -> SessionMode::Headless.
+    // Headless task: mode backfill -> SessionMode::Headless. PR-2 has
+    // since stamped a `conversation_id` on the variant — assert both the
+    // preserved (vestigial) prompt AND the new conversation linkage.
     let session = store
         .get_session(&parse_session_id("s-headalpha")?, false)
         .await
         .context("Store::get_session(s-headalpha)")?;
-    match &session.item.mode {
-        SessionMode::Headless { prompt } if prompt == "do a thing" => {}
-        other => bail!("s-headalpha: expected Headless('do a thing'); got {other:?}"),
+    let conv_id = match &session.item.mode {
+        SessionMode::Headless {
+            prompt,
+            conversation_id: Some(conv_id),
+        } if prompt == "do a thing" => conv_id.clone(),
+        other => bail!(
+            "s-headalpha: expected Headless('do a thing') with conversation_id; got {other:?}"
+        ),
+    };
+
+    // First session_event on the backfilled conversation is the original
+    // prompt as a UserMessage — exercises both the serializer that wrote
+    // the row in the Rust migration AND the deserializer that reads
+    // `SessionEvent` back through the `Store` API.
+    let events = store
+        .get_session_events(&parse_session_id("s-headalpha")?)
+        .await
+        .context("Store::get_session_events(s-headalpha)")?;
+    let first = events
+        .first()
+        .with_context(|| "s-headalpha: expected at least one session_event after PR-2 backfill")?;
+    match &first.item {
+        SessionEvent::UserMessage { content, .. } if content == "do a thing" => {}
+        other => bail!(
+            "s-headalpha first session_event: expected UserMessage('do a thing'); got {other:?}"
+        ),
     }
+    let _ = conv_id;
 
     // Interactive task: mode backfill -> SessionMode::Interactive { conversation_id, .. }.
     let session = store
@@ -1390,6 +1517,7 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         None,
         SessionMode::Headless {
             prompt: "smoke: do a thing".to_string(),
+            conversation_id: None,
         },
         Status::Complete,
         None,
@@ -1404,7 +1532,7 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         .await
         .context("Store::get_session post-migration")?;
     match &fetched.item.mode {
-        SessionMode::Headless { prompt } if prompt == "smoke: do a thing" => Ok(()),
+        SessionMode::Headless { prompt, .. } if prompt == "smoke: do a thing" => Ok(()),
         other => bail!(
             "post-migration create_session did not round-trip SessionMode::Headless; got {other:?}"
         ),

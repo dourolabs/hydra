@@ -143,6 +143,7 @@ impl AgentQueue {
         let request = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless {
                 prompt: prompt.to_string(),
+                conversation_id: None,
             },
             agent_config: api::sessions::AgentConfig::new(
                 Some(agent_name),
@@ -705,6 +706,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: prompt.to_string(),
+                conversation_id: None,
             },
             Status::Created,
             None,
@@ -792,7 +794,7 @@ mod tests {
                 ..
             } = task;
 
-            let SessionMode::Headless { prompt } = &mode else {
+            let SessionMode::Headless { prompt, .. } = &mode else {
                 panic!("expected headless");
             };
             assert_eq!(prompt, "Fix the issue");
@@ -3170,6 +3172,7 @@ mod tests {
         let request_b = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless {
                 prompt: prompt.to_string(),
+                conversation_id: None,
             },
             agent_config: api::sessions::AgentConfig::new(
                 Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),

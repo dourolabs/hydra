@@ -2181,6 +2181,7 @@ mod tests {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "test task".to_string(),
+                conversation_id: None,
             },
             status,
             last_message,
@@ -2892,6 +2893,7 @@ mod tests {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "test session".to_string(),
+                conversation_id: None,
             },
             status: Status::Created,
             last_message: None,

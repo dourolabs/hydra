@@ -158,6 +158,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "test task".to_string(),
+                conversation_id: None,
             },
             crate::store::Status::Created,
             None,

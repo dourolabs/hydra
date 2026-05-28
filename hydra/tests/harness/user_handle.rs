@@ -53,6 +53,7 @@ fn create_session_request_with_repo_url(
     CreateSessionRequest {
         mode: SessionMode::Headless {
             prompt: prompt.to_string(),
+            conversation_id: None,
         },
         agent_config: AgentConfig::default(),
         mount_spec,

@@ -123,7 +123,23 @@ impl AgentConfig {
 #[non_exhaustive]
 pub enum SessionMode {
     /// One-shot headless task. The prompt drives the whole run.
-    Headless { prompt: String },
+    ///
+    /// Historically the only field was `prompt`. The
+    /// sessions/worker_run interface redesign (PR-2,
+    /// `/designs/sessions-worker-run-interface.md` §4) introduces a
+    /// per-headless-session `conversation_id`: the prompt moves to the
+    /// conversation's first `SessionEvent::UserMessage`, and the worker
+    /// resolves it from there in PR-3. Both fields stay `Option`-typed
+    /// during PR-2 so the deserializer accepts the legacy `{ prompt }`
+    /// shape and the post-migration `{ conversation_id }` shape; PR-3
+    /// drops `prompt` and tightens `conversation_id` to a required
+    /// field.
+    Headless {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_id: Option<ConversationId>,
+    },
     /// Interactive session attached to a conversation.
     Interactive {
         conversation_id: ConversationId,
@@ -144,10 +160,15 @@ pub enum SessionMode {
 }
 
 impl SessionMode {
-    /// Convenience accessor for the linked conversation (`None` on headless).
+    /// Convenience accessor for the linked conversation. Returns the
+    /// `Headless.conversation_id` once PR-2's backfill has stamped one
+    /// on the row (legacy rows still return `None`); always returns
+    /// `Some` for `Interactive`.
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         match self {
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless {
+                conversation_id, ..
+            } => conversation_id.as_ref(),
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
@@ -665,7 +686,7 @@ pub struct SessionSummary {
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
         let raw_prompt = match &session.mode {
-            SessionMode::Headless { prompt } => prompt.as_str(),
+            SessionMode::Headless { prompt, .. } => prompt.as_str(),
             SessionMode::Interactive { .. } => "",
         };
         let prompt = if raw_prompt.chars().count() > 20 {
@@ -1158,6 +1179,7 @@ mod tests {
             Some(vec!["secret".to_string()]),
             SessionMode::Headless {
                 prompt: prompt.to_string(),
+                conversation_id: None,
             },
             Status::Running,
             Some("last message text".to_string()),
@@ -1383,6 +1405,7 @@ mod tests {
     fn session_mode_round_trips_headless_and_interactive() {
         let headless = SessionMode::Headless {
             prompt: "go".to_string(),
+            conversation_id: None,
         };
         let h_json = serde_json::to_value(&headless).unwrap();
         assert_eq!(h_json["type"], "headless");
@@ -1516,6 +1539,7 @@ mod tests {
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
                 prompt: "do stuff".to_string(),
+                conversation_id: None,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),

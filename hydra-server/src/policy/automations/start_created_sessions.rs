@@ -118,6 +118,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "test task".to_string(),
+                conversation_id: None,
             },
             status,
             None,

@@ -1533,6 +1533,7 @@ mod tests {
         let headless_request = CreateSessionRequest {
             mode: SessionMode::Headless {
                 prompt: "do stuff".to_string(),
+                conversation_id: None,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1638,6 +1639,7 @@ mod tests {
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
                 prompt: "do stuff".to_string(),
+                conversation_id: None,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),

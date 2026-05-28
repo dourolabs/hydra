@@ -5434,6 +5434,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "prompt".to_string(),
+                conversation_id: None,
             },
             Status::Created,
             None,
@@ -5460,6 +5461,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "round-trip prompt".to_string(),
+                conversation_id: None,
             },
             Status::Created,
             None,
@@ -5502,6 +5504,7 @@ mod tests {
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
             SessionMode::Headless {
                 prompt: "full prompt".to_string(),
+                conversation_id: None,
             },
             Status::Created,
             Some("last message".to_string()),
@@ -5819,6 +5822,7 @@ mod tests {
         let mut updated = fetched.item.clone();
         updated.mode = crate::domain::sessions::SessionMode::Headless {
             prompt: "updated prompt".to_string(),
+            conversation_id: None,
         };
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
@@ -5830,7 +5834,8 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        let crate::domain::sessions::SessionMode::Headless { prompt } = &fetched2.item.mode else {
+        let crate::domain::sessions::SessionMode::Headless { prompt, .. } = &fetched2.item.mode
+        else {
             panic!("expected headless");
         };
         assert_eq!(prompt, "updated prompt");
@@ -8879,6 +8884,7 @@ mod tests {
             },
             None => SessionMode::Headless {
                 prompt: "interactive prompt".to_string(),
+                conversation_id: None,
             },
         };
         Session::new(
