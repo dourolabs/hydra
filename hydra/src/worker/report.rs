@@ -118,6 +118,12 @@ pub enum MaterializeError {
     /// transcript replay.
     #[error("state bytes are not in this wrapper's expected format")]
     WrongFormat,
+    /// The bytes parsed as this wrapper's payload but did not carry an
+    /// on-disk transcript. The bare session id alone is not enough for the
+    /// wrapper to resume on a fresh worker, so the dispatcher must fall back
+    /// to transcript replay.
+    #[error("payload parsed but carried no transcript to materialize")]
+    MissingTranscript,
     /// The bytes parsed but writing the wrapper's on-disk artifact failed.
     #[error("failed to write resume artifact: {0}")]
     IoError(#[from] std::io::Error),
