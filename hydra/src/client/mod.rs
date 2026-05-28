@@ -20,7 +20,10 @@ use hydra_common::{
         DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
     },
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
-    api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
+    api::v1::relations::{
+        CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
+        RemoveRelationResponse,
+    },
     api::v1::secrets::{ListSecretsResponse, SetSecretRequest},
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -344,7 +347,9 @@ pub trait HydraClientInterface: Send + Sync {
     async fn remove_label_association(&self, label_id: &LabelId, object_id: &HydraId)
         -> Result<()>;
 
-    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()>;
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<bool>;
+
+    async fn remove_relation(&self, request: &RemoveRelationRequest) -> Result<bool>;
 
     async fn create_conversation(
         &self,
@@ -1902,17 +1907,40 @@ impl HydraClient {
         Ok(())
     }
 
-    /// Call `POST /v1/relations` to create a relation.
-    pub async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+    /// Call `POST /v1/relations` to create a relation. Returns `true` when
+    /// the server reports the relation was newly created (HTTP 201), or
+    /// `false` when it already existed (HTTP 200).
+    pub async fn create_relation(&self, request: &CreateRelationRequest) -> Result<bool> {
         let url = self.endpoint("/v1/relations")?;
-        self.authed(self.http.post(url))
+        let response = self
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
             .context("failed to submit create relation request")?
             .error_for_status_with_body("hydra-server rejected create relation request")
             .await?;
-        Ok(())
+        Ok(response.status() == StatusCode::CREATED)
+    }
+
+    /// Call `DELETE /v1/relations` to remove a relation. Returns the
+    /// `removed` flag from the server (`true` when an existing relation was
+    /// deleted, `false` when no such relation existed).
+    pub async fn remove_relation(&self, request: &RemoveRelationRequest) -> Result<bool> {
+        let url = self.endpoint("/v1/relations")?;
+        let response = self
+            .authed(self.http.delete(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit remove relation request")?
+            .error_for_status_with_body("hydra-server rejected remove relation request")
+            .await?;
+        let body: RemoveRelationResponse = response
+            .json()
+            .await
+            .context("failed to decode remove relation response")?;
+        Ok(body.removed)
     }
 
     /// Call `GET /v1/relations` to list relations matching the given filters.
@@ -2549,8 +2577,12 @@ impl HydraClientInterface for HydraClient {
         HydraClient::remove_label_association(self, label_id, object_id).await
     }
 
-    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<bool> {
         HydraClient::create_relation(self, request).await
+    }
+
+    async fn remove_relation(&self, request: &RemoveRelationRequest) -> Result<bool> {
+        HydraClient::remove_relation(self, request).await
     }
 
     async fn create_conversation(
@@ -2914,6 +2946,121 @@ mod tests {
         mock.assert();
         assert_eq!(actual, response);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_relation_returns_true_on_201_created() -> Result<()> {
+        let server = MockServer::start();
+        let request = CreateRelationRequest {
+            source_id: "i-aaaaaa".parse()?,
+            target_id: "i-bbbbbb".parse()?,
+            rel_type: "child-of".to_string(),
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/relations").json_body(json!({
+                "source_id": "i-aaaaaa",
+                "target_id": "i-bbbbbb",
+                "rel_type": "child-of",
+            }));
+            then.status(201).json_body(json!({
+                "source_id": "i-aaaaaa",
+                "target_id": "i-bbbbbb",
+                "rel_type": "child-of",
+            }));
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let created = client.create_relation(&request).await?;
+
+        mock.assert();
+        assert!(created, "201 Created should be reported as created=true");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_relation_returns_false_on_200_already_existed() -> Result<()> {
+        let server = MockServer::start();
+        let request = CreateRelationRequest {
+            source_id: "i-aaaaaa".parse()?,
+            target_id: "i-bbbbbb".parse()?,
+            rel_type: "child-of".to_string(),
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/relations");
+            then.status(200).json_body(json!({
+                "source_id": "i-aaaaaa",
+                "target_id": "i-bbbbbb",
+                "rel_type": "child-of",
+            }));
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let created = client.create_relation(&request).await?;
+
+        mock.assert();
+        assert!(
+            !created,
+            "200 OK should be reported as created=false (already existed)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_relation_returns_removed_flag_from_body() -> Result<()> {
+        let server = MockServer::start();
+        let request = RemoveRelationRequest {
+            source_id: "i-aaaaaa".parse()?,
+            target_id: "i-bbbbbb".parse()?,
+            rel_type: "child-of".to_string(),
+        };
+
+        let mock_true = server.mock(|when, then| {
+            when.method(DELETE).path("/v1/relations").json_body(json!({
+                "source_id": "i-aaaaaa",
+                "target_id": "i-bbbbbb",
+                "rel_type": "child-of",
+            }));
+            then.status(200).json_body(json!({ "removed": true }));
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let removed = client.remove_relation(&request).await?;
+
+        mock_true.assert();
+        assert!(removed, "server's removed=true should propagate");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_relation_returns_false_when_not_found() -> Result<()> {
+        let server = MockServer::start();
+        let request = RemoveRelationRequest {
+            source_id: "i-aaaaaa".parse()?,
+            target_id: "i-bbbbbb".parse()?,
+            rel_type: "child-of".to_string(),
+        };
+
+        let mock_false = server.mock(|when, then| {
+            when.method(DELETE).path("/v1/relations");
+            then.status(200).json_body(json!({ "removed": false }));
+        });
+
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+
+        let removed = client.remove_relation(&request).await?;
+
+        mock_false.assert();
+        assert!(!removed, "server's removed=false should propagate");
         Ok(())
     }
 

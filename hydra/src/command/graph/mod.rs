@@ -9,6 +9,7 @@ pub mod diff;
 pub mod dispatch;
 pub mod log;
 pub mod query;
+pub mod relate;
 pub mod resolver;
 pub mod search;
 pub mod utils;
@@ -17,9 +18,11 @@ use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use hydra_common::graph::{ObjectKind, VerbosityLevel};
 use hydra_common::time::HydraTime;
+use hydra_common::HydraId;
 use std::str::FromStr;
 
 use crate::client::HydraClientInterface;
+use crate::command::graph::relate::{parse_rel_target, RelTarget, RelateParams};
 use crate::command::output::CommandContext;
 
 /// Default cap on the resolved node-id set size, mirroring `MAX_BATCH_IDS`
@@ -60,6 +63,54 @@ pub const DEFAULT_LOG_LIMIT: usize = 50;
 /// Default `--since` value (Unix epoch, i.e. "from the beginning of time")
 /// used when the user omits the flag on `diff` / `log`.
 pub const DEFAULT_SINCE: &str = "1970-01-01T00:00:00Z";
+
+/// Long-form `--help` block for `hydra graph create`.
+pub const CREATE_LONG_ABOUT: &str = "\
+Create a relation between two graph objects.
+
+Maps directly onto the server's (source_id, rel_type, target_id) triple:
+the first positional becomes source_id, the prefix becomes rel_type, and the
+suffix becomes target_id.
+
+Supported relation kinds: child-of, blocked-on, has-patch, has-document,
+refers-to. The same `childof` / `child_of` aliases the server accepts also
+work.
+
+Note: `has-patch` and `has-document` are normally set automatically when
+patches and documents are created. Manual create/delete is supported for
+fix-ups, but you usually don't need it.
+
+Idempotent: if the relation already exists, the command exits 0 and prints
+`relation already exists`.
+
+Examples:
+  hydra graph create i-abc child-of:i-parent
+  hydra graph create i-abc blocked-on:i-blocker
+  hydra graph create p-xyz refers-to:i-issue";
+
+/// Long-form `--help` block for `hydra graph delete`.
+pub const DELETE_LONG_ABOUT: &str = "\
+Delete a relation between two graph objects.
+
+Maps directly onto the server's (source_id, rel_type, target_id) triple,
+the same way as `hydra graph create`.
+
+Supported relation kinds: child-of, blocked-on, has-patch, has-document,
+refers-to. The same `childof` / `child_of` aliases the server accepts also
+work.
+
+Note: `has-patch` and `has-document` are normally managed automatically by
+`hydra patches create` / `hydra documents create`; manual deletion is
+supported for fix-ups.
+
+Exit codes:
+  0 — the relation was deleted.
+  1 — no such relation existed (the desired state was already in place,
+      but the explicit signal lets scripts detect the no-op).
+
+Examples:
+  hydra graph delete i-abc child-of:i-parent
+  hydra graph delete i-abc blocked-on:i-blocker";
 
 #[derive(Debug, Subcommand)]
 pub enum GraphCommand {
@@ -181,6 +232,43 @@ pub enum GraphCommand {
         #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_NODES)]
         max_nodes: usize,
     },
+    /// Create a relation between two graph objects.
+    ///
+    /// Supported relation kinds: child-of, blocked-on, has-patch,
+    /// has-document, refers-to. The `has-patch` / `has-document` edges are
+    /// normally managed automatically by `hydra patches create` /
+    /// `hydra documents create`; the manual form is for fix-ups.
+    #[command(long_about = CREATE_LONG_ABOUT)]
+    Create {
+        /// Source object id (the `source_id` of the relation).
+        #[arg(value_name = "FROM_ID")]
+        from: HydraId,
+
+        /// `<REL>:<TO_ID>` — one of child-of, blocked-on, has-patch,
+        /// has-document, refers-to.
+        #[arg(value_name = "REL:TO_ID", value_parser = parse_rel_target)]
+        target: RelTarget,
+    },
+    /// Delete a relation between two graph objects.
+    ///
+    /// Supported relation kinds: child-of, blocked-on, has-patch,
+    /// has-document, refers-to. The `has-patch` / `has-document` edges are
+    /// normally managed automatically by `hydra patches create` /
+    /// `hydra documents create`; the manual form is for fix-ups.
+    ///
+    /// Exits 1 (with the `relation not found` message) if no such relation
+    /// existed.
+    #[command(long_about = DELETE_LONG_ABOUT)]
+    Delete {
+        /// Source object id (the `source_id` of the relation).
+        #[arg(value_name = "FROM_ID")]
+        from: HydraId,
+
+        /// `<REL>:<TO_ID>` — one of child-of, blocked-on, has-patch,
+        /// has-document, refers-to.
+        #[arg(value_name = "REL:TO_ID", value_parser = parse_rel_target)]
+        target: RelTarget,
+    },
 }
 
 /// CLI-facing kind filter, repeatable as `--kind issue --kind patch ...`.
@@ -282,6 +370,12 @@ pub async fn run(
                 context,
             )
             .await
+        }
+        GraphCommand::Create { from, target } => {
+            relate::run_create(client, RelateParams { from, target }, context).await
+        }
+        GraphCommand::Delete { from, target } => {
+            relate::run_delete(client, RelateParams { from, target }, context).await
         }
     }
 }
@@ -407,6 +501,96 @@ mod tests {
             }
             other => panic!("expected Log, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn create_parses_positional_from_and_rel_target() {
+        let cmd = parse_graph(&["create", "i-aaaaaa", "child-of:i-bbbbbb"]);
+        match cmd {
+            GraphCommand::Create { from, target } => {
+                assert_eq!(from.as_ref(), "i-aaaaaa");
+                assert_eq!(target.target.as_ref(), "i-bbbbbb");
+                assert_eq!(
+                    target.rel,
+                    crate::command::graph::relate::RelationKindCli::ChildOf,
+                );
+            }
+            other => panic!("expected Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_accepts_all_five_relation_kinds() {
+        for (raw, expected) in [
+            (
+                "child-of:i-bbbbbb",
+                crate::command::graph::relate::RelationKindCli::ChildOf,
+            ),
+            (
+                "blocked-on:i-bbbbbb",
+                crate::command::graph::relate::RelationKindCli::BlockedOn,
+            ),
+            (
+                "has-patch:p-bbbbbb",
+                crate::command::graph::relate::RelationKindCli::HasPatch,
+            ),
+            (
+                "has-document:d-bbbbbb",
+                crate::command::graph::relate::RelationKindCli::HasDocument,
+            ),
+            (
+                "refers-to:i-bbbbbb",
+                crate::command::graph::relate::RelationKindCli::RefersTo,
+            ),
+        ] {
+            let cmd = parse_graph(&["create", "i-aaaaaa", raw]);
+            match cmd {
+                GraphCommand::Create { target, .. } => assert_eq!(target.rel, expected, "{raw}"),
+                other => panic!("expected Create for {raw}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn create_rejects_invalid_rel_target() {
+        let res = Cli::try_parse_from(["hydra", "graph", "create", "i-aaaaaa", "bogus:i-bbbbbb"]);
+        let err = match res {
+            Ok(_) => panic!("clap should reject unknown relation kinds"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("child-of") && msg.contains("refers-to"),
+            "error should list supported kinds: {msg}",
+        );
+    }
+
+    #[test]
+    fn create_rejects_missing_target() {
+        let res = Cli::try_parse_from(["hydra", "graph", "create", "i-aaaaaa"]);
+        assert!(res.is_err(), "clap should reject missing positional");
+    }
+
+    #[test]
+    fn delete_parses_positional_from_and_rel_target() {
+        let cmd = parse_graph(&["delete", "i-aaaaaa", "blocked-on:i-bbbbbb"]);
+        match cmd {
+            GraphCommand::Delete { from, target } => {
+                assert_eq!(from.as_ref(), "i-aaaaaa");
+                assert_eq!(target.target.as_ref(), "i-bbbbbb");
+                assert_eq!(
+                    target.rel,
+                    crate::command::graph::relate::RelationKindCli::BlockedOn,
+                );
+            }
+            other => panic!("expected Delete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_rejects_invalid_rel_target() {
+        let res = Cli::try_parse_from(["hydra", "graph", "delete", "i-aaaaaa", "bogus:i-bbbbbb"]);
+        assert!(res.is_err(), "clap should reject unknown relation kinds");
     }
 
     #[test]
