@@ -255,7 +255,6 @@ mod tests {
             },
             None => SessionMode::Headless {
                 prompt: "test".to_string(),
-                conversation_id: None,
             },
         };
         Session {

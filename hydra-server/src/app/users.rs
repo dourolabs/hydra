@@ -388,7 +388,6 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "p".to_string(),
-                conversation_id: None,
             },
             Status::Created,
             None,
