@@ -17,20 +17,24 @@
 --                  own actor being a User. The cleanup must replace
 --                  {"Issue":"i-actissone"} with the resolved
 --                  {"User": {"name": "alice"}}.
--- `i-actisstwo`  — ZERO matching tasks_v2 rows; cleanup NULLs the
---                  affected `actor` column rather than failing the
---                  migration.
+-- `i-actisstwo`  — ZERO matching tasks_v2 rows; cleanup falls back to
+--                  External-legacy with the parent issue id preserved
+--                  as the username rather than NULLing or failing.
 -- `i-actissmany` — TWO non-deleted is_latest=TRUE matching tasks_v2
 --                  rows with distinct actors. The lookup map only
---                  inserts when actors.len()==1, so refs NULL.
+--                  inserts when actors.len()==1, so refs fall back to
+--                  External-legacy.
 -- `i-actissdel`  — One matching task with deleted=TRUE; the loader's
---                  `WHERE deleted = FALSE` skips it -> 0 matches -> NULL.
+--                  `WHERE deleted = FALSE` skips it -> 0 matches ->
+--                  External-legacy fallback.
 -- `i-actissold`  — One matching task with is_latest=FALSE; the loader's
---                  `WHERE is_latest = TRUE` skips it -> 0 matches -> NULL.
+--                  `WHERE is_latest = TRUE` skips it -> 0 matches ->
+--                  External-legacy fallback.
 -- `i-actisschn`  — One matching task whose own actor is a chained
 --                  {"Issue":"i-actisstwo"} reference;
 --                  `extract_actor_id_from_actor_ref` refuses chained
---                  lookups -> entry omitted from map -> refs NULL.
+--                  lookups -> entry omitted from map -> refs fall back
+--                  to External-legacy.
 --------------------------------------------------------------------------------
 INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator)
 VALUES
@@ -55,7 +59,8 @@ VALUES
      '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
      '2026-05-10T10:00:00Z'),
     -- Multi-match parent: two distinct latest non-deleted spawned tasks
-    -- -> the lookup map drops `i-actissmany` -> Issue refs NULL.
+    -- -> the lookup map drops `i-actissmany` -> Issue refs fall back to
+    -- External-legacy("i-actissmany").
     ('s-spawnmnya', 1, 'alice', 'complete', FALSE, TRUE,
      'i-actissmany', NULL,
      '{"working_dir":"repo","mounts":[]}'::jsonb,
@@ -101,7 +106,8 @@ VALUES
 -- The `is_latest` BEFORE-INSERT trigger forces is_latest=TRUE on freshly
 -- inserted rows, so we have to demote `s-spawnold` AFTER the insert. The
 -- loader's `WHERE is_latest = TRUE` then skips it -> 0 matches for
--- `i-actissold` -> the Issue rewrite NULLs the referring row.
+-- `i-actissold` -> the Issue rewrite falls back to External-legacy with
+-- the parent issue id preserved.
 UPDATE metis.tasks_v2 SET is_latest = FALSE WHERE id = 's-spawnold';
 
 --------------------------------------------------------------------------------
@@ -121,13 +127,13 @@ VALUES
     -- 3. Issue (with matching tasks_v2 row) -> resolved User
     ('i-actiss',   1, 'task', 'issue actor with match', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actissone"}}}'::jsonb),
-    -- 4. Issue (without matching tasks_v2 row) -> NULL
+    -- 4. Issue (without matching tasks_v2 row) -> External-legacy("i-actisstwo")
     ('i-actissno', 1, 'task', 'issue actor without match', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actisstwo"}}}'::jsonb),
     -- 5. Service with valid AgentName -> Agent
     ('i-actsvcok', 1, 'task', 'service-as-agent actor', 'alice',
      '{"Authenticated":{"actor_id":{"Service":"swe"}}}'::jsonb),
-    -- 6. Service with invalid AgentName -> NULL
+    -- 6. Service with invalid AgentName -> External-legacy("has space")
     ('i-actsvcno', 1, 'task', 'service invalid agent name', 'alice',
      '{"Authenticated":{"actor_id":{"Service":"has space"}}}'::jsonb),
     -- 7. Legacy bare string parseable to User
@@ -136,13 +142,13 @@ VALUES
     -- 8. Legacy bare string parseable to Agent via agents/swe
     ('i-actlega',  1, 'task', 'legacy agents/<x>', 'alice',
      '{"Authenticated":{"actor_id":"agents/swe"}}'::jsonb),
-    -- 9. Legacy unparseable bare string -> NULL
+    -- 9. Legacy unparseable bare string -> External-legacy("definitely not an actor")
     ('i-actlegx',  1, 'task', 'legacy unparseable', 'alice',
      '{"Authenticated":{"actor_id":"definitely not an actor"}}'::jsonb),
     -- 10. Already-typed User -> no-op
     ('i-actuser',  1, 'task', 'already-typed User', 'alice',
      '{"Authenticated":{"actor_id":{"User":{"name":"alice"}}}}'::jsonb),
-    -- 11. Multi-key map (Legacy catch-all) -> NULL
+    -- 11. Multi-key map (Legacy catch-all) -> External-legacy(JSON form of the map)
     ('i-actmulti', 1, 'task', 'multi-key actor_id', 'alice',
      '{"Authenticated":{"actor_id":{"kind":"user","name":"alice"}}}'::jsonb),
     -- 12. Legacy adhoc/<sid> -> Adhoc
@@ -160,28 +166,28 @@ VALUES
     -- 16. Legacy svc-<n> shorthand -> Agent (validates as AgentName)
     ('i-actsvshr', 1, 'task', 'legacy svc-<n> shorthand', 'alice',
      '{"Authenticated":{"actor_id":"svc-swe"}}'::jsonb),
-    -- 17. Legacy users/<x> with invalid Username payload -> NULL
+    -- 17. Legacy users/<x> with invalid Username payload -> External-legacy("users/has space")
     ('i-actubad',  1, 'task', 'legacy users/<has space>', 'alice',
      '{"Authenticated":{"actor_id":"users/has space"}}'::jsonb),
-    -- 18. Legacy agents/<x> with invalid AgentName payload -> NULL
+    -- 18. Legacy agents/<x> with invalid AgentName payload -> External-legacy("agents/with space")
     ('i-actabad',  1, 'task', 'legacy agents/<with space>', 'alice',
      '{"Authenticated":{"actor_id":"agents/with space"}}'::jsonb),
-    -- 19. Legacy external/<sys>/<x> with invalid ExternalSystem -> NULL
+    -- 19. Legacy external/<sys>/<x> with invalid ExternalSystem -> External-legacy("external/has space/foo")
     ('i-actexbad', 1, 'task', 'legacy external/<has space>/foo', 'alice',
      '{"Authenticated":{"actor_id":"external/has space/foo"}}'::jsonb),
-    -- 20. Legacy a-<issue_id> shorthand is intentionally NOT recognised -> NULL
+    -- 20. Legacy a-<issue_id> shorthand is intentionally NOT recognised -> External-legacy("a-i-actissone")
     ('i-actashrt', 1, 'task', 'legacy a-<issue_id> shorthand', 'alice',
      '{"Authenticated":{"actor_id":"a-i-actissone"}}'::jsonb),
-    -- 21. Multi-match Issue ref -> NULL (lookup map omits multi-match entries).
+    -- 21. Multi-match Issue ref -> External-legacy("i-actissmany") (lookup map omits multi-match entries).
     ('i-actrefmny',1, 'task', 'multi-match Issue ref', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actissmany"}}}'::jsonb),
-    -- 22. Deleted-only-task Issue ref -> NULL.
+    -- 22. Deleted-only-task Issue ref -> External-legacy("i-actissdel").
     ('i-actrefdel',1, 'task', 'deleted-task Issue ref', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actissdel"}}}'::jsonb),
-    -- 23. Not-latest-only-task Issue ref -> NULL.
+    -- 23. Not-latest-only-task Issue ref -> External-legacy("i-actissold").
     ('i-actrefold',1, 'task', 'not-latest-task Issue ref', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actissold"}}}'::jsonb),
-    -- 24. Chained-Issue Issue ref -> NULL (lookup chains aren't followed).
+    -- 24. Chained-Issue Issue ref -> External-legacy("i-actisschn") (lookup chains aren't followed).
     ('i-actrefchn',1, 'task', 'chained-Issue ref', 'alice',
      '{"Authenticated":{"actor_id":{"Issue":"i-actisschn"}}}'::jsonb),
     -- 25. System.on_behalf_of = Username -> resolved to User.

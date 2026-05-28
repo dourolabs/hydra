@@ -316,7 +316,8 @@ fn classify_tagged(tag: &str, payload: &Value) -> Rewrite {
 /// recognised here — Issue rewrites require a `tasks_v2` lookup that
 /// the caller drives, and Legacy strings carrying `a-i-...` are far
 /// rarer than the corresponding `{"Issue":"i-..."}` tagged shape.
-/// They drop to NULL.
+/// They fall back to External-legacy via `Rewrite::Fallback` with the
+/// bare string preserved as the username.
 fn parse_legacy_string(s: &str) -> Option<NewActorId> {
     if let Some(rest) = s.strip_prefix("users/") {
         Username::try_new(rest).ok()?;
@@ -681,7 +682,7 @@ mod sqlite {
                     target: "actor_variant_cleanup",
                     issue_id = %iid,
                     matches = actors.len(),
-                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will NULL Issue actors"
+                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will fall back to External-legacy for the original Issue id"
                 );
             }
         }
@@ -894,7 +895,7 @@ mod postgres {
                     target: "actor_variant_cleanup",
                     issue_id = %iid,
                     matches = actors.len(),
-                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will NULL Issue actors"
+                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will fall back to External-legacy for the original Issue id"
                 );
             }
         }
