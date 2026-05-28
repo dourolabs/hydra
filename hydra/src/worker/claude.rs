@@ -771,7 +771,7 @@ fn parse_claude_events(line: &str) -> Vec<ClaudeEvent> {
                     let tool_name = chunk
                         .get("name")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("tool")
+                        .unwrap_or("unknown_tool")
                         .to_string();
                     let payload = chunk
                         .get("input")
@@ -1281,6 +1281,21 @@ mod tests {
             tool_use.1.get("description").and_then(|v| v.as_str()),
             Some("List files")
         );
+    }
+
+    #[test]
+    fn parse_claude_events_tool_use_missing_name_falls_back_to_unknown_tool() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","input":{"x":1}}]}}"#;
+        let events = parse_claude_events(line);
+        let tool_use = events
+            .iter()
+            .find_map(|e| match e {
+                ClaudeEvent::ToolUse { tool_name, payload } => Some((tool_name, payload)),
+                _ => None,
+            })
+            .expect("expected a ToolUse event");
+        assert_eq!(tool_use.0, "unknown_tool");
+        assert_eq!(tool_use.1.get("x").and_then(|v| v.as_i64()), Some(1));
     }
 
     #[test]
