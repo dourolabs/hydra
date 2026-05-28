@@ -161,18 +161,22 @@ impl Claude {
     /// handle. Per design `sessions-worker-run-interface.md` §3.4–3.5:
     ///
     /// * deserialize the bytes as [`SessionStatePayload::V1`],
-    /// * write the embedded transcript to Claude's expected path
+    /// * validate the embedded transcript is shaped like Claude JSONL,
+    /// * write the transcript to Claude's expected path
     ///   (`~/.claude/projects/<encoded-cwd>/<UUID>.jsonl`),
     /// * return `Ok(NativeResume::Claude(ClaudeResume::SessionId(uuid)))`.
     ///
     /// Returns [`MaterializeError::WrongFormat`] if the bytes do not parse as
     /// this wrapper's payload (e.g. cross-model handoff from a Codex
-    /// session), [`MaterializeError::MissingTranscript`] if the payload
-    /// parses but carries no transcript (the bare session id alone cannot
-    /// resume Claude on a fresh worker — there is no on-disk transcript to
-    /// resume against), and [`MaterializeError::IoError`] if writing the
-    /// on-disk transcript fails. The dispatcher treats all error variants
-    /// identically and falls back to transcript replay.
+    /// session) or if the embedded transcript fails the JSONL shape check —
+    /// the dispatcher then falls back to transcript replay rather than
+    /// letting Claude crash on garbage at resume time. Returns
+    /// [`MaterializeError::MissingTranscript`] if the payload parses but
+    /// carries no transcript (the bare session id alone cannot resume Claude
+    /// on a fresh worker — there is no on-disk transcript to resume against).
+    /// Returns [`MaterializeError::IoError`] if writing the on-disk transcript
+    /// fails. The dispatcher treats all error variants identically and falls
+    /// back to transcript replay.
     pub fn try_materialize(&self, state_bytes: &[u8]) -> Result<NativeResume, MaterializeError> {
         let payload: SessionStatePayload =
             serde_json::from_slice(state_bytes).map_err(|_| MaterializeError::WrongFormat)?;
@@ -181,6 +185,7 @@ impl Claude {
             transcript,
         } = payload;
         let bytes = transcript.ok_or(MaterializeError::MissingTranscript)?;
+        validate_claude_transcript_bytes(&bytes, &session_id)?;
         let target = transcript_path(&self.home_dir, &self.working_dir, &session_id);
         write_transcript_atomic(&target, &bytes)?;
         Ok(NativeResume::Claude(ClaudeResume::SessionId(session_id)))
@@ -845,6 +850,48 @@ pub(crate) fn write_transcript_atomic(path: &Path, bytes: &[u8]) -> std::io::Res
     Ok(())
 }
 
+/// Validate that `bytes` look like a Claude transcript JSONL stream for the
+/// given `expected_session_id` before we install them at the on-disk path
+/// `claude --resume` reads. The checks intentionally match what Claude itself
+/// will trip over at load time (rather than re-validating every transcript
+/// invariant): the bytes must be UTF-8, must be non-empty, every non-empty
+/// line must parse as a JSON object, and at least one of those objects must
+/// carry a `session_id` field matching the payload's `expected_session_id`.
+/// On failure we return [`MaterializeError::WrongFormat`] so the dispatcher
+/// falls back to transcript replay rather than letting Claude crash on
+/// garbage at resume time.
+fn validate_claude_transcript_bytes(
+    bytes: &[u8],
+    expected_session_id: &str,
+) -> Result<(), MaterializeError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| MaterializeError::WrongFormat)?;
+    let mut saw_line = false;
+    let mut saw_matching_session_id = false;
+    for raw_line in text.split('\n') {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        saw_line = true;
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|_| MaterializeError::WrongFormat)?;
+        if !value.is_object() {
+            return Err(MaterializeError::WrongFormat);
+        }
+        if value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s == expected_session_id)
+        {
+            saw_matching_session_id = true;
+        }
+    }
+    if !saw_line || !saw_matching_session_id {
+        return Err(MaterializeError::WrongFormat);
+    }
+    Ok(())
+}
+
 /// Install a Claude transcript file at the on-disk location Claude expects for
 /// `--resume <UUID>`. Reads the source file, extracts the session UUID from
 /// the first JSONL line's `session_id` field, writes the bytes atomically to
@@ -1258,6 +1305,152 @@ mod tests {
         // Also: well-formed JSON that isn't a SessionStatePayload.
         let result = claude.try_materialize(b"{\"unrelated\":42}");
         assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+    }
+
+    /// Build a SessionStatePayload::V1 with the given session_id + raw transcript
+    /// bytes, serialized via serde_json. Mirrors the suspend-side uploader.
+    fn payload_bytes(session_id: &str, transcript: Option<Vec<u8>>) -> Vec<u8> {
+        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+            session_id: session_id.to_string(),
+            transcript,
+        };
+        serde_json::to_vec(&payload).unwrap()
+    }
+
+    #[tokio::test]
+    async fn try_materialize_rejects_transcript_with_non_json_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // First line is valid JSON with the right session_id, but the second
+        // line is plain garbage — Claude would crash trying to load it.
+        let transcript =
+            b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n<<garbage>>\n".to_vec();
+        let bytes = payload_bytes("abc-uuid", Some(transcript));
+
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        // We should NOT have installed the garbage transcript on disk.
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists(), "no transcript should be installed");
+    }
+
+    #[tokio::test]
+    async fn try_materialize_rejects_empty_transcript_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // Empty `Some(transcript)` — distinct from `None`, which returns
+        // `MissingTranscript`; only the "non-empty" validation rule catches
+        // empty bytes that did get carried in the payload.
+        let bytes = payload_bytes("abc-uuid", Some(Vec::new()));
+
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists());
+    }
+
+    #[tokio::test]
+    async fn try_materialize_rejects_transcript_without_matching_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // Valid JSONL but no line carries the expected session_id; could be
+        // a cross-session blob mis-routed to this UUID.
+        let transcript =
+            b"{\"session_id\":\"other-uuid\",\"type\":\"summary\"}\n{\"type\":\"user\"}\n".to_vec();
+        let bytes = payload_bytes("abc-uuid", Some(transcript));
+
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists());
+    }
+
+    #[tokio::test]
+    async fn try_materialize_rejects_transcript_with_top_level_non_object_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // Valid JSON token but not an object — Claude's loader expects per-line
+        // objects, not bare numbers/strings/arrays.
+        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n42\n".to_vec();
+        let bytes = payload_bytes("abc-uuid", Some(transcript));
+
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists());
+    }
+
+    #[tokio::test]
+    async fn try_materialize_rejects_non_utf8_transcript_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // 0xFF / 0xFE form an invalid UTF-8 sequence; Claude transcripts are
+        // always UTF-8 JSONL so this is "downstream crash" territory.
+        let bytes = payload_bytes("abc-uuid", Some(vec![0xff, 0xfe, 0xfd]));
+
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists());
+    }
+
+    #[tokio::test]
+    async fn try_materialize_accepts_multi_line_valid_transcript() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // Realistic-ish multi-line transcript: a summary line with session_id
+        // plus a few content lines. Trailing newline + a blank line are
+        // tolerated (Claude's loader ignores them).
+        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n\
+                           {\"type\":\"user\",\"text\":\"hi\"}\n\
+                           {\"type\":\"assistant\",\"text\":\"hello\"}\n\
+                           \n"
+        .to_vec();
+        let bytes = payload_bytes("abc-uuid", Some(transcript.clone()));
+
+        let native = claude.try_materialize(&bytes).expect("materialize ok");
+        assert!(matches!(
+            native,
+            NativeResume::Claude(ClaudeResume::SessionId(ref s)) if s == "abc-uuid"
+        ));
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(installed.exists());
+        assert_eq!(std::fs::read(&installed).unwrap(), transcript);
     }
 
     #[test]
