@@ -59,6 +59,32 @@ pub enum SetSessionStatusError {
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
+/// Merge agent-level secrets with the `session_settings.secrets` list,
+/// deduplicating while preserving first-seen order. Returns `None` when
+/// both inputs are empty so callers can drop the field from the
+/// `CreateSessionRequest` rather than send an explicit empty `Vec`.
+pub(crate) fn merge_agent_and_settings_secrets(
+    agent: &crate::domain::agents::Agent,
+    settings: &SessionSettings,
+) -> Option<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for s in agent
+        .secrets
+        .iter()
+        .chain(settings.secrets.iter().flatten())
+    {
+        if seen.insert(s.clone()) {
+            merged.push(s.clone());
+        }
+    }
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
+}
+
 impl AppState {
     pub async fn add_session(
         &self,
@@ -105,24 +131,20 @@ impl AppState {
         } = request;
 
         // Apply global defaults via the single `SessionSettings` ->
-        // `apply_session_settings_defaults` path. Build a settings struct
-        // from the request's defaultable fields, run it through the
-        // defaulter, then read the resolved values back out.
-        let request_settings = SessionSettings {
-            model: req_agent_config.model.clone(),
-            image: req_image.clone(),
-            cpu_limit: req_cpu_limit.clone(),
-            memory_limit: req_memory_limit.clone(),
-            secrets: req_secrets.clone(),
-            ..SessionSettings::default()
-        };
-        let resolved_settings = self.apply_session_settings_defaults(request_settings);
-
-        let image = req_image.or(resolved_settings.image);
-        let cpu_limit = req_cpu_limit.or(resolved_settings.cpu_limit);
-        let memory_limit = req_memory_limit.or(resolved_settings.memory_limit);
-        let secrets = req_secrets.or(resolved_settings.secrets);
-        let model = req_agent_config.model.clone().or(resolved_settings.model);
+        // `apply_session_settings_defaults` path. Today the defaulter
+        // only fills in `model` (from `config.job.default_model`), so
+        // we only need to round-trip that field; the other request
+        // values pass through unchanged.
+        let model = self
+            .apply_session_settings_defaults(SessionSettings {
+                model: req_agent_config.model.clone(),
+                ..SessionSettings::default()
+            })
+            .model;
+        let image = req_image;
+        let cpu_limit = req_cpu_limit;
+        let memory_limit = req_memory_limit;
+        let secrets = req_secrets;
 
         // Construction-time invariant: the spec must include a Bundle mount
         // that materializes `working_dir` on disk. A request that arrives
@@ -195,6 +217,58 @@ impl AppState {
         }
 
         settings
+    }
+
+    /// Lower a `SessionSettings` into a fully-resolved `MountSpec`.
+    ///
+    /// Used by callers (`agent_queue::build_task`,
+    /// `spawn_conversation_sessions::spawn_session`) that own the
+    /// `CreateSessionRequest` and need to pre-populate its `mount_spec`
+    /// since `create_session` no longer derives one from session_settings.
+    ///
+    /// Empty `remote_url` / missing `repo_name` returns the default
+    /// (empty) spec; the server's `create_session` then falls through
+    /// to a `Bundle::None` spec via `mount_spec_from_create_request`.
+    pub(crate) async fn resolve_mount_spec(
+        &self,
+        settings: &SessionSettings,
+    ) -> Result<MountSpec, crate::store::StoreError> {
+        use crate::routes::sessions::mount_spec_from_create_request;
+
+        let (bundle, service_repo_name) =
+            match (settings.remote_url.as_ref(), settings.repo_name.as_ref()) {
+                (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
+                    let rev = settings
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| "main".to_string());
+                    let bundle = Bundle::GitRepository {
+                        url: remote_url.trim().to_string(),
+                        rev,
+                    };
+                    (bundle, repo_name.cloned())
+                }
+                (_, Some(repo_name)) => {
+                    let repository = self.repository_from_store(repo_name).await?;
+                    let rev = settings
+                        .branch
+                        .clone()
+                        .or_else(|| repository.default_branch.clone())
+                        .unwrap_or_else(|| "main".to_string());
+                    let bundle = Bundle::GitRepository {
+                        url: repository.remote_url.clone(),
+                        rev,
+                    };
+                    (bundle, Some(repo_name.clone()))
+                }
+                _ => return Ok(MountSpec::default()),
+            };
+
+        let build_cache = match (service_repo_name, self.config.build_cache.to_context()) {
+            (Some(name), Some(ctx)) => Some((name, ctx)),
+            _ => None,
+        };
+        Ok(mount_spec_from_create_request(bundle, build_cache))
     }
 
     pub async fn set_session_status(

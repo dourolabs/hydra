@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
@@ -9,7 +9,7 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
 use hydra_common::api::v1::agents::AgentName;
-use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode};
+use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, SessionMode};
 use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
@@ -211,7 +211,11 @@ async fn spawn_session(
         .app_state
         .apply_session_settings_defaults(conversation.session_settings.clone());
 
-    let mount_spec = match resolve_mount_spec_from_settings(ctx, &conversation_settings).await {
+    let mount_spec = match ctx
+        .app_state
+        .resolve_mount_spec(&conversation_settings)
+        .await
+    {
         Ok(spec) => spec,
         Err(err) => {
             return Err(AutomationError::Other(anyhow::anyhow!(
@@ -221,25 +225,8 @@ async fn spawn_session(
         }
     };
 
-    // Merge agent-level secrets with the conversation's `session_settings.secrets`.
-    let secrets = {
-        let mut seen = HashSet::new();
-        let mut merged = Vec::new();
-        for s in agent
-            .secrets
-            .iter()
-            .chain(conversation_settings.secrets.iter().flatten())
-        {
-            if seen.insert(s.clone()) {
-                merged.push(s.clone());
-            }
-        }
-        if merged.is_empty() {
-            None
-        } else {
-            Some(merged)
-        }
-    };
+    let secrets =
+        crate::app::sessions::merge_agent_and_settings_secrets(&agent, &conversation_settings);
 
     let actor = ActorRef::Automation {
         automation_name: AUTOMATION_NAME.into(),
@@ -395,63 +382,6 @@ async fn spawn_session(
     );
 
     Ok(())
-}
-
-/// Lower the conversation's `session_settings` into a fully-resolved
-/// `MountSpec`. Mirrors the same `remote_url` / `repo_name` / `branch`
-/// rules the agent_queue automation uses; returns the empty default
-/// when no source is configured so the server's `create_session`
-/// falls through to a `Bundle::None` spec.
-async fn resolve_mount_spec_from_settings(
-    ctx: &AutomationContext<'_>,
-    settings: &crate::domain::issues::SessionSettings,
-) -> anyhow::Result<MountSpec> {
-    use crate::routes::sessions::mount_spec_from_create_request;
-    use hydra_common::api::v1::sessions::Bundle;
-
-    let (bundle, service_repo_name) =
-        match (settings.remote_url.as_ref(), settings.repo_name.as_ref()) {
-            (Some(remote_url), repo_name) if !remote_url.trim().is_empty() => {
-                let rev = settings
-                    .branch
-                    .clone()
-                    .unwrap_or_else(|| "main".to_string());
-                let bundle = Bundle::GitRepository {
-                    url: remote_url.trim().to_string(),
-                    rev,
-                };
-                (bundle, repo_name.cloned())
-            }
-            (_, Some(repo_name)) => {
-                let repository = ctx
-                    .app_state
-                    .repository_from_store(repo_name)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("failed to load repository '{repo_name}': {err}")
-                    })?;
-                let rev = settings
-                    .branch
-                    .clone()
-                    .or_else(|| repository.default_branch.clone())
-                    .unwrap_or_else(|| "main".to_string());
-                let bundle = Bundle::GitRepository {
-                    url: repository.remote_url.clone(),
-                    rev,
-                };
-                (bundle, Some(repo_name.clone()))
-            }
-            _ => return Ok(MountSpec::default()),
-        };
-
-    let build_cache = match (
-        service_repo_name,
-        ctx.app_state.config.build_cache.to_context(),
-    ) {
-        (Some(name), Some(ctx_)) => Some((name, ctx_)),
-        _ => None,
-    };
-    Ok(mount_spec_from_create_request(bundle, build_cache))
 }
 
 /// Find the most-recently-created session linked to `conversation_id` that
