@@ -122,7 +122,7 @@ function makeForm(): Form {
 function makeResponse(): FormResponse {
   return {
     action_id: "submit",
-    actor: { Username: "alice" },
+    actor: { User: { name: "alice" } },
     values: { decision: "approve" },
     submitted_at: "2026-05-14T18:42:00.000Z",
   };

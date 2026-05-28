@@ -324,7 +324,7 @@ mod tests {
 
         let response = FormResponse {
             action_id: "submit".to_string(),
-            actor: ActorId::Username(Username::from("alice")),
+            actor: ActorId::User(Username::from("alice")),
             values: {
                 let mut m = HashMap::new();
                 m.insert("score".to_string(), json!(4));

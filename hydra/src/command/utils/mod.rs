@@ -12,18 +12,10 @@ pub async fn resolve_username(client: &dyn HydraClientInterface) -> Result<Usern
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        // Phase 2 of `/designs/actor-system-overhaul.md` (§3.4): once
-        // `create_actor_for_job` routes through `actor_id_of`, an
-        // agent-spawned session's `whoami` returns `Agent { name,
-        // creator }` and an ad-hoc session returns `Adhoc { session_id,
-        // creator }`. Both expose the human on whose behalf the
-        // session ran — the same field the legacy `Session` / `Issue`
-        // arms used for attribution — so the CLI keeps working without
-        // a separate lookup.
-        ActorIdentity::Session { creator, .. }
-        | ActorIdentity::Issue { creator, .. }
-        | ActorIdentity::Adhoc { creator, .. }
-        | ActorIdentity::Agent { creator, .. } => Ok(creator),
+        // Agent-spawned and adhoc sessions both expose the human on
+        // whose behalf the session ran via `creator`, so the CLI can
+        // resolve a username without a separate lookup.
+        ActorIdentity::Adhoc { creator, .. } | ActorIdentity::Agent { creator, .. } => Ok(creator),
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }
@@ -64,10 +56,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_username_uses_whoami_creator_for_session() {
+    async fn resolve_username_uses_whoami_creator_for_adhoc_session() {
         let server = MockServer::start();
         let client = hydra_client(&server);
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Adhoc {
             session_id: SessionId::from_str("s-abcd").unwrap(),
             creator: Username::from("whoami-creator"),
         });

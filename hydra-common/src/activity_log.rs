@@ -259,7 +259,7 @@ mod tests {
         };
 
         let actor = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice")),
+            actor_id: ActorId::User(Username::from("alice")),
             session_id: None,
         };
 

@@ -14,19 +14,10 @@ pub async fn whoami(
 ) -> Result<Json<v1::whoami::WhoAmIResponse>, ApiError> {
     info!(actor = %actor.name(), "whoami invoked");
 
-    let identity = match actor.actor_id {
-        ActorId::Username(username) => ActorIdentity::User {
+    let identity = match actor.actor_id.clone() {
+        ActorId::User(username) => ActorIdentity::User {
             username: username.into(),
         },
-        ActorId::Session(session_id) => ActorIdentity::Session {
-            session_id,
-            creator: actor.creator.clone(),
-        },
-        ActorId::Issue(issue_id) => ActorIdentity::Issue {
-            issue_id,
-            creator: actor.creator.clone(),
-        },
-        ActorId::Service(service_name) => ActorIdentity::Service { service_name },
         ActorId::Agent(name) => ActorIdentity::Agent {
             name,
             creator: actor.creator.clone(),
@@ -35,11 +26,9 @@ pub async fn whoami(
             session_id,
             creator: actor.creator.clone(),
         },
-        // `User` / `External` are not produced on the authenticated
-        // request path (they're login / GitHub-poller flows). `Legacy`
-        // is the read-only deserialization catch-all and should never
-        // reach an authenticated request path.
-        other => {
+        // `External` is not produced on the authenticated request path
+        // (it's a GitHub-poller / external-source flow).
+        other @ ActorId::External { .. } => {
             return Err(ApiError::internal(format!(
                 "whoami invariant violated: authenticated actor has unsupported variant {other:?}"
             )));

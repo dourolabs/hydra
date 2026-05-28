@@ -27,29 +27,26 @@ async fn resolve_spawned_from(ctx: &AutomationContext<'_>, sid: &SessionId) -> O
     }
 }
 
-/// When a session, agent, or issue actor creates or updates a patch or
+/// When an adhoc-session or agent actor creates or updates a patch or
 /// document, link the artifact back to the relevant issue.
 ///
 /// Subscribes to `PatchCreated`/`PatchUpdated` and `DocumentCreated`/`DocumentUpdated`.
 /// Resolves the source issue from the event actor:
-/// - `ActorId::Session(sid)` or `ActorId::Adhoc(sid)`: loads the session and
-///   uses its `spawned_from` issue (no link if the session has no
-///   `spawned_from`).
+/// - `ActorId::Adhoc(sid)`: loads the session and uses its `spawned_from`
+///   issue (no link if the session has no `spawned_from`).
 /// - `ActorId::Agent(_)`: an agent-spawned actor doesn't carry its session
 ///   id in `actor_id`, so we read `ActorRef::Authenticated.session_id` (set
 ///   by `require_auth`), then load the session and use its `spawned_from`.
-/// - `ActorId::Issue(iid)`: uses the issue id directly.
 ///
 /// In either case, inserts a `(issue, artifact, has-patch | has-document)` row
 /// into `object_relationships`. Idempotent — the underlying insert is
 /// `INSERT OR IGNORE`.
 ///
-/// Human, service, user, external, and legacy actors are intentionally
-/// ignored — they don't carry the session-or-issue context the link needs.
-/// Callers that want a link should use `POST /v1/relations` directly. The
-/// dispatch match is exhaustive on `ActorId`, so adding a new variant will
-/// force a compile-time decision here rather than silently defaulting to
-/// no-op.
+/// Human user and external actors are intentionally ignored — they don't
+/// carry the session-or-issue context the link needs. Callers that want a
+/// link should use `POST /v1/relations` directly. The dispatch match is
+/// exhaustive on `ActorId`, so adding a new variant will force a
+/// compile-time decision here rather than silently defaulting to no-op.
 pub struct LinkArtifactsToIssueAutomation;
 
 impl LinkArtifactsToIssueAutomation {
@@ -83,12 +80,10 @@ impl Automation for LinkArtifactsToIssueAutomation {
                 actor_id,
                 session_id,
             } => match actor_id {
-                ActorId::Session(sid) | ActorId::Adhoc(sid) => {
-                    match resolve_spawned_from(ctx, sid).await {
-                        Some(id) => id,
-                        None => return Ok(()),
-                    }
-                }
+                ActorId::Adhoc(sid) => match resolve_spawned_from(ctx, sid).await {
+                    Some(id) => id,
+                    None => return Ok(()),
+                },
                 ActorId::Agent(_) => {
                     let Some(sid) = session_id else {
                         tracing::warn!(
@@ -102,15 +97,10 @@ impl Automation for LinkArtifactsToIssueAutomation {
                         None => return Ok(()),
                     }
                 }
-                ActorId::Issue(iid) => iid.clone(),
-                // Human/service/user/external/legacy actors don't carry the
-                // issue context this automation needs; callers wanting an
+                // Human user and external actors don't carry the issue
+                // context this automation needs; callers wanting an
                 // explicit link should use `POST /v1/relations`.
-                ActorId::Username(_)
-                | ActorId::Service(_)
-                | ActorId::User(_)
-                | ActorId::External { .. }
-                | ActorId::Legacy(_) => return Ok(()),
+                ActorId::User(_) | ActorId::External { .. } => return Ok(()),
             },
             // System and Automation actor refs aren't end-user principals;
             // artifacts they produce are linked (if at all) via the wrapped
@@ -172,21 +162,14 @@ mod tests {
 
     fn session_actor(session_id: &hydra_common::SessionId) -> ActorRef {
         ActorRef::Authenticated {
-            actor_id: ActorId::Session(session_id.clone()),
-            session_id: None,
-        }
-    }
-
-    fn issue_actor(issue_id: &IssueId) -> ActorRef {
-        ActorRef::Authenticated {
-            actor_id: ActorId::Issue(issue_id.clone()),
+            actor_id: ActorId::Adhoc(session_id.clone()),
             session_id: None,
         }
     }
 
     fn human_actor() -> ActorRef {
         ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice").into()),
+            actor_id: ActorId::User(Username::from("alice").into()),
             session_id: None,
         }
     }
@@ -481,113 +464,6 @@ mod tests {
             .unwrap();
 
         let event = patch_created_event(patch_id.clone(), session_actor(&session_id));
-        let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: handles.store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-        automation.execute(&ctx).await.unwrap();
-
-        let source: HydraId = issue_id.into();
-        let target: HydraId = patch_id.into();
-        let relations = handles
-            .store
-            .get_relationships(
-                Some(&source),
-                Some(&target),
-                Some(RelationshipType::HasPatch),
-            )
-            .await
-            .unwrap();
-        assert_eq!(relations.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn links_patch_to_issue_for_issue_actor() {
-        let handles = test_utils::test_state_handles();
-        let issue_id = add_issue(&handles).await;
-
-        let (patch_id, _) = handles
-            .store
-            .add_patch(make_patch(), &issue_actor(&issue_id))
-            .await
-            .unwrap();
-
-        let event = patch_created_event(patch_id.clone(), issue_actor(&issue_id));
-        let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: handles.store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        let source: HydraId = issue_id.into();
-        let target: HydraId = patch_id.into();
-        let relations = handles
-            .store
-            .get_relationships(
-                Some(&source),
-                Some(&target),
-                Some(RelationshipType::HasPatch),
-            )
-            .await
-            .unwrap();
-        assert_eq!(relations.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn links_document_to_issue_for_issue_actor() {
-        let handles = test_utils::test_state_handles();
-        let issue_id = add_issue(&handles).await;
-
-        let (document_id, _) = handles
-            .store
-            .add_document(make_document("/notes/a.md"), &issue_actor(&issue_id))
-            .await
-            .unwrap();
-
-        let event =
-            document_created_event(document_id.clone(), "/notes/a.md", issue_actor(&issue_id));
-        let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: handles.store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        let source: HydraId = issue_id.into();
-        let target: HydraId = document_id.into();
-        let relations = handles
-            .store
-            .get_relationships(
-                Some(&source),
-                Some(&target),
-                Some(RelationshipType::HasDocument),
-            )
-            .await
-            .unwrap();
-        assert_eq!(relations.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn second_invocation_is_idempotent_for_issue_actor() {
-        let handles = test_utils::test_state_handles();
-        let issue_id = add_issue(&handles).await;
-
-        let (patch_id, _) = handles
-            .store
-            .add_patch(make_patch(), &issue_actor(&issue_id))
-            .await
-            .unwrap();
-
-        let event = patch_created_event(patch_id.clone(), issue_actor(&issue_id));
         let automation = LinkArtifactsToIssueAutomation::new(None).unwrap();
         let ctx = AutomationContext {
             event: &event,

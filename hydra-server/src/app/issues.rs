@@ -112,6 +112,8 @@ pub enum SubmitFormActionError {
         source: StoreError,
         issue_id: IssueId,
     },
+    #[error("actor '{actor_name}' cannot submit form actions")]
+    UnsupportedActor { actor_name: String },
 }
 
 #[derive(Debug, Error)]
@@ -503,18 +505,27 @@ impl AppState {
             return Err(SubmitFormActionError::ValidationFailed { field_errors });
         }
 
-        // Extract actor_id from ActorRef for the FormResponse
+        // Extract actor_id from ActorRef for the FormResponse. System
+        // workers without an `on_behalf_of` and bare Automation triggers
+        // don't have a Principal-eligible identity to attribute; reject
+        // those rather than papering over them with a synthetic name.
         let actor_id = match &actor {
             ActorRef::Authenticated { actor_id, .. } => actor_id.clone(),
             ActorRef::System {
                 on_behalf_of: Some(id),
                 ..
             } => id.clone(),
+            ActorRef::System { worker_name, .. } => {
+                return Err(SubmitFormActionError::UnsupportedActor {
+                    actor_name: worker_name.clone(),
+                });
+            }
             ActorRef::Automation {
                 automation_name, ..
-            } => hydra_common::actor_ref::ActorId::Service(automation_name.clone()),
-            ActorRef::System { worker_name, .. } => {
-                hydra_common::actor_ref::ActorId::Service(worker_name.clone())
+            } => {
+                return Err(SubmitFormActionError::UnsupportedActor {
+                    actor_name: automation_name.clone(),
+                });
             }
         };
 

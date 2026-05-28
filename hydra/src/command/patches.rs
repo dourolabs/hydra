@@ -1462,7 +1462,7 @@ mod tests {
     use reqwest::Client as HttpClient;
     use std::{fs, str::FromStr};
 
-    const TEST_HYDRA_TOKEN: &str = "u-test-user:test-hydra-token";
+    const TEST_HYDRA_TOKEN: &str = "users/test-user:test-hydra-token";
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()

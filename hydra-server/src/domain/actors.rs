@@ -78,7 +78,7 @@ pub struct Actor {
 impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
         let creator = username.clone();
-        let actor_id = ActorId::Username(username.into());
+        let actor_id = ActorId::User(username.into());
         Self::new_with_token(actor_id, creator, None)
     }
 
@@ -87,18 +87,11 @@ impl Actor {
     }
 
     /// Build a new `Actor` from an already-constructed [`ActorId`].
-    ///
-    /// `ActorId::Legacy` is rejected at debug time: new writes must not
-    /// produce that variant (see `ActorId` docs).
     pub fn new_from_actor_id(
         actor_id: ActorId,
         creator: Username,
         session_id: Option<SessionId>,
     ) -> (Actor, String) {
-        debug_assert!(
-            !matches!(actor_id, ActorId::Legacy(_)),
-            "Actor::new_from_actor_id must never be called with ActorId::Legacy"
-        );
         Self::new_with_token(actor_id, creator, session_id)
     }
 
@@ -376,7 +369,6 @@ impl From<&Actor> for ActorRef {
 mod tests {
     use super::*;
     use hydra_common::api::v1::users::Username as CommonUsername;
-    use std::str::FromStr;
 
     #[test]
     fn new_for_user_creates_user_actor() {
@@ -384,10 +376,8 @@ mod tests {
         let (actor, auth_token) = Actor::new_for_user(username.clone());
 
         assert!(!auth_token.is_empty());
-        assert_eq!(
-            actor.actor_id,
-            ActorId::Username(CommonUsername::from("octo"))
-        );
+        assert_eq!(actor.actor_id, ActorId::User(CommonUsername::from("octo")));
+        assert_eq!(actor.name(), "users/octo");
         let prefix = format!("{}:", actor.name());
         let raw_token = auth_token
             .strip_prefix(&prefix)
@@ -400,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_name_rejects_invalid_prefix() {
+    fn parse_name_rejects_invalid_path() {
         let err = Actor::parse_name("x-123").expect_err("should reject invalid prefix");
         assert!(matches!(
             err,
@@ -409,24 +399,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_name_rejects_empty_suffix() {
-        let err = Actor::parse_name("u-").expect_err("should reject empty username");
+    fn parse_name_rejects_empty_user_suffix() {
+        let err = Actor::parse_name("users/").expect_err("should reject empty username");
         assert!(matches!(
             err,
-            ActorError::InvalidActorName(name) if name == "u-"
+            ActorError::InvalidActorName(name) if name == "users/"
         ));
     }
 
     #[test]
     fn new_from_actor_id_formats_actor_names() {
-        let issue_id = hydra_common::IssueId::from_str("i-abcdef").unwrap();
         let session_id = SessionId::new();
+        let agent_name =
+            hydra_common::api::v1::agents::AgentName::try_new("swe").expect("agent name");
         let cases: Vec<(ActorId, String)> = vec![
-            (ActorId::Issue(issue_id.clone()), "a-i-abcdef".to_string()),
-            (ActorId::Service("bff".to_string()), "svc-bff".to_string()),
+            (ActorId::Agent(agent_name.clone()), "agents/swe".to_string()),
             (
-                ActorId::Session(session_id.clone()),
-                format!("w-{session_id}"),
+                ActorId::Adhoc(session_id.clone()),
+                format!("adhoc/{session_id}"),
             ),
         ];
 
@@ -445,8 +435,10 @@ mod tests {
     #[test]
     fn new_from_actor_id_carries_session_id() {
         let session_id = SessionId::new();
+        let agent_name =
+            hydra_common::api::v1::agents::AgentName::try_new("swe").expect("agent name");
         let (actor, _) = Actor::new_from_actor_id(
-            ActorId::Service("bff".to_string()),
+            ActorId::Agent(agent_name),
             Username::from("admin"),
             Some(session_id.clone()),
         );
@@ -461,7 +453,7 @@ mod tests {
         assert_eq!(
             actor_ref,
             ActorRef::Authenticated {
-                actor_id: ActorId::Username(CommonUsername::from("alice")),
+                actor_id: ActorId::User(CommonUsername::from("alice")),
                 session_id: None,
             }
         );

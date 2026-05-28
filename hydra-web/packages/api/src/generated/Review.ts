@@ -21,8 +21,7 @@ import type { Principal } from "./Principal";
  * Each bare-string hit emits a `tracing::warn!` on the
  * `review_author_legacy_decode` target so we can release-soak the
  * fallback and confirm zero stale-client traffic before deleting it
- * (design §8.2, §11 row 7). The same instrumentation mirrors the
- * `ActorId::Legacy` warn-log added in p-qtlpckuo.
+ * (design §8.2, §11 row 7).
  */
 export type Review = {
   contents: string;

@@ -22,10 +22,10 @@ use tracing::info;
 
 /// Return 403 if the authenticated actor is not the requested user.
 ///
-/// Only `ActorId::Username` actors are permitted; session and issue actors
-/// are rejected even when their `creator` field matches the target.
+/// Only `ActorId::User` actors are permitted; agent / adhoc / external
+/// actors are rejected even when their `creator` field matches the target.
 fn authorize(actor: &Actor, target: &Username) -> Result<(), ApiError> {
-    if let ActorId::Username(ref username) = actor.actor_id {
+    if let ActorId::User(ref username) = actor.actor_id {
         if username.as_str() == target.as_str() {
             return Ok(());
         }

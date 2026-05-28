@@ -338,27 +338,18 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<Principal> {
 async fn actor_principal(actor: &ActorRef, store: &dyn ReadOnlyStore) -> Option<Principal> {
     let actor_id = actor.on_behalf_of()?;
     match actor_id {
-        ActorId::Username(u) | ActorId::User(u) => Some(Principal::User { name: u }),
+        ActorId::User(u) => Some(Principal::User { name: u }),
         ActorId::Agent(a) => Some(Principal::Agent { name: a }),
         ActorId::External { system, username } => Some(Principal::External { system, username }),
-        // Phase-2 `Adhoc(sid)` matches the legacy `Session(sid)` arm:
-        // both are sessions without a registered agent identity, so
+        // Ad-hoc sessions don't have a registered agent identity, so
         // the matching principal is the session's creator (a `User`).
-        ActorId::Session(sid) | ActorId::Adhoc(sid) => store
+        ActorId::Adhoc(sid) => store
             .get_session(&sid, false)
             .await
             .ok()
             .map(|s| Principal::User {
                 name: ApiUsername::from(s.item.creator.as_str()),
             }),
-        ActorId::Issue(iid) => store
-            .get_issue(&iid, false)
-            .await
-            .ok()
-            .map(|i| Principal::User {
-                name: ApiUsername::from(i.item.creator.as_str()),
-            }),
-        ActorId::Service(_) | ActorId::Legacy(_) => None,
     }
 }
 
@@ -472,7 +463,7 @@ mod tests {
 
     fn user_actor(name: &str) -> CommonActorRef {
         CommonActorRef::Authenticated {
-            actor_id: ActorId::Username(ApiUsername::from(name)),
+            actor_id: ActorId::User(ApiUsername::from(name)),
             session_id: None,
         }
     }

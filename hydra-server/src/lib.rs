@@ -483,7 +483,7 @@ pub async fn setup_local_auth(
             .context("setup_local_auth called without local auth config")?,
     );
 
-    let actor_name = format!("u-{username}");
+    let actor_name = format!("users/{username}");
 
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),

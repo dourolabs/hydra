@@ -25,6 +25,7 @@
 //! Rust-migration authors who reach for SQL helpers should keep the rule in
 //! mind.
 
+pub mod actor_variant_cleanup;
 pub mod events;
 
 use anyhow::{Context, Result};
@@ -95,12 +96,15 @@ pub trait RustMigration: Send + Sync {
 }
 
 static EVENTS_MIGRATION: events::EventsMigration = events::EventsMigration;
+static ACTOR_VARIANT_CLEANUP_MIGRATION: actor_variant_cleanup::ActorVariantCleanupMigration =
+    actor_variant_cleanup::ActorVariantCleanupMigration;
 
 /// The static registry of Rust migrations to interleave with sqlx SQL
 /// migrations. Order is by `version()` ascending; a debug assertion catches
 /// a forgotten sort at first call.
 pub fn rust_migrations() -> &'static [&'static dyn RustMigration] {
-    const ALL: &[&'static dyn RustMigration] = &[&EVENTS_MIGRATION];
+    const ALL: &[&'static dyn RustMigration] =
+        &[&EVENTS_MIGRATION, &ACTOR_VARIANT_CLEANUP_MIGRATION];
     debug_assert!(
         ALL.windows(2).all(|w| w[0].version() <= w[1].version()),
         "rust_migrations() must be sorted by version() ascending — see store/migrations/mod.rs"

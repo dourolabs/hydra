@@ -255,7 +255,7 @@ mod tests {
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
         let hydra_id = SessionId::new();
         let (actor, _) = crate::domain::actors::Actor::new_from_actor_id(
-            crate::domain::actors::ActorId::Session(SessionId::new()),
+            crate::domain::actors::ActorId::Adhoc(SessionId::new()),
             crate::domain::users::Username::from("creator"),
             None,
         );

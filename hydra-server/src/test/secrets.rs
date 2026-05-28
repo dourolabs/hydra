@@ -37,7 +37,7 @@ fn test_state_with_secrets() -> TestStateHandles {
     TestStateHandles { state, store }
 }
 
-// The test user actor has ActorId::Username("test-creator"), so we use that as the username.
+// The test user actor has ActorId::User("test-creator"), so we use that as the username.
 const TEST_USERNAME: &str = "test-creator";
 
 #[tokio::test]
@@ -304,7 +304,7 @@ async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<(
     // actor_id is a SessionId — the route should still reject it because user
     // secrets are gated on Username-typed actors only.
     let (session_actor, auth_token) = Actor::new_from_actor_id(
-        ActorId::Session(SessionId::new()),
+        ActorId::Adhoc(SessionId::new()),
         Username::from(TEST_USERNAME),
         None,
     );
