@@ -4,7 +4,11 @@ use crate::{
     routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
-use hydra_common::{api::v1, constants::ENV_HYDRA_ID};
+use hydra_common::{
+    api::v1,
+    api::v1::sessions::{AgentConfigRuntime, SessionModeKind},
+    constants::ENV_HYDRA_ID,
+};
 use tracing::{error, info, warn};
 
 pub async fn get_session_context(
@@ -18,17 +22,13 @@ pub async fn get_session_context(
         ApiError::not_found(format!("Session '{session_id}' not found"))
     })?;
 
-    // Build the API `Session` the worker will see. The persisted
-    // `mount_spec` is now the single source of truth — no re-derivation
-    // from a separate `context` / resolved-bundle path (PR-F).
-    let mut session: v1::sessions::Session = task.clone().into();
-
-    // When running in a containerized engine (e.g. Docker), rewrite file://
+    // Compute the API mount_spec the worker will see, rewriting file://
     // URLs inside `mount_spec.mounts[*].bundle` to the container-side mount
     // path so the worker receives URLs it can resolve from inside the
     // container.
+    let mut mount_spec = task.mount_spec.clone();
     if state.job_engine.is_containerized() {
-        let _ = rewrite_local_bundle_urls(&mut session.mount_spec);
+        let _ = rewrite_local_bundle_urls(&mut mount_spec);
     }
 
     // Resolve per-user secrets with global fallback and inject into env_vars
@@ -38,29 +38,27 @@ pub async fn get_session_context(
         .resolve_secrets_into_env_vars(&task.creator, &mut env_vars, &task.secrets)
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
-    session.env_vars = env_vars.clone();
 
-    // For interactive sessions, fill in the server-configured idle-timeout
-    // default into the embedded `SessionMode::Interactive` so the worker can
-    // read it directly off `session.mode` without a separate handshake field.
-    // Matches the domain `SessionMode` exhaustively so a new variant in a
-    // future PR forces this site to be revisited (the cross-crate API
-    // `SessionMode` is `#[non_exhaustive]`).
-    if let SessionMode::Interactive { .. } = &task.mode {
-        if let v1::sessions::SessionMode::Interactive {
+    // Mode kind discriminator + per-mode idle-timeout default lookup.
+    let (mode_kind, idle_timeout_secs) = match &task.mode {
+        SessionMode::Headless { .. } => (SessionModeKind::Headless, None),
+        SessionMode::Interactive {
             idle_timeout_secs, ..
-        } = &mut session.mode
-        {
-            if idle_timeout_secs.is_none() {
-                *idle_timeout_secs = Some(state.config.job.interactive_idle_timeout_secs);
-            }
-        }
-    }
+        } => (
+            SessionModeKind::Interactive,
+            Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
+        ),
+    };
+
+    let agent_config_runtime = AgentConfigRuntime::new(
+        task.agent_config.model.clone(),
+        task.agent_config.mcp_config.clone(),
+        idle_timeout_secs,
+    );
 
     // Resolve the creator's GitHub token server-side so the worker can clone
     // repos. Best-effort: if no token is on file we hand back `None` and the
-    // worker fails at clone time with a clear auth error, matching the
-    // pre-refactor `client.get_github_token().await.ok()` semantics.
+    // worker fails at clone time with a clear auth error.
     let github_token = match get_github_token_for_user(&state, &task.creator).await {
         Ok(response) => Some(response.github_token),
         Err(err) => {
@@ -74,9 +72,14 @@ pub async fn get_session_context(
         }
     };
 
-    // `resumed_state` is reserved for the §3 resumption design; populated by a
-    // future PR and read by the worker via `Session.resumed_from`.
-    let context = v1::sessions::WorkerContext::new(session, env_vars, github_token, None);
+    let context = v1::sessions::WorkerContext::new(
+        session_id.clone(),
+        mode_kind,
+        mount_spec,
+        agent_config_runtime,
+        env_vars,
+        github_token,
+    );
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
 }

@@ -3,33 +3,74 @@ use crate::app::chat_relay;
 use crate::domain::actors::{Actor, ActorRef};
 use crate::store::StoreError;
 use axum::{
-    Extension,
+    Extension, Json,
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    response::Response,
+    response::{IntoResponse, Response},
 };
+use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use hydra_common::SessionId;
-use hydra_common::api::v1::conversations::{
-    ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
-};
-use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent};
-use tracing::{error, info, warn};
+use hydra_common::api::v1;
+use hydra_common::api::v1::conversations::{ServerMessage, WorkerConnect, WorkerMessage};
+use hydra_common::api::v1::sessions::SessionEvent;
+use tracing::{debug, error, info, warn};
 
 use super::{ApiError, SessionIdPath};
 
-/// GET /v1/sessions/:session_id/relay — WebSocket upgrade endpoint for
-/// the interactive chat relay. Workers connect here to exchange messages
-/// with the server.
-pub async fn session_relay(
+/// GET /v1/sessions/:session_id/events
+///
+/// Dual-mode handler:
+/// * If the request carries a WebSocket `Upgrade` header → upgrade to the
+///   per-session worker relay (renamed from the legacy `/relay` route per
+///   the PR-3 cutover).
+/// * Otherwise → return the persisted `SessionEvent` log as JSON.
+pub async fn session_events_or_ws(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     SessionIdPath(session_id): SessionIdPath,
+    ws: Option<WebSocketUpgrade>,
+) -> Result<Response, ApiError> {
+    if let Some(ws) = ws {
+        session_relay_inner(state, actor, session_id, ws).await
+    } else {
+        get_session_events_json(state, session_id).await
+    }
+}
+
+async fn get_session_events_json(
+    state: AppState,
+    session_id: SessionId,
+) -> Result<Response, ApiError> {
+    info!(session_id = %session_id, "get_session_events invoked");
+    let events = state
+        .store()
+        .get_session_events(&session_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::SessionNotFound(_) => {
+                ApiError::not_found(format!("session '{session_id}' not found"))
+            }
+            other => ApiError::internal(format!(
+                "Failed to load session events '{session_id}': {other}"
+            )),
+        })?;
+    let api_events: Vec<v1::sessions::SessionEvent> =
+        events.into_iter().map(|v| v.item.into()).collect();
+    Ok(Json(api_events).into_response())
+}
+
+async fn session_relay_inner(
+    state: AppState,
+    actor: Actor,
+    session_id: SessionId,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    // Verify the session exists and has a conversation_id.
+    // Verify the session exists. Both interactive and headless modes share
+    // the same WS route now (the legacy interactive-only guard is gone per
+    // PR-3 design §5).
     let session = state
         .get_latest_session(&session_id)
         .await
@@ -41,9 +82,7 @@ pub async fn session_relay(
         })?;
 
     let conversation_id = session.conversation_id().cloned().ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "session '{session_id}' is not an interactive session (no conversation_id)"
-        ))
+        ApiError::internal(format!("session '{session_id}' has no conversation_id"))
     })?;
 
     // Verify the conversation exists.
@@ -62,44 +101,57 @@ pub async fn session_relay(
         session_id = %session_id,
         conversation_id = %conversation_id,
         actor = %actor.name(),
-        "WebSocket relay upgrade requested"
+        "events WebSocket upgrade requested"
     );
 
+    let session_value = session.clone();
+    let greet_user = session.mode.greet_user();
+    let resumed_from = session.resumed_from.clone();
+    let system_prompt = session.agent_config.system_prompt.clone();
+
     Ok(ws.on_upgrade(move |socket| {
-        handle_relay_socket(socket, state, session_id, conversation_id, actor)
+        handle_relay_socket(
+            socket,
+            state,
+            session_id,
+            conversation_id,
+            actor,
+            greet_user,
+            resumed_from,
+            system_prompt,
+            session_value,
+        )
     }))
 }
 
+/// Per-WS-connection state used by Phase 2 ([`ServerMessage::FirstMessage`]
+/// dispatch). When the worker sends `Ready` and there is no `UserMessage`
+/// yet, the server stashes the resolved `agent_prompt` here and the existing
+/// UserMessage event-arrival hook clears the flag once one lands.
+#[derive(Debug)]
+struct PendingFirstMessage {
+    agent_prompt: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_relay_socket(
     socket: WebSocket,
     state: AppState,
     session_id: SessionId,
     conversation_id: hydra_common::ConversationId,
     actor: Actor,
+    greet_user: bool,
+    resumed_from: Option<SessionId>,
+    system_prompt: Option<String>,
+    _session: crate::domain::sessions::Session,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // Step 1: Wait for WorkerConnect handshake message.
-    let worker_connect = match ws_receiver.next().await {
-        Some(Ok(Message::Text(text))) => match serde_json::from_str::<WorkerConnect>(&text) {
-            Ok(msg) => msg,
-            Err(err) => {
-                error!(%session_id, error = %err, "invalid WorkerConnect message");
-                let _ = ws_sender.send(Message::Close(None)).await;
-                return;
-            }
-        },
-        Some(Ok(Message::Close(_))) | None => {
-            info!(%session_id, "WebSocket closed before handshake");
-            return;
-        }
-        Some(Ok(other)) => {
-            error!(%session_id, msg_type = ?other, "expected text WorkerConnect message");
+    // ---- Phase 1: handshake ----
+    let worker_connect = match recv_worker_connect(&mut ws_receiver, &session_id).await {
+        Some(c) => c,
+        None => {
             let _ = ws_sender.send(Message::Close(None)).await;
-            return;
-        }
-        Some(Err(err)) => {
-            error!(%session_id, error = %err, "WebSocket error during handshake");
             return;
         }
     };
@@ -107,35 +159,68 @@ async fn handle_relay_socket(
     info!(
         %session_id,
         connect = ?worker_connect,
-        "worker connected, performing catch-up"
+        "worker connected"
     );
 
-    // Step 2: Build WorkerCatchUp response.
-    let catch_up =
-        match build_catch_up(&state, &conversation_id, &session_id, &worker_connect).await {
-            Ok(catch_up) => catch_up,
-            Err(err) => {
-                error!(%session_id, error = %err, "failed to build catch-up");
-                let _ = ws_sender.send(Message::Close(None)).await;
+    let mut pending_first_message: Option<PendingFirstMessage> = None;
+
+    match worker_connect {
+        WorkerConnect::Fresh => {
+            // Look up the prior session's state blob if this session is a
+            // resume continuation.
+            let resume_blob = if let Some(prior_id) = resumed_from.as_ref() {
+                match state.store().get_session_state(prior_id).await {
+                    Ok(blob) => blob,
+                    Err(err) => {
+                        warn!(
+                            %session_id,
+                            prior_session_id = %prior_id,
+                            error = %err,
+                            "failed to load prior session_state blob; worker will fall back to transcript"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let resume_msg = ServerMessage::ResumeContext {
+                resume_blob,
+                prior_session_id: resumed_from.clone(),
+            };
+            if !send_server_msg(&mut ws_sender, &session_id, &resume_msg).await {
                 return;
             }
-        };
-
-    // Send catch-up to worker.
-    let catch_up_msg = ServerMessage::CatchUp(catch_up);
-    let catch_up_json = match serde_json::to_string(&catch_up_msg) {
-        Ok(json) => json,
-        Err(err) => {
-            error!(%session_id, error = %err, "failed to serialize catch-up");
-            return;
         }
-    };
-    if ws_sender.send(Message::Text(catch_up_json)).await.is_err() {
-        warn!(%session_id, "failed to send catch-up, WebSocket closed");
-        return;
+        WorkerConnect::Reconnecting {
+            last_received_session_event_index,
+        } => {
+            // Mid-session reconnect: ship every session event past the
+            // worker's index. Phase 2 is skipped — the model is already
+            // running.
+            let events = match collect_session_events_after(
+                &state,
+                &session_id,
+                last_received_session_event_index,
+            )
+            .await
+            {
+                Ok(events) => events,
+                Err(err) => {
+                    error!(%session_id, error = %err, "failed to collect catch-up events");
+                    let _ = ws_sender.send(Message::Close(None)).await;
+                    return;
+                }
+            };
+            let catch_up_msg = ServerMessage::CatchUp { events };
+            if !send_server_msg(&mut ws_sender, &session_id, &catch_up_msg).await {
+                return;
+            }
+        }
     }
 
-    // Step 3: Register relay in ChatRelayMap.
+    // ---- Register the relay so user-message writes flow to the worker ----
     let mut user_msg_rx = chat_relay::register_relay(
         &state.chat_relay_map,
         conversation_id.clone(),
@@ -146,14 +231,90 @@ async fn handle_relay_socket(
 
     let actor_ref = ActorRef::from(&actor);
 
-    // Step 4: Relay loop — bidirectional message forwarding.
+    // ---- Phase 2 / 3: main loop ----
     loop {
         tokio::select! {
-            // Worker -> Server: messages from WebSocket
+            // Worker -> Server
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<WorkerMessage>(&text) {
+                            Ok(WorkerMessage::Connect(_)) => {
+                                warn!(%session_id, "received unexpected duplicate Connect message; ignoring");
+                            }
+                            Ok(WorkerMessage::RequestTranscript { prior_session_id }) => {
+                                let events = collect_session_events_after(
+                                    &state,
+                                    &prior_session_id,
+                                    // `usize::MAX` would skip everything, so use 0 minus 1 sentinel
+                                    // by passing the value the loop interprets as "before index 0".
+                                    usize::MAX,
+                                )
+                                .await
+                                .unwrap_or_default();
+                                // collect_session_events_after returns events with `index > skip_after`;
+                                // for "all events" we need a separate full read.
+                                let events = match state.store().get_session_events(&prior_session_id).await {
+                                    Ok(versioned) => versioned.into_iter().map(|v| v.item.into()).collect(),
+                                    Err(err) => {
+                                        warn!(
+                                            %session_id,
+                                            %prior_session_id,
+                                            error = %err,
+                                            "failed to load transcript; sending empty"
+                                        );
+                                        events
+                                    }
+                                };
+                                let msg = ServerMessage::Transcript { events };
+                                if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
+                                    break;
+                                }
+                            }
+                            Ok(WorkerMessage::Ready) => {
+                                // Resolve agent_prompt per design §1.5.
+                                let agent_prompt = if resumed_from.is_some() {
+                                    None
+                                } else {
+                                    system_prompt.clone()
+                                };
+
+                                // Look up first SessionEvent::UserMessage on this session's
+                                // conversation (across the whole conversation's session chain
+                                // for resumed cases — though resumed sessions are gated above).
+                                let user_message = match find_first_user_message(
+                                    &state, &conversation_id,
+                                ).await {
+                                    Ok(opt) => opt,
+                                    Err(err) => {
+                                        error!(%session_id, error = %err, "failed to look up first UserMessage for FirstMessage");
+                                        None
+                                    }
+                                };
+
+                                if let Some(content) = user_message {
+                                    let msg = ServerMessage::FirstMessage {
+                                        agent_prompt,
+                                        user_message: Some(content),
+                                    };
+                                    if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
+                                        break;
+                                    }
+                                } else if greet_user {
+                                    let msg = ServerMessage::FirstMessage {
+                                        agent_prompt,
+                                        user_message: None,
+                                    };
+                                    if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
+                                        break;
+                                    }
+                                } else {
+                                    // Stash the agent_prompt; the UserMessage event-arrival
+                                    // hook (the `user_msg_rx` branch below) will drain it.
+                                    pending_first_message = Some(PendingFirstMessage { agent_prompt });
+                                    debug!(%session_id, "FirstMessage deferred — awaiting first UserMessage");
+                                }
+                            }
                             Ok(WorkerMessage::Event { event }) => {
                                 if let Err(err) = handle_worker_event(
                                     &state,
@@ -203,21 +364,36 @@ async fn handle_relay_socket(
                 }
             }
 
-            // Server -> Worker: user messages queued via the relay
+            // Server -> Worker: user messages queued via the relay.
+            //
+            // When `pending_first_message.is_some()`, the first arriving
+            // `SessionEvent::UserMessage` triggers a `FirstMessage` emit and
+            // suppresses the normal Phase-3 `Event` push for that same
+            // message (its content goes inside `user_message`). All
+            // subsequent UserMessages flow through the normal path.
             user_msg = user_msg_rx.recv() => {
                 match user_msg {
                     Some(event) => {
-                        let server_msg = ServerMessage::Event { event };
-                        match serde_json::to_string(&server_msg) {
-                            Ok(json) => {
-                                if ws_sender.send(Message::Text(json)).await.is_err() {
-                                    warn!(%session_id, "failed to forward user message, WebSocket closed");
+                        if let Some(pending) = pending_first_message.take() {
+                            if let SessionEvent::UserMessage { content, .. } = &event {
+                                let msg = ServerMessage::FirstMessage {
+                                    agent_prompt: pending.agent_prompt,
+                                    user_message: Some(content.clone()),
+                                };
+                                if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
                                     break;
                                 }
+                                // Suppress the Phase-3 push of THIS UserMessage —
+                                // its content is already inside FirstMessage.
+                                continue;
+                            } else {
+                                // Non-UserMessage arrived first; keep the flag stashed.
+                                pending_first_message = Some(pending);
                             }
-                            Err(err) => {
-                                error!(%session_id, error = %err, "failed to serialize server message");
-                            }
+                        }
+                        let server_msg = ServerMessage::Event { event };
+                        if !send_server_msg(&mut ws_sender, &session_id, &server_msg).await {
+                            break;
                         }
                     }
                     None => {
@@ -229,89 +405,100 @@ async fn handle_relay_socket(
         }
     }
 
-    // Step 5: Cleanup on disconnect. The conversation status (Active → Idle)
-    // is owned by `SpawnConversationSessionsAutomation`, which flips it when
-    // the companion session reaches a terminal status (Complete / Failed).
-    // The relay only unregisters its in-memory entry here.
+    // Cleanup on disconnect.
     chat_relay::unregister_relay(&state.chat_relay_map, &conversation_id);
     info!(%session_id, %conversation_id, "relay unregistered");
 }
 
-/// Build the WorkerCatchUp payload based on the worker's connect message.
-///
-/// For `Fresh` connections, we always return the full event log: a Fresh
-/// handshake means a brand-new worker process (typically in a new container
-/// for resume) that needs the entire conversation history to rebuild context.
-/// The `resume_from_event_index` field is ignored — see the resume design in
-/// `hydra/src/worker/interactive.rs` for how the worker reconstructs context
-/// from the replayed events.
-///
-/// For `Reconnecting` connections we skip events the worker has already seen;
-/// that path is a mid-session WebSocket reconnect where the same worker
-/// process is still alive and only needs the deltas it missed.
-///
-/// Note: the persisted `session_state` blob is intentionally NOT included in
-/// the catch-up. The worker's transcript-based resume path was removed
-/// (predecessor blob is no longer read on resume), and shipping it caused the
-/// catch-up text frame to exceed the WebSocket 16 MiB cap on long
-/// conversations, killing every resume attempt silently (see i-xwmoxzhe). The
-/// upload path (`WorkerMessage::SessionStateUpload` + store) is preserved
-/// untouched so we can revisit catch-up-side delivery later without
-/// reimplementing the writer.
-async fn build_catch_up(
+async fn recv_worker_connect(
+    ws_receiver: &mut futures::stream::SplitStream<WebSocket>,
+    session_id: &SessionId,
+) -> Option<WorkerConnect> {
+    match ws_receiver.next().await {
+        Some(Ok(Message::Text(text))) => match serde_json::from_str::<WorkerMessage>(&text) {
+            Ok(WorkerMessage::Connect(c)) => Some(c),
+            Ok(other) => {
+                error!(%session_id, msg = ?other, "expected WorkerMessage::Connect first");
+                None
+            }
+            Err(err) => {
+                error!(%session_id, error = %err, "invalid handshake message");
+                None
+            }
+        },
+        Some(Ok(Message::Close(_))) | None => {
+            info!(%session_id, "WebSocket closed before handshake");
+            None
+        }
+        Some(Ok(other)) => {
+            error!(%session_id, msg_type = ?other, "expected text WorkerMessage::Connect");
+            None
+        }
+        Some(Err(err)) => {
+            error!(%session_id, error = %err, "WebSocket error during handshake");
+            None
+        }
+    }
+}
+
+async fn send_server_msg(
+    ws_sender: &mut SplitSink<WebSocket, Message>,
+    session_id: &SessionId,
+    msg: &ServerMessage,
+) -> bool {
+    let json = match serde_json::to_string(msg) {
+        Ok(j) => j,
+        Err(err) => {
+            error!(%session_id, error = %err, "failed to serialize ServerMessage");
+            return false;
+        }
+    };
+    if ws_sender.send(Message::Text(json)).await.is_err() {
+        warn!(%session_id, "failed to send ServerMessage, WebSocket closed");
+        return false;
+    }
+    true
+}
+
+/// Collect session events on `session_id` whose index is strictly greater
+/// than `last_received_session_event_index`. Per-session indexes are dense
+/// and monotonic, starting at 0.
+async fn collect_session_events_after(
+    state: &AppState,
+    session_id: &SessionId,
+    last_received_session_event_index: usize,
+) -> Result<Vec<SessionEvent>, StoreError> {
+    let events = state.store().get_session_events(session_id).await?;
+    Ok(events
+        .into_iter()
+        .skip(last_received_session_event_index.saturating_add(1))
+        .map(|v| v.item.into())
+        .collect())
+}
+
+/// Find the first `SessionEvent::UserMessage` content across every session
+/// linked to the conversation, in session creation-time order. Returns
+/// `None` if no UserMessage has been recorded yet.
+async fn find_first_user_message(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
-    session_id: &SessionId,
-    worker_connect: &WorkerConnect,
-) -> Result<WorkerCatchUp, StoreError> {
-    // Source prior chat history from `SessionEvent` across every session
-    // linked to the conversation, in session creation-time order. This
-    // mirrors the frontend read path (`useChatTranscript`) per design §3.4.1
-    // and replaces the legacy `ConversationEvent`-driven catch-up that
-    // Phase E step 18 removed.
-    let mut query = SearchSessionsQuery::default();
+) -> Result<Option<String>, StoreError> {
+    let mut query = hydra_common::api::v1::sessions::SearchSessionsQuery::default();
     query.conversation_id = Some(conversation_id.clone());
     let mut sessions = state.store().list_sessions(&query).await?;
     sessions.sort_by_key(|(_, v)| v.creation_time);
-
-    let mut all_events: Vec<SessionEvent> = Vec::new();
     for (sid, _) in &sessions {
-        let session_events = state.store().get_session_events(sid).await?;
-        for v in session_events {
-            all_events.push(v.item.into());
+        let events = state.store().get_session_events(sid).await?;
+        for v in events {
+            if let crate::domain::sessions::SessionEvent::UserMessage { content, .. } = &v.item {
+                return Ok(Some(content.clone()));
+            }
         }
     }
-
-    let skip_count = match worker_connect {
-        WorkerConnect::Fresh { .. } => 0,
-        WorkerConnect::Reconnecting {
-            last_received_event_index,
-        } => last_received_event_index + 1,
-    };
-
-    let events: Vec<SessionEvent> = all_events.into_iter().skip(skip_count).collect();
-
-    info!(
-        %conversation_id,
-        %session_id,
-        events = events.len(),
-        "build_catch_up"
-    );
-
-    Ok(WorkerCatchUp { events })
+    Ok(None)
 }
 
 /// Handle a session event sent by the worker.
-///
-/// The `Suspending` event is recorded on the session log (worker's record of
-/// why it suspended) but does NOT mutate the conversation's status here. The
-/// worker exiting after a Suspending event lets the job engine drive the
-/// session to `Complete` / `Failed`; `SpawnConversationSessionsAutomation`
-/// then flips the conversation `Active → Idle` from that terminal transition.
-///
-/// `Suspending` and `Closed` ARE additionally mirrored onto the conversation
-/// events log (lifecycle history); chat content (`UserMessage` /
-/// `AssistantMessage`) lives only on the session log per Phase E step 18.
 async fn handle_worker_event(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
@@ -346,20 +533,18 @@ async fn handle_worker_event(
 /// Map a worker-emitted [`SessionEvent`] onto the corresponding lifecycle
 /// [`crate::domain::conversations::ConversationEvent`], if any. Used by the
 /// relay handler to mirror Suspending / Closed onto the conversation events
-/// log. Returns `None` for chat-content variants (UserMessage /
-/// AssistantMessage), which intentionally do not appear in the conversation
-/// events log post-Phase-E-step-18.
+/// log. Returns `None` for chat-content variants.
 fn session_event_to_lifecycle_conversation_event(
     event: &crate::domain::sessions::SessionEvent,
 ) -> Option<crate::domain::conversations::ConversationEvent> {
-    use crate::domain::conversations::ConversationEvent as ConvEvent;
-    use crate::domain::sessions::SessionEvent as SEvent;
+    use crate::domain::conversations::ConversationEvent as CE;
+    use crate::domain::sessions::SessionEvent as SE;
     match event {
-        SEvent::Suspending { reason, timestamp } => Some(ConvEvent::Suspending {
+        SE::Suspending { reason, timestamp } => Some(CE::Suspending {
             reason: reason.clone(),
             timestamp: *timestamp,
         }),
-        SEvent::Closed { timestamp } => Some(ConvEvent::Closed {
+        SE::Closed { timestamp } => Some(CE::Closed {
             timestamp: *timestamp,
         }),
         _ => None,

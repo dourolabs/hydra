@@ -6,4 +6,4 @@
  * paths so the eventual `get_session_event_summaries` store method can return
  * the same minimal shape per session.
  */
-export type SessionEventSummary = { event_count: number; last_event_preview?: string | null };
+export type SessionEventSummary = { event_count: number, last_event_preview?: string | null, };

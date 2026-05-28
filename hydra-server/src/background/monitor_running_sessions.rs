@@ -117,7 +117,7 @@ mod tests {
     use hydra_common::IssueId;
     use std::{collections::HashMap, sync::Arc};
 
-    fn test_session(prompt: &str, spawned_from: Option<IssueId>) -> Session {
+    fn test_session(_prompt: &str, spawned_from: Option<IssueId>) -> Session {
         Session::new(
             Username::from("test-creator"),
             spawned_from,
@@ -130,8 +130,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,

@@ -7353,7 +7353,7 @@ mod tests {
         spawn_task_with_prompt("test prompt")
     }
 
-    fn spawn_task_with_prompt(prompt: &str) -> Session {
+    fn spawn_task_with_prompt(_prompt: &str) -> Session {
         Session::new(
             Username::from("test-creator"),
             None,
@@ -7369,8 +7369,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -7449,20 +7448,14 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
-        assert_eq!(
+        assert!(matches!(
             versions[0].item.mode,
-            SessionMode::Headless {
-                prompt: "v1".to_string(),
-                conversation_id: None
-            }
-        );
-        assert_eq!(
+            SessionMode::Headless { .. }
+        ));
+        assert!(matches!(
             versions[1].item.mode,
-            SessionMode::Headless {
-                prompt: "v2".to_string(),
-                conversation_id: None
-            }
-        );
+            SessionMode::Headless { .. }
+        ));
     }
 
     #[tokio::test]
@@ -7554,6 +7547,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // PR-3: prompt no longer lives on SessionMode::Headless.
     async fn task_list_filters_by_text_search() {
         let store = create_test_store().await;
 
@@ -7572,10 +7566,10 @@ mod tests {
         let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        let SessionMode::Headless { prompt, .. } = &tasks[0].1.item.mode else {
+        let SessionMode::Headless { .. } = &tasks[0].1.item.mode else {
             panic!("expected headless");
         };
-        assert_eq!(prompt, "deploy to production");
+        // prompt assertion removed: prompt field no longer on SessionMode::Headless
     }
 
     #[tokio::test]
@@ -7842,8 +7836,7 @@ mod tests {
             Some("4Gi".to_string()),
             Some(vec!["secret1".to_string(), "secret2".to_string()]),
             SessionMode::Headless {
-                prompt: "full test".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Pending,
             Some("last msg".to_string()),
@@ -7879,7 +7872,7 @@ mod tests {
         task.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: Some(7),
+            greet_user: false,
         };
 
         let now = Utc::now();
@@ -7898,11 +7891,8 @@ mod tests {
             Some(conv_id),
             "conversation_id must be persisted"
         );
-        assert_eq!(
-            fetched.item.mode.conversation_resume_from(),
-            Some(7),
-            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
-        );
+        // PR-3 removed conversation_resume_from; resumption now flows via
+        // Session.resumed_from + the server-side session_state blob.
     }
 
     #[tokio::test]
@@ -10566,7 +10556,7 @@ mod tests {
                 session.mode = SessionMode::Interactive {
                     conversation_id: conv_id,
                     idle_timeout_secs: None,
-                    conversation_resume_from: None,
+                    greet_user: false,
                 };
             }
             None => {
@@ -10575,8 +10565,7 @@ mod tests {
                 // collapse this case to Headless with an empty prompt — same
                 // semantic effect (no conversation linkage).
                 session.mode = SessionMode::Headless {
-                    prompt: String::new(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 };
             }
         }
@@ -11329,7 +11318,9 @@ mod tests {
 
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "headless");
-        assert_eq!(mode["prompt"], "test prompt");
+        // PR-3 dropped Headless.prompt; the conversation's first
+        // UserMessage event now carries the prompt.
+        assert!(mode.get("prompt").is_none_or(|v| v.is_null()));
 
         let mount_spec = parse_json(row.mount_spec.as_deref().expect("mount_spec is non-null"));
         assert_eq!(mount_spec["working_dir"], "repo");

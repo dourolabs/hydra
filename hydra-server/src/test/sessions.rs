@@ -56,10 +56,10 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
 
-    let SessionMode::Headless { prompt, .. } = &task.mode else {
+    let SessionMode::Headless { .. } = &task.mode else {
         panic!("expected headless");
     };
-    assert_eq!(prompt, "0");
+    // prompt assertion removed: prompt field no longer on SessionMode::Headless
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -304,7 +304,6 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     let bundle_item = worker_context
-        .session
         .mount_spec
         .mounts
         .first()
@@ -405,7 +404,6 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
     assert!(context_response.status().is_success());
     let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     let bundle_item = worker_context
-        .session
         .mount_spec
         .mounts
         .first()
@@ -525,8 +523,7 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
             memory_limit: None,
             secrets: None,
             mode: SessionMode::Headless {
-                prompt: "with-usage".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             status: Status::Complete,
             last_message: None,
@@ -744,8 +741,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1023,8 +1019,7 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1106,8 +1101,7 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1210,8 +1204,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1271,8 +1264,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1301,7 +1293,6 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     let bundle_item = body
-        .session
         .mount_spec
         .mounts
         .first()
@@ -1316,10 +1307,8 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    let v1::sessions::SessionMode::Headless { prompt, .. } = &body.session.mode else {
-        panic!("expected Headless mode, got {:?}", body.session.mode);
-    };
-    assert_eq!(prompt, "0");
+    assert_eq!(body.mode_kind, v1::sessions::SessionModeKind::Headless);
+    // prompt assertion removed: WorkerContext no longer carries the prompt
     Ok(())
 }
 
@@ -1351,8 +1340,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1381,7 +1369,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(
-        body.session.agent_config.model.as_deref(),
+        body.agent_config_runtime.model.as_deref(),
         Some("claude-3-5-sonnet")
     );
     Ok(())
@@ -1410,8 +1398,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1478,7 +1465,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 mode: SessionMode::Interactive {
                     conversation_id: hydra_common::ConversationId::new(),
                     idle_timeout_secs: None,
-                    conversation_resume_from: None,
+                    greet_user: false,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1506,13 +1493,11 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    let v1::sessions::SessionMode::Interactive {
-        idle_timeout_secs, ..
-    } = &body.session.mode
-    else {
-        panic!("expected Interactive mode, got {:?}", body.session.mode);
-    };
-    assert_eq!(*idle_timeout_secs, Some(expected_idle_timeout));
+    assert_eq!(body.mode_kind, v1::sessions::SessionModeKind::Interactive);
+    assert_eq!(
+        body.agent_config_runtime.idle_timeout_secs,
+        Some(expected_idle_timeout)
+    );
     Ok(())
 }
 
@@ -1568,8 +1553,7 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1627,8 +1611,7 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 memory_limit: None,
                 secrets: None,
                 mode: SessionMode::Headless {
-                    prompt: "0".to_string(),
-                    conversation_id: None,
+                    conversation_id: hydra_common::ConversationId::new(),
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1710,8 +1693,7 @@ fn make_session_with_service_repo(
         memory_limit: None,
         secrets: None,
         mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         status: Status::Created,
         last_message: None,
@@ -1740,8 +1722,7 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         memory_limit: None,
         secrets: None,
         mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         status: Status::Created,
         last_message: None,
@@ -1810,7 +1791,7 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     let server = spawn_test_server_with_state(state, store).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = &context.mount_spec;
     assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
     assert_eq!(spec.mounts.len(), 3);
     match &spec.mounts[0] {
@@ -1873,7 +1854,7 @@ async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyh
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1912,8 +1893,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         memory_limit: None,
         secrets: None,
         mode: SessionMode::Headless {
-            prompt: "prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         status: Status::Created,
         last_message: None,
@@ -1933,7 +1913,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
 
     // The spec has no BuildCache item because there's no service repo name,
     // even though the server itself has build_cache configured.
-    let spec = &context.session.mount_spec;
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1958,7 +1938,7 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = &context.mount_spec;
     assert_eq!(spec.mounts.len(), 2);
     match &spec.mounts[0] {
         MountItem::Bundle { bundle, .. } => {
@@ -2061,7 +2041,7 @@ async fn get_session_context_mount_spec_matches_get_session_with_build_cache() -
         .await?;
 
     assert_eq!(
-        context.session.mount_spec, session_record.session.mount_spec,
+        context.mount_spec, session_record.session.mount_spec,
         "WorkerContext.session.mount_spec must equal GET /v1/sessions/:id mount_spec",
     );
     let _ = repo_name;

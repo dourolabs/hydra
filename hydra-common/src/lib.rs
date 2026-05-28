@@ -197,8 +197,9 @@ mod ts_export {
         crate::sessions::RelativePath::export_all(&cfg).expect("RelativePath");
         crate::sessions::MountSpec::export_all(&cfg).expect("MountSpec");
         crate::sessions::MountItem::export_all(&cfg).expect("MountItem");
-        crate::sessions::SessionStateBlob::export_all(&cfg).expect("SessionStateBlob");
         crate::sessions::WorkerContext::export_all(&cfg).expect("WorkerContext");
+        crate::sessions::SessionModeKind::export_all(&cfg).expect("SessionModeKind");
+        crate::sessions::AgentConfigRuntime::export_all(&cfg).expect("AgentConfigRuntime");
         crate::sessions::CreateSessionResponse::export_all(&cfg).expect("CreateSessionResponse");
         crate::sessions::ListSessionsResponse::export_all(&cfg).expect("ListSessionsResponse");
         crate::sessions::SessionVersionRecord::export_all(&cfg).expect("SessionVersionRecord");
@@ -302,7 +303,6 @@ mod ts_export {
         crate::conversations::SearchConversationsQuery::export_all(&cfg)
             .expect("SearchConversationsQuery");
         crate::conversations::WorkerConnect::export_all(&cfg).expect("WorkerConnect");
-        crate::conversations::WorkerCatchUp::export_all(&cfg).expect("WorkerCatchUp");
         crate::conversations::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
         crate::conversations::ServerMessage::export_all(&cfg).expect("ServerMessage");
     }

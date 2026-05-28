@@ -21,8 +21,8 @@ fn default_task_status() -> Status {
 pub struct InteractiveOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<ConversationId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
+    #[serde(default)]
+    pub greet_user: bool,
 }
 
 /// Per-session knobs handed to the model wrapper. Mirrors
@@ -64,64 +64,43 @@ impl AgentConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionMode {
-    /// One-shot headless task. See the analogous variant on
-    /// `api::sessions::SessionMode::Headless` for the rationale behind
-    /// keeping both `prompt` and `conversation_id` `Option`-typed
-    /// during PR-2 of the sessions/worker_run interface redesign.
-    Headless {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        prompt: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        conversation_id: Option<ConversationId>,
-    },
+    /// One-shot headless task. The session is attached to a single
+    /// conversation; its first `UserMessage` event is the prompt the
+    /// worker feeds to the model.
+    Headless { conversation_id: ConversationId },
     Interactive {
         conversation_id: ConversationId,
         /// Optional worker-side idle timeout override. `None` falls back to
         /// `config.job.interactive_idle_timeout_secs`.
         idle_timeout_secs: Option<u64>,
-        /// Event-index resumption marker. See
-        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
-        /// state-blob direction.
-        conversation_resume_from: Option<usize>,
+        /// When `true`, the server sends the agent prompt without waiting
+        /// for a user message; the model produces a greeting as its first
+        /// turn.
+        #[serde(default)]
+        greet_user: bool,
     },
 }
 
 impl SessionMode {
+    /// Returns the linked conversation id (every mode has one in the
+    /// domain). Returned as `Option<&_>` to keep call-site ergonomics
+    /// identical to the legacy API where headless sessions might lack a
+    /// conversation_id — callers that need a hard-required id can `unwrap`
+    /// safely on persisted sessions.
     pub fn conversation_id(&self) -> Option<&ConversationId> {
-        match self {
-            SessionMode::Headless {
-                conversation_id, ..
-            } => conversation_id.as_ref(),
+        Some(match self {
+            SessionMode::Headless { conversation_id } => conversation_id,
             SessionMode::Interactive {
                 conversation_id, ..
-            } => Some(conversation_id),
-        }
+            } => conversation_id,
+        })
     }
 
-    /// Returns the conversation event index to resume from, if any.
-    /// Always `None` for `SessionMode::Headless`.
-    pub fn conversation_resume_from(&self) -> Option<usize> {
+    /// Returns `true` when the server should send the agent prompt as the
+    /// first message without waiting for a user message.
+    pub fn greet_user(&self) -> bool {
         match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => *conversation_resume_from,
-            SessionMode::Headless { .. } => None,
-        }
-    }
-
-    /// Stamp the resume hint on an interactive mode. Returns `false` if
-    /// called on a `Headless` mode — the caller has the wrong session.
-    #[must_use]
-    pub fn set_conversation_resume_from(&mut self, value: Option<usize>) -> bool {
-        match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => {
-                *conversation_resume_from = value;
-                true
-            }
+            SessionMode::Interactive { greet_user, .. } => *greet_user,
             SessionMode::Headless { .. } => false,
         }
     }
@@ -229,8 +208,9 @@ impl Session {
         }
     }
 
-    /// Returns the conversation_id, if this is an interactive session attached
-    /// to a conversation.
+    /// Returns the conversation_id. Every session — headless or
+    /// interactive — is attached to a conversation, but the API is kept
+    /// `Option`-typed for ergonomic compatibility with legacy call sites.
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         self.mode.conversation_id()
     }
@@ -238,21 +218,6 @@ impl Session {
     /// Returns `true` if this is an interactive session.
     pub fn is_interactive(&self) -> bool {
         matches!(self.mode, SessionMode::Interactive { .. })
-    }
-
-    /// Returns the prompt string for the worker, regardless of mode.
-    /// Headless sessions return `mode.Headless.prompt`; Interactive
-    /// sessions return `agent_config.system_prompt` (the agent's prompt,
-    /// stamped at session-create time).
-    pub fn resolved_prompt(&self) -> &str {
-        match &self.mode {
-            SessionMode::Headless { prompt, .. } => prompt.as_str(),
-            SessionMode::Interactive { .. } => self
-                .agent_config
-                .system_prompt
-                .as_deref()
-                .unwrap_or_default(),
-        }
     }
 }
 
@@ -292,18 +257,14 @@ impl From<api::sessions::InteractiveOptions> for InteractiveOptions {
     fn from(value: api::sessions::InteractiveOptions) -> Self {
         InteractiveOptions {
             conversation_id: value.conversation_id,
-            conversation_resume_from: value.conversation_resume_from,
+            greet_user: value.greet_user,
         }
     }
 }
 
 impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
     fn from(value: InteractiveOptions) -> Self {
-        api::sessions::InteractiveOptions::new(
-            value.conversation_id,
-            None,
-            value.conversation_resume_from,
-        )
+        api::sessions::InteractiveOptions::new(value.conversation_id, None, value.greet_user)
     }
 }
 
@@ -330,23 +291,28 @@ impl From<AgentConfig> for api::sessions::AgentConfig {
 }
 
 impl From<api::sessions::SessionMode> for SessionMode {
+    /// Persisted sessions always carry `Headless.conversation_id =
+    /// Some(_)` — PR-2's backfill migration guarantees this. The
+    /// only `None` case is an in-flight request that hasn't yet hit
+    /// `AppState::create_session`'s conversation auto-create. Reading
+    /// a stored row whose conversation_id has slipped through as
+    /// `None` is a data-integrity bug; panic loudly.
     fn from(value: api::sessions::SessionMode) -> Self {
         match value {
-            api::sessions::SessionMode::Headless {
-                prompt,
-                conversation_id,
-            } => SessionMode::Headless {
-                prompt,
-                conversation_id,
+            api::sessions::SessionMode::Headless { conversation_id } => SessionMode::Headless {
+                conversation_id: conversation_id.expect(
+                    "Headless.conversation_id must be Some on persisted/domain sessions; \
+                     server-side auto-create resolves None values before reaching the domain",
+                ),
             },
             api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
+                greet_user,
             } => SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
+                greet_user,
             },
             _ => unreachable!("unsupported session mode variant"),
         }
@@ -356,21 +322,17 @@ impl From<api::sessions::SessionMode> for SessionMode {
 impl From<SessionMode> for api::sessions::SessionMode {
     fn from(value: SessionMode) -> Self {
         match value {
-            SessionMode::Headless {
-                prompt,
-                conversation_id,
-            } => api::sessions::SessionMode::Headless {
-                prompt,
-                conversation_id,
+            SessionMode::Headless { conversation_id } => api::sessions::SessionMode::Headless {
+                conversation_id: Some(conversation_id),
             },
             SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
+                greet_user,
             } => api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
+                greet_user,
             },
         }
     }
@@ -643,8 +605,7 @@ mod tests {
             Some("768Mi".to_string()),
             secrets.clone(),
             SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -677,8 +638,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -778,8 +738,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "p".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,

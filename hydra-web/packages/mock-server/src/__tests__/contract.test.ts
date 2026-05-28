@@ -187,7 +187,8 @@ describe("Sessions", () => {
   });
 
   const sessionPayload: CreateSessionRequest = {
-    mode: { type: "headless", prompt: "Contract test session prompt" },
+    mode: { type: "headless", conversation_id: null },
+    initial_prompt: "Contract test session prompt",
     agent_config: {},
     mount_spec: {
       working_dir: "repo",
@@ -215,10 +216,7 @@ describe("Sessions", () => {
     // Get
     const fetched = await client.getSession(sessionId);
     expect(fetched.session_id).toBe(sessionId);
-    expect(fetched.session.mode).toEqual({
-      type: "headless",
-      prompt: "Contract test session prompt",
-    });
+    expect(fetched.session.mode.type).toBe("headless");
     expect(fetched.session.status).toBe("pending");
 
     // List
@@ -261,11 +259,8 @@ describe("Sessions", () => {
   it("get session context", async () => {
     const created = await client.createSession(sessionPayload);
     const ctx = await client.getSessionContext(created.session_id);
-    expect(ctx.session.mode.type).toBe("headless");
-    if (ctx.session.mode.type === "headless") {
-      expect(ctx.session.mode.prompt).toBe("Contract test session prompt");
-    }
-    const firstItem = ctx.session.mount_spec.mounts[0];
+    expect(ctx.mode_kind).toBe("headless");
+    const firstItem = ctx.mount_spec.mounts[0];
     expect(firstItem.type).toBe("bundle");
     if (firstItem.type === "bundle") {
       expect(firstItem.bundle.type).toBe("git_repository");

@@ -35,7 +35,9 @@ function formatMountSpec(mountSpec: MountSpec): string {
 }
 
 function promptOf(task: Session): string | null {
-  if (task.mode.type === "headless") return task.mode.prompt;
+  // PR-3: the headless prompt no longer lives inline on the SessionMode;
+  // it's the conversation's first UserMessage event. Read paths that need
+  // the prompt should query the conversation event log instead.
   return task.agent_config.system_prompt ?? null;
 }
 

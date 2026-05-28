@@ -588,7 +588,7 @@ impl HydraClient {
                 .map_err(|()| anyhow!("failed to set ws scheme"))?,
             scheme => return Err(anyhow!("unsupported server URL scheme: {scheme}")),
         }
-        ws_url.set_path(&format!("/v1/sessions/{session_id}/relay"));
+        ws_url.set_path(&format!("/v1/sessions/{session_id}/events"));
 
         let host_header = match ws_url.port() {
             Some(port) => format!("{}:{}", ws_url.host_str().unwrap_or_default(), port),

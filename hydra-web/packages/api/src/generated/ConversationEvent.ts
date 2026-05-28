@@ -6,7 +6,4 @@ import type { SessionId } from "./SessionId";
  * has moved to [`SessionEvent`] — see
  * `designs/sessions-orthogonality-redesign.md` §3.2 and Phase E step 18.
  */
-export type ConversationEvent =
-  | { type: "suspending"; reason: string; timestamp: string }
-  | { type: "resumed"; session_id: SessionId; timestamp: string }
-  | { type: "closed"; timestamp: string };
+export type ConversationEvent = { "type": "suspending", reason: string, timestamp: string, } | { "type": "resumed", session_id: SessionId, timestamp: string, } | { "type": "closed", timestamp: string, };

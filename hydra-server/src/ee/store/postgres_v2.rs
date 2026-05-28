@@ -5433,8 +5433,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -5460,8 +5459,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "round-trip prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -5503,8 +5501,7 @@ mod tests {
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
             SessionMode::Headless {
-                prompt: "full prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             Some("last message".to_string()),
@@ -5821,8 +5818,7 @@ mod tests {
 
         let mut updated = fetched.item.clone();
         updated.mode = crate::domain::sessions::SessionMode::Headless {
-            prompt: "updated prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         };
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
@@ -5834,11 +5830,10 @@ mod tests {
             fetched2.item.creator, task.creator,
             "creator must persist across updates"
         );
-        let crate::domain::sessions::SessionMode::Headless { prompt, .. } = &fetched2.item.mode
-        else {
+        let crate::domain::sessions::SessionMode::Headless { .. } = &fetched2.item.mode else {
             panic!("expected headless");
         };
-        assert_eq!(prompt, "updated prompt");
+        // prompt assertion removed: prompt field no longer on SessionMode::Headless
         assert_eq!(fetched2.version, 2);
     }
 
@@ -5851,7 +5846,7 @@ mod tests {
         task.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: Some(7),
+            greet_user: false,
         };
 
         let (task_id, _) = store
@@ -5870,7 +5865,7 @@ mod tests {
             "conversation_id must be persisted"
         );
         assert_eq!(
-            fetched.item.mode.conversation_resume_from(),
+            None::<usize>,
             Some(7),
             "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
         );
@@ -8564,7 +8559,7 @@ mod tests {
         task_a.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_a.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            greet_user: false,
         };
         let (task_a_id, _) = handles
             .store
@@ -8576,7 +8571,7 @@ mod tests {
         task_b.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_b.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            greet_user: false,
         };
         handles
             .store
@@ -8880,11 +8875,10 @@ mod tests {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless {
-                prompt: "interactive prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
         };
         Session::new(

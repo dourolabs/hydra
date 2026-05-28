@@ -36,7 +36,10 @@ type LegacySession = Session & {
 
 function promptOf(session: Session): string {
   const legacy = session as LegacySession;
-  if (session.mode?.type === "headless") return session.mode.prompt;
+  // PR-3 removed the inline `prompt` field from SessionMode::Headless; the
+  // prompt now lives on the conversation's first UserMessage event. For
+  // mock-server purposes we fall back to legacy serialized values or the
+  // agent prompt.
   if (session.mode?.type === "interactive") {
     return session.agent_config?.system_prompt ?? "";
   }
@@ -125,7 +128,7 @@ export function createInteractiveSessionForConversation(
 ): string {
   const id = generateId("session");
   const task: Session = {
-    mode: { type: "interactive", conversation_id: conversationId },
+    mode: { type: "interactive", conversation_id: conversationId, greet_user: false },
     agent_config: {},
     mount_spec: {
       working_dir: "repo",
@@ -372,15 +375,24 @@ export function createSessionRoutes(store: Store): Hono {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
-    // PR-F: WorkerContext.session is a straight read of the persisted
-    // session; no per-fetch re-derivation of mount_spec from a separate
-    // `context` field.
-    const sessionWithEnv: Session = { ...task, env_vars: task.env_vars ?? {} };
+    // PR-3: WorkerContext is orchestration-only data — session_id, mode kind,
+    // mount layout, env vars, github token. The persisted Session itself is
+    // no longer embedded; the worker fetches per-mode data via the WS.
+    const mode_kind = task.mode.type === "headless" ? "headless" : "interactive";
     const resp: WorkerContext = {
-      session: sessionWithEnv,
+      session_id: id,
+      mode_kind,
+      mount_spec: task.mount_spec,
+      agent_config_runtime: {
+        model: task.agent_config?.model ?? null,
+        mcp_config: task.agent_config?.mcp_config ?? null,
+        idle_timeout_secs:
+          task.mode.type === "interactive"
+            ? (task.mode.idle_timeout_secs ?? null)
+            : null,
+      },
       resolved_env: task.env_vars ?? {},
       github_token: null,
-      resumed_state: null,
     };
     return c.json(resp);
   });

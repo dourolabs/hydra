@@ -35,8 +35,7 @@ fn sample_task(status: Status) -> Session {
         None,
         None,
         SessionMode::Headless {
-            prompt: "prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         status,
         None,

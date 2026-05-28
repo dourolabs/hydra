@@ -10,8 +10,4 @@
  * submitted_at)`). Clients therefore never specify a review author
  * on the inbound side — this struct intentionally omits the field.
  */
-export type UpsertReviewRequest = {
-  contents: string;
-  is_approved: boolean;
-  submitted_at: string | null;
-};
+export type UpsertReviewRequest = { contents: string, is_approved: boolean, submitted_at: string | null, };

@@ -387,8 +387,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "p".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,

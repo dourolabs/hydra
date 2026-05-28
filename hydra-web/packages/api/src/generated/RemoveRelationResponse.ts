@@ -3,4 +3,4 @@
 /**
  * Response body for `DELETE /v1/relations/`.
  */
-export type RemoveRelationResponse = { removed: boolean };
+export type RemoveRelationResponse = { removed: boolean, };

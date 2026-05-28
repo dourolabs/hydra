@@ -550,7 +550,7 @@ mod tests {
         assert!(worker.is_branch_stale(&branch).await);
     }
 
-    fn test_session(prompt: &str) -> crate::store::Session {
+    fn test_session(_prompt: &str) -> crate::store::Session {
         use crate::domain::sessions::{AgentConfig, SessionMode};
         use crate::routes::sessions::mount_spec_from_create_request;
         crate::store::Session::new(
@@ -565,8 +565,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             crate::store::Status::Created,
             None,

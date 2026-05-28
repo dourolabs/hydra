@@ -626,8 +626,7 @@ fn make_dummy_task() -> crate::store::Session {
         None,
         None,
         SessionMode::Headless {
-            prompt: "test prompt".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         crate::store::Status::Created,
         None,

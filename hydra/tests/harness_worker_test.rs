@@ -196,7 +196,7 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
         mode: SessionMode::Interactive {
             conversation_id,
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            greet_user: false,
         },
         agent_config: AgentConfig::default(),
         mount_spec: MountSpec::default(),
@@ -207,6 +207,7 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
         secrets: None,
         spawned_from: None,
         resumed_from: None,
+        initial_prompt: None,
     };
     let session_id = user.client().create_session(&request).await?.session_id;
 

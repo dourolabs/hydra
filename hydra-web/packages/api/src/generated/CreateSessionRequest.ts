@@ -5,15 +5,12 @@ import type { MountSpec } from "./MountSpec";
 import type { SessionId } from "./SessionId";
 import type { SessionMode } from "./SessionMode";
 
-export type CreateSessionRequest = {
-  mode: SessionMode;
-  agent_config: AgentConfig;
-  mount_spec: MountSpec;
-  image?: string | null;
-  env_vars?: { [key in string]: string };
-  cpu_limit?: string | null;
-  memory_limit?: string | null;
-  secrets?: Array<string> | null;
-  spawned_from?: IssueId | null;
-  resumed_from?: SessionId | null;
-};
+export type CreateSessionRequest = { mode: SessionMode, agent_config: AgentConfig, mount_spec: MountSpec, image?: string | null, env_vars?: { [key in string]: string }, cpu_limit?: string | null, memory_limit?: string | null, secrets?: Array<string> | null, spawned_from?: IssueId | null, resumed_from?: SessionId | null, 
+/**
+ * Initial user-message content for this session. Required for fresh
+ * (non-resumed) headless sessions: the server seeds the conversation's
+ * first `SessionEvent::UserMessage` from this string. Optional for
+ * interactive sessions, in which case the first user turn arrives via
+ * the relay WebSocket later.
+ */
+initial_prompt?: string | null, };

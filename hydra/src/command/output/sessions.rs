@@ -424,11 +424,10 @@ mod tests {
             Some(id) => SessionMode::Interactive {
                 conversation_id: id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless {
-                prompt: "p".to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
         };
         let mount_spec = MountSpec::new(
@@ -523,7 +522,12 @@ mod tests {
     fn session_summary_note_renders_em_dash_when_usage_missing() {
         let record = build_summary_record(None, None);
         let note = session_summary_note(&record).expect("note present");
-        assert_eq!(note, "tokens: —");
+        // Every session now carries a conversation_id (PR-3 cutover); the
+        // note prepends it before the tokens segment.
+        assert!(
+            note.ends_with("tokens: —"),
+            "expected note to end with em-dash tokens, got {note}"
+        );
     }
 
     #[test]

@@ -7,21 +7,29 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use chrono::Utc;
+use futures::{SinkExt, StreamExt};
 use hydra_common::{
+    api::v1::{
+        conversations::{ServerMessage, WorkerConnect, WorkerMessage},
+        sessions::{SessionEvent, SessionModeKind},
+    },
     constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
-    sessions::{InteractiveOptions, SessionMode, WorkerContext},
+    sessions::WorkerContext,
     SessionId,
 };
+use tokio_tungstenite::tungstenite;
 
+use crate::client::RelayWebSocket;
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::relay_adapter::{spawn_relay_adapter, RelayAdapter};
-use crate::worker::report::{RunReport, SessionResume, TokenUsage};
+use crate::worker::relay_adapter::{spawn_pump, RelayAdapter};
+use crate::worker::report::{NativeResume, RunReport, TokenUsage};
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -56,47 +64,23 @@ pub async fn run(
     let job = session;
 
     let WorkerContext {
-        session,
+        session_id: ctx_session_id,
+        mode_kind,
+        mount_spec,
+        agent_config_runtime,
         resolved_env,
         github_token,
         ..
     } = client.get_session_context(&job).await?;
-    let mount_spec = session.mount_spec.clone();
-    let model = session.agent_config.model.clone();
-    let mcp_config_json = session
-        .agent_config
+    debug_assert_eq!(ctx_session_id, job);
+    let model = agent_config_runtime.model.clone();
+    let mcp_config_json = agent_config_runtime
         .mcp_config
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .context("failed to serialize MCP config")?;
-    let (prompt, interactive) = match &session.mode {
-        SessionMode::Headless { prompt, .. } => (prompt.clone(), None),
-        SessionMode::Interactive {
-            conversation_id,
-            idle_timeout_secs,
-            conversation_resume_from,
-        } => (
-            session
-                .agent_config
-                .system_prompt
-                .clone()
-                .unwrap_or_default(),
-            Some(InteractiveOptions::new(
-                Some(conversation_id.clone()),
-                *idle_timeout_secs,
-                *conversation_resume_from,
-            )),
-        ),
-        // The `SessionMode` enum is `#[non_exhaustive]` across the crate
-        // boundary. A future variant should crash loudly here rather than
-        // silently fall through to either branch.
-        other => {
-            return Err(anyhow!(
-                "worker received an unsupported SessionMode: {other:?}"
-            ));
-        }
-    };
+    let interactive = matches!(mode_kind, SessionModeKind::Interactive);
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
         let tmp_path = tmp.keep();
@@ -151,16 +135,10 @@ pub async fn run(
     let agent_start = Instant::now();
 
     let mut run_usage: Option<TokenUsage> = None;
-    let last_message = if let Err(err) =
-        reject_interactive_if_unsupported(&model, interactive.is_some())
-    {
+    let last_message = if let Err(err) = reject_interactive_if_unsupported(&model, interactive) {
         // Fast-path: when the caller asked for interactive but the model
         // name resolves to a wrapper that doesn't support it, bail before
-        // `ModelSelector::from_context` runs any per-worker setup (e.g.
-        // `codex login`, writing `~/.codex/config.toml`, creating the output
-        // tempdir, opening the relay WebSocket). The defense-in-depth guard
-        // inside the `Ok(mut selector)` arm below still rejects the same
-        // case if it somehow reaches construction.
+        // `ModelSelector::from_context` runs any per-worker setup.
         let elapsed = agent_start.elapsed().as_secs_f64();
         log_status(format!(
             "Phase: agent execution — failed during model setup ({elapsed:.2}s): {err}"
@@ -173,12 +151,8 @@ pub async fn run(
     } else {
         let selector_home_dir = worker_home_dir
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
-        let selector_idle_timeout = Duration::from_secs(
-            interactive
-                .as_ref()
-                .and_then(|opts| opts.idle_timeout_secs)
-                .unwrap_or(600),
-        );
+        let selector_idle_timeout =
+            Duration::from_secs(agent_config_runtime.idle_timeout_secs.unwrap_or(600));
 
         let selector_result = ModelSelector::from_context(
             &model,
@@ -203,39 +177,16 @@ pub async fn run(
                     .unwrap_or_else(|| "model setup failed".to_string())
             }
             Ok(mut selector) => {
-                let run_result = if let Some(interactive_opts) = interactive {
-                    log_status("Phase: interactive agent execution — starting");
-                    if matches!(selector, ModelSelector::Codex(_)) {
-                        Err(anyhow!("model {model:?} does not support interactive mode"))
-                    } else {
-                        let conversation_resume_from = interactive_opts.conversation_resume_from;
-                        let ws_stream = client.connect_relay_websocket(&job).await?;
-                        let RelayAdapter {
-                            input_rx,
-                            output_tx,
-                            pump,
-                            initial_resume,
-                        } = spawn_relay_adapter(
-                            ws_stream,
-                            &job,
-                            conversation_resume_from,
-                            &prompt,
-                            selector_home_dir.clone(),
-                            repo_path.clone(),
-                            selector_idle_timeout,
-                        );
-                        let resume: Option<SessionResume> = initial_resume.await.unwrap_or(None);
-                        let report = selector
-                            .run_interactive(input_rx, output_tx, &job, &prompt, resume)
-                            .await;
-                        let _ = pump.await;
-                        report
-                    }
-                } else {
-                    log_status("Phase: agent execution — starting");
-                    let resume: Option<SessionResume> = None;
-                    selector.run(&prompt, resume).await
-                };
+                let run_result = drive_session(
+                    &mut selector,
+                    client.as_ref(),
+                    &job,
+                    mode_kind,
+                    selector_home_dir.clone(),
+                    repo_path.clone(),
+                    selector_idle_timeout,
+                )
+                .await;
 
                 match run_result {
                     Ok(report) => {
@@ -508,6 +459,278 @@ fn reject_interactive_if_unsupported(model: &Option<String>, interactive: bool) 
     } else {
         Ok(())
     }
+}
+
+/// Drive a session end-to-end over the new events WebSocket.
+///
+/// Performs Phase 1 (handshake + ResumeContext + optional native materialize
+/// or transcript fallback), Phase 2 (Ready / FirstMessage exchange + concat),
+/// then dispatches Phase 3 to the appropriate per-mode runner.
+async fn drive_session(
+    selector: &mut ModelSelector,
+    client: &dyn HydraClientInterface,
+    job: &SessionId,
+    mode_kind: SessionModeKind,
+    home_dir: PathBuf,
+    working_dir: PathBuf,
+    idle_timeout: Duration,
+) -> Result<RunReport> {
+    let mut ws = client.connect_relay_websocket(job).await?;
+
+    // Phase 1: handshake.
+    ws_send(&mut ws, &WorkerMessage::Connect(WorkerConnect::Fresh)).await?;
+
+    let resume_context = match ws_recv(&mut ws).await? {
+        ServerMessage::ResumeContext {
+            resume_blob,
+            prior_session_id,
+        } => (resume_blob, prior_session_id),
+        other => bail!("Phase 1: expected ResumeContext, got {other:?}"),
+    };
+    let (resume_blob, prior_session_id) = resume_context;
+
+    // Phase 1: try native materialize, fall back to transcript on Err.
+    let (native_resume, primer_events) = match resume_blob {
+        Some(bytes) => match selector.try_materialize_resume(&bytes) {
+            Ok(native) => (Some(native), Vec::new()),
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    prior_session_id = ?prior_session_id,
+                    "Native resume materialization failed; falling back to transcript"
+                );
+                let events = if let Some(prior) = prior_session_id.clone() {
+                    request_transcript(&mut ws, prior).await?
+                } else {
+                    Vec::new()
+                };
+                (None, events)
+            }
+        },
+        None if prior_session_id.is_some() => {
+            let events = request_transcript(&mut ws, prior_session_id.clone().unwrap()).await?;
+            (None, events)
+        }
+        None => (None, Vec::new()),
+    };
+
+    // Phase 2: signal Ready, await FirstMessage.
+    ws_send(&mut ws, &WorkerMessage::Ready).await?;
+    let first = match ws_recv(&mut ws).await? {
+        ServerMessage::FirstMessage {
+            agent_prompt,
+            user_message,
+        } => (agent_prompt, user_message),
+        other => bail!("Phase 2: expected FirstMessage, got {other:?}"),
+    };
+    let prompt_string =
+        build_prompt_string(&primer_events, first.0.as_deref(), first.1.as_deref())?;
+
+    // Emit a SessionEvent::Resumed once if the native resume succeeded.
+    if native_resume.is_some() {
+        if let Some(from) = prior_session_id.clone() {
+            ws_send(
+                &mut ws,
+                &WorkerMessage::Event {
+                    event: SessionEvent::Resumed {
+                        from_session_id: from,
+                        timestamp: Utc::now(),
+                    },
+                },
+            )
+            .await?;
+        }
+    }
+
+    // Phase 3: dispatch to the per-mode runner.
+    match mode_kind {
+        SessionModeKind::Headless => {
+            // Headless: one-shot run-and-close. Close the WS for inbound
+            // messages but keep it open for sending output events via the
+            // pump (we send everything through the pump for uniformity).
+            drive_headless(
+                selector,
+                ws,
+                job,
+                &prompt_string,
+                native_resume,
+                home_dir,
+                working_dir,
+                idle_timeout,
+            )
+            .await
+        }
+        SessionModeKind::Interactive => {
+            drive_interactive(
+                selector,
+                ws,
+                job,
+                &prompt_string,
+                native_resume,
+                home_dir,
+                working_dir,
+                idle_timeout,
+            )
+            .await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drive_headless(
+    selector: &mut ModelSelector,
+    ws: RelayWebSocket,
+    job: &SessionId,
+    prompt: &str,
+    resume: Option<NativeResume>,
+    home_dir: PathBuf,
+    working_dir: PathBuf,
+    idle_timeout: Duration,
+) -> Result<RunReport> {
+    log_status("Phase: agent execution — starting");
+    // Spawn the relay pump in passive mode: the model output is forwarded as
+    // SessionEvents over the WS, inbound user messages are dropped.
+    let RelayAdapter {
+        input_rx: _input_rx,
+        output_tx,
+        pump,
+    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout);
+
+    // For headless, we use `run_with_native` (not `run_interactive_*`) because
+    // the model is a one-shot. The events the wrapper produces are forwarded
+    // through `output_tx` by way of the wrapper's internal channel — but
+    // `run_with_native` doesn't accept an output_tx today. To keep parity, we
+    // emit a synthesized AssistantMessage on completion. Streaming per-event
+    // forwarding for headless is a follow-up.
+    let _ = output_tx; // keep the pump alive
+    let report = selector.run_with_native(prompt, resume).await;
+    let _ = pump.await;
+    report
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drive_interactive(
+    selector: &mut ModelSelector,
+    ws: RelayWebSocket,
+    job: &SessionId,
+    prompt: &str,
+    resume: Option<NativeResume>,
+    home_dir: PathBuf,
+    working_dir: PathBuf,
+    idle_timeout: Duration,
+) -> Result<RunReport> {
+    log_status("Phase: interactive agent execution — starting");
+    if matches!(selector, ModelSelector::Codex(_)) {
+        return Err(anyhow!("model does not support interactive mode"));
+    }
+    let RelayAdapter {
+        input_rx,
+        output_tx,
+        pump,
+    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout);
+    let report = selector
+        .run_interactive_with_native(input_rx, output_tx, prompt, resume)
+        .await;
+    let _ = pump.await;
+    report
+}
+
+async fn ws_send(ws: &mut RelayWebSocket, msg: &WorkerMessage) -> Result<()> {
+    let json = serde_json::to_string(msg).context("serialize WorkerMessage")?;
+    ws.send(tungstenite::Message::Text(json))
+        .await
+        .map_err(|e| anyhow!("WebSocket send failed: {e}"))
+}
+
+async fn ws_recv(ws: &mut RelayWebSocket) -> Result<ServerMessage> {
+    loop {
+        let frame = ws
+            .next()
+            .await
+            .ok_or_else(|| anyhow!("WebSocket closed before message received"))?
+            .map_err(|e| anyhow!("WebSocket read failed: {e}"))?;
+        match frame {
+            tungstenite::Message::Text(text) => {
+                return serde_json::from_str::<ServerMessage>(&text)
+                    .with_context(|| format!("parse ServerMessage: {text}"));
+            }
+            tungstenite::Message::Ping(p) => {
+                let _ = ws.send(tungstenite::Message::Pong(p)).await;
+            }
+            tungstenite::Message::Close(_) => {
+                bail!("WebSocket closed mid-protocol");
+            }
+            _ => continue,
+        }
+    }
+}
+
+async fn request_transcript(
+    ws: &mut RelayWebSocket,
+    prior_session_id: SessionId,
+) -> Result<Vec<SessionEvent>> {
+    ws_send(ws, &WorkerMessage::RequestTranscript { prior_session_id }).await?;
+    match ws_recv(ws).await? {
+        ServerMessage::Transcript { events } => Ok(events),
+        other => bail!("expected Transcript, got {other:?}"),
+    }
+}
+
+/// Concatenate primer + agent_prompt + user_message into one string. Returns
+/// an error if both agent_prompt and user_message are None (and primer is
+/// empty too).
+fn build_prompt_string(
+    primer_events: &[SessionEvent],
+    agent_prompt: Option<&str>,
+    user_message: Option<&str>,
+) -> Result<String> {
+    let primer = build_primer(primer_events);
+    let body = match (agent_prompt, user_message) {
+        (Some(p), Some(u)) => format!("{p}\n\n{u}"),
+        (Some(p), None) => p.to_string(),
+        (None, Some(u)) => u.to_string(),
+        (None, None) => {
+            if primer.is_empty() {
+                bail!("FirstMessage: both agent_prompt and user_message are None");
+            }
+            String::new()
+        }
+    };
+    Ok(if primer.is_empty() {
+        body
+    } else if body.is_empty() {
+        primer
+    } else {
+        format!("{primer}\n\n{body}")
+    })
+}
+
+fn build_primer(events: &[SessionEvent]) -> String {
+    if events.is_empty() {
+        return String::new();
+    }
+    let mut buf = String::from(
+        "<prior-conversation>\nThe user and I had this prior conversation. \
+         Treat this as historical context only. Respond to the next user \
+         message after this block.\n\n",
+    );
+    for event in events {
+        match event {
+            SessionEvent::UserMessage { content, .. } => {
+                buf.push_str("User: ");
+                buf.push_str(content);
+                buf.push('\n');
+            }
+            SessionEvent::AssistantMessage { content, .. } => {
+                buf.push_str("Assistant: ");
+                buf.push_str(content);
+                buf.push('\n');
+            }
+            _ => {}
+        }
+    }
+    buf.push_str("</prior-conversation>");
+    buf
 }
 
 #[cfg(test)]

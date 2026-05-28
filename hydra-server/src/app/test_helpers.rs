@@ -27,8 +27,7 @@ pub fn sample_task() -> Session {
         None,
         None,
         SessionMode::Headless {
-            prompt: "Spawn me".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         Status::Created,
         None,
@@ -53,8 +52,7 @@ pub fn task_for_issue_with_status(issue_id: &IssueId, status: Status) -> Session
         None,
         None,
         SessionMode::Headless {
-            prompt: "Spawn me".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         status,
         None,

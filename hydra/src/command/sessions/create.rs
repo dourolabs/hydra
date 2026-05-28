@@ -52,8 +52,7 @@ pub async fn run(
     };
     let request = CreateSessionRequest {
         mode: SessionMode::Headless {
-            prompt,
-            conversation_id: None,
+            conversation_id: Some(hydra_common::ConversationId::new()),
         },
         agent_config: AgentConfig::default(),
         mount_spec,
@@ -64,6 +63,7 @@ pub async fn run(
         secrets: None,
         spawned_from: issue_id,
         resumed_from: None,
+        initial_prompt: Some(prompt),
     };
     let response = client.create_session(&request).await?;
     let session_id = response.session_id;
@@ -359,8 +359,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "0".to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
             status,
             None,

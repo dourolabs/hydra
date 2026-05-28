@@ -87,7 +87,7 @@ mod tests {
     use chrono::Utc;
     use futures::{channel::mpsc, SinkExt, StreamExt};
     use hydra_common::api::v1::{
-        conversations::{ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage},
+        conversations::{ServerMessage, WorkerConnect, WorkerMessage},
         sessions::SessionEvent,
     };
 
@@ -172,7 +172,7 @@ mod tests {
 
         // Worker sends a Connect handshake. (Phase-1 wire variants gain new
         // shapes in PR-3; here we use whatever exists on main today —
-        // `WorkerConnect::Fresh { resume_from_event_index: None }`, wrapped
+        // `WorkerConnect::Fresh`, wrapped
         // in a `WorkerMessage` via `serde_json` round-trip through the
         // existing `WorkerMessage::Event` variant, which is the most stable
         // surface available pre-PR-3.)
@@ -208,20 +208,18 @@ mod tests {
         }
 
         // Server sends a CatchUp back; worker recv()s it as a ServerMessage.
-        let cu = ServerMessage::CatchUp(WorkerCatchUp { events: vec![] });
+        let cu = ServerMessage::CatchUp { events: vec![] };
         server.send_raw_server_message(&cu).await;
         let got = worker.recv().await.unwrap().expect("server message");
         match got {
-            ServerMessage::CatchUp(WorkerCatchUp { events }) => assert!(events.is_empty()),
+            ServerMessage::CatchUp { events } => assert!(events.is_empty()),
             other => panic!("expected CatchUp, got {other:?}"),
         }
 
         // Verifies the `WorkerConnect` (Phase-1) variant also round-trips
         // through serde — this is what PR-3 will feed through the typed
         // send path once `WorkerMessage::Connect` lands.
-        let handshake = WorkerConnect::Fresh {
-            resume_from_event_index: None,
-        };
+        let handshake = WorkerConnect::Fresh;
         let json = serde_json::to_string(&handshake).unwrap();
         let parsed: WorkerConnect = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, handshake);
@@ -260,11 +258,11 @@ mod tests {
             .send(tungstenite::Message::Ping(vec![1, 2, 3]))
             .await
             .unwrap();
-        let cu = ServerMessage::CatchUp(WorkerCatchUp { events: vec![] });
+        let cu = ServerMessage::CatchUp { events: vec![] };
         server.send_raw_server_message(&cu).await;
 
         let got = worker.recv().await.unwrap().expect("server message");
-        assert!(matches!(got, ServerMessage::CatchUp(_)));
+        assert!(matches!(got, ServerMessage::CatchUp { .. }));
 
         // Server side should have received an automatic Pong.
         let raw = server.inner.next().await.expect("pong frame").unwrap();

@@ -31,23 +31,22 @@ pub struct InteractiveOptions {
     /// long without a user message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_timeout_secs: Option<u64>,
-    /// When resuming a conversation, the event index to resume from. The worker
-    /// sends this in the WorkerConnect handshake so the server only replays
-    /// events after this index and includes session state for resumption.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
+    /// When set, the model produces a greeting as its first turn instead of
+    /// blocking for a user message at session start.
+    #[serde(default)]
+    pub greet_user: bool,
 }
 
 impl InteractiveOptions {
     pub fn new(
         conversation_id: Option<ConversationId>,
         idle_timeout_secs: Option<u64>,
-        conversation_resume_from: Option<usize>,
+        greet_user: bool,
     ) -> Self {
         Self {
             conversation_id,
             idle_timeout_secs,
-            conversation_resume_from,
+            greet_user,
         }
     }
 }
@@ -112,31 +111,21 @@ impl AgentConfig {
 
 /// First-class discriminant for the two kinds of sessions Hydra runs.
 ///
-/// A session is in exactly one mode at a time; making the mode an enum
-/// kills the previous `(prompt, interactive)` cross-field validation.
-/// Resumption is **not** a mode — it's the lineage edge
-/// `Session::resumed_from`.
+/// A session is in exactly one mode at a time. Resumption is **not** a mode
+/// — it's the lineage edge `Session::resumed_from`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SessionMode {
-    /// One-shot headless task. The prompt drives the whole run.
-    ///
-    /// Historically the only field was `prompt`. The
-    /// sessions/worker_run interface redesign (PR-2,
-    /// `/designs/sessions-worker-run-interface.md` §4) introduces a
-    /// per-headless-session `conversation_id`: the prompt moves to the
-    /// conversation's first `SessionEvent::UserMessage`, and the worker
-    /// resolves it from there in PR-3. Both fields stay `Option`-typed
-    /// during PR-2 so the deserializer accepts the legacy `{ prompt }`
-    /// shape and the post-migration `{ conversation_id }` shape; PR-3
-    /// drops `prompt` and tightens `conversation_id` to a required
-    /// field.
+    /// One-shot headless task. The session is attached to a single
+    /// conversation; its first `UserMessage` event is the prompt the
+    /// worker feeds to the model. `conversation_id` is `None` only on
+    /// the API request side — the server auto-creates the conversation
+    /// and stamps the id during `create_session`; persisted sessions
+    /// always carry `Some(_)`.
     Headless {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        prompt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation_id: Option<ConversationId>,
     },
@@ -149,44 +138,49 @@ pub enum SessionMode {
         /// and for legacy rows that don't carry one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idle_timeout_secs: Option<u64>,
-        /// Event-index resumption marker. See
-        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
-        /// state-blob direction. Belongs inside the `Interactive` variant because
-        /// resumption is only meaningful for interactive sessions; making it part of
-        /// the mode means a `Headless` session can never carry a meaningless value.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        conversation_resume_from: Option<usize>,
+        /// When `true`, the server sends the agent prompt as the first
+        /// `FirstMessage` without waiting for a user message — the model
+        /// produces a greeting as its first turn. Defaults to `false`.
+        #[serde(default)]
+        greet_user: bool,
     },
 }
 
 impl SessionMode {
-    /// Convenience accessor for the linked conversation. Returns the
-    /// `Headless.conversation_id` once PR-2's backfill has stamped one
-    /// on the row (legacy rows still return `None`); always returns
-    /// `Some` for `Interactive`.
+    /// Returns the linked conversation id, when one has been stamped.
+    /// Persisted sessions always have one; the only `None` case is a
+    /// freshly-built `Headless` request that hasn't yet hit the server's
+    /// `create_session` (which auto-creates the conversation row).
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         match self {
-            SessionMode::Headless {
-                conversation_id, ..
-            } => conversation_id.as_ref(),
+            SessionMode::Headless { conversation_id } => conversation_id.as_ref(),
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
         }
     }
 
-    /// Returns the conversation event index to resume from, if any. Always
-    /// `None` for headless sessions because resumption is only meaningful
-    /// for interactive runs.
-    pub fn conversation_resume_from(&self) -> Option<usize> {
+    /// Tag-only kind discriminator used by the worker to decide whether to
+    /// expect a long-running interactive pump or a one-shot run.
+    pub fn kind(&self) -> SessionModeKind {
         match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => *conversation_resume_from,
-            SessionMode::Headless { .. } => None,
+            SessionMode::Headless { .. } => SessionModeKind::Headless,
+            SessionMode::Interactive { .. } => SessionModeKind::Interactive,
         }
     }
+}
+
+/// Payload-less discriminator carved out of [`SessionMode`]. Carried on
+/// [`WorkerContext`] so the worker knows whether to drop inbound user
+/// messages (headless) or service them (interactive) without needing the
+/// full mode payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum SessionModeKind {
+    Headless,
+    Interactive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,7 +286,9 @@ impl Session {
         }
     }
 
-    /// The linked conversation, if this is an interactive session.
+    /// The linked conversation. Persisted sessions always have one; the
+    /// `None` case is only an in-flight `CreateSessionRequest` whose
+    /// `Headless.conversation_id` is being auto-resolved server-side.
     pub fn conversation_id(&self) -> Option<&ConversationId> {
         self.mode.conversation_id()
     }
@@ -330,6 +326,13 @@ pub struct CreateSessionRequest {
     pub spawned_from: Option<IssueId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<SessionId>,
+    /// Initial user-message content for this session. Required for fresh
+    /// (non-resumed) headless sessions: the server seeds the conversation's
+    /// first `SessionEvent::UserMessage` from this string. Optional for
+    /// interactive sessions, in which case the first user turn arrives via
+    /// the relay WebSocket later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -586,43 +589,72 @@ impl<'de> Deserialize<'de> for MountItem {
     }
 }
 
-/// Opaque serialized session state included in a resumed session's
-/// [`WorkerContext`]. Reserved for the §3 resumption design.
+/// Slimmed [`AgentConfig`] carrying only the fields the worker's wrapper
+/// binary needs at startup — model name, MCP config, idle timeout. The
+/// system prompt is **not** here: it now flows as model input via
+/// [`crate::api::v1::conversations::ServerMessage::FirstMessage::agent_prompt`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-pub struct SessionStateBlob(pub Vec<u8>);
+#[non_exhaustive]
+pub struct AgentConfigRuntime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
+}
 
-/// Everything a worker needs to run a session. The embedded [`Session`]
-/// is the single source of truth for mount layout, agent config, and
-/// mode; per-fetch resolutions (`resolved_env`, `github_token`,
-/// `resumed_state`) live alongside it but are never persisted.
+impl AgentConfigRuntime {
+    pub fn new(
+        model: Option<String>,
+        mcp_config: Option<McpConfig>,
+        idle_timeout_secs: Option<u64>,
+    ) -> Self {
+        Self {
+            model,
+            mcp_config,
+            idle_timeout_secs,
+        }
+    }
+}
+
+/// Orchestration-only data a worker needs to boot. Model-input data —
+/// prompt, user message, resume blob — does NOT live here; it flows via
+/// the websocket protocol in `hydra-common::api::v1::conversations`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct WorkerContext {
-    pub session: Session,
+    pub session_id: SessionId,
+    pub mode_kind: SessionModeKind,
+    pub mount_spec: MountSpec,
+    #[serde(default)]
+    pub agent_config_runtime: AgentConfigRuntime,
     #[serde(default)]
     pub resolved_env: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_token: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resumed_state: Option<SessionStateBlob>,
 }
 
 impl WorkerContext {
     pub fn new(
-        session: Session,
+        session_id: SessionId,
+        mode_kind: SessionModeKind,
+        mount_spec: MountSpec,
+        agent_config_runtime: AgentConfigRuntime,
         resolved_env: HashMap<String, String>,
         github_token: Option<String>,
-        resumed_state: Option<SessionStateBlob>,
     ) -> Self {
         Self {
-            session,
+            session_id,
+            mode_kind,
+            mount_spec,
+            agent_config_runtime,
             resolved_env,
             github_token,
-            resumed_state,
         }
     }
 }
@@ -685,17 +717,9 @@ pub struct SessionSummary {
 
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
-        let raw_prompt = match &session.mode {
-            SessionMode::Headless { prompt, .. } => prompt.as_str(),
-            SessionMode::Interactive { .. } => "",
-        };
-        let prompt = if raw_prompt.chars().count() > 20 {
-            let mut s: String = raw_prompt.chars().take(20).collect();
-            s.push_str("...");
-            s
-        } else {
-            raw_prompt.to_string()
-        };
+        // The headless prompt now lives on the conversation's first
+        // UserMessage event; SessionSummary no longer carries it inline.
+        let prompt = String::new();
         let error = session.error.as_ref().map(|e| match e {
             TaskError::JobEngineError { reason } => {
                 if reason.chars().count() > 100 {
@@ -1165,7 +1189,7 @@ mod tests {
         );
     }
 
-    fn make_test_session(prompt: &str) -> Session {
+    fn make_test_session(_prompt: &str) -> Session {
         Session::new(
             Username::from("alice"),
             Some(IssueId::new()),
@@ -1178,8 +1202,7 @@ mod tests {
             Some("1Gi".to_string()),
             Some(vec!["secret".to_string()]),
             SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: Some(crate::ConversationId::new()),
             },
             Status::Running,
             Some("last message text".to_string()),
@@ -1201,21 +1224,6 @@ mod tests {
     }
 
     #[test]
-    fn session_summary_truncates_long_prompt() {
-        let long_prompt = "x".repeat(500);
-        let session = make_test_session(&long_prompt);
-        let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, format!("{}...", "x".repeat(20)));
-    }
-
-    #[test]
-    fn session_summary_preserves_short_prompt() {
-        let session = make_test_session("short prompt");
-        let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, "short prompt");
-    }
-
-    #[test]
     fn session_summary_excludes_heavy_fields() {
         let session = make_test_session("test prompt");
         let summary = SessionSummary::from(&session);
@@ -1234,7 +1242,7 @@ mod tests {
     fn session_summary_maps_all_fields() {
         let session = make_test_session("my prompt");
         let summary = SessionSummary::from(&session);
-        assert_eq!(summary.prompt, "my prompt");
+        assert_eq!(summary.prompt, "");
         assert!(summary.spawned_from.is_some());
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.status, Status::Running);
@@ -1243,8 +1251,8 @@ mod tests {
         assert!(summary.creation_time.is_some());
         assert!(summary.start_time.is_some());
         assert!(summary.end_time.is_none());
-        // One-shot session has no `interactive`, so no linked conversation.
-        assert!(summary.conversation_id.is_none());
+        // Every session is attached to a conversation.
+        assert!(summary.conversation_id.is_some());
         // The fixture leaves usage unset.
         assert!(summary.usage.is_none());
     }
@@ -1286,7 +1294,7 @@ mod tests {
         session.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: Some(600),
-            conversation_resume_from: None,
+            greet_user: false,
         };
         let summary = SessionSummary::from(&session);
         assert_eq!(summary.conversation_id.as_ref(), Some(&conv_id));
@@ -1299,15 +1307,6 @@ mod tests {
     }
 
     #[test]
-    fn session_summary_omits_conversation_id_when_absent() {
-        let session = make_test_session("one-shot prompt");
-        let summary = SessionSummary::from(&session);
-        assert!(summary.conversation_id.is_none());
-        let value = serde_json::to_value(&summary).unwrap();
-        assert!(value.get("conversation_id").is_none());
-    }
-
-    #[test]
     fn session_summary_record_from_version_record() {
         let session = make_test_session("record test");
         let session_id = crate::SessionId::new();
@@ -1316,7 +1315,7 @@ mod tests {
         let summary_record = SessionSummaryRecord::from(&record);
         assert_eq!(summary_record.session_id, session_id);
         assert_eq!(summary_record.version, 7);
-        assert_eq!(summary_record.session.prompt, "record test");
+        assert_eq!(summary_record.session.prompt, "");
         assert_eq!(summary_record.actor, None);
     }
 
@@ -1403,13 +1402,13 @@ mod tests {
 
     #[test]
     fn session_mode_round_trips_headless_and_interactive() {
+        let headless_conv_id = crate::ConversationId::new();
         let headless = SessionMode::Headless {
-            prompt: "go".to_string(),
-            conversation_id: None,
+            conversation_id: Some(headless_conv_id.clone()),
         };
         let h_json = serde_json::to_value(&headless).unwrap();
         assert_eq!(h_json["type"], "headless");
-        assert_eq!(h_json["prompt"], "go");
+        assert_eq!(h_json["conversation_id"], headless_conv_id.as_ref());
         let parsed: SessionMode = serde_json::from_value(h_json).unwrap();
         assert_eq!(parsed, headless);
 
@@ -1417,13 +1416,13 @@ mod tests {
         let interactive = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: Some(300),
-            conversation_resume_from: Some(7),
+            greet_user: true,
         };
         let i_json = serde_json::to_value(&interactive).unwrap();
         assert_eq!(i_json["type"], "interactive");
         assert_eq!(i_json["conversation_id"], conv_id.as_ref());
         assert_eq!(i_json["idle_timeout_secs"], 300);
-        assert_eq!(i_json["conversation_resume_from"], 7);
+        assert_eq!(i_json["greet_user"], true);
         let parsed: SessionMode = serde_json::from_value(i_json).unwrap();
         assert_eq!(parsed, interactive);
     }
@@ -1509,7 +1508,7 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1520,6 +1519,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
 
         let json = serde_json::to_value(&request).unwrap();
@@ -1536,10 +1536,10 @@ mod tests {
 
     #[test]
     fn create_session_request_round_trips_headless_mode() {
+        let conv_id = crate::ConversationId::new();
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-                conversation_id: None,
+                conversation_id: Some(conv_id.clone()),
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1550,67 +1550,43 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: Some("do stuff".to_string()),
         };
 
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["mode"]["type"], "headless");
-        assert_eq!(json["mode"]["prompt"], "do stuff");
+        assert_eq!(json["mode"]["conversation_id"], conv_id.as_ref());
         // Optional/empty fields are omitted on the wire.
         assert!(json.get("spawned_from").is_none());
         assert!(json.get("resumed_from").is_none());
     }
 
     #[test]
-    fn worker_context_serializes_session_agent_config_mcp_config() {
-        let mcp_config = serde_json::json!({
-            "mcpServers": {
-                "browser": {"command": "mcp-browser"}
-            }
-        });
-        let mut session = make_test_session("test prompt");
-        session.agent_config.mcp_config = Some(mcp_config.clone());
-        let context = WorkerContext::new(session, HashMap::new(), None, None);
-
-        let json = serde_json::to_value(&context).unwrap();
-        assert_eq!(
-            json["session"]["agent_config"].get("mcp_config").unwrap(),
-            &mcp_config
+    fn worker_context_round_trips() {
+        let session_id = SessionId::new();
+        let runtime = AgentConfigRuntime::new(
+            Some("claude-3".to_string()),
+            Some(serde_json::json!({"mcpServers": {}})),
+            Some(600),
         );
-
-        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(
-            deserialized.session.agent_config.mcp_config,
-            Some(mcp_config)
+        let context = WorkerContext::new(
+            session_id.clone(),
+            SessionModeKind::Interactive,
+            test_mount_spec(),
+            runtime.clone(),
+            HashMap::from([("KEY".to_string(), "VAL".to_string())]),
+            Some("ghp_test".to_string()),
         );
-    }
-
-    #[test]
-    fn worker_context_serializes_interactive_mode_on_session() {
-        let conv_id = crate::ConversationId::new();
-        let mut session = make_test_session("test prompt");
-        session.mode = SessionMode::Interactive {
-            conversation_id: conv_id.clone(),
-            idle_timeout_secs: Some(600),
-            conversation_resume_from: Some(42),
-        };
-        let context = WorkerContext::new(session, HashMap::new(), None, None);
-
         let json = serde_json::to_value(&context).unwrap();
-        let mode = &json["session"]["mode"];
-        assert_eq!(mode["type"], "interactive");
-        assert_eq!(mode["idle_timeout_secs"], 600);
-        assert_eq!(mode["conversation_resume_from"], 42);
-        assert_eq!(mode["conversation_id"], conv_id.as_ref());
-
-        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
-        assert!(matches!(
-            deserialized.session.mode,
-            SessionMode::Interactive {
-                idle_timeout_secs: Some(600),
-                conversation_resume_from: Some(42),
-                ..
-            }
-        ));
+        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.session_id, session_id);
+        assert_eq!(parsed.mode_kind, SessionModeKind::Interactive);
+        assert_eq!(parsed.agent_config_runtime, runtime);
+        assert_eq!(
+            parsed.resolved_env.get("KEY").map(String::as_str),
+            Some("VAL")
+        );
+        assert_eq!(parsed.github_token.as_deref(), Some("ghp_test"));
     }
 
     #[test]
@@ -1816,83 +1792,15 @@ mod tests {
     }
 
     #[test]
-    fn worker_context_requires_session_for_deserialization() {
+    fn worker_context_requires_session_id_for_deserialization() {
         let json = serde_json::json!({
             "resolved_env": {},
         });
         let result: Result<WorkerContext, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
-            "WorkerContext deserialization must fail without session",
+            "WorkerContext deserialization must fail without session_id",
         );
-    }
-
-    #[test]
-    fn worker_context_drops_legacy_top_level_fields() {
-        let session = make_test_session("legacy check");
-        let context = WorkerContext::new(session, HashMap::new(), None, None);
-        let json = serde_json::to_value(&context).unwrap();
-        for legacy in [
-            "prompt",
-            "model",
-            "variables",
-            "mcp_config",
-            "interactive",
-            "mount_spec",
-            "request_context",
-            "build_cache",
-        ] {
-            assert!(
-                json.get(legacy).is_none(),
-                "serialized payload must not include legacy {legacy}"
-            );
-        }
-    }
-
-    #[test]
-    fn worker_context_round_trips_embedded_session() {
-        let session = make_test_session("embedded round trip");
-        let context = WorkerContext::new(
-            session.clone(),
-            HashMap::from([("KEY".to_string(), "VAL".to_string())]),
-            Some("ghp_test".to_string()),
-            None,
-        );
-        let json = serde_json::to_value(&context).unwrap();
-        assert!(
-            json.get("session").is_some(),
-            "session field must serialize"
-        );
-        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.session, session);
-        assert_eq!(
-            parsed.resolved_env.get("KEY").map(String::as_str),
-            Some("VAL")
-        );
-        assert_eq!(parsed.github_token.as_deref(), Some("ghp_test"));
-        assert!(parsed.resumed_state.is_none());
-    }
-
-    #[test]
-    fn worker_context_omits_resumed_state_when_none() {
-        let session = make_test_session("no resumed state");
-        let context = WorkerContext::new(session, HashMap::new(), None, None);
-        let json = serde_json::to_value(&context).unwrap();
-        assert!(
-            json.get("resumed_state").is_none(),
-            "resumed_state must be skipped when None"
-        );
-    }
-
-    #[test]
-    fn worker_context_round_trips_resumed_state() {
-        let session = make_test_session("with resumed state");
-        let blob = SessionStateBlob(vec![0xde, 0xad, 0xbe, 0xef]);
-        let context = WorkerContext::new(session, HashMap::new(), None, Some(blob.clone()));
-        let json = serde_json::to_value(&context).unwrap();
-        assert!(json.get("resumed_state").is_some());
-        let parsed: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.resumed_state, Some(blob));
     }
 
     #[test]

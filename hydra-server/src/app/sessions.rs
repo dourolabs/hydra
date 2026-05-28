@@ -134,6 +134,7 @@ impl AppState {
             secrets: req_secrets,
             spawned_from,
             resumed_from,
+            initial_prompt,
             ..
         } = request;
 
@@ -310,31 +311,23 @@ impl AppState {
         }
 
         let agent_config = AgentConfig::new(agent_name.clone(), model, system_prompt, mcp_config);
-        let mode: SessionMode = req_mode.into();
 
-        // PR-2 write-side: for fresh headless sessions, materialize a
-        // Conversation row up front so the new `tasks_v2.mode.conversation_id`
-        // is populated at create time. The first `SessionEvent::UserMessage`
-        // is then appended below — keyed by the just-assigned `session_id` so
+        // PR-3 write-side: for fresh headless sessions, materialize a
+        // Conversation row up front so the persisted session's mode carries
+        // a real conversation_id. The first `SessionEvent::UserMessage` is
+        // then appended below — keyed by the just-assigned `session_id` so
         // the worker's `get_session_events` lookup surfaces the prompt
-        // uniformly across modes (per design doc §2.2 / §5 PR-2 scope and
-        // parent issue i-ygaugkot). `Headless.prompt` is preserved vestigially
-        // so the read-side fallback that PR-2 ships continues to work; PR-3
-        // drops the field from the type along with the wire cutover.
+        // uniformly across modes (per design doc §1.4 / §2.2).
         //
         // The three writes (conversation, session, session event) are not
         // wrapped in a cross-store transaction: the per-store mutation
         // primitives don't expose one, and adding one would balloon the PR.
-        // The headless backfill migration already handles the equivalent
-        // recovery case at boot — a partial create (e.g., conversation
-        // written but session insert failed) would simply re-trigger the
-        // backfill on the next process start, which is idempotent.
-        let (mode, headless_first_message) = match mode {
-            SessionMode::Headless {
-                prompt,
-                conversation_id,
-            } => {
-                let conversation_id = match conversation_id {
+        // A partial create (conversation written, session insert failed)
+        // leaves an orphan conversation row, which is benign — no session
+        // references it.
+        let (resolved_mode, headless_first_message) = match req_mode {
+            api::sessions::SessionMode::Headless { conversation_id } => {
+                let resolved_id = match conversation_id {
                     Some(existing) => existing,
                     None => {
                         let conversation = crate::domain::conversations::Conversation {
@@ -353,20 +346,27 @@ impl AppState {
                         id
                     }
                 };
-                let first_message = SessionEvent::UserMessage {
-                    content: prompt.clone(),
-                    timestamp: Utc::now(),
-                };
+                // For fresh headless sessions, `initial_prompt` becomes the
+                // first `SessionEvent::UserMessage`. Resumed sessions
+                // inherit the prompt from the prior session's history, so
+                // the caller may omit it.
+                let first_message =
+                    initial_prompt
+                        .clone()
+                        .map(|content| SessionEvent::UserMessage {
+                            content,
+                            timestamp: Utc::now(),
+                        });
                 (
                     SessionMode::Headless {
-                        prompt,
-                        conversation_id: Some(conversation_id),
+                        conversation_id: resolved_id,
                     },
-                    Some(first_message),
+                    first_message,
                 )
             }
-            other => (other, None),
+            other => (other.into(), None),
         };
+        let mode = resolved_mode;
 
         let mut session = Session::new(
             creator,
@@ -1595,8 +1595,7 @@ mod tests {
         // from. Pre-fix this produced an empty `mounts: []`.
         let headless_request = CreateSessionRequest {
             mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1607,6 +1606,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
         let (headless_id, _) = state
             .create_session(
@@ -1655,7 +1655,7 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1666,6 +1666,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
         let (chat_id, _) = state
             .create_session(chat_request, ActorRef::test(), Username::from("creator"))
@@ -1701,8 +1702,7 @@ mod tests {
         // Headless session — no conversation lookup, no spawned_from.
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
-                prompt: "do stuff".to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1713,6 +1713,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
         let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
@@ -1751,7 +1752,7 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1762,6 +1763,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
         let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
@@ -1814,7 +1816,7 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentConfig::default(),
             mount_spec: MountSpec::default(),
@@ -1825,6 +1827,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: None,
         };
         let (session_id, _) = state
             .create_session(request, ActorRef::test(), Username::from("creator"))
@@ -1855,7 +1858,6 @@ mod tests {
         let state = state_with_default_model("default-model");
         let request = CreateSessionRequest {
             mode: SessionMode::Headless {
-                prompt: "what is the time".to_string(),
                 conversation_id: None,
             },
             agent_config: AgentConfig::default(),
@@ -1867,6 +1869,7 @@ mod tests {
             secrets: None,
             spawned_from: None,
             resumed_from: None,
+            initial_prompt: Some("what is the time".to_string()),
         };
 
         let (session_id, _) = state
@@ -1886,9 +1889,8 @@ mod tests {
         //    AND conversation_id is now `Some(_)`.
         let conv_id = match &session.mode {
             crate::domain::sessions::SessionMode::Headless {
-                prompt,
-                conversation_id: Some(conv_id),
-            } if prompt == "what is the time" => conv_id.clone(),
+                conversation_id: conv_id,
+            } => conv_id.clone(),
             other => panic!("expected Headless with conversation_id, got {other:?}"),
         };
 

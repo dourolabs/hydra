@@ -52,7 +52,6 @@ fn create_session_request_with_repo_url(
     );
     CreateSessionRequest {
         mode: SessionMode::Headless {
-            prompt: prompt.to_string(),
             conversation_id: None,
         },
         agent_config: AgentConfig::default(),
@@ -62,6 +61,7 @@ fn create_session_request_with_repo_url(
         cpu_limit: None,
         memory_limit: None,
         secrets: None,
+        initial_prompt: Some(prompt.to_string()),
         spawned_from: issue_id,
         resumed_from: None,
     }

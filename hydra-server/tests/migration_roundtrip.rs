@@ -1379,12 +1379,9 @@ async fn smoke_read_sessions(store: &PostgresStoreV2) -> Result<()> {
         .context("Store::get_session(s-headalpha)")?;
     let conv_id = match &session.item.mode {
         SessionMode::Headless {
-            prompt,
-            conversation_id: Some(conv_id),
-        } if prompt == "do a thing" => conv_id.clone(),
-        other => bail!(
-            "s-headalpha: expected Headless('do a thing') with conversation_id; got {other:?}"
-        ),
+            conversation_id: conv_id,
+        } => conv_id.clone(),
+        other => bail!("s-headalpha: expected Headless with conversation_id; got {other:?}"),
     };
 
     // First session_event on the backfilled conversation is the original
@@ -1575,8 +1572,7 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         None,
         None,
         SessionMode::Headless {
-            prompt: "smoke: do a thing".to_string(),
-            conversation_id: None,
+            conversation_id: hydra_common::ConversationId::new(),
         },
         Status::Complete,
         None,
@@ -1591,7 +1587,7 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         .await
         .context("Store::get_session post-migration")?;
     match &fetched.item.mode {
-        SessionMode::Headless { prompt, .. } if prompt == "smoke: do a thing" => Ok(()),
+        SessionMode::Headless { .. } => Ok(()),
         other => bail!(
             "post-migration create_session did not round-trip SessionMode::Headless; got {other:?}"
         ),

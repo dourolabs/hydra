@@ -1853,8 +1853,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
             memory_limit: None,
             secrets: None,
             mode: SessionMode::Headless {
-                prompt: "0".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             status: Status::Created,
             last_message: None,

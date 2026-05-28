@@ -385,7 +385,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     };
     let create_session_request = CreateSessionRequest {
         mode: ApiSessionMode::Headless {
-            prompt: "test prompt".to_string(),
             conversation_id: None,
         },
         agent_config: ApiAgentConfig::default(),
@@ -397,6 +396,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         secrets: None,
         spawned_from: None,
         resumed_from: None,
+        initial_prompt: Some("test prompt".to_string()),
     };
     let created_session = client.create_session(&create_session_request).await?;
     assert_eq!(created_session.session_id, job_id);
@@ -444,7 +444,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let context = client.get_session_context(&job_id).await?;
     let bundle_item = context
-        .session
         .mount_spec
         .mounts
         .first()
@@ -829,30 +828,28 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
 
 fn forward_worker_context_json() -> Value {
     json!({
-        "session": {
-            "creator": "future-creator",
-            "agent_config": {
-                "model": "future-model",
-                "extra_agent_field": true
-            },
-            "mount_spec": {
-                "working_dir": "repo",
-                "mounts": [
-                    {
-                        "type": "bundle",
-                        "target": "repo",
-                        "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
-                        "session_id": "s-forwardct",
-                    },
-                    {"type": "documents", "target": "documents"}
-                ],
-                "note": "future-only key inside spec"
-            },
-            "mode": { "type": "headless", "prompt": "worker prompt" },
-            "future_field": "future"
+        "session_id": "s-forwardct",
+        "mode_kind": "headless",
+        "mount_spec": {
+            "working_dir": "repo",
+            "mounts": [
+                {
+                    "type": "bundle",
+                    "target": "repo",
+                    "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
+                    "session_id": "s-forwardct",
+                },
+                {"type": "documents", "target": "documents"}
+            ],
+            "note": "future-only key inside spec"
+        },
+        "agent_config_runtime": {
+            "model": "future-model",
+            "extra_agent_field": true
         },
         "resolved_env": { "foo": "bar" },
         "github_token": null,
-        "note": "context"
+        "note": "context",
+        "future_field": "future"
     })
 }

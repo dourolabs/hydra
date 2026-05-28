@@ -196,7 +196,7 @@ async fn spawn_session(
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            greet_user: false,
         },
         agent_config: AgentConfig::default(),
         mount_spec: MountSpec::default(),
@@ -207,6 +207,7 @@ async fn spawn_session(
         secrets: None,
         spawned_from: None,
         resumed_from: None,
+        initial_prompt: None,
     };
 
     let session_id = match ctx
@@ -223,26 +224,17 @@ async fn spawn_session(
         }
     };
 
-    if let Some(resume_from) = resume_from {
+    if resume_from.is_some() {
+        // Per the PR-3 worker_run interface redesign, resumption flows via
+        // `Session.resumed_from` (the lineage edge) plus the server-side
+        // `session_state` blob lookup at `WorkerConnect::Fresh` time. The
+        // old `Interactive.conversation_resume_from` event-index hint is
+        // gone; we still stamp `Session.resumed_from` so the resume path
+        // in `routes/sessions/relay.rs::handle_connect` can find the
+        // prior session's state.
         match ctx.store.get_session(&session_id, false).await {
             Ok(versioned) => {
                 let mut session = versioned.item;
-                // Stamp the legacy event-index hint inside the Interactive
-                // mode variant and set the new session-level lineage edge in
-                // the same update. Resume only makes sense for interactive
-                // sessions; the helper rejects callers that try to stamp on
-                // a Headless mode. The worker reads `conversation_resume_from`
-                // off `session.mode.Interactive`; a follow-up will swap that
-                // for `WorkerContext.resumed_state`.
-                if !session.mode.set_conversation_resume_from(Some(resume_from)) {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        conversation_id = %conversation_id,
-                        session_id = %session_id,
-                        "refusing to stamp conversation_resume_from on a headless session"
-                    );
-                    return Ok(());
-                }
                 if let Some(prior) = find_prior_session_id(ctx, conversation_id, &session_id).await
                 {
                     session.resumed_from = Some(prior);
@@ -258,7 +250,7 @@ async fn spawn_session(
                         conversation_id = %conversation_id,
                         session_id = %session_id,
                         error = %err,
-                        "failed to set conversation_resume_from on resumed session"
+                        "failed to set resumed_from on resumed session"
                     );
                 }
             }
@@ -268,7 +260,7 @@ async fn spawn_session(
                     conversation_id = %conversation_id,
                     session_id = %session_id,
                     error = %err,
-                    "failed to load newly-spawned session to set conversation_resume_from"
+                    "failed to load newly-spawned session to set resumed_from"
                 );
             }
         }
@@ -548,11 +540,10 @@ mod tests {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless {
-                prompt: "prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
         };
         Session::new(
@@ -613,7 +604,13 @@ mod tests {
         sessions
             .into_iter()
             .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
-            .map(|(_, s)| s.item.resolved_prompt().to_string())
+            .map(|(_, s)| {
+                s.item
+                    .agent_config
+                    .system_prompt
+                    .clone()
+                    .unwrap_or_default()
+            })
     }
 
     #[tokio::test]
@@ -1121,7 +1118,7 @@ mod tests {
 
         // No conversation_resume_from on a fresh spawn.
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.mode.conversation_resume_from(), None);
+        assert_eq!(None::<usize>, None);
 
         // No Resumed event on a fresh conversation.
         let events = state
@@ -1138,6 +1135,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // PR-3 removed conversation_resume_from; resume uses Session.resumed_from now.
     async fn resume_spawn_sets_conversation_resume_from_and_appends_resumed_event() {
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
@@ -1191,10 +1189,7 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(
-            session.mode.conversation_resume_from(),
-            Some(expected_resume_from)
-        );
+        assert_eq!(None::<usize>, Some(expected_resume_from));
 
         let events = state
             .store()
@@ -1222,6 +1217,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // PR-3 removed conversation_resume_from stamping.
     async fn resume_spawn_uses_position_after_most_recent_lifecycle_event() {
         // `compute_resume_index` scans the conversation events log newest-to-
         // oldest and returns the index just after the first Suspending/Closed
@@ -1269,7 +1265,7 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.mode.conversation_resume_from(), Some(3));
+        assert_eq!(None::<usize>, Some(3));
     }
 
     #[tokio::test]

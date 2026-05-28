@@ -14,7 +14,8 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
 use crate::worker::report::{
-    RunReport, SessionResume, TokenUsage, WorkerEvent, WorkerInputMessage,
+    MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
+    WorkerInputMessage,
 };
 
 /// Routes a worker invocation to either the Claude or Codex per-model wrapper.
@@ -75,6 +76,97 @@ impl ModelSelector {
                 }
                 c.run(prompt).await
             }
+        }
+    }
+
+    /// Attempt to materialize `state_bytes` into a wrapper-native resume
+    /// handle. Per design §3, the dispatcher delegates to the active
+    /// wrapper's [`try_materialize`].
+    pub fn try_materialize_resume(
+        &self,
+        state_bytes: &[u8],
+    ) -> Result<NativeResume, MaterializeError> {
+        match self {
+            Self::Claude(c) => c.try_materialize(state_bytes),
+            Self::Codex(c) => c.try_materialize(state_bytes),
+        }
+    }
+
+    /// Run one batch turn with a wrapper-native resume handle (per design
+    /// §3.2 `run_with_native`).
+    pub async fn run_with_native(
+        &mut self,
+        prompt: &str,
+        resume: Option<NativeResume>,
+    ) -> Result<RunReport> {
+        match self {
+            Self::Claude(c) => {
+                let claude_resume = match resume {
+                    Some(NativeResume::Claude(r)) => Some(r),
+                    Some(NativeResume::Codex(_)) => {
+                        return Err(anyhow!(
+                            "ModelSelector::run_with_native: Claude arm received \
+                             a Codex NativeResume"
+                        ));
+                    }
+                    None => None,
+                };
+                c.run(prompt, claude_resume).await
+            }
+            Self::Codex(c) => {
+                if resume.is_some() {
+                    tracing::debug!(
+                        "ModelSelector::run_with_native: Codex arm dropping resume (not implemented)"
+                    );
+                }
+                c.run(prompt).await
+            }
+        }
+    }
+
+    /// Run one interactive session with a wrapper-native resume handle (per
+    /// design §3.2 `run_interactive_with_native`).
+    pub async fn run_interactive_with_native(
+        &mut self,
+        input: mpsc::Receiver<WorkerInputMessage>,
+        output: mpsc::Sender<WorkerEvent>,
+        prompt: &str,
+        resume: Option<NativeResume>,
+    ) -> Result<RunReport> {
+        match self {
+            Self::Claude(c) => {
+                let claude_resume = match resume {
+                    Some(NativeResume::Claude(r)) => Some(r),
+                    Some(NativeResume::Codex(_)) => {
+                        return Err(anyhow!(
+                            "ModelSelector::run_interactive_with_native: Claude arm \
+                             received a Codex NativeResume"
+                        ));
+                    }
+                    None => None,
+                };
+                let (claude_in_tx, claude_in_rx) = mpsc::channel::<ClaudeUserMessage>(32);
+                let (claude_out_tx, claude_out_rx) = mpsc::channel::<ClaudeEvent>(32);
+                let in_pump = spawn_input_translator(input, claude_in_tx);
+                let out_pump = spawn_output_translator(claude_out_rx, output);
+                // Synthesize a SessionId placeholder for the per-wrapper API.
+                // The wrapper itself ignores `session_id` in run_interactive
+                // (round-2 feedback #3 — see design §3.2).
+                let placeholder_sid = SessionId::new();
+                let report = c
+                    .run_interactive(
+                        claude_in_rx,
+                        claude_out_tx,
+                        &placeholder_sid,
+                        prompt,
+                        claude_resume,
+                    )
+                    .await;
+                let _ = in_pump.await;
+                let _ = out_pump.await;
+                report
+            }
+            Self::Codex(_) => Err(anyhow!("model does not support interactive mode")),
         }
     }
 

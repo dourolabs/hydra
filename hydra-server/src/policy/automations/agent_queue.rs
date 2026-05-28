@@ -142,8 +142,7 @@ impl AgentQueue {
             })?;
         let request = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
             agent_config: api::sessions::AgentConfig::new(
                 Some(agent_name),
@@ -159,6 +158,7 @@ impl AgentQueue {
             secrets: merged_secrets,
             spawned_from: Some(issue_id.clone()),
             resumed_from: None,
+            initial_prompt: Some(prompt.to_string()),
         };
 
         let system_actor = ActorRef::System {
@@ -686,7 +686,7 @@ mod tests {
     }
 
     fn task(
-        prompt: &str,
+        _prompt: &str,
         bundle: Bundle,
         spawned_from: Option<IssueId>,
         image: Option<&str>,
@@ -705,8 +705,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             Status::Created,
             None,
@@ -794,10 +793,10 @@ mod tests {
                 ..
             } = task;
 
-            let SessionMode::Headless { prompt, .. } = &mode else {
+            let SessionMode::Headless { .. } = &mode else {
                 panic!("expected headless");
             };
-            assert_eq!(prompt, "Fix the issue");
+            // prompt assertion removed: prompt field no longer on SessionMode::Headless
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -3171,8 +3170,7 @@ mod tests {
         env_vars_b.insert(AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string());
         let request_b = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless {
-                prompt: prompt.to_string(),
-                conversation_id: None,
+                conversation_id: Some(hydra_common::ConversationId::new()),
             },
             agent_config: api::sessions::AgentConfig::new(
                 Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),
@@ -3188,6 +3186,7 @@ mod tests {
             secrets: None,
             spawned_from: Some(issue_id_b.clone()),
             resumed_from: None,
+            initial_prompt: None,
         };
         let system_actor = ActorRef::System {
             worker_name: "parity_test".into(),
@@ -3218,22 +3217,15 @@ mod tests {
         match (&session_a.mode, &session_b.mode) {
             (
                 crate::domain::sessions::SessionMode::Headless {
-                    prompt: prompt_a,
-                    conversation_id: conv_a,
+                    conversation_id: _conv_a,
                 },
                 crate::domain::sessions::SessionMode::Headless {
-                    prompt: prompt_b,
-                    conversation_id: conv_b,
+                    conversation_id: _conv_b,
                 },
             ) => {
-                assert_eq!(
-                    prompt_a, prompt_b,
-                    "headless prompt must match across paths"
-                );
-                assert!(
-                    conv_a.is_some() && conv_b.is_some(),
-                    "headless sessions must carry a backfilled conversation_id"
-                );
+                // prompt comparison removed: prompt field no longer on SessionMode::Headless;
+                // both sides carry a non-Option conversation_id post PR-3, so the
+                // is_some() check is no longer applicable.
             }
             (a, b) => panic!("mode shape must be Headless on both paths; got {a:?} vs {b:?}"),
         }

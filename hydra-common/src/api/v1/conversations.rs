@@ -216,39 +216,44 @@ pub struct SendMessageRequest {
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkerConnect {
-    Fresh {
-        resume_from_event_index: Option<usize>,
-    },
-    Reconnecting {
-        last_received_event_index: usize,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct WorkerCatchUp {
-    /// Prior chat events across the conversation's resumption chain (concatenated
-    /// in session creation-time order). The worker uses this to seed its
-    /// primer / context on a fresh start.
-    pub events: Vec<SessionEvent>,
-}
-
-/// Messages sent from the worker to the server over the relay WebSocket.
+/// Worker → server handshake. The worker sends exactly one
+/// [`WorkerConnect`] immediately after the WS connection opens.
 ///
-/// This enum distinguishes between session events (which get stored and
-/// broadcast) and session state uploads (binary blobs for resumption).
+/// `Fresh` is a cold boot: the worker has no model state in memory.
+/// `Reconnecting` is mid-run: the model is still up and the worker
+/// just needs to catch up on session events it missed during the
+/// disconnect.
+///
+/// Note: the discriminator tag is `kind` rather than `type` so this
+/// enum can sit inside [`WorkerMessage::Connect`] without the outer
+/// `WorkerMessage` `type` tag colliding with the inner discriminator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkerConnect {
+    Fresh,
+    Reconnecting {
+        last_received_session_event_index: usize,
+    },
+}
+
+/// Messages sent from the worker to the server over the events WebSocket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerMessage {
-    /// A session event (assistant message, suspending, etc.).
+    /// Initial handshake — sent exactly once per WS connection.
+    Connect(WorkerConnect),
+    /// Phase-1 fallback: native-blob materialization failed (or the server
+    /// had no blob to send for a resumed session). Server replies with
+    /// [`ServerMessage::Transcript`].
+    RequestTranscript { prior_session_id: SessionId },
+    /// Phase-2 trigger: the worker is done with Phase-1 context
+    /// negotiation and ready to receive [`ServerMessage::FirstMessage`].
+    Ready,
+    /// A session event (assistant message, tool use, suspending, etc.).
     Event { event: SessionEvent },
     /// A session state upload for resumption support.
     SessionStateUpload {
@@ -287,14 +292,37 @@ pub enum SessionStatePayload {
     },
 }
 
-/// Messages sent from the server to the worker over the relay WebSocket.
+/// Messages sent from the server to the worker over the events WebSocket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    /// Catch-up payload sent immediately after the worker connects.
-    CatchUp(WorkerCatchUp),
+    /// Phase-1 response on `WorkerConnect::Fresh`. `resume_blob` is the raw
+    /// bytes stored by a prior session (if any); `prior_session_id` is the
+    /// predecessor's id (used to request a transcript fallback if the blob
+    /// won't materialize).
+    ResumeContext {
+        #[cfg_attr(feature = "ts", ts(type = "number[] | null"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_blob: Option<Vec<u8>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prior_session_id: Option<SessionId>,
+    },
+    /// Phase-1 fallback response to [`WorkerMessage::RequestTranscript`].
+    Transcript { events: Vec<SessionEvent> },
+    /// Phase-2 response to [`WorkerMessage::Ready`].
+    ///
+    /// Invariant: at least one of `agent_prompt` / `user_message` is `Some`;
+    /// the worker treats both-`None` as a fatal protocol error.
+    FirstMessage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_prompt: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user_message: Option<String>,
+    },
+    /// Catch-up payload sent immediately after a `Reconnecting` handshake.
+    CatchUp { events: Vec<SessionEvent> },
     /// A session event forwarded to the worker (e.g., a user message).
     Event { event: SessionEvent },
 }
@@ -354,49 +382,21 @@ mod tests {
 
     #[test]
     fn worker_connect_fresh_round_trip() {
-        let msg = WorkerConnect::Fresh {
-            resume_from_event_index: Some(5),
-        };
+        let msg = WorkerConnect::Fresh;
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WorkerConnect = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""kind":"fresh""#));
     }
 
     #[test]
     fn worker_connect_reconnecting_round_trip() {
         let msg = WorkerConnect::Reconnecting {
-            last_received_event_index: 10,
+            last_received_session_event_index: 10,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WorkerConnect = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
-    }
-
-    #[test]
-    fn worker_catch_up_round_trip() {
-        let catch_up = WorkerCatchUp {
-            events: vec![SessionEvent::UserMessage {
-                content: "test".to_string(),
-                timestamp: Utc::now(),
-            }],
-        };
-        let json = serde_json::to_string(&catch_up).unwrap();
-        let deserialized: WorkerCatchUp = serde_json::from_str(&json).unwrap();
-        assert_eq!(catch_up, deserialized);
-        assert!(
-            !json.contains("session_state"),
-            "session_state must never appear on the wire — it caused giant catch-up \
-             frames to exceed the WebSocket size limit (see i-xwmoxzhe); got {json}"
-        );
-    }
-
-    #[test]
-    fn worker_catch_up_tolerates_legacy_session_state_field() {
-        // Older servers may still ship `session_state` in the catch-up payload.
-        // The new worker ignores it; deserialization must not fail.
-        let json = r#"{"events":[],"session_state":[1,2,3]}"#;
-        let catch_up: WorkerCatchUp = serde_json::from_str(json).unwrap();
-        assert!(catch_up.events.is_empty());
     }
 
     #[test]
@@ -486,14 +486,65 @@ mod tests {
 
     #[test]
     fn server_message_catch_up_round_trip() {
-        let msg = ServerMessage::CatchUp(WorkerCatchUp {
+        let msg = ServerMessage::CatchUp {
             events: vec![SessionEvent::UserMessage {
                 content: "hi".to_string(),
                 timestamp: Utc::now(),
             }],
-        });
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn server_message_resume_context_round_trip() {
+        let sid = SessionId::new();
+        let msg = ServerMessage::ResumeContext {
+            resume_blob: Some(vec![1, 2, 3]),
+            prior_session_id: Some(sid.clone()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn server_message_first_message_round_trip() {
+        let msg = ServerMessage::FirstMessage {
+            agent_prompt: Some("you are helpful".to_string()),
+            user_message: Some("hello".to_string()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn worker_message_connect_round_trip() {
+        let msg = WorkerMessage::Connect(WorkerConnect::Fresh);
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn worker_message_ready_round_trip() {
+        let msg = WorkerMessage::Ready;
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"ready""#));
+    }
+
+    #[test]
+    fn worker_message_request_transcript_round_trip() {
+        let sid = SessionId::new();
+        let msg = WorkerMessage::RequestTranscript {
+            prior_session_id: sid.clone(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
     }
 

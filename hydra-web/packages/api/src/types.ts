@@ -154,8 +154,9 @@ export type { Username } from "./generated/Username";
 export type { VersionResponse } from "./generated/VersionResponse";
 export type { Versioned } from "./generated/Versioned";
 export type { WhoAmIResponse } from "./generated/WhoAmIResponse";
-export type { SessionStateBlob } from "./generated/SessionStateBlob";
 export type { WorkerContext } from "./generated/WorkerContext";
+export type { SessionModeKind } from "./generated/SessionModeKind";
+export type { AgentConfigRuntime } from "./generated/AgentConfigRuntime";
 
 // Conversations
 export type { Conversation } from "./generated/Conversation";
@@ -168,6 +169,5 @@ export type { CreateConversationRequest } from "./generated/CreateConversationRe
 export type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 export type { SendMessageRequest } from "./generated/SendMessageRequest";
 export type { ServerMessage } from "./generated/ServerMessage";
-export type { WorkerCatchUp } from "./generated/WorkerCatchUp";
 export type { WorkerConnect } from "./generated/WorkerConnect";
 export type { WorkerMessage } from "./generated/WorkerMessage";

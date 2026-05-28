@@ -107,8 +107,7 @@ mod tests {
             None,
             None,
             SessionMode::Headless {
-                prompt: "test".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             status,
             None,

@@ -1041,8 +1041,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
             memory_limit: None,
             secrets: None,
             mode: SessionMode::Headless {
-                prompt: "test prompt".to_string(),
-                conversation_id: None,
+                conversation_id: hydra_common::ConversationId::new(),
             },
             status: Status::Created,
             last_message: None,
