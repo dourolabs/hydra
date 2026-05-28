@@ -45,18 +45,15 @@ WHERE mount_spec IS NULL;
 --------------------------------------------------------------------------------
 -- agent_config backfill
 --
--- `system_prompt` is backfilled from the legacy `prompt` column so the
--- post-PR-1 read path (which sources the worker prompt from
--- `agent_config.system_prompt` for both modes) stays correct for historic
--- rows.
--- `agent_name` is NULL on historical rows: the legacy schema does not
--- record which agent was used at session-creation time.
+-- `system_prompt` and `agent_name` are intentionally NULL on historical rows
+-- — the legacy schema does not record either, and resolving them from the
+-- agent definition is out of scope here (deferred to PR-3).
 --------------------------------------------------------------------------------
 UPDATE tasks_v2
 SET agent_config = json_object(
     'agent_name',    NULL,
     'model',         model,
-    'system_prompt', prompt,
+    'system_prompt', NULL,
     'mcp_config',    CASE WHEN mcp_config IS NULL THEN NULL ELSE json(mcp_config) END
 )
 WHERE agent_config IS NULL;
@@ -81,7 +78,7 @@ WHERE agent_config IS NULL;
 UPDATE tasks_v2
 SET mode = CASE
     WHEN conversation_id IS NULL THEN
-        json_object('type', 'headless')
+        json_object('type', 'headless', 'prompt', prompt)
     ELSE
         json_object(
             'type', 'interactive',
