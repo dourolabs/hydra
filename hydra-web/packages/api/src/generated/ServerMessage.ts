@@ -5,4 +5,4 @@ import type { SessionId } from "./SessionId";
 /**
  * Messages sent from the server to the worker over the events WebSocket.
  */
-export type ServerMessage = { "type": "resume_context", resume_blob?: number[] | null, prior_session_id?: SessionId | null, } | { "type": "transcript", events: Array<SessionEvent>, } | { "type": "first_message", agent_prompt?: string | null, user_message?: string | null, } | { "type": "catch_up", events: Array<SessionEvent>, } | { "type": "event", event: SessionEvent, };
+export type ServerMessage = { "type": "resume_context", resume_blob?: number[] | null, prior_session_id?: SessionId | null, } | { "type": "transcript", events: Array<SessionEvent>, } | { "type": "first_message", agent_prompt?: string | null, user_message?: string | null, session_event_baseline: number, } | { "type": "catch_up", events: Array<SessionEvent>, } | { "type": "event", event: SessionEvent, };

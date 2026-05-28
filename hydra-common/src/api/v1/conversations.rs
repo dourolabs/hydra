@@ -315,11 +315,24 @@ pub enum ServerMessage {
     ///
     /// Invariant: at least one of `agent_prompt` / `user_message` is `Some`;
     /// the worker treats both-`None` as a fatal protocol error.
+    ///
+    /// `session_event_baseline` is `session_events.len()` at the moment the
+    /// server built this message — i.e., the count of events already in the
+    /// server-side log that the worker should consider "already seen"
+    /// (because they either flowed in via the `FirstMessage.user_message`
+    /// channel, a pre-Ready `SessionEvent::Resumed` dual-write, a
+    /// `SessionEvent::UserMessage` backfilled at session-create time for a
+    /// headless session, etc.). The worker seeds its running event count
+    /// from this value before entering Phase 3 so that the
+    /// `WorkerConnect::Reconnecting.last_received_session_event_index` it
+    /// sends on a transient WS reconnect matches the server's
+    /// `session_events.index` convention. See design §1.5 / §1.6.
     FirstMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_prompt: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user_message: Option<String>,
+        session_event_baseline: usize,
     },
     /// Catch-up payload sent immediately after a `Reconnecting` handshake.
     CatchUp { events: Vec<SessionEvent> },
@@ -514,6 +527,7 @@ mod tests {
         let msg = ServerMessage::FirstMessage {
             agent_prompt: Some("you are helpful".to_string()),
             user_message: Some("hello".to_string()),
+            session_event_baseline: 1,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();

@@ -79,6 +79,15 @@ pub struct RelayAdapter {
 /// model sees the messages it missed during the disconnect — and Phase 3
 /// resumes on the new WS. A `None` `reconnect` disables the retry (used by
 /// tests that want strict single-WS behavior).
+///
+/// `initial_session_event_count` seeds the worker's running event-count
+/// tracker with the value the server reported in
+/// `ServerMessage::FirstMessage.session_event_baseline`. Events that landed
+/// in `session_events` before Phase 3 — the implicit FirstMessage user
+/// message, a `SessionEvent::Resumed` dual-write, the backfilled headless
+/// UserMessage — are counted here so the Reconnecting handshake's
+/// `last_received_session_event_index` matches the server's index
+/// convention. See design §1.5 / §1.6.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_pump(
     ws: RelayWebSocket,
@@ -87,6 +96,7 @@ pub fn spawn_pump(
     working_dir: PathBuf,
     idle_timeout: Duration,
     reconnect: Option<ReconnectFn>,
+    initial_session_event_count: usize,
 ) -> RelayAdapter {
     let (input_tx, input_rx) = mpsc::channel::<WorkerInputMessage>(32);
     let (output_tx, output_rx) = mpsc::channel::<WorkerEvent>(32);
@@ -102,6 +112,7 @@ pub fn spawn_pump(
             input_tx,
             output_rx,
             reconnect,
+            initial_session_event_count,
         )
         .await
         {
@@ -139,6 +150,7 @@ async fn run_pump(
     input_tx: mpsc::Sender<WorkerInputMessage>,
     mut output_rx: mpsc::Receiver<WorkerEvent>,
     reconnect: Option<ReconnectFn>,
+    initial_session_event_count: usize,
 ) -> Result<()> {
     use futures::StreamExt;
     let (mut ws_sender, mut ws_receiver) = ws.split();
@@ -148,10 +160,15 @@ async fn run_pump(
     let mut model_session_id: Option<String> = None;
 
     // Running count of per-session events the worker has either received from
-    // the server or successfully sent. Used to populate
+    // the server or successfully sent. Seeded from the server-supplied
+    // `ServerMessage::FirstMessage.session_event_baseline` so this count
+    // tracks `session_events.len()` on the server side — including events
+    // that landed before Phase 3 (the implicit FirstMessage user message, a
+    // `SessionEvent::Resumed` dual-write, a backfilled headless UserMessage).
+    // Used to populate
     // `WorkerConnect::Reconnecting.last_received_session_event_index` so the
     // server can ship every event past that point in `CatchUp`.
-    let mut session_event_count: usize = 0;
+    let mut session_event_count: usize = initial_session_event_count;
 
     let idle_deadline = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle_deadline);
@@ -478,6 +495,17 @@ where
 
 /// Suspend-emission helper: writes a `Suspending` event followed by a
 /// best-effort `SessionStateUpload` carrying the transcript file.
+///
+/// Note on `session_event_count`: this helper does NOT increment the pump's
+/// running event count even though the Suspending event lands in
+/// `session_events`. The pump terminates immediately after this call (no
+/// further Phase-3 work can happen), and the WS is closed via
+/// `Message::Close` right after — so the worker will never need to emit a
+/// Reconnecting handshake whose `last_received_session_event_index` would
+/// depend on the post-Suspending count. If that lifecycle ever changes
+/// (e.g., a future Suspending → resumed flow that keeps the pump alive),
+/// add a `session_event_count = session_event_count.saturating_add(1)` at
+/// the caller per the design's index-tracking convention.
 async fn emit_suspend<Si>(
     ws_sender: &mut Si,
     reason: &str,

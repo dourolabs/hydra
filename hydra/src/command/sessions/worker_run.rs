@@ -516,17 +516,26 @@ async fn drive_session(
 
     // Phase 2: signal Ready, await FirstMessage.
     ws_send(&mut ws, &WorkerMessage::Ready).await?;
-    let first = match ws_recv(&mut ws).await? {
-        ServerMessage::FirstMessage {
-            agent_prompt,
-            user_message,
-        } => (agent_prompt, user_message),
-        other => bail!("Phase 2: expected FirstMessage, got {other:?}"),
-    };
-    let prompt_string =
-        build_prompt_string(&primer_events, first.0.as_deref(), first.1.as_deref())?;
+    let (first_agent_prompt, first_user_message, mut session_event_baseline) =
+        match ws_recv(&mut ws).await? {
+            ServerMessage::FirstMessage {
+                agent_prompt,
+                user_message,
+                session_event_baseline,
+            } => (agent_prompt, user_message, session_event_baseline),
+            other => bail!("Phase 2: expected FirstMessage, got {other:?}"),
+        };
+    let prompt_string = build_prompt_string(
+        &primer_events,
+        first_agent_prompt.as_deref(),
+        first_user_message.as_deref(),
+    )?;
 
-    // Emit a SessionEvent::Resumed once if the native resume succeeded.
+    // Emit a SessionEvent::Resumed once if the native resume succeeded. The
+    // dual-write at spawn time may have already landed one for this session
+    // (case d in the matrix); the worker-driven emit is idempotent on the
+    // baseline since the server appends only what the worker sends, but we
+    // still increment the local count because this is a real Phase-3 send.
     if native_resume.is_some() {
         if let Some(from) = prior_session_id.clone() {
             ws_send(
@@ -539,6 +548,7 @@ async fn drive_session(
                 },
             )
             .await?;
+            session_event_baseline = session_event_baseline.saturating_add(1);
         }
     }
 
@@ -558,6 +568,7 @@ async fn drive_session(
                 home_dir,
                 working_dir,
                 idle_timeout,
+                session_event_baseline,
             )
             .await
         }
@@ -572,6 +583,7 @@ async fn drive_session(
                 home_dir,
                 working_dir,
                 idle_timeout,
+                session_event_baseline,
             )
             .await
         }
@@ -589,6 +601,7 @@ async fn drive_headless(
     home_dir: PathBuf,
     working_dir: PathBuf,
     idle_timeout: Duration,
+    session_event_baseline: usize,
 ) -> Result<RunReport> {
     log_status("Phase: agent execution — starting");
     // Spawn the relay pump: model output is forwarded as SessionEvents over
@@ -598,7 +611,15 @@ async fn drive_headless(
         input_rx: _input_rx,
         output_tx,
         pump,
-    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout, reconnect);
+    } = spawn_pump(
+        ws,
+        job,
+        home_dir,
+        working_dir,
+        idle_timeout,
+        reconnect,
+        session_event_baseline,
+    );
 
     // Hand the pump's input side to `run_with_native` so the wrapper streams
     // each parsed event (assistant text, tool use, usage, session_init) to
@@ -622,6 +643,7 @@ async fn drive_interactive(
     home_dir: PathBuf,
     working_dir: PathBuf,
     idle_timeout: Duration,
+    session_event_baseline: usize,
 ) -> Result<RunReport> {
     log_status("Phase: interactive agent execution — starting");
     if matches!(selector, ModelSelector::Codex(_)) {
@@ -632,7 +654,15 @@ async fn drive_interactive(
         input_rx,
         output_tx,
         pump,
-    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout, reconnect);
+    } = spawn_pump(
+        ws,
+        job,
+        home_dir,
+        working_dir,
+        idle_timeout,
+        reconnect,
+        session_event_baseline,
+    );
     let report = selector
         .run_interactive_with_native(input_rx, output_tx, prompt, resume)
         .await;

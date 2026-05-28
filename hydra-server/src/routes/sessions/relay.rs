@@ -281,10 +281,17 @@ async fn handle_relay_socket(
                                     }
                                 };
 
+                                // Snapshot the current count of session_events for THIS
+                                // session — what the worker should consider "already seen"
+                                // before Phase-3 traffic begins. See design §1.5 / §1.6.
+                                let session_event_baseline =
+                                    current_session_event_count(&state, &session_id).await;
+
                                 if let Some(content) = user_message {
                                     let msg = ServerMessage::FirstMessage {
                                         agent_prompt,
                                         user_message: Some(content),
+                                        session_event_baseline,
                                     };
                                     if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
                                         break;
@@ -293,6 +300,7 @@ async fn handle_relay_socket(
                                     let msg = ServerMessage::FirstMessage {
                                         agent_prompt,
                                         user_message: None,
+                                        session_event_baseline,
                                     };
                                     if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
                                         break;
@@ -300,6 +308,8 @@ async fn handle_relay_socket(
                                 } else {
                                     // Stash the agent_prompt; the UserMessage event-arrival
                                     // hook (the `user_msg_rx` branch below) will drain it.
+                                    // Re-snapshot the baseline at that moment so it covers
+                                    // the just-arrived UserMessage's index.
                                     pending_first_message = Some(PendingFirstMessage { agent_prompt });
                                     debug!(%session_id, "FirstMessage deferred — awaiting first UserMessage");
                                 }
@@ -365,9 +375,15 @@ async fn handle_relay_socket(
                     Some(event) => {
                         if let Some(pending) = pending_first_message.take() {
                             if let SessionEvent::UserMessage { content, .. } = &event {
+                                // The UserMessage was already appended to session_events
+                                // by the POST /messages writer before being pushed onto
+                                // this channel, so the baseline includes it.
+                                let session_event_baseline =
+                                    current_session_event_count(&state, &session_id).await;
                                 let msg = ServerMessage::FirstMessage {
                                     agent_prompt: pending.agent_prompt,
                                     user_message: Some(content.clone()),
+                                    session_event_baseline,
                                 };
                                 if !send_server_msg(&mut ws_sender, &session_id, &msg).await {
                                     break;
@@ -447,6 +463,28 @@ async fn send_server_msg(
         return false;
     }
     true
+}
+
+/// Read `session_events.len()` for a single session id. Used to populate
+/// `ServerMessage::FirstMessage.session_event_baseline` so the worker's
+/// running event count matches the server's `session_events.index` convention
+/// before Phase 3 begins. Returns `0` on a store error (the worst that can
+/// happen is a single duplicated `UserMessage` on reconnect — same shape as
+/// the pre-fix bug — and we want the protocol to be resilient to a transient
+/// store hiccup at this point).
+async fn current_session_event_count(state: &AppState, session_id: &SessionId) -> usize {
+    match state.store().get_session_events(session_id).await {
+        Ok(events) => events.len(),
+        Err(err) => {
+            warn!(
+                %session_id,
+                error = %err,
+                "failed to read session_events.len() for FirstMessage.session_event_baseline; \
+                 falling back to 0"
+            );
+            0
+        }
+    }
 }
 
 /// Collect session events on `session_id` whose index is strictly greater

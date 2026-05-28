@@ -189,17 +189,18 @@ async fn phase1_fresh(ws: &mut WsStream) -> anyhow::Result<(Option<Vec<u8>>, Opt
 
 /// Phase 2: send Ready, expect either an immediate FirstMessage or `None`
 /// (within the supplied timeout) if the server stashed
-/// `pending_first_message`.
+/// `pending_first_message`. Returns `(agent_prompt, user_message, baseline)`.
 async fn phase2_ready_with_timeout(
     ws: &mut WsStream,
     timeout: Duration,
-) -> anyhow::Result<Option<(Option<String>, Option<String>)>> {
+) -> anyhow::Result<Option<(Option<String>, Option<String>, usize)>> {
     send(ws, WorkerMessage::Ready).await?;
     match recv_server_with_timeout(ws, timeout).await? {
         Some(ServerMessage::FirstMessage {
             agent_prompt,
             user_message,
-        }) => Ok(Some((agent_prompt, user_message))),
+            session_event_baseline,
+        }) => Ok(Some((agent_prompt, user_message, session_event_baseline))),
         Some(other) => anyhow::bail!("expected FirstMessage, got {other:?}"),
         None => Ok(None),
     }
@@ -239,6 +240,9 @@ async fn case_a_fresh_interactive_greet_false_with_user_message_present() -> any
         .expect("FirstMessage should be emitted immediately (UserMessage present)");
     assert_eq!(first.0.as_deref(), Some("be helpful"));
     assert_eq!(first.1.as_deref(), Some("hello there"));
+    // Baseline must include the seeded UserMessage at idx 0 (per design §1.5
+    // — counts the events already in session_events before Phase 3).
+    assert_eq!(first.2, 1, "baseline must reflect seeded UserMessage");
     Ok(())
 }
 
@@ -301,9 +305,15 @@ async fn case_b_fresh_interactive_greet_false_deferred_until_user_message() -> a
         ServerMessage::FirstMessage {
             agent_prompt,
             user_message,
+            session_event_baseline,
         } => {
             assert_eq!(agent_prompt.as_deref(), Some("deferred prompt"));
             assert_eq!(user_message.as_deref(), Some("first turn"));
+            // The just-arrived UserMessage is at session_events[0].
+            assert_eq!(
+                session_event_baseline, 1,
+                "baseline must include the just-arrived UserMessage at idx 0"
+            );
         }
         other => panic!("expected FirstMessage, got {other:?}"),
     }
@@ -786,5 +796,221 @@ async fn headless_session_can_receive_worker_event_appends() -> anyhow::Result<(
         "headless session must surface streamed AssistantMessages on its event log: {events:?}"
     );
 
+    Ok(())
+}
+
+// ============================================================================
+// Reconnecting drift regression (round-3 review #1)
+// ============================================================================
+//
+// Round-2 review caught that the worker's `session_event_count` drifts from
+// the server's `session_events.index` whenever an event is appended without
+// flowing through Phase 3 — notably the FirstMessage.user_message
+// consumption of `session_events[0]` for fresh interactive sessions started
+// via `POST /v1/conversations { message }`. On mid-session reconnect after a
+// later UserMessage lands, the worker reports the wrong index and the model
+// sees the UserMessage twice (once via Phase 3 before the disconnect, once
+// via the CatchUp re-injection).
+//
+// Round-3 fix: `ServerMessage::FirstMessage.session_event_baseline` carries
+// `session_events.len()` at FirstMessage emission time; the worker seeds its
+// count tracker from this value so the Reconnecting handshake's
+// `last_received_session_event_index` matches the server's index convention.
+
+#[tokio::test]
+async fn reconnecting_after_first_message_does_not_replay_seeded_user_message() -> anyhow::Result<()>
+{
+    // Reproduces the round-2 case-(a) drift trace using the corrected
+    // baseline. After a FirstMessage that consumed the seeded UserMessage at
+    // idx 0, an AssistantMessage at idx 1, and a second UserMessage at idx 2,
+    // the worker's running count is exactly `baseline=1` + 1 (sent) + 1
+    // (received) = 3. The corresponding Reconnecting payload carries
+    // `last_received_session_event_index = 2`, which means the server's
+    // CatchUp slice MUST be empty — no duplicate re-injection of the second
+    // UserMessage into the model.
+    let (state, store) = fresh_state();
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    register_agent(&store, "chat", "be helpful", false).await?;
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: Some(AgentName::try_new("chat").unwrap()),
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id;
+    let session_id = find_session(&store, &conversation_id).await;
+
+    // Phase 1 + 2 — get the baseline.
+    let mut ws = connect_ws(&server.base_url(), &session_id).await?;
+    let _ = phase1_fresh(&mut ws).await?;
+    let first = phase2_ready_with_timeout(&mut ws, Duration::from_secs(2))
+        .await?
+        .expect("FirstMessage should be emitted (UserMessage already at idx 0)");
+    assert_eq!(first.1.as_deref(), Some("hello"));
+    assert_eq!(
+        first.2, 1,
+        "case-(a) baseline must be 1 (the seeded UserMessage at idx 0)"
+    );
+
+    // Phase 3: emit an AssistantMessage; goes to session_events[1].
+    send(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::AssistantMessage {
+                content: "hi back".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    // worker running count: 1 (baseline) + 1 (sent) = 2.
+
+    // Second user message via REST — lands at session_events[2].
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "next".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Worker receives the Event for the second UserMessage on its WS.
+    match recv_server_with_timeout(&mut ws, Duration::from_secs(2))
+        .await?
+        .expect("subsequent UserMessage flows through Phase-3 push")
+    {
+        ServerMessage::Event {
+            event: SessionEvent::UserMessage { content, .. },
+        } => assert_eq!(content, "next"),
+        other => panic!("expected Event(UserMessage), got {other:?}"),
+    }
+    // worker running count: 2 + 1 (received) = 3 → last_received_session_event_index = 2.
+
+    // Simulate a transient transport drop and reconnect with the correctly
+    // computed index. With the round-3 fix, `last_received_session_event_index`
+    // is 2 (count 3 - 1); the CatchUp slice covers events at idx > 2, i.e.,
+    // none.
+    drop(ws);
+    // Give the server a beat to notice the drop and unregister the relay.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut ws = connect_ws(&server.base_url(), &session_id).await?;
+    send(
+        &mut ws,
+        WorkerMessage::Connect(WorkerConnect::Reconnecting {
+            last_received_session_event_index: 2,
+        }),
+    )
+    .await?;
+    match recv_server(&mut ws).await? {
+        ServerMessage::CatchUp { events } => {
+            assert!(
+                events.is_empty(),
+                "CatchUp must be empty when the worker correctly reports the head index — \
+                 a non-empty slice here means the UserMessage would be re-injected into the \
+                 model and seen twice: {events:?}"
+            );
+        }
+        other => panic!("expected CatchUp, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reconnecting_with_pre_fix_index_would_have_returned_duplicate_user_message()
+-> anyhow::Result<()> {
+    // Negative-control proof that the drift bug is real. Before the round-3
+    // fix, the worker would have computed `last_received_session_event_index
+    // = count - 1` where count counts only Phase-3 traffic (i.e., 1 for the
+    // AssistantMessage send + 1 for the UserMessage receive = 2, so idx = 1).
+    // With idx = 1, the server returns events past 1 — which includes the
+    // just-consumed UserMessage at idx 2. This test pins that broken
+    // behaviour to a single visible failure mode and proves the round-3 fix
+    // (which sends idx = 2 instead) is necessary, not cosmetic.
+    let (state, store) = fresh_state();
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    register_agent(&store, "chat", "be helpful", false).await?;
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: Some(AgentName::try_new("chat").unwrap()),
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id;
+    let session_id = find_session(&store, &conversation_id).await;
+
+    let mut ws = connect_ws(&server.base_url(), &session_id).await?;
+    let _ = phase1_fresh(&mut ws).await?;
+    let _ = phase2_ready_with_timeout(&mut ws, Duration::from_secs(2)).await?;
+    send(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::AssistantMessage {
+                content: "hi back".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "next".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+    // Drain the Event for the second UserMessage to keep the WS state clean.
+    let _ = recv_server_with_timeout(&mut ws, Duration::from_secs(2)).await?;
+    drop(ws);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The OLD worker would have sent idx = 1 here (count=2 minus 1). Server
+    // returns events past idx 1: the second UserMessage at idx 2.
+    let mut ws = connect_ws(&server.base_url(), &session_id).await?;
+    send(
+        &mut ws,
+        WorkerMessage::Connect(WorkerConnect::Reconnecting {
+            last_received_session_event_index: 1,
+        }),
+    )
+    .await?;
+    match recv_server(&mut ws).await? {
+        ServerMessage::CatchUp { events } => {
+            assert_eq!(
+                events.len(),
+                1,
+                "pre-fix index would have shipped the duplicate UserMessage: {events:?}"
+            );
+            assert!(
+                matches!(events[0], SessionEvent::UserMessage { ref content, .. } if content == "next"),
+                "the redelivered event is exactly the UserMessage the model already consumed: {:?}",
+                events[0]
+            );
+        }
+        other => panic!("expected CatchUp, got {other:?}"),
+    }
     Ok(())
 }
