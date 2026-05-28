@@ -223,7 +223,9 @@ async fn connect_relay(base_url: &str, session_id: &SessionId) -> anyhow::Result
 /// tests in this file pulled out of the server. The fake worker still
 /// reasons in terms of "a catch-up payload with an `events` vec", so we
 /// keep a tiny local struct of the same shape to avoid rewriting every
-/// test body.
+/// test body. Several active callers only need the existence-of-handshake
+/// signal and never destructure `events`, hence the `#[allow(dead_code)]`.
+#[allow(dead_code)]
 struct CatchUp {
     events: Vec<SessionEvent>,
 }
@@ -246,6 +248,64 @@ async fn worker_handshake(ws: &mut WsStream, _connect: WorkerConnect) -> anyhow:
     match serde_json::from_str::<ServerMessage>(&text)? {
         ServerMessage::CatchUp { events } => Ok(CatchUp { events }),
         other => anyhow::bail!("expected CatchUp, got {other:?}"),
+    }
+}
+
+/// Complete the new-protocol Phase 1+2 handshake on a fresh WS:
+/// 1. Send `WorkerConnect::Fresh`, await `ServerMessage::ResumeContext`.
+/// 2. Send `WorkerMessage::Ready`, optionally await
+///    `ServerMessage::FirstMessage` if `wait_for_first_message` is true.
+///
+/// Tests that want to stash `pending_first_message` (e.g. for `greet_user=false`
+/// with no UserMessage) pass `false` here and drain manually.
+///
+/// Returns the (optional) FirstMessage tuple. Returns the synthesized list of
+/// events the worker would have re-injected — for FirstMessage with a
+/// `user_message`, that's a synthetic `SessionEvent::UserMessage`.
+async fn worker_full_handshake(
+    ws: &mut WsStream,
+    wait_for_first_message: bool,
+) -> anyhow::Result<(Option<SessionId>, Vec<SessionEvent>)> {
+    let connect_json = serde_json::to_string(&WorkerMessage::Connect(WorkerConnect::Fresh))?;
+    ws.send(tungstenite::Message::Text(connect_json)).await?;
+    let resume_ctx = recv_text_msg(ws).await?;
+    let prior_id = match serde_json::from_str::<ServerMessage>(&resume_ctx)? {
+        ServerMessage::ResumeContext {
+            prior_session_id, ..
+        } => prior_session_id,
+        other => anyhow::bail!("expected ResumeContext, got {other:?}"),
+    };
+    let ready_json = serde_json::to_string(&WorkerMessage::Ready)?;
+    ws.send(tungstenite::Message::Text(ready_json)).await?;
+    if !wait_for_first_message {
+        return Ok((prior_id, Vec::new()));
+    }
+    let first_msg = recv_text_msg(ws).await?;
+    let events = match serde_json::from_str::<ServerMessage>(&first_msg)? {
+        ServerMessage::FirstMessage { user_message, .. } => match user_message {
+            Some(content) => vec![SessionEvent::UserMessage {
+                content,
+                timestamp: chrono::Utc::now(),
+            }],
+            None => Vec::new(),
+        },
+        other => anyhow::bail!("expected FirstMessage, got {other:?}"),
+    };
+    Ok((prior_id, events))
+}
+
+async fn recv_text_msg(ws: &mut WsStream) -> anyhow::Result<String> {
+    loop {
+        let frame = ws
+            .next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("ws closed mid-protocol"))??;
+        match frame {
+            tungstenite::Message::Text(t) => return Ok(t),
+            tungstenite::Message::Ping(p) => ws.send(tungstenite::Message::Pong(p)).await?,
+            tungstenite::Message::Close(_) => anyhow::bail!("ws closed before message"),
+            _ => continue,
+        }
     }
 }
 
@@ -383,7 +443,6 @@ async fn worker_context_includes_configured_idle_timeout() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-#[ignore] // PR-3: chat_lifecycle tests use the old WS protocol; need rewrite for new Fresh→ResumeContext→Ready→FirstMessage flow.
 async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_state()
 -> anyhow::Result<()> {
     let (state, store) = state_with_idle_timeout_secs(2);
@@ -406,14 +465,15 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
 
     let session_id = find_session_for_conversation(&store, &created.conversation_id).await;
 
-    // Connect as a fake worker, handshake, then send Suspending +
-    // SessionStateUpload to simulate the worker's idle-timeout flow.
+    // Connect as a fake worker. Under the PR-3 protocol the initial user
+    // message reaches the worker via `ServerMessage::FirstMessage.user_message`
+    // (not `CatchUp` — that only fires on `Reconnecting`).
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
-    let catch_up = worker_handshake(&mut ws, WorkerConnect::Fresh).await?;
+    let (_prior, events) = worker_full_handshake(&mut ws, true).await?;
     assert_eq!(
-        catch_up.events.len(),
+        events.len(),
         1,
-        "fresh worker should receive the initial user message in catch-up"
+        "fresh worker should observe the initial user message via FirstMessage"
     );
 
     send_worker_message(
@@ -483,13 +543,12 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
 }
 
 #[tokio::test]
-#[ignore] // PR-3: chat_lifecycle tests use the old WS protocol; need rewrite for new Fresh→ResumeContext→Ready→FirstMessage flow.
 async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Result<()> {
     // Regression test for the "agent forgets prior context on resume" bug.
-    // The fake worker passes the real `resume_from_event_index` value that
-    // the resumed session was created with; the server must respond with the
-    // full event log (UserMessage + AssistantMessage + Suspending) regardless,
-    // so the new worker can rebuild context from it.
+    // Under the PR-3 protocol the resumed worker reconstructs prior context
+    // by either (a) materializing the prior session_state blob, or
+    // (b) requesting the prior session's transcript via
+    // `WorkerMessage::RequestTranscript`. This test exercises (b).
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
@@ -511,7 +570,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
 
     let mut ws = connect_relay(&server.base_url(), &initial_session_id).await?;
-    let _catch_up = worker_handshake(&mut ws, WorkerConnect::Fresh).await?;
+    let (_prior, _events) = worker_full_handshake(&mut ws, true).await?;
 
     // Simulate a partial agent reply being recorded before the worker suspends.
     send_worker_message(
@@ -589,44 +648,63 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         "resumed_from on the new session should point at the predecessor"
     );
 
-    // Step 3: connect as the new worker, passing the real worker's value of
-    // resume_from_event_index. The server must still return the FULL event
-    // log so the new worker can reconstruct context from it.
+    // Step 3: connect as the new worker. Phase 1 returns ResumeContext
+    // with prior_session_id; the worker requests the prior transcript via
+    // `WorkerMessage::RequestTranscript` to rebuild context from it.
     let mut ws2 = connect_relay(&server.base_url(), &resumed_session_id).await?;
-    let catch_up = worker_handshake(&mut ws2, WorkerConnect::Fresh).await?;
-    // Expected sequence: UserMessage, AssistantMessage, Suspending, Resumed.
+    let connect_json = serde_json::to_string(&WorkerMessage::Connect(WorkerConnect::Fresh))?;
+    ws2.send(tungstenite::Message::Text(connect_json)).await?;
+    let resume_ctx = recv_text_msg(&mut ws2).await?;
+    let prior_session_id = match serde_json::from_str::<ServerMessage>(&resume_ctx)? {
+        ServerMessage::ResumeContext {
+            prior_session_id: Some(id),
+            ..
+        } => id,
+        other => panic!("expected ResumeContext with prior_session_id, got {other:?}"),
+    };
+    let req_json = serde_json::to_string(&WorkerMessage::RequestTranscript {
+        prior_session_id: prior_session_id.clone(),
+    })?;
+    ws2.send(tungstenite::Message::Text(req_json)).await?;
+    let transcript = recv_text_msg(&mut ws2).await?;
+    let events = match serde_json::from_str::<ServerMessage>(&transcript)? {
+        ServerMessage::Transcript { events } => events,
+        other => panic!("expected Transcript, got {other:?}"),
+    };
+    // Expected sequence on the prior session: UserMessage, AssistantMessage,
+    // Suspending. (Resumed is appended to the NEW session, not the prior.)
     assert_eq!(
-        catch_up.events.len(),
-        4,
-        "Fresh catch-up must return the full event log; got {:?}",
-        catch_up.events
+        events.len(),
+        3,
+        "Transcript must return the prior session's full event log; got {events:?}"
     );
     assert!(
         matches!(
-            &catch_up.events[0],
+            &events[0],
             SessionEvent::UserMessage { content, .. } if content == "first user message"
         ),
         "event[0] should be the initial user message, got {:?}",
-        catch_up.events[0]
+        events[0]
     );
     assert!(
         matches!(
-            &catch_up.events[1],
+            &events[1],
             SessionEvent::AssistantMessage { content, .. } if content == "first agent reply"
         ),
         "event[1] should be the prior assistant reply, got {:?}",
-        catch_up.events[1]
+        events[1]
     );
     assert!(
-        matches!(catch_up.events[2], SessionEvent::Suspending { .. }),
+        matches!(events[2], SessionEvent::Suspending { .. }),
         "event[2] should be Suspending, got {:?}",
-        catch_up.events[2]
+        events[2]
     );
-    assert!(
-        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
-        "event[3] should be Resumed, got {:?}",
-        catch_up.events[3]
-    );
+
+    // Complete Phase 2 so the new worker can receive subsequent UserMessages
+    // through the relay (the Phase-3 path under test below).
+    let ready_json = serde_json::to_string(&WorkerMessage::Ready)?;
+    ws2.send(tungstenite::Message::Text(ready_json)).await?;
+    let _first_message = recv_text_msg(&mut ws2).await?;
 
     // Step 4: send a new user message and verify the worker receives it via
     // the relay (i.e. the new session is actively relaying).
@@ -782,7 +860,6 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore] // PR-3: chat_lifecycle tests use the old WS protocol; need rewrite for new Fresh→ResumeContext→Ready→FirstMessage flow.
 async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 -> anyhow::Result<()> {
     // Regression guard for the close/resume flow:
@@ -819,19 +896,19 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 
     // Step 2: connect fake-worker #1 and exchange three full turns.
     let mut ws1 = connect_relay(&server.base_url(), &initial_session_id).await?;
-    let catch_up = worker_handshake(&mut ws1, WorkerConnect::Fresh).await?;
+    let (_prior, observed_events) = worker_full_handshake(&mut ws1, true).await?;
     assert_eq!(
-        catch_up.events.len(),
+        observed_events.len(),
         1,
-        "fresh worker should see msg1 in the initial catch-up"
+        "fresh worker should see msg1 in FirstMessage"
     );
     assert!(
         matches!(
-            &catch_up.events[0],
+            &observed_events[0],
             SessionEvent::UserMessage { content, .. } if content == msg1
         ),
-        "first catch-up event should be msg1, got {:?}",
-        catch_up.events[0]
+        "first observed event should be msg1, got {:?}",
+        observed_events[0]
     );
 
     send_worker_message(
@@ -1000,57 +1077,73 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "resumed session must be interactive"
     );
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
-    let catch_up2 = worker_handshake(&mut ws2, WorkerConnect::Fresh).await?;
-
-    // History-tracked assertion: full prior log, in insertion order.
-    // Expected sequence: msg1, reply1, msg2, reply2, msg3, reply3, Suspending,
-    // Closed, Resumed = 9 events.
+    // Phase 1: Fresh → ResumeContext (with prior_session_id).
+    let connect_json = serde_json::to_string(&WorkerMessage::Connect(WorkerConnect::Fresh))?;
+    ws2.send(tungstenite::Message::Text(connect_json)).await?;
+    let prior_id = match serde_json::from_str::<ServerMessage>(&recv_text_msg(&mut ws2).await?)? {
+        ServerMessage::ResumeContext {
+            prior_session_id: Some(id),
+            ..
+        } => id,
+        other => panic!("expected ResumeContext with prior_session_id, got {other:?}"),
+    };
+    // Phase 1 fallback: request the prior session's transcript and assert
+    // it contains the full conversation history (3 user + 3 assistant +
+    // Suspending = 7 events, in insertion order).
+    let req_json = serde_json::to_string(&WorkerMessage::RequestTranscript {
+        prior_session_id: prior_id,
+    })?;
+    ws2.send(tungstenite::Message::Text(req_json)).await?;
+    let prior_events = match serde_json::from_str::<ServerMessage>(&recv_text_msg(&mut ws2).await?)?
+    {
+        ServerMessage::Transcript { events } => events,
+        other => panic!("expected Transcript, got {other:?}"),
+    };
     assert_eq!(
-        catch_up2.events.len(),
-        9,
-        "catch-up should contain 3 user + 3 assistant + Suspending + Closed + \
-         Resumed = 9 events, got {:?}",
-        catch_up2.events
+        prior_events.len(),
+        8,
+        "prior session transcript: 3 user + 3 assistant + Suspending + Closed = 8; got {prior_events:?}"
     );
-    match &catch_up2.events[0] {
+    match &prior_events[0] {
         SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg1),
-        other => panic!("event[0] should be msg1 UserMessage, got {other:?}"),
+        other => panic!("transcript[0] should be msg1, got {other:?}"),
     }
-    match &catch_up2.events[1] {
+    match &prior_events[1] {
         SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 1"),
-        other => panic!("event[1] should be reply 1 AssistantMessage, got {other:?}"),
+        other => panic!("transcript[1] should be reply 1, got {other:?}"),
     }
-    match &catch_up2.events[2] {
+    match &prior_events[2] {
         SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg2),
-        other => panic!("event[2] should be msg2 UserMessage, got {other:?}"),
+        other => panic!("transcript[2] should be msg2, got {other:?}"),
     }
-    match &catch_up2.events[3] {
+    match &prior_events[3] {
         SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 2"),
-        other => panic!("event[3] should be reply 2 AssistantMessage, got {other:?}"),
+        other => panic!("transcript[3] should be reply 2, got {other:?}"),
     }
-    match &catch_up2.events[4] {
+    match &prior_events[4] {
         SessionEvent::UserMessage { content, .. } => assert_eq!(content, msg3),
-        other => panic!("event[4] should be msg3 UserMessage, got {other:?}"),
+        other => panic!("transcript[4] should be msg3, got {other:?}"),
     }
-    match &catch_up2.events[5] {
+    match &prior_events[5] {
         SessionEvent::AssistantMessage { content, .. } => assert_eq!(content, "reply 3"),
-        other => panic!("event[5] should be reply 3 AssistantMessage, got {other:?}"),
+        other => panic!("transcript[5] should be reply 3, got {other:?}"),
     }
     assert!(
-        matches!(catch_up2.events[6], SessionEvent::Suspending { .. }),
-        "event[6] should be Suspending, got {:?}",
-        catch_up2.events[6]
+        matches!(prior_events[6], SessionEvent::Suspending { .. }),
+        "transcript[6] should be Suspending, got {:?}",
+        prior_events[6]
     );
     assert!(
-        matches!(catch_up2.events[7], SessionEvent::Closed { .. }),
-        "event[7] should be Closed, got {:?}",
-        catch_up2.events[7]
+        matches!(prior_events[7], SessionEvent::Closed { .. }),
+        "transcript[7] should be Closed (mirrored from the /close lifecycle event), \
+         got {:?}",
+        prior_events[7]
     );
-    assert!(
-        matches!(catch_up2.events[8], SessionEvent::Resumed { .. }),
-        "event[8] should be Resumed, got {:?}",
-        catch_up2.events[8]
-    );
+    // Phase 2: send Ready; consume the FirstMessage (drives the new session
+    // forward so Phase-3 can receive msg4 below).
+    let ready_json = serde_json::to_string(&WorkerMessage::Ready)?;
+    ws2.send(tungstenite::Message::Text(ready_json)).await?;
+    let _first_message = recv_text_msg(&mut ws2).await?;
 
     // Step 7: send msg4 and verify the resumed relay forwards ONLY this new
     // message — not a replay of msg1/msg2/msg3.
@@ -1168,7 +1261,6 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 }
 
 #[tokio::test]
-#[ignore] // PR-3: chat_lifecycle tests use the old WS protocol; need rewrite for new Fresh→ResumeContext→Ready→FirstMessage flow.
 async fn close_then_resume_replays_full_history_with_no_session_state() -> anyhow::Result<()> {
     // Regression test for the user-reported "agent forgets context on resume"
     // bug. When the user /closes a chat, the worker is killed without
@@ -1195,7 +1287,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
 
     let mut ws = connect_relay(&server.base_url(), &initial_session_id).await?;
-    let _catch_up = worker_handshake(&mut ws, WorkerConnect::Fresh).await?;
+    let (_prior, _events) = worker_full_handshake(&mut ws, true).await?;
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {
@@ -1259,46 +1351,56 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         .clone()
         .expect("resumed_from must be set on a session created by /resume");
 
-    // Step 4: connect fake-worker #2 with the real worker's
-    // resume_from_event_index value. The server must return the FULL event
-    // log including the prior UserMessage + AssistantMessage so the new
-    // worker can rebuild context.
+    // Step 4: connect fake-worker #2 and pull the prior session's transcript
+    // via `WorkerMessage::RequestTranscript`. The server must return the
+    // FULL prior log including the UserMessage + AssistantMessage so the
+    // new worker can rebuild context — even though no session_state was
+    // ever persisted.
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
-    let catch_up = worker_handshake(&mut ws2, WorkerConnect::Fresh).await?;
-
-    // Expected sequence: UserMessage("first user message"), AssistantMessage("first agent reply"), Closed, Resumed.
+    let connect_json = serde_json::to_string(&WorkerMessage::Connect(WorkerConnect::Fresh))?;
+    ws2.send(tungstenite::Message::Text(connect_json)).await?;
+    let prior_id = match serde_json::from_str::<ServerMessage>(&recv_text_msg(&mut ws2).await?)? {
+        ServerMessage::ResumeContext {
+            prior_session_id: Some(id),
+            ..
+        } => id,
+        other => panic!("expected ResumeContext with prior_session_id, got {other:?}"),
+    };
+    let req_json = serde_json::to_string(&WorkerMessage::RequestTranscript {
+        prior_session_id: prior_id,
+    })?;
+    ws2.send(tungstenite::Message::Text(req_json)).await?;
+    let prior_events = match serde_json::from_str::<ServerMessage>(&recv_text_msg(&mut ws2).await?)?
+    {
+        ServerMessage::Transcript { events } => events,
+        other => panic!("expected Transcript, got {other:?}"),
+    };
     assert_eq!(
-        catch_up.events.len(),
-        4,
-        "expected the full event log on resume, got {:?}",
-        catch_up.events
+        prior_events.len(),
+        3,
+        "prior session transcript: UserMessage + AssistantMessage + Closed = 3, got {prior_events:?}"
     );
     assert!(
         matches!(
-            &catch_up.events[0],
+            &prior_events[0],
             SessionEvent::UserMessage { content, .. } if content == "first user message"
         ),
-        "event[0] should be the initial user message, got {:?}",
-        catch_up.events[0]
+        "transcript[0] should be the initial user message, got {:?}",
+        prior_events[0]
     );
     assert!(
         matches!(
-            &catch_up.events[1],
+            &prior_events[1],
             SessionEvent::AssistantMessage { content, .. } if content == "first agent reply"
         ),
-        "event[1] should be the prior assistant reply (the key context the \
+        "transcript[1] should be the prior assistant reply (the key context the \
          worker would otherwise have lost), got {:?}",
-        catch_up.events[1]
+        prior_events[1]
     );
     assert!(
-        matches!(catch_up.events[2], SessionEvent::Closed { .. }),
-        "event[2] should be Closed, got {:?}",
-        catch_up.events[2]
-    );
-    assert!(
-        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
-        "event[3] should be Resumed, got {:?}",
-        catch_up.events[3]
+        matches!(prior_events[2], SessionEvent::Closed { .. }),
+        "transcript[2] should be Closed, got {:?}",
+        prior_events[2]
     );
 
     Ok(())
@@ -1606,7 +1708,6 @@ async fn register_agent_with_prompt_body(
 /// EITHER `WorkerCatchUp.events` OR a `ServerMessage::Event` on the relay,
 /// which mirrors how the bug actually manifests in production.
 #[tokio::test]
-#[ignore] // PR-3: chat_lifecycle tests use the old WS protocol; need rewrite for new Fresh→ResumeContext→Ready→FirstMessage flow.
 async fn create_conversation_with_first_message_reaches_worker_via_relay() -> anyhow::Result<()> {
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state, store.clone()).await?;
@@ -1638,21 +1739,24 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     // original test was guarding against.)
     let _session = store.get_session(&session_id, false).await?.item;
 
-    // Connect as a fake worker, handshake, and observe the first user
-    // message. It may arrive via catch-up (worker connected after the
-    // message was appended) or via the relay (worker connected before the
-    // message landed). Either is sufficient for PromptPrepend to fire.
+    // Connect as a fake worker, run the new Phase 1+2 handshake, and observe
+    // the first user message. Under the PR-3 protocol the first message
+    // reaches the worker via `FirstMessage.user_message`; if the conversation
+    // create races the WS open such that the message lands after `Ready`,
+    // the server stashes `pending_first_message` and emits `FirstMessage`
+    // once the UserMessage arrives. Either outcome is sufficient for
+    // PromptPrepend to fire.
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
-    let catch_up = worker_handshake(&mut ws, WorkerConnect::Fresh).await?;
+    let (_prior, observed_events) = worker_full_handshake(&mut ws, true).await?;
 
-    let saw_in_catch_up = catch_up.events.iter().any(|e| {
+    let saw_via_first_message = observed_events.iter().any(|e| {
         matches!(
             e,
             SessionEvent::UserMessage { content, .. } if content == "hello"
         )
     });
 
-    let saw_via_relay = if saw_in_catch_up {
+    let saw_via_relay = if saw_via_first_message {
         false
     } else {
         let drained = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
@@ -1667,10 +1771,9 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     };
 
     assert!(
-        saw_in_catch_up || saw_via_relay,
-        "worker must observe the first user message via either catch-up or relay; \
-         catch-up events were: {:?}",
-        catch_up.events
+        saw_via_first_message || saw_via_relay,
+        "worker must observe the first user message via either FirstMessage or relay; \
+         FirstMessage events observed were: {observed_events:?}"
     );
 
     Ok(())

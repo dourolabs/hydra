@@ -80,7 +80,7 @@ impl Automation for SpawnConversationSessionsAutomation {
                 if new.status != ConversationStatus::Active {
                     return Ok(());
                 }
-                spawn_session(ctx, conversation_id, new, None).await?;
+                spawn_session(ctx, conversation_id, new, false).await?;
             }
             ServerEvent::ConversationUpdated {
                 conversation_id,
@@ -98,8 +98,8 @@ impl Automation for SpawnConversationSessionsAutomation {
                 {
                     return Ok(());
                 }
-                let resume_from = compute_resume_index(ctx, conversation_id).await;
-                spawn_session(ctx, conversation_id, new, resume_from).await?;
+                let is_resume = has_prior_terminal(ctx, conversation_id).await;
+                spawn_session(ctx, conversation_id, new, is_resume).await?;
             }
             ServerEvent::SessionUpdated { payload, .. } => {
                 let MutationPayload::Session { old, new, .. } = payload.as_ref() else {
@@ -125,10 +125,9 @@ impl Automation for SpawnConversationSessionsAutomation {
 
 /// Spawn a session for a conversation that has just entered `Active` status.
 ///
-/// `resume_from` is `Some(index)` for resume spawns (the worker should replay
-/// from that event index) and `None` for fresh spawns. When `resume_from` is
-/// `Some`, the spawned session's `conversation_resume_from` is stamped and a
-/// `Resumed` event is appended to the conversation log.
+/// `is_resume` distinguishes the two spawn flavors: `true` means a resume
+/// continuation (stamp `Session.resumed_from`, append `ConversationEvent::Resumed`,
+/// dual-write `SessionEvent::Resumed`), `false` means a brand-new conversation.
 ///
 /// Returns `Err` for misconfiguration cases that prevent a spawn (no agent
 /// available, agent prompt missing, `create_session` fails). The runner
@@ -140,7 +139,7 @@ async fn spawn_session(
     ctx: &AutomationContext<'_>,
     conversation_id: &ConversationId,
     conversation: &Conversation,
-    resume_from: Option<usize>,
+    is_resume: bool,
 ) -> Result<(), AutomationError> {
     if conversation.deleted {
         return Ok(());
@@ -224,7 +223,7 @@ async fn spawn_session(
         }
     };
 
-    if resume_from.is_some() {
+    if is_resume {
         // Per the PR-3 worker_run interface redesign, resumption flows via
         // `Session.resumed_from` (the lineage edge) plus the server-side
         // `session_state` blob lookup at `WorkerConnect::Fresh` time. The
@@ -232,11 +231,15 @@ async fn spawn_session(
         // gone; we still stamp `Session.resumed_from` so the resume path
         // in `routes/sessions/relay.rs::handle_connect` can find the
         // prior session's state.
+        //
+        // Look up the prior session id once and reuse it for both the
+        // `Session.resumed_from` stamp and the dual-write of the
+        // `SessionEvent::Resumed` marker below.
+        let prior_session_id = find_prior_session_id(ctx, conversation_id, &session_id).await;
         match ctx.store.get_session(&session_id, false).await {
             Ok(versioned) => {
                 let mut session = versioned.item;
-                if let Some(prior) = find_prior_session_id(ctx, conversation_id, &session_id).await
-                {
+                if let Some(prior) = prior_session_id.clone() {
                     session.resumed_from = Some(prior);
                 }
                 if let Err(err) = ctx
@@ -288,9 +291,7 @@ async fn spawn_session(
         // Dual-write the SessionEvent::Resumed marker onto the newly-spawned
         // session, carrying the prior session id (Phase C step 7 of the
         // sessions-orthogonality redesign, §3.2 mapping rule).
-        if let Some(from_session_id) =
-            find_prior_session_id(ctx, conversation_id, &session_id).await
-        {
+        if let Some(from_session_id) = prior_session_id {
             let session_event = crate::domain::sessions::SessionEvent::Resumed {
                 from_session_id,
                 timestamp: resumed_timestamp,
@@ -316,7 +317,7 @@ async fn spawn_session(
         automation = AUTOMATION_NAME,
         conversation_id = %conversation_id,
         session_id = %session_id,
-        resume = resume_from.is_some(),
+        resume = is_resume,
         "spawned conversation session"
     );
 
@@ -342,39 +343,35 @@ async fn find_prior_session_id(
         .map(|(id, _)| id)
 }
 
-/// Compute the `conversation_resume_from` index for a resume spawn.
+/// `true` iff the conversation has any prior terminal session — i.e., this is
+/// a resume spawn rather than the first spawn of a fresh conversation.
 ///
-/// Scans events newest-to-oldest:
-///   - First `Closed` / `Suspending` found ⇒ index just after it (the worker
-///     resumes from the post-terminal boundary).
-///   - First `Resumed` found ⇒ `events.len()` (the prior resume already
-///     consumed the snapshot; start at the current end).
-///   - No marker found ⇒ `events.len()`.
-async fn compute_resume_index(
-    ctx: &AutomationContext<'_>,
-    conversation_id: &ConversationId,
-) -> Option<usize> {
-    let events = match ctx.store.get_conversation_events(conversation_id).await {
-        Ok(events) => events,
+/// Replaces the old `compute_resume_index` (which returned an `Option<usize>`
+/// whose value was only consumed as `.is_some()`; PR-3 removed the
+/// `Interactive.conversation_resume_from` field that consumed it). Looks at
+/// the last conversation event newest-to-oldest: a trailing `Closed`,
+/// `Suspending`, or `Resumed` means the conversation has been around the loop
+/// at least once and the spawn should be wired with `Session.resumed_from`.
+async fn has_prior_terminal(ctx: &AutomationContext<'_>, conversation_id: &ConversationId) -> bool {
+    match ctx.store.get_conversation_events(conversation_id).await {
+        Ok(events) => events.iter().next_back().is_some_and(|e| {
+            matches!(
+                e.item,
+                ConversationEvent::Closed { .. }
+                    | ConversationEvent::Suspending { .. }
+                    | ConversationEvent::Resumed { .. }
+            )
+        }),
         Err(err) => {
             tracing::warn!(
                 automation = AUTOMATION_NAME,
                 conversation_id = %conversation_id,
                 error = %err,
-                "failed to load conversation events; resume snapshot will use events.len()"
+                "failed to load conversation events; treating as fresh spawn"
             );
-            return None;
-        }
-    };
-    if let Some((i, e)) = events.iter().enumerate().next_back() {
-        match &e.item {
-            ConversationEvent::Closed { .. } | ConversationEvent::Suspending { .. } => {
-                return Some(i + 1);
-            }
-            ConversationEvent::Resumed { .. } => return Some(events.len()),
+            false
         }
     }
-    Some(events.len())
 }
 
 /// On a session's terminal transition, flip the conversation's status from
@@ -1135,8 +1132,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // PR-3 removed conversation_resume_from; resume uses Session.resumed_from now.
-    async fn resume_spawn_sets_conversation_resume_from_and_appends_resumed_event() {
+    async fn resume_spawn_stamps_resumed_from_and_appends_resumed_event() {
+        // PR-3 successor of `resume_spawn_sets_conversation_resume_from_…`:
+        // verifies that a conversation transitioning Closed → Active gets a
+        // brand-new spawned session whose `Session.resumed_from` points at
+        // the prior session, and that a `ConversationEvent::Resumed`
+        // referencing the new session_id is appended to the conversation log.
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
@@ -1147,7 +1148,20 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate a closed conversation with prior history: Suspending then Closed.
+        // Seed a prior session so `find_prior_session_id` finds something to
+        // wire into the new session's `resumed_from`.
+        let prior_session = make_interactive_session(
+            crate::domain::task_status::Status::Complete,
+            Some(conversation_id.clone()),
+        );
+        let (prior_session_id, _) = state
+            .store
+            .add_session_with_actor(prior_session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        // Lifecycle history that makes `has_prior_terminal` return true:
+        // Suspending → Closed.
         state
             .store
             .append_conversation_event_with_actor(
@@ -1172,15 +1186,6 @@ mod tests {
             .await
             .unwrap();
 
-        // The events count just before the automation fires is the expected
-        // conversation_resume_from value (index just after Closed).
-        let expected_resume_from = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap()
-            .len();
-
         let event = conversation_updated_event(
             conversation_id.clone(),
             conversation,
@@ -1189,7 +1194,11 @@ mod tests {
         let session = run_and_get_session(&state, &conversation_id, &event).await;
 
         assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(None::<usize>, Some(expected_resume_from));
+        assert_eq!(
+            session.resumed_from.as_ref(),
+            Some(&prior_session_id),
+            "resumed_from must point at the previous session"
+        );
 
         let events = state
             .store()
@@ -1208,64 +1217,13 @@ mod tests {
             .list_sessions_with_query(&SearchSessionsQuery::default())
             .await
             .unwrap();
-        let session_id = sessions
+        let new_session_id = sessions
             .into_iter()
+            .filter(|(id, _)| id != &prior_session_id)
             .find(|(_, s)| s.item.conversation_id() == Some(&conversation_id))
             .map(|(id, _)| id)
             .unwrap();
-        assert_eq!(resumed, session_id);
-    }
-
-    #[tokio::test]
-    #[ignore] // PR-3 removed conversation_resume_from stamping.
-    async fn resume_spawn_uses_position_after_most_recent_lifecycle_event() {
-        // `compute_resume_index` scans the conversation events log newest-to-
-        // oldest and returns the index just after the first Suspending/Closed
-        // it finds. Post-Phase-E step 18 the log carries only lifecycle
-        // events (Suspending/Resumed/Closed), so the previous "UserMessage
-        // races in after Closed" scenario no longer applies. This regression
-        // test guards the boundary-after-most-recent-lifecycle invariant
-        // directly: Suspending → Closed → Suspending yields
-        // `events.len() == 3`.
-        let state = state_with_default_model("default-model");
-        register_agent(&state, "swe", "prompt", false).await;
-
-        let conversation = make_conversation_with_status(Some("swe"), ConversationStatus::Closed);
-        let (conversation_id, _) = state
-            .store
-            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
-            .await
-            .unwrap();
-
-        for ev in [
-            ConversationEvent::Suspending {
-                reason: "idle_timeout".into(),
-                timestamp: Utc::now(),
-            },
-            ConversationEvent::Closed {
-                timestamp: Utc::now(),
-            },
-            ConversationEvent::Suspending {
-                reason: "sigterm".into(),
-                timestamp: Utc::now(),
-            },
-        ] {
-            state
-                .store
-                .append_conversation_event_with_actor(&conversation_id, ev, ActorRef::test())
-                .await
-                .unwrap();
-        }
-
-        let event = conversation_updated_event(
-            conversation_id.clone(),
-            conversation,
-            make_conversation(Some("swe")),
-        );
-        let session = run_and_get_session(&state, &conversation_id, &event).await;
-
-        assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(None::<usize>, Some(3));
+        assert_eq!(resumed, new_session_id);
     }
 
     #[tokio::test]

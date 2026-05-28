@@ -3,10 +3,29 @@ import type { MountSpec, Session } from "@hydra/api";
 import { Badge, MarkdownViewer } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
+import { useChatTranscript } from "../chat/useChatTranscript";
 import styles from "./SessionSettings.module.css";
 
 interface SessionSettingsProps {
   task: Session;
+}
+
+/**
+ * Locate the conversation's first `UserMessage` content across the merged
+ * transcript. Used to render the original prompt for both interactive and
+ * headless sessions now that `SessionMode::Headless` no longer carries
+ * `prompt` inline (PR-3 — first user message lives in the conversation
+ * event log).
+ */
+function useFirstUserMessage(conversationId: string | null): string | null {
+  const { events } = useChatTranscript(conversationId ?? "");
+  if (!conversationId) return null;
+  for (const e of events) {
+    if (e.type === "user_message") {
+      return e.content;
+    }
+  }
+  return null;
 }
 
 function formatMountSpec(mountSpec: MountSpec): string {
@@ -34,10 +53,7 @@ function formatMountSpec(mountSpec: MountSpec): string {
   return bundleLabel ?? "None";
 }
 
-function promptOf(task: Session): string | null {
-  // PR-3: the headless prompt no longer lives inline on the SessionMode;
-  // it's the conversation's first UserMessage event. Read paths that need
-  // the prompt should query the conversation event log instead.
+function systemPromptOf(task: Session): string | null {
   return task.agent_config.system_prompt ?? null;
 }
 
@@ -58,7 +74,17 @@ export function SessionSettings({ task }: SessionSettingsProps) {
   const entries: { label: string; value: React.ReactNode; stacked?: boolean }[] =
     [];
 
-  const prompt = promptOf(task);
+  // For headless sessions, the original prompt is the conversation's first
+  // UserMessage (PR-3). For interactive sessions we still display the agent
+  // system prompt if one is set. Falling back from one to the other keeps
+  // the "Prompt" row populated for both modes.
+  const conversationId = task.mode.conversation_id ?? null;
+  const firstUserMessage = useFirstUserMessage(
+    task.mode.type === "headless" ? conversationId : null,
+  );
+  const systemPrompt = systemPromptOf(task);
+  const prompt =
+    task.mode.type === "headless" ? firstUserMessage : systemPrompt;
   if (prompt) {
     entries.push({
       label: "Prompt",

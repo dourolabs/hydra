@@ -69,7 +69,10 @@ impl ModelSelector {
     /// `resume` is logged and dropped if supplied.
     pub async fn run(&mut self, prompt: &str, resume: Option<SessionResume>) -> Result<RunReport> {
         match self {
-            Self::Claude(c) => c.run(prompt, resume.map(claude_resume_from_generic)).await,
+            Self::Claude(c) => {
+                c.run(prompt, resume.map(claude_resume_from_generic), None)
+                    .await
+            }
             Self::Codex(c) => {
                 if resume.is_some() {
                     tracing::debug!("ModelSelector: dropping `resume` for Codex (out of scope)");
@@ -94,10 +97,18 @@ impl ModelSelector {
 
     /// Run one batch turn with a wrapper-native resume handle (per design
     /// §3.2 `run_with_native`).
+    ///
+    /// When `output` is `Some`, the wrapper streams per-event output through
+    /// the channel (translated to generic [`WorkerEvent`]s) as soon as it
+    /// parses each line from the model. The headless WS driver
+    /// (`drive_headless`) supplies this so `SessionEvent`s flow to the server
+    /// in real time. Pass `None` for callers that only want the final
+    /// [`RunReport`] (e.g. CLI smoke tests).
     pub async fn run_with_native(
         &mut self,
         prompt: &str,
         resume: Option<NativeResume>,
+        output: Option<mpsc::Sender<WorkerEvent>>,
     ) -> Result<RunReport> {
         match self {
             Self::Claude(c) => {
@@ -111,12 +122,30 @@ impl ModelSelector {
                     }
                     None => None,
                 };
-                c.run(prompt, claude_resume).await
+                let claude_events = output.as_ref().map(|_| mpsc::channel::<ClaudeEvent>(32));
+                let (claude_events_tx, out_pump) = match (claude_events, output) {
+                    (Some((tx, rx)), Some(worker_tx)) => {
+                        let pump = spawn_output_translator(rx, worker_tx);
+                        (Some(tx), Some(pump))
+                    }
+                    _ => (None, None),
+                };
+                let report = c.run(prompt, claude_resume, claude_events_tx).await;
+                if let Some(pump) = out_pump {
+                    let _ = pump.await;
+                }
+                report
             }
             Self::Codex(c) => {
                 if resume.is_some() {
                     tracing::debug!(
                         "ModelSelector::run_with_native: Codex arm dropping resume (not implemented)"
+                    );
+                }
+                if output.is_some() {
+                    tracing::debug!(
+                        "ModelSelector::run_with_native: Codex arm dropping output channel \
+                         (per-event streaming for Codex not yet implemented)"
                     );
                 }
                 c.run(prompt).await

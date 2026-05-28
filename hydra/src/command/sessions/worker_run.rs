@@ -28,7 +28,7 @@ use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::relay_adapter::{spawn_pump, RelayAdapter};
+use crate::worker::relay_adapter::{client_reconnect_fn, spawn_pump, RelayAdapter};
 use crate::worker::report::{NativeResume, RunReport, TokenUsage};
 use crate::{
     client::{ConflictError, HydraClientInterface},
@@ -179,7 +179,7 @@ pub async fn run(
             Ok(mut selector) => {
                 let run_result = drive_session(
                     &mut selector,
-                    client.as_ref(),
+                    Arc::clone(&client),
                     &job,
                     mode_kind,
                     selector_home_dir.clone(),
@@ -468,7 +468,7 @@ fn reject_interactive_if_unsupported(model: &Option<String>, interactive: bool) 
 /// then dispatches Phase 3 to the appropriate per-mode runner.
 async fn drive_session(
     selector: &mut ModelSelector,
-    client: &dyn HydraClientInterface,
+    client: Arc<dyn HydraClientInterface>,
     job: &SessionId,
     mode_kind: SessionModeKind,
     home_dir: PathBuf,
@@ -551,6 +551,7 @@ async fn drive_session(
             drive_headless(
                 selector,
                 ws,
+                Arc::clone(&client),
                 job,
                 &prompt_string,
                 native_resume,
@@ -564,6 +565,7 @@ async fn drive_session(
             drive_interactive(
                 selector,
                 ws,
+                Arc::clone(&client),
                 job,
                 &prompt_string,
                 native_resume,
@@ -580,6 +582,7 @@ async fn drive_session(
 async fn drive_headless(
     selector: &mut ModelSelector,
     ws: RelayWebSocket,
+    client: Arc<dyn HydraClientInterface>,
     job: &SessionId,
     prompt: &str,
     resume: Option<NativeResume>,
@@ -588,22 +591,22 @@ async fn drive_headless(
     idle_timeout: Duration,
 ) -> Result<RunReport> {
     log_status("Phase: agent execution — starting");
-    // Spawn the relay pump in passive mode: the model output is forwarded as
-    // SessionEvents over the WS, inbound user messages are dropped.
+    // Spawn the relay pump: model output is forwarded as SessionEvents over
+    // the WS; inbound user messages are dropped (headless is single-turn).
+    let reconnect = Some(client_reconnect_fn(client, job.clone()));
     let RelayAdapter {
         input_rx: _input_rx,
         output_tx,
         pump,
-    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout);
+    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout, reconnect);
 
-    // For headless, we use `run_with_native` (not `run_interactive_*`) because
-    // the model is a one-shot. The events the wrapper produces are forwarded
-    // through `output_tx` by way of the wrapper's internal channel — but
-    // `run_with_native` doesn't accept an output_tx today. To keep parity, we
-    // emit a synthesized AssistantMessage on completion. Streaming per-event
-    // forwarding for headless is a follow-up.
-    let _ = output_tx; // keep the pump alive
-    let report = selector.run_with_native(prompt, resume).await;
+    // Hand the pump's input side to `run_with_native` so the wrapper streams
+    // each parsed event (assistant text, tool use, usage, session_init) to
+    // the pump as it observes them. Dropping `output_tx` at end-of-scope
+    // closes the channel and lets the pump exit cleanly.
+    let report = selector
+        .run_with_native(prompt, resume, Some(output_tx))
+        .await;
     let _ = pump.await;
     report
 }
@@ -612,6 +615,7 @@ async fn drive_headless(
 async fn drive_interactive(
     selector: &mut ModelSelector,
     ws: RelayWebSocket,
+    client: Arc<dyn HydraClientInterface>,
     job: &SessionId,
     prompt: &str,
     resume: Option<NativeResume>,
@@ -623,11 +627,12 @@ async fn drive_interactive(
     if matches!(selector, ModelSelector::Codex(_)) {
         return Err(anyhow!("model does not support interactive mode"));
     }
+    let reconnect = Some(client_reconnect_fn(client, job.clone()));
     let RelayAdapter {
         input_rx,
         output_tx,
         pump,
-    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout);
+    } = spawn_pump(ws, job, home_dir, working_dir, idle_timeout, reconnect);
     let report = selector
         .run_interactive_with_native(input_rx, output_tx, prompt, resume)
         .await;
@@ -879,6 +884,39 @@ mod tests {
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn build_prompt_string_both_none_with_no_primer_returns_err() {
+        // FirstMessage matrix case (f) from the design / parent issue:
+        // both `agent_prompt` and `user_message` are `None` AND the primer
+        // is empty — the protocol invariant requires at least one of them
+        // to be `Some`, so `build_prompt_string` must `bail!`. This is the
+        // worker-side defense-in-depth check against a malformed
+        // `ServerMessage::FirstMessage`.
+        let err = build_prompt_string(&[], None, None)
+            .expect_err("both-None FirstMessage with empty primer must fail-fast");
+        assert!(
+            err.to_string()
+                .contains("both agent_prompt and user_message"),
+            "expected protocol-violation message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_prompt_string_both_none_with_primer_succeeds() {
+        // Sibling of the case-(f) test: when `agent_prompt` and
+        // `user_message` are both `None` but a transcript primer was
+        // assembled (resumed-via-transcript path), the primer alone is the
+        // first model input. This documents that the both-`None` invariant
+        // is conditional on "no primer either" — purely-primer resume runs
+        // are legitimate.
+        let events = vec![SessionEvent::UserMessage {
+            content: "earlier turn".to_string(),
+            timestamp: Utc::now(),
+        }];
+        let s = build_prompt_string(&events, None, None).expect("primer-only path is valid");
+        assert!(s.contains("earlier turn"), "primer must be present: {s}");
     }
 
     #[test]

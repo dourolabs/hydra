@@ -19,7 +19,10 @@
 //! `WorkerSocket` send/recv calls.
 
 use std::{
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 
@@ -28,7 +31,7 @@ use chrono::Utc;
 use futures::{Sink, SinkExt};
 use hydra_common::{
     api::v1::{
-        conversations::{ServerMessage, SessionStatePayload, WorkerMessage},
+        conversations::{ServerMessage, SessionStatePayload, WorkerConnect, WorkerMessage},
         sessions::SessionEvent,
     },
     SessionId,
@@ -37,9 +40,16 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
 use tracing::{error, info, warn};
 
-use crate::client::RelayWebSocket;
+use crate::client::{HydraClientInterface, RelayWebSocket};
 use crate::worker::claude::transcript_path;
 use crate::worker::report::{WorkerEvent, WorkerInputMessage};
+
+/// Closure that re-opens the relay WebSocket when the pump observes a
+/// transient transport error. Concrete impls in production code call
+/// [`HydraClientInterface::connect_relay_websocket`]; tests pass a stub that
+/// hands back a paired in-memory stream.
+pub type ReconnectFn =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<RelayWebSocket>> + Send>> + Send + Sync>;
 
 /// Handles returned by [`spawn_pump`].
 pub struct RelayAdapter {
@@ -60,6 +70,15 @@ pub struct RelayAdapter {
 /// Spawn the Phase-3 bidirectional pump. The caller is responsible for
 /// having already performed Phases 1 and 2 on `ws` (handshake, ResumeContext,
 /// Ready/FirstMessage exchange).
+///
+/// `reconnect` is invoked once when the pump observes a transient WS error
+/// in Phase 3 (recv/send failure). The new WS is followed by a
+/// [`WorkerConnect::Reconnecting`] handshake carrying the worker's running
+/// count of session events; the server's [`ServerMessage::CatchUp`] reply is
+/// drained — any `UserMessage` slice is re-injected into `input_tx` so the
+/// model sees the messages it missed during the disconnect — and Phase 3
+/// resumes on the new WS. A `None` `reconnect` disables the retry (used by
+/// tests that want strict single-WS behavior).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_pump(
     ws: RelayWebSocket,
@@ -67,6 +86,7 @@ pub fn spawn_pump(
     home_dir: PathBuf,
     working_dir: PathBuf,
     idle_timeout: Duration,
+    reconnect: Option<ReconnectFn>,
 ) -> RelayAdapter {
     let (input_tx, input_rx) = mpsc::channel::<WorkerInputMessage>(32);
     let (output_tx, output_rx) = mpsc::channel::<WorkerEvent>(32);
@@ -81,6 +101,7 @@ pub fn spawn_pump(
             idle_timeout,
             input_tx,
             output_rx,
+            reconnect,
         )
         .await
         {
@@ -95,6 +116,19 @@ pub fn spawn_pump(
     }
 }
 
+/// Construct a [`ReconnectFn`] that re-opens the relay WS via the supplied
+/// [`HydraClientInterface`] for the given session id.
+pub fn client_reconnect_fn(
+    client: Arc<dyn HydraClientInterface>,
+    session_id: SessionId,
+) -> ReconnectFn {
+    Arc::new(move || {
+        let client = Arc::clone(&client);
+        let session_id = session_id.clone();
+        Box::pin(async move { client.connect_relay_websocket(&session_id).await })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_pump(
     ws: RelayWebSocket,
@@ -104,6 +138,7 @@ async fn run_pump(
     idle_timeout: Duration,
     input_tx: mpsc::Sender<WorkerInputMessage>,
     mut output_rx: mpsc::Receiver<WorkerEvent>,
+    reconnect: Option<ReconnectFn>,
 ) -> Result<()> {
     use futures::StreamExt;
     let (mut ws_sender, mut ws_receiver) = ws.split();
@@ -111,6 +146,12 @@ async fn run_pump(
     // Track the model session id reported via WorkerEvent::SessionInit so the
     // suspend-upload code can find the transcript on disk.
     let mut model_session_id: Option<String> = None;
+
+    // Running count of per-session events the worker has either received from
+    // the server or successfully sent. Used to populate
+    // `WorkerConnect::Reconnecting.last_received_session_event_index` so the
+    // server can ship every event past that point in `CatchUp`.
+    let mut session_event_count: usize = 0;
 
     let idle_deadline = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle_deadline);
@@ -120,7 +161,12 @@ async fn run_pump(
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .context("failed to install SIGTERM handler")?;
 
-    loop {
+    // Whether we've already used our one reconnect attempt. The protocol
+    // expects at most one mid-session reconnect; further failures terminate
+    // the pump cleanly.
+    let mut reconnect_used = false;
+
+    'outer: loop {
         tokio::select! {
             event = output_rx.recv() => {
                 match event {
@@ -130,7 +176,21 @@ async fn run_pump(
                                 content: text,
                                 timestamp: Utc::now(),
                             };
-                            if !send_worker_event(&mut ws_sender, session_event).await {
+                            if send_worker_event(&mut ws_sender, session_event).await {
+                                session_event_count = session_event_count.saturating_add(1);
+                            } else {
+                                if let Some((new_sender, new_receiver)) = try_reconnect(
+                                    &reconnect,
+                                    &mut reconnect_used,
+                                    session_id,
+                                    session_event_count,
+                                    &input_tx,
+                                    &mut session_event_count,
+                                ).await {
+                                    ws_sender = new_sender;
+                                    ws_receiver = new_receiver;
+                                    continue 'outer;
+                                }
                                 break;
                             }
                         }
@@ -149,7 +209,21 @@ async fn run_pump(
                             payload,
                             timestamp: Utc::now(),
                         };
-                        if !send_worker_event(&mut ws_sender, session_event).await {
+                        if send_worker_event(&mut ws_sender, session_event).await {
+                            session_event_count = session_event_count.saturating_add(1);
+                        } else {
+                            if let Some((new_sender, new_receiver)) = try_reconnect(
+                                &reconnect,
+                                &mut reconnect_used,
+                                session_id,
+                                session_event_count,
+                                &input_tx,
+                                &mut session_event_count,
+                            ).await {
+                                ws_sender = new_sender;
+                                ws_receiver = new_receiver;
+                                continue 'outer;
+                            }
                             break;
                         }
                     }
@@ -168,6 +242,7 @@ async fn run_pump(
                     Some(Ok(tungstenite::Message::Text(text))) => {
                         match serde_json::from_str::<ServerMessage>(&text) {
                             Ok(ServerMessage::Event { event }) => {
+                                session_event_count = session_event_count.saturating_add(1);
                                 if let SessionEvent::UserMessage { content, .. } = event {
                                     idle_deadline
                                         .as_mut()
@@ -195,11 +270,35 @@ async fn run_pump(
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | None => {
                         info!("WebSocket closed by server");
+                        if let Some((new_sender, new_receiver)) = try_reconnect(
+                            &reconnect,
+                            &mut reconnect_used,
+                            session_id,
+                            session_event_count,
+                            &input_tx,
+                            &mut session_event_count,
+                        ).await {
+                            ws_sender = new_sender;
+                            ws_receiver = new_receiver;
+                            continue 'outer;
+                        }
                         break;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(err)) => {
                         warn!(error = %err, "WebSocket error");
+                        if let Some((new_sender, new_receiver)) = try_reconnect(
+                            &reconnect,
+                            &mut reconnect_used,
+                            session_id,
+                            session_event_count,
+                            &input_tx,
+                            &mut session_event_count,
+                        ).await {
+                            ws_sender = new_sender;
+                            ws_receiver = new_receiver;
+                            continue 'outer;
+                        }
                         break;
                     }
                 }
@@ -239,6 +338,119 @@ async fn run_pump(
     drop(input_tx);
     let _ = ws_sender.send(tungstenite::Message::Close(None)).await;
     Ok(())
+}
+
+/// Attempt one Phase-3 reconnect via the caller-supplied closure. On success
+/// returns the split halves of the new WS; on failure (or if `reconnect` is
+/// `None`, or if the slot has already been used) returns `None` so the caller
+/// can tear down the pump.
+async fn try_reconnect(
+    reconnect: &Option<ReconnectFn>,
+    reconnect_used: &mut bool,
+    session_id: &SessionId,
+    current_event_count: usize,
+    input_tx: &mpsc::Sender<WorkerInputMessage>,
+    out_event_count: &mut usize,
+) -> Option<(
+    futures::stream::SplitSink<RelayWebSocket, tungstenite::Message>,
+    futures::stream::SplitStream<RelayWebSocket>,
+)> {
+    use futures::StreamExt;
+    let reconnect = reconnect.as_ref()?;
+    if *reconnect_used {
+        warn!(%session_id, "WS reconnect slot already used; exiting pump");
+        return None;
+    }
+    *reconnect_used = true;
+
+    let new_ws = match (reconnect)().await {
+        Ok(ws) => ws,
+        Err(err) => {
+            warn!(%session_id, error = %err, "WS reconnect failed");
+            return None;
+        }
+    };
+    let (mut new_sender, mut new_receiver) = new_ws.split();
+
+    // Convention: `last_received_session_event_index` is the index of the
+    // most recent event the worker has observed. When the worker has seen
+    // `N` events, the highest index it has confirmed is `N - 1`; when `N`
+    // is 0 (rare — disconnect before any Phase-3 traffic) we send `0` and
+    // accept the narrow window in which event-0 might be skipped.
+    let last_idx = current_event_count.saturating_sub(1);
+    let msg = WorkerMessage::Connect(WorkerConnect::Reconnecting {
+        last_received_session_event_index: last_idx,
+    });
+    let json = match serde_json::to_string(&msg) {
+        Ok(j) => j,
+        Err(err) => {
+            error!(%session_id, error = %err, "failed to serialize Reconnecting handshake");
+            return None;
+        }
+    };
+    if new_sender
+        .send(tungstenite::Message::Text(json))
+        .await
+        .is_err()
+    {
+        warn!(%session_id, "failed to send Reconnecting handshake on new WS");
+        return None;
+    }
+    info!(%session_id, last_received_session_event_index = last_idx, "sent Reconnecting handshake");
+
+    // Wait for CatchUp, skipping pings.
+    loop {
+        let frame = match new_receiver.next().await {
+            Some(Ok(f)) => f,
+            Some(Err(err)) => {
+                warn!(%session_id, error = %err, "WS error awaiting CatchUp");
+                return None;
+            }
+            None => {
+                warn!(%session_id, "WS closed awaiting CatchUp");
+                return None;
+            }
+        };
+        match frame {
+            tungstenite::Message::Text(text) => {
+                match serde_json::from_str::<ServerMessage>(&text) {
+                    Ok(ServerMessage::CatchUp { events }) => {
+                        info!(%session_id, events = events.len(), "CatchUp received");
+                        for event in events {
+                            *out_event_count = out_event_count.saturating_add(1);
+                            // Per design §1.6, only UserMessages get re-injected
+                            // into the model's input queue; the rest are
+                            // discarded (we already emitted those as the prior
+                            // pump run).
+                            if let SessionEvent::UserMessage { content, .. } = event {
+                                if input_tx.send(WorkerInputMessage { content }).await.is_err() {
+                                    warn!(%session_id, "input channel closed during CatchUp drain");
+                                    return None;
+                                }
+                            }
+                        }
+                        return Some((new_sender, new_receiver));
+                    }
+                    Ok(other) => {
+                        warn!(%session_id, ?other, "expected CatchUp, got other ServerMessage; exiting");
+                        return None;
+                    }
+                    Err(err) => {
+                        warn!(%session_id, error = %err, "failed to parse CatchUp");
+                        return None;
+                    }
+                }
+            }
+            tungstenite::Message::Ping(data) => {
+                let _ = new_sender.send(tungstenite::Message::Pong(data)).await;
+            }
+            tungstenite::Message::Close(_) => {
+                warn!(%session_id, "WS closed before CatchUp arrived");
+                return None;
+            }
+            _ => continue,
+        }
+    }
 }
 
 async fn send_worker_event<Si>(ws_sender: &mut Si, event: SessionEvent) -> bool

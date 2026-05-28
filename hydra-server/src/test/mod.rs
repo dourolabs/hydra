@@ -6,6 +6,7 @@ mod conversations;
 mod device_flow;
 mod documents;
 mod events;
+mod first_message_matrix;
 mod github_app;
 mod github_token;
 mod health;

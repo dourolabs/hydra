@@ -186,7 +186,19 @@ impl Claude {
 
     /// Run a one-shot, non-interactive Claude invocation and return the
     /// resulting `RunReport`.
-    pub async fn run(&mut self, prompt: &str, resume: Option<ClaudeResume>) -> Result<RunReport> {
+    ///
+    /// If `events` is `Some`, each parsed [`ClaudeEvent`] is forwarded on the
+    /// channel as it is read from Claude's stdout. The headless WS-driver
+    /// (`drive_headless`) uses this to stream `SessionEvent`s back to the
+    /// server in real time. Send errors are non-fatal (we keep draining
+    /// stdout so the on-disk transcript and `RunReport` aggregation remain
+    /// complete).
+    pub async fn run(
+        &mut self,
+        prompt: &str,
+        resume: Option<ClaudeResume>,
+        events: Option<mpsc::Sender<ClaudeEvent>>,
+    ) -> Result<RunReport> {
         let resume_uuid = match resume {
             Some(ClaudeResume::SessionId(uuid)) => Some(uuid),
             Some(ClaudeResume::TranscriptFile(path)) => Some(install_claude_transcript_file(
@@ -251,6 +263,7 @@ impl Claude {
             let mut stdout_writer = io::stdout();
             let mut line = String::new();
             let mut session_id: Option<String> = None;
+            let mut events_open = events.is_some();
             loop {
                 line.clear();
                 let read = reader
@@ -264,6 +277,16 @@ impl Claude {
                 }
                 if let Some(sid) = extract_session_id(&line) {
                     session_id = Some(sid);
+                }
+                if let Some(tx) = events.as_ref() {
+                    if events_open {
+                        for event in parse_claude_events(&line) {
+                            if tx.send(event).await.is_err() {
+                                events_open = false;
+                                break;
+                            }
+                        }
+                    }
                 }
                 for formatted in formatter.handle_line(&line) {
                     stdout_writer

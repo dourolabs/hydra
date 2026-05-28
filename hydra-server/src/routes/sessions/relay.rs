@@ -243,17 +243,6 @@ async fn handle_relay_socket(
                                 warn!(%session_id, "received unexpected duplicate Connect message; ignoring");
                             }
                             Ok(WorkerMessage::RequestTranscript { prior_session_id }) => {
-                                let events = collect_session_events_after(
-                                    &state,
-                                    &prior_session_id,
-                                    // `usize::MAX` would skip everything, so use 0 minus 1 sentinel
-                                    // by passing the value the loop interprets as "before index 0".
-                                    usize::MAX,
-                                )
-                                .await
-                                .unwrap_or_default();
-                                // collect_session_events_after returns events with `index > skip_after`;
-                                // for "all events" we need a separate full read.
                                 let events = match state.store().get_session_events(&prior_session_id).await {
                                     Ok(versioned) => versioned.into_iter().map(|v| v.item.into()).collect(),
                                     Err(err) => {
@@ -263,7 +252,7 @@ async fn handle_relay_socket(
                                             error = %err,
                                             "failed to load transcript; sending empty"
                                         );
-                                        events
+                                        Vec::new()
                                     }
                                 };
                                 let msg = ServerMessage::Transcript { events };
@@ -479,6 +468,15 @@ async fn collect_session_events_after(
 /// Find the first `SessionEvent::UserMessage` content across every session
 /// linked to the conversation, in session creation-time order. Returns
 /// `None` if no UserMessage has been recorded yet.
+///
+/// Worst-case cost is O(N) serial `get_session_events` reads over the
+/// conversation's session chain. The loop short-circuits the moment it finds
+/// the first UserMessage, so the common case is a single read; long
+/// resumption chains (suspend/resume across many sessions) bear the full
+/// fan-out cost. A dedicated `store::get_first_user_message_for_conversation`
+/// could collapse this to one read; left as a follow-up because the call site
+/// is a one-per-WS-handshake cold path and the speedup is moot for the
+/// typical 1–2 session chains we see today.
 async fn find_first_user_message(
     state: &AppState,
     conversation_id: &hydra_common::ConversationId,
