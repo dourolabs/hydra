@@ -9,34 +9,100 @@
 -- `IssueId` / `SessionId` newtypes for the §3.3 store-level smoke.
 
 --------------------------------------------------------------------------------
--- A parent issue that the `Issue` actor-rewrite arm resolves through
--- a `tasks_v2.spawned_from` lookup.
+-- Parent issues that the `Issue` actor-rewrite arm resolves through a
+-- `tasks_v2.spawned_from` lookup. Each parent corresponds to a different
+-- tie-break edge that `load_issue_to_actor_id` must handle correctly.
 --
--- `i-actissone` has exactly one matching tasks_v2 row, with the task's
--- own actor being a User. The cleanup must replace
--- {"Issue":"i-actissone"} with the resolved {"User": {"name": "alice"}}.
---
--- `i-actisstwo` has ZERO matching tasks_v2 rows; the cleanup must
--- NULL the affected `actor` column rather than failing the migration.
+-- `i-actissone`  — exactly one matching tasks_v2 row, with the task's
+--                  own actor being a User. The cleanup must replace
+--                  {"Issue":"i-actissone"} with the resolved
+--                  {"User": {"name": "alice"}}.
+-- `i-actisstwo`  — ZERO matching tasks_v2 rows; cleanup NULLs the
+--                  affected `actor` column rather than failing the
+--                  migration.
+-- `i-actissmany` — TWO non-deleted is_latest=TRUE matching tasks_v2
+--                  rows with distinct actors. The lookup map only
+--                  inserts when actors.len()==1, so refs NULL.
+-- `i-actissdel`  — One matching task with deleted=TRUE; the loader's
+--                  `WHERE deleted = FALSE` skips it -> 0 matches -> NULL.
+-- `i-actissold`  — One matching task with is_latest=FALSE; the loader's
+--                  `WHERE is_latest = TRUE` skips it -> 0 matches -> NULL.
+-- `i-actisschn`  — One matching task whose own actor is a chained
+--                  {"Issue":"i-actisstwo"} reference;
+--                  `extract_actor_id_from_actor_ref` refuses chained
+--                  lookups -> entry omitted from map -> refs NULL.
 --------------------------------------------------------------------------------
 INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator)
 VALUES
-    ('i-actissone', 1, 'task', 'parent for Issue-arm lookup', 'alice'),
-    ('i-actisstwo', 1, 'task', 'parent for no-match Issue-arm', 'alice');
+    ('i-actissone',  1, 'task', 'parent for Issue-arm lookup',           'alice'),
+    ('i-actisstwo',  1, 'task', 'parent for no-match Issue-arm',         'alice'),
+    ('i-actissmany', 1, 'task', 'parent for multi-match Issue-arm',      'alice'),
+    ('i-actissdel',  1, 'task', 'parent whose only task is deleted',     'alice'),
+    ('i-actissold',  1, 'task', 'parent whose only task is not-latest',  'alice'),
+    ('i-actisschn',  1, 'task', 'parent whose only task chains Issue',   'alice');
 
 INSERT INTO metis.tasks_v2 (id, version_number, creator, status, deleted, is_latest,
                             spawned_from, conversation_id,
                             mount_spec, agent_config, mode,
                             actor, creation_time)
-VALUES (
-    's-spawnone', 1, 'alice', 'complete', FALSE, TRUE,
-    'i-actissone', NULL,
-    '{"working_dir":"repo","mounts":[]}'::jsonb,
-    '{}'::jsonb,
-    '{"type":"headless","prompt":"do thing"}'::jsonb,
-    '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
-    '2026-05-10T10:00:00Z'
-);
+VALUES
+    -- The single-match parent: classic Issue-arm rewrite resolves to User(alice).
+    ('s-spawnone',  1, 'alice', 'complete', FALSE, TRUE,
+     'i-actissone', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
+     '2026-05-10T10:00:00Z'),
+    -- Multi-match parent: two distinct latest non-deleted spawned tasks
+    -- -> the lookup map drops `i-actissmany` -> Issue refs NULL.
+    ('s-spawnmnya', 1, 'alice', 'complete', FALSE, TRUE,
+     'i-actissmany', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
+     '2026-05-10T10:00:01Z'),
+    ('s-spawnmnyb', 1, 'alice', 'complete', FALSE, TRUE,
+     'i-actissmany', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"User": {"name": "bob"}}}}'::jsonb,
+     '2026-05-10T10:00:02Z'),
+    -- Deleted spawned task: the loader's `WHERE deleted=FALSE` skips it.
+    ('s-spawndel',  1, 'alice', 'complete', TRUE, TRUE,
+     'i-actissdel', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
+     '2026-05-10T10:00:03Z'),
+    -- is_latest=FALSE spawned task: post-INSERT trigger forces is_latest=TRUE
+    -- on every fresh row, so we explicitly flip it below.
+    ('s-spawnold',  1, 'alice', 'complete', FALSE, TRUE,
+     'i-actissold', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"User": {"name": "alice"}}}}'::jsonb,
+     '2026-05-10T10:00:04Z'),
+    -- Chained-Issue spawned task: actor itself references another Issue.
+    -- `extract_actor_id_from_actor_ref` refuses NeedsIssueLookup outcomes,
+    -- so `i-actisschn` never makes it into the lookup map.
+    ('s-spawnchn',  1, 'alice', 'complete', FALSE, TRUE,
+     'i-actisschn', NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated": {"actor_id": {"Issue": "i-actisstwo"}}}'::jsonb,
+     '2026-05-10T10:00:05Z');
+
+-- The `is_latest` BEFORE-INSERT trigger forces is_latest=TRUE on freshly
+-- inserted rows, so we have to demote `s-spawnold` AFTER the insert. The
+-- loader's `WHERE is_latest = TRUE` then skips it -> 0 matches for
+-- `i-actissold` -> the Issue rewrite NULLs the referring row.
+UPDATE metis.tasks_v2 SET is_latest = FALSE WHERE id = 's-spawnold';
 
 --------------------------------------------------------------------------------
 -- issues_v2.actor — exercise every pre-cleanup shape that the
@@ -78,7 +144,61 @@ VALUES
      '{"Authenticated":{"actor_id":{"User":{"name":"alice"}}}}'::jsonb),
     -- 11. Multi-key map (Legacy catch-all) -> NULL
     ('i-actmulti', 1, 'task', 'multi-key actor_id', 'alice',
-     '{"Authenticated":{"actor_id":{"kind":"user","name":"alice"}}}'::jsonb);
+     '{"Authenticated":{"actor_id":{"kind":"user","name":"alice"}}}'::jsonb),
+    -- 12. Legacy adhoc/<sid> -> Adhoc
+    ('i-actadhoc', 1, 'task', 'legacy adhoc/<sid>', 'alice',
+     '{"Authenticated":{"actor_id":"adhoc/s-adhocone"}}'::jsonb),
+    -- 13. Legacy external/<sys>/<user> -> External
+    ('i-actextn',  1, 'task', 'legacy external/<sys>/<user>', 'alice',
+     '{"Authenticated":{"actor_id":"external/github/jayantk"}}'::jsonb),
+    -- 14. Legacy u-<x> shorthand -> User
+    ('i-actushrt', 1, 'task', 'legacy u-<x> shorthand', 'alice',
+     '{"Authenticated":{"actor_id":"u-alice"}}'::jsonb),
+    -- 15. Legacy s-<sid> shorthand -> Adhoc (session_id includes the s- prefix)
+    ('i-actsshrt', 1, 'task', 'legacy s-<sid> shorthand', 'alice',
+     '{"Authenticated":{"actor_id":"s-abcdef"}}'::jsonb),
+    -- 16. Legacy svc-<n> shorthand -> Agent (validates as AgentName)
+    ('i-actsvshr', 1, 'task', 'legacy svc-<n> shorthand', 'alice',
+     '{"Authenticated":{"actor_id":"svc-swe"}}'::jsonb),
+    -- 17. Legacy users/<x> with invalid Username payload -> NULL
+    ('i-actubad',  1, 'task', 'legacy users/<has space>', 'alice',
+     '{"Authenticated":{"actor_id":"users/has space"}}'::jsonb),
+    -- 18. Legacy agents/<x> with invalid AgentName payload -> NULL
+    ('i-actabad',  1, 'task', 'legacy agents/<with space>', 'alice',
+     '{"Authenticated":{"actor_id":"agents/with space"}}'::jsonb),
+    -- 19. Legacy external/<sys>/<x> with invalid ExternalSystem -> NULL
+    ('i-actexbad', 1, 'task', 'legacy external/<has space>/foo', 'alice',
+     '{"Authenticated":{"actor_id":"external/has space/foo"}}'::jsonb),
+    -- 20. Legacy a-<issue_id> shorthand is intentionally NOT recognised -> NULL
+    ('i-actashrt', 1, 'task', 'legacy a-<issue_id> shorthand', 'alice',
+     '{"Authenticated":{"actor_id":"a-i-actissone"}}'::jsonb),
+    -- 21. Multi-match Issue ref -> NULL (lookup map omits multi-match entries).
+    ('i-actrefmny',1, 'task', 'multi-match Issue ref', 'alice',
+     '{"Authenticated":{"actor_id":{"Issue":"i-actissmany"}}}'::jsonb),
+    -- 22. Deleted-only-task Issue ref -> NULL.
+    ('i-actrefdel',1, 'task', 'deleted-task Issue ref', 'alice',
+     '{"Authenticated":{"actor_id":{"Issue":"i-actissdel"}}}'::jsonb),
+    -- 23. Not-latest-only-task Issue ref -> NULL.
+    ('i-actrefold',1, 'task', 'not-latest-task Issue ref', 'alice',
+     '{"Authenticated":{"actor_id":{"Issue":"i-actissold"}}}'::jsonb),
+    -- 24. Chained-Issue Issue ref -> NULL (lookup chains aren't followed).
+    ('i-actrefchn',1, 'task', 'chained-Issue ref', 'alice',
+     '{"Authenticated":{"actor_id":{"Issue":"i-actisschn"}}}'::jsonb),
+    -- 25. System.on_behalf_of = Username -> resolved to User.
+    ('i-actsysu',  1, 'task', 'System.on_behalf_of with Username', 'alice',
+     '{"System":{"worker_name":"task-spawner","on_behalf_of":{"Username":"alice"}}}'::jsonb),
+    -- 26. System.on_behalf_of = Issue (no match) -> on_behalf_of=null
+    -- (whole row stays non-NULL per `actor_variant_cleanup.rs:341-355`).
+    ('i-actsysn',  1, 'task', 'System.on_behalf_of with unresolved Issue', 'alice',
+     '{"System":{"worker_name":"task-spawner","on_behalf_of":{"Issue":"i-actisstwo"}}}'::jsonb),
+    -- 27. Automation.triggered_by = Authenticated/Username -> resolved.
+    ('i-actauto',  1, 'task', 'Automation.triggered_by with Username', 'alice',
+     '{"Automation":{"automation_name":"github_pr_sync","triggered_by":{"Authenticated":{"actor_id":{"Username":"alice"}}}}}'::jsonb),
+    -- 28. Automation.triggered_by = Authenticated/Issue (no match) ->
+    -- triggered_by=null (whole row stays non-NULL per
+    -- `actor_variant_cleanup.rs:375-384`).
+    ('i-actauton', 1, 'task', 'Automation.triggered_by with unresolved Issue', 'alice',
+     '{"Automation":{"automation_name":"github_pr_sync","triggered_by":{"Authenticated":{"actor_id":{"Issue":"i-actisstwo"}}}}}'::jsonb);
 
 --------------------------------------------------------------------------------
 -- actors_v2.actor + actor_id — the bare ActorId column. The cleanup
@@ -108,3 +228,63 @@ VALUES
      '{"type":"suspending","reason":"x","timestamp":"2026-05-10T11:00:00Z"}'::jsonb,
      '{"Authenticated":{"actor_id":{"Session":"s-cesessx"}}}'::jsonb,
      '2026-05-10T11:00:00Z');
+
+--------------------------------------------------------------------------------
+-- Multi-table coverage: the migration walks every table in
+-- `ACTOR_REF_TABLES_COMMON` plus session_events_v2 / conversation_events_v2.
+-- The pre-existing rows above only exercise issues_v2, actors_v2, and
+-- conversation_events_v2; the rows below add one legacy-shape `actor`
+-- row to each remaining table so the per-table walker is exercised end
+-- to end. Each row picks `{"Username":"alice"}` so the post-cleanup
+-- expected shape is the stable `{"User":{"name":"alice"}}` across all
+-- tables.
+--------------------------------------------------------------------------------
+
+-- repositories_v2.actor
+INSERT INTO metis.repositories_v2 (id, version_number, remote_url, actor)
+VALUES
+    ('r-actreplc', 1, 'https://example.invalid/repo.git',
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb);
+
+-- users_v2.actor
+INSERT INTO metis.users_v2 (id, version_number, username, actor)
+VALUES
+    ('u-actusrlc', 1, 'mtableuser',
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb);
+
+-- patches_v2.actor
+INSERT INTO metis.patches_v2
+    (id, version_number, description, diff, service_repo_name, creator, actor)
+VALUES
+    ('p-actpchlc', 1, 'patch with legacy actor', '', 'dourolabs/hydra', 'alice',
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb);
+
+-- tasks_v2.actor — separate from `s-spawnone` (and the other parent-lookup
+-- tasks) so spawned_from=NULL keeps it out of the Issue-arm lookup map.
+INSERT INTO metis.tasks_v2 (id, version_number, creator, status, deleted, is_latest,
+                            spawned_from, conversation_id,
+                            mount_spec, agent_config, mode,
+                            actor, creation_time)
+VALUES
+    ('s-actrowx',  1, 'alice', 'complete', FALSE, TRUE,
+     NULL, NULL,
+     '{"working_dir":"repo","mounts":[]}'::jsonb,
+     '{}'::jsonb,
+     '{"type":"headless","prompt":"do thing"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb,
+     '2026-05-10T10:30:00Z');
+
+-- documents_v2.actor
+INSERT INTO metis.documents_v2 (id, version_number, body_markdown, actor)
+VALUES
+    ('d-actdoclc', 1, '# legacy actor',
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb);
+
+-- session_events_v2.actor — bind to the multi-table tasks_v2 row above.
+INSERT INTO metis.session_events_v2
+    (session_id, version_number, event_type, event_data, actor, created_at)
+VALUES
+    ('s-actrowx', 1, 'user_message',
+     '{"type":"user_message","content":"se hello","timestamp":"2026-05-10T10:35:00Z"}'::jsonb,
+     '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb,
+     '2026-05-10T10:35:00Z');

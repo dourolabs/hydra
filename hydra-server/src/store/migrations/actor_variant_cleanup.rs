@@ -1222,4 +1222,95 @@ mod tests {
             }))
         );
     }
+
+    #[test]
+    fn classify_bare_string_adhoc_path() {
+        let v = json!("adhoc/s-xxx");
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Replace(json!({"Adhoc": {"session_id": "s-xxx"}}))
+        );
+    }
+
+    #[test]
+    fn classify_bare_string_svc_shorthand() {
+        let valid = json!("svc-swe");
+        assert_eq!(
+            classify_actor_id(&valid),
+            Rewrite::Replace(json!({"Agent": {"name": "swe"}}))
+        );
+        let invalid = json!("svc-has space");
+        assert!(matches!(classify_actor_id(&invalid), Rewrite::Drop { .. }));
+    }
+
+    #[test]
+    fn classify_bare_string_a_issue_shorthand_drops() {
+        // `a-<issue_id>` is intentionally unrecognised by the bare-string
+        // parser: the corresponding tagged shape `{"Issue":"i-..."}`
+        // covers the same case and routes through the lookup, while a
+        // bare `a-` string would short-circuit that path with no Issue
+        // lookup at all.
+        let v = json!("a-i-abc");
+        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+    }
+
+    #[test]
+    fn classify_bare_string_external_invalid_system_drops() {
+        // `ExternalSystem::try_new` rejects whitespace, so the legacy
+        // path `external/<has space>/foo` falls through to Drop.
+        let v = json!("external/has space/foo");
+        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+    }
+
+    #[test]
+    fn classify_actor_ref_system_issue_no_match_collapses_to_null_on_behalf_of() {
+        // `actor_ref_authenticated_issue_no_match_drops_to_null` (above)
+        // exercises the Authenticated arm. The System arm differs: an
+        // unresolvable `on_behalf_of` collapses the inner field to
+        // `null` rather than NULLing the whole row, because System
+        // attribution lives in `worker_name`.
+        let raw = json!({
+            "System": {
+                "worker_name": "task-spawner",
+                "on_behalf_of": {"Issue": "i-no-match"}
+            }
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "System": {
+                    "worker_name": "task-spawner",
+                    "on_behalf_of": null
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn classify_actor_ref_automation_issue_no_match_collapses_to_null_triggered_by() {
+        // Automation.triggered_by carrying an unresolvable Authenticated/
+        // Issue ref collapses to `triggered_by: null` rather than NULLing
+        // the whole row, mirroring the System.on_behalf_of behaviour.
+        let raw = json!({
+            "Automation": {
+                "automation_name": "github_pr_sync",
+                "triggered_by": {
+                    "Authenticated": {"actor_id": {"Issue": "i-no-match"}}
+                }
+            }
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "Automation": {
+                    "automation_name": "github_pr_sync",
+                    "triggered_by": null
+                }
+            }))
+        );
+    }
 }
