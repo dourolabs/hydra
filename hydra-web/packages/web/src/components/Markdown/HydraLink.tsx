@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { hydraIdKind, type HydraIdKind } from "@hydra/api";
 import type { HydraLinkProps } from "@hydra/ui";
 import { useDocument } from "../../features/documents/useDocument";
 import { useIssue } from "../../features/issues/useIssue";
@@ -8,9 +9,7 @@ import { useConversation } from "../../features/chat/useConversations";
 import { useLabel } from "../../features/labels/useLabel";
 import styles from "./HydraLink.module.css";
 
-type HydraKind = "issue" | "patch" | "document" | "conversation" | "session" | "label";
-
-const KIND_LABEL: Record<HydraKind, string> = {
+const KIND_LABEL: Record<HydraIdKind, string> = {
   issue: "Issue",
   patch: "Patch",
   document: "Document",
@@ -18,25 +17,6 @@ const KIND_LABEL: Record<HydraKind, string> = {
   session: "Session",
   label: "Label",
 };
-
-function kindOf(id: string): HydraKind | null {
-  switch (id.charAt(0)) {
-    case "i":
-      return "issue";
-    case "p":
-      return "patch";
-    case "d":
-      return "document";
-    case "c":
-      return "conversation";
-    case "s":
-      return "session";
-    case "l":
-      return "label";
-    default:
-      return null;
-  }
-}
 
 function Fallback({ raw }: { raw: string }) {
   return <span>{raw}</span>;
@@ -130,7 +110,7 @@ function LabelLink({ id, raw }: HydraLinkProps) {
  * `hydraLinkComponent` prop.
  */
 export function HydraLink({ id, raw }: HydraLinkProps) {
-  const kind = kindOf(id);
+  const kind = hydraIdKind(id);
   switch (kind) {
     case "issue":
       return <IssueLink id={id} raw={raw} />;

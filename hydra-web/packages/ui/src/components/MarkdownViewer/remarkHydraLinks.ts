@@ -2,6 +2,12 @@
 // Hydra id prefixes and suffix is 4-12 lowercase ASCII letters (mirrors
 // HydraId::validate_str in hydra-common/src/ids.rs).
 //
+// The character class `[ipdcsl]` is the set of first letters of every prefix
+// in `@hydra/api`'s `HYDRA_ID_PREFIXES`. `@hydra/ui` intentionally has no
+// `@hydra/api` dependency, so the coupling is enforced by a contract test in
+// `@hydra/web` (see `hydraIdRegex.contract.test.ts`) that fails if a prefix is
+// added to `HYDRA_ID_PREFIXES` without being added here too.
+//
 // Anything that does not match this exact shape (including agent-memory
 // kebab-case slugs like `[[round-2-acceptance-check]]`) is left as plain
 // text by the markdown renderer.

@@ -46,7 +46,7 @@ export type { AvatarProps } from "./components/Avatar";
 export { LogViewer } from "./components/LogViewer";
 export type { LogViewerProps } from "./components/LogViewer";
 
-export { MarkdownViewer } from "./components/MarkdownViewer";
+export { MarkdownViewer, HYDRA_ID_REGEX } from "./components/MarkdownViewer";
 export type {
   MarkdownViewerProps,
   HydraLinkComponent,
