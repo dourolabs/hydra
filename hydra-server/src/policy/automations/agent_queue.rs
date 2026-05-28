@@ -3211,10 +3211,32 @@ mod tests {
             session_a.agent_config, session_b.agent_config,
             "agent_config must match across paths"
         );
-        assert_eq!(
-            session_a.mode, session_b.mode,
-            "mode must match across paths"
-        );
+        // Mode shape must match, but PR-2's create-side change stamps a
+        // freshly-generated `conversation_id` on every headless session,
+        // so the two paths necessarily produce distinct ids. Compare the
+        // prompt and assert both ids are populated rather than equal.
+        match (&session_a.mode, &session_b.mode) {
+            (
+                crate::domain::sessions::SessionMode::Headless {
+                    prompt: prompt_a,
+                    conversation_id: conv_a,
+                },
+                crate::domain::sessions::SessionMode::Headless {
+                    prompt: prompt_b,
+                    conversation_id: conv_b,
+                },
+            ) => {
+                assert_eq!(
+                    prompt_a, prompt_b,
+                    "headless prompt must match across paths"
+                );
+                assert!(
+                    conv_a.is_some() && conv_b.is_some(),
+                    "headless sessions must carry a backfilled conversation_id"
+                );
+            }
+            (a, b) => panic!("mode shape must be Headless on both paths; got {a:?} vs {b:?}"),
+        }
         assert_eq!(
             session_a.image, session_b.image,
             "image must match across paths"

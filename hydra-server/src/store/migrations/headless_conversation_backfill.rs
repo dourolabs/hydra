@@ -29,9 +29,9 @@
 //! same id, so a second run is a no-op by construction.
 
 use super::{Backend, RustMigration};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
-use hydra_common::ConversationId;
+use hydra_common::{ConversationId, random_len_for_count};
 use serde_json::{Value, json};
 
 /// The sqlx migration version this Rust step must run *after*. Pin
@@ -118,6 +118,24 @@ fn user_message_event_data(content: &str, timestamp_rfc3339: &str) -> String {
     .to_string()
 }
 
+/// Pull the optional `agent_name` out of a `tasks_v2.agent_config` JSON
+/// blob so the backfilled conversation row inherits the same
+/// attribution. Returns `Ok(None)` when the field is absent or
+/// explicitly null. Malformed JSON is a hard error (the row scan
+/// already produced it as a string/jsonb, so failure here means a
+/// genuinely corrupted store).
+fn agent_name_from_agent_config(
+    agent_config_text: &str,
+    session_id: &str,
+) -> Result<Option<String>> {
+    let value: Value = serde_json::from_str(agent_config_text)
+        .with_context(|| format!("decode tasks_v2.agent_config JSON for {session_id}"))?;
+    Ok(value
+        .get("agent_name")
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
 #[cfg(test)]
 mod classify_tests {
     use super::*;
@@ -186,6 +204,24 @@ mod classify_tests {
             other => panic!("expected UserMessage, got {other:?}"),
         }
     }
+
+    #[test]
+    fn agent_name_from_agent_config_extracts_present_name() {
+        let extracted = agent_name_from_agent_config(r#"{"agent_name":"swe"}"#, "s-x").unwrap();
+        assert_eq!(extracted.as_deref(), Some("swe"));
+    }
+
+    #[test]
+    fn agent_name_from_agent_config_handles_missing_field() {
+        let extracted = agent_name_from_agent_config("{}", "s-x").unwrap();
+        assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn agent_name_from_agent_config_handles_null_field() {
+        let extracted = agent_name_from_agent_config(r#"{"agent_name":null}"#, "s-x").unwrap();
+        assert!(extracted.is_none());
+    }
 }
 
 #[cfg(test)]
@@ -214,7 +250,9 @@ mod sqlite_integration_tests {
         let pool = fresh_pool().await;
 
         // Seed a legacy headless row. `conversation_id` column is NULL,
-        // `mode` is `{"type":"headless","prompt":"hello"}`.
+        // `mode` is `{"type":"headless","prompt":"hello"}`. The
+        // `agent_config` carries an `agent_name` so the backfill's
+        // attribution-inheritance branch is exercised.
         let session_id = "s-legacyhdls";
         let original_prompt = "hello from the past";
         sqlx::query(
@@ -225,7 +263,7 @@ mod sqlite_integration_tests {
              VALUES (?1, 1, 'alice', NULL, '{}', \
                      'complete', 0, '2026-05-01T00:00:00.000Z', NULL, \
                      '{\"working_dir\":\"repo\",\"mounts\":[]}', \
-                     '{}', \
+                     '{\"agent_name\":\"swe\"}', \
                      json_object('type', 'headless', 'prompt', ?2), \
                      1, 0)",
         )
@@ -264,16 +302,24 @@ mod sqlite_integration_tests {
             "prompt is preserved verbatim during the PR-2 transition"
         );
 
-        // Assert the conversation row exists.
-        let conv_row: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM conversations WHERE id = ?1 AND is_latest = 1")
+        // Assert the conversation row exists and inherited the
+        // session's agent_name (rather than landing as NULL).
+        let conv_row =
+            sqlx::query("SELECT agent_name FROM conversations WHERE id = ?1 AND is_latest = 1")
                 .bind(conv_in_mode)
-                .fetch_one(&pool)
+                .fetch_all(&pool)
                 .await
                 .unwrap();
         assert_eq!(
-            conv_row.0, 1,
+            conv_row.len(),
+            1,
             "exactly one conversation row should exist for the backfilled session"
+        );
+        let agent_name_col: Option<String> = conv_row[0].try_get("agent_name").unwrap();
+        assert_eq!(
+            agent_name_col.as_deref(),
+            Some("swe"),
+            "backfilled conversation must inherit the session's agent_name"
         );
 
         // Assert the first session_event is a UserMessage with the original prompt.
@@ -450,8 +496,10 @@ mod sqlite {
         // Load every latest, non-deleted `tasks_v2` row whose mode is
         // some form of headless. `is_latest = 1` keeps the per-id
         // multi-version history alone — we only stamp the head row.
+        // `agent_config` rides along so the backfilled conversation row
+        // can inherit the session's agent attribution.
         let rows = sqlx::query(
-            "SELECT id, version_number, mode FROM tasks_v2 \
+            "SELECT id, version_number, mode, agent_config FROM tasks_v2 \
              WHERE is_latest = 1 \
                AND deleted = 0 \
                AND mode IS NOT NULL \
@@ -461,11 +509,24 @@ mod sqlite {
         .await
         .context("scan tasks_v2 for headless rows")?;
 
+        // Random-suffix length for the new conversation ids tracks the
+        // existing conversations table so the suffix scales with table
+        // size (matches the in-app `next_conversation_id` policy at
+        // `sqlite_store.rs:584`). Caches aren't initialized at migration
+        // time, so we hit the table directly.
+        let existing_conversations: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE is_latest = 1")
+                .fetch_one(pool)
+                .await
+                .context("count conversations for ConversationId random length")?;
+        let id_len = random_len_for_count(existing_conversations.max(0) as u64);
+
         let mut rewrote = 0usize;
         for row in rows {
             let session_id: String = row.try_get("id")?;
             let version_number: i64 = row.try_get("version_number")?;
             let mode_text: String = row.try_get("mode")?;
+            let agent_config_text: String = row.try_get("agent_config")?;
             let mode: Value = serde_json::from_str(&mode_text)
                 .with_context(|| format!("decode tasks_v2.mode JSON for {session_id}"))?;
             let Classify::NeedsBackfill { prompt } = classify(&mode) else {
@@ -477,27 +538,33 @@ mod sqlite {
             // inside Rust migrations (it avoids depending on per-store
             // `next_*_id` helpers, which themselves depend on row-count
             // caches that aren't initialized at migration time).
-            let conversation_id = ConversationId::generate(8)
+            let conversation_id = ConversationId::generate(id_len)
                 .context("generate ConversationId for headless backfill (length within bounds)")?;
             let now = Utc::now();
             let now_rfc3339 = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+            let agent_name = agent_name_from_agent_config(&agent_config_text, &session_id)?;
 
             // Run the three coordinated writes in a transaction so a
             // crash mid-row leaves the source row untouched and the
             // next migration run picks it up cleanly.
             let mut tx = pool.begin().await.context("begin sqlite tx")?;
 
-            // 1. New `conversations` row. Title/agent_name/session_settings
-            //    use the same lightweight defaults the in-app
-            //    `next_conversation_id` -> `add_conversation` path would
-            //    pick for a fresh row with no extra metadata.
+            // 1. New `conversations` row. `agent_name` is inherited from
+            //    the session's agent_config so downstream consumers
+            //    (e.g. the agent-attribution column on the conversation
+            //    page) see the same attribution as the rest of that
+            //    user's headless runs. Title/session_settings stay
+            //    empty — the in-app `add_conversation` path picks the
+            //    same defaults for fresh rows with no extra metadata.
             sqlx::query(
                 "INSERT INTO conversations \
                     (id, version_number, title, agent_name, session_settings, \
                      status, creator, deleted, actor, is_latest, created_at, updated_at) \
-                 VALUES (?1, 1, NULL, NULL, '{}', 'active', ?2, 0, NULL, 1, ?3, ?3)",
+                 VALUES (?1, 1, NULL, ?2, '{}', 'active', ?3, 0, NULL, 1, ?4, ?4)",
             )
             .bind(conversation_id.as_ref())
+            .bind(agent_name.as_deref())
             .bind(legacy_creator_for_row(&mut *tx, &session_id).await?)
             .bind(&now_rfc3339)
             .execute(&mut *tx)
@@ -565,10 +632,12 @@ mod sqlite {
     /// Look up the `creator` of a session for the new conversation row.
     /// Conversation rows carry a `creator NOT NULL`; mirroring the
     /// owning session is the only attribution available at migration
-    /// time. Falls back to a sentinel only if the source row is gone
-    /// (race with a delete in another process — should not happen at
-    /// app startup, but we leave the conversation creatable rather
-    /// than failing the whole migration).
+    /// time. We hard-fail when the source row is missing rather than
+    /// inserting a sentinel string — per [[no-sentinel-string-for-undefined]]
+    /// the row scan above already filtered to `is_latest = 1 AND
+    /// deleted = 0`, so a missing follow-up read implies an external
+    /// concurrent delete or a corrupted store. Either way the operator
+    /// should investigate before the migration synthesizes attribution.
     async fn legacy_creator_for_row<'e, E>(executor: E, session_id: &str) -> Result<String>
     where
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
@@ -579,7 +648,13 @@ mod sqlite {
                 .fetch_optional(executor)
                 .await
                 .with_context(|| format!("lookup creator for tasks_v2 {session_id}"))?;
-        Ok(creator.unwrap_or_else(|| "system".to_string()))
+        creator.ok_or_else(|| {
+            anyhow!(
+                "headless-conversation-backfill: tasks_v2.creator missing for session {session_id} \
+                 between the row scan and the conversation insert; aborting migration so the \
+                 operator can investigate (no synthetic creator written)"
+            )
+        })
     }
 }
 
@@ -594,7 +669,7 @@ mod postgres {
 
     pub async fn run(pool: &PgPool) -> Result<()> {
         let rows = sqlx::query(
-            "SELECT id, version_number, mode FROM metis.tasks_v2 \
+            "SELECT id, version_number, mode, agent_config FROM metis.tasks_v2 \
              WHERE is_latest = TRUE \
                AND deleted = FALSE \
                AND mode IS NOT NULL \
@@ -604,19 +679,34 @@ mod postgres {
         .await
         .context("scan metis.tasks_v2 for headless rows")?;
 
+        // Random-suffix length tracks existing conversations — see the
+        // sqlite driver for the same rationale.
+        let existing_conversations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM metis.conversations_v2 WHERE is_latest = TRUE",
+        )
+        .fetch_one(pool)
+        .await
+        .context("count metis.conversations_v2 for ConversationId random length")?;
+        let id_len = random_len_for_count(existing_conversations.max(0) as u64);
+
         let mut rewrote = 0usize;
         for row in rows {
             let session_id: String = row.try_get("id")?;
             let version_number: i64 = row.try_get("version_number")?;
             let mode: Value = row.try_get("mode")?;
+            let agent_config: Value = row.try_get("agent_config")?;
             let Classify::NeedsBackfill { prompt } = classify(&mode) else {
                 continue;
             };
 
-            let conversation_id = ConversationId::generate(8)
+            let conversation_id = ConversationId::generate(id_len)
                 .context("generate ConversationId for headless backfill (length within bounds)")?;
             let now = Utc::now();
             let now_rfc3339 = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+            // Reuse the shared text-form helper so sqlite + postgres
+            // pull from identical decode paths.
+            let agent_name = agent_name_from_agent_config(&agent_config.to_string(), &session_id)?;
 
             let mut tx = pool.begin().await.context("begin postgres tx")?;
 
@@ -625,9 +715,10 @@ mod postgres {
                 "INSERT INTO metis.conversations_v2 \
                     (id, version_number, title, agent_name, session_settings, \
                      status, creator, deleted, actor, created_at, updated_at) \
-                 VALUES ($1, 1, NULL, NULL, '{}'::jsonb, 'active', $2, FALSE, NULL, NOW(), NOW())",
+                 VALUES ($1, 1, NULL, $2, '{}'::jsonb, 'active', $3, FALSE, NULL, NOW(), NOW())",
             )
             .bind(conversation_id.as_ref())
+            .bind(agent_name.as_deref())
             .bind(&creator)
             .execute(&mut *tx)
             .await
@@ -696,6 +787,12 @@ mod postgres {
         .fetch_optional(executor)
         .await
         .with_context(|| format!("lookup creator for metis.tasks_v2 {session_id}"))?;
-        Ok(creator.unwrap_or_else(|| "system".to_string()))
+        creator.ok_or_else(|| {
+            anyhow!(
+                "headless-conversation-backfill: metis.tasks_v2.creator missing for session \
+                 {session_id} between the row scan and the conversation insert; aborting \
+                 migration so the operator can investigate (no synthetic creator written)"
+            )
+        })
     }
 }
