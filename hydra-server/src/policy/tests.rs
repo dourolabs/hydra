@@ -1036,7 +1036,7 @@ async fn restriction_can_read_actor_from_context() {
 
     // Authenticated actor should be allowed
     let auth_actor = ActorRef::Authenticated {
-        actor_id: crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+        actor_id: crate::domain::actors::ActorId::User(Username::from("alice").into()),
         session_id: None,
     };
     let result = engine.check_create_issue(&issue, &store, &auth_actor).await;
@@ -1071,7 +1071,7 @@ async fn default_policy_does_not_apply_inbox_label_on_issue_creation() {
     handles.state.ensure_inbox_label().await;
 
     let human_actor = ActorRef::Authenticated {
-        actor_id: ActorId::Username(Username::from("alice").into()),
+        actor_id: ActorId::User(Username::from("alice").into()),
         session_id: None,
     };
     let issue = dummy_issue();

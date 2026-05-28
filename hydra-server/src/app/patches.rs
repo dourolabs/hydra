@@ -341,21 +341,11 @@ fn principal_for_review_author(actor: &ActorRef) -> Result<Principal, UpsertPatc
         }
     };
     match actor_id {
-        // Phase-1 typed principals.
         ActorId::User(name) => Ok(Principal::User { name: name.clone() }),
         ActorId::Agent(name) => Ok(Principal::Agent { name: name.clone() }),
-        // Pre-Phase-1 username variant: treat as User for back-compat —
-        // existing human-user CLI flows still produce this variant.
-        ActorId::Username(name) => Ok(Principal::User { name: name.clone() }),
         ActorId::Adhoc(_) => Err(invalid("ad-hoc sessions cannot author reviews")),
         ActorId::External { .. } => Err(invalid(
             "external actors cannot author reviews via the patch upsert API",
-        )),
-        ActorId::Legacy(_) => Err(invalid("legacy actor identifiers cannot author reviews")),
-        // Session/Issue/Service actor refs are not Principal-eligible
-        // identities — they have no durable user/agent name behind them.
-        ActorId::Session(_) | ActorId::Issue(_) | ActorId::Service(_) => Err(invalid(
-            "session/issue/service actors cannot author reviews",
         )),
     }
 }
@@ -749,7 +739,7 @@ mod tests {
             .add_session(task, Utc::now(), &ActorRef::test())
             .await?;
         let (actor, _auth_token) = Actor::new_from_actor_id(
-            crate::domain::actors::ActorId::Session(task_id.clone()),
+            crate::domain::actors::ActorId::Adhoc(task_id.clone()),
             creator_username.clone(),
             None,
         );

@@ -170,11 +170,8 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
-            ActorId::Username(username) => username.clone().into(),
-            // Phase-2 `Adhoc(sid)` matches the legacy `Session(sid)`
-            // path semantically (a session without an agent name) —
-            // resolve the creator off the session row.
-            ActorId::Session(session_id) | ActorId::Adhoc(session_id) => {
+            ActorId::User(username) => username.clone().into(),
+            ActorId::Adhoc(session_id) => {
                 let task = ctx.app_state.get_session(session_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
                         "github_pr_sync: failed to load task '{session_id}': {e}"
@@ -182,20 +179,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 })?;
                 task.creator
             }
-            ActorId::Issue(issue_id) => {
-                let issue = ctx.store.get_issue(issue_id, false).await.map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: failed to load issue '{issue_id}': {e}"
-                    ))
-                })?;
-                issue.item.creator
-            }
             // The shared agent actor row carries the creator on the
             // underlying `Actor` struct — no per-session lookup is
             // needed because the patch event already came from an
-            // authenticated agent session. Match the legacy `Service`
-            // arm's pattern.
-            ActorId::Service(_) | ActorId::Agent(_) => {
+            // authenticated agent session.
+            ActorId::Agent(_) => {
                 let actor = ctx
                     .store
                     .get_actor(&actor_id.to_string())
@@ -207,11 +195,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     })?;
                 actor.item.creator
             }
-            // `User` / `External` / `Legacy` aren't constructed by any
-            // hydra-server call site that emits patch events. Treat as
-            // unsupported with a warning so a misconfigured deployment
-            // doesn't silently 500.
-            ActorId::User(_) | ActorId::External { .. } | ActorId::Legacy(_) => {
+            // `External` actors aren't constructed by any hydra-server
+            // call site that emits patch events. Treat as unsupported
+            // with a warning so a misconfigured deployment doesn't
+            // silently 500.
+            ActorId::External { .. } => {
                 warn!(
                     patch_id = %patch_id,
                     actor_id = %actor_id,

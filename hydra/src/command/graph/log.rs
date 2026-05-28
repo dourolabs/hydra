@@ -473,7 +473,7 @@ mod tests {
     fn session_actor(name: &str) -> ActorRef {
         let session_id = SessionId::from_str(name).expect("valid session id");
         ActorRef::Authenticated {
-            actor_id: ActorId::Session(session_id),
+            actor_id: ActorId::Adhoc(session_id),
             session_id: None,
         }
     }

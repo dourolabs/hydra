@@ -180,7 +180,7 @@ async fn killed_session_token_is_rejected_at_auth() -> anyhow::Result<()> {
     let creator = Username::from("test-creator");
     let session_id = SessionId::new();
     let (actor, auth_token) =
-        Actor::new_from_actor_id(ActorId::Session(session_id.clone()), creator, None);
+        Actor::new_from_actor_id(ActorId::Adhoc(session_id.clone()), creator, None);
     // Issue an auth-token row bound to the session — same shape that
     // `create_actor_for_job` writes in production.
     crate::test_utils::register_actor_and_token(

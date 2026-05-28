@@ -966,7 +966,7 @@ mod tests {
         };
 
         let actor = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice")),
+            actor_id: ActorId::User(Username::from("alice")),
             session_id: None,
         };
         let ts = chrono::Utc::now();
@@ -974,7 +974,7 @@ mod tests {
             IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts, Vec::new());
 
         let value = serde_json::to_value(&record).expect("should serialize");
-        let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
+        let expected_actor = json!({"Authenticated": {"actor_id": {"User": {"name": "alice"}}}});
         assert_eq!(value["actor"], expected_actor);
     }
 

@@ -62,7 +62,7 @@ async fn revoked_session_token_returns_401() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let session_id = SessionId::new();
     let (actor, auth_token) = Actor::new_from_actor_id(
-        ActorId::Session(session_id.clone()),
+        ActorId::Adhoc(session_id.clone()),
         Username::from("creator"),
         None,
     );

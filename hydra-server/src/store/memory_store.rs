@@ -3198,7 +3198,7 @@ mod tests {
         let store = MemoryStore::new();
 
         let user_actor = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice").into()),
+            actor_id: ActorId::User(Username::from("alice").into()),
             session_id: None,
         };
         let system_actor = ActorRef::System {
@@ -4468,7 +4468,7 @@ mod tests {
     async fn add_and_get_actor_by_name() {
         let store = MemoryStore::new();
         let actor = Actor {
-            actor_id: ActorId::Username(Username::from("ada").into()),
+            actor_id: ActorId::User(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
         };
@@ -4488,7 +4488,7 @@ mod tests {
     async fn add_actor_rejects_duplicate_name() {
         let store = MemoryStore::new();
         let actor = Actor {
-            actor_id: ActorId::Session(SessionId::new()),
+            actor_id: ActorId::Adhoc(SessionId::new()),
             creator: Username::from("creator"),
             session_id: None,
         };
@@ -4511,7 +4511,7 @@ mod tests {
         let store = MemoryStore::new();
         let task_id = SessionId::new();
         let actor = Actor {
-            actor_id: ActorId::Session(task_id),
+            actor_id: ActorId::Adhoc(task_id),
             creator: Username::from("creator"),
             session_id: None,
         };
@@ -4536,7 +4536,7 @@ mod tests {
     async fn update_actor_missing_returns_not_found() {
         let store = MemoryStore::new();
         let actor = Actor {
-            actor_id: ActorId::Username(Username::from("ada").into()),
+            actor_id: ActorId::User(Username::from("ada").into()),
             creator: Username::from("ada"),
             session_id: None,
         };
@@ -4548,7 +4548,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            StoreError::ActorNotFound(name) if name == "u-ada"
+            StoreError::ActorNotFound(name) if name == "users/ada"
         ));
     }
 
@@ -4556,7 +4556,7 @@ mod tests {
     async fn get_actor_missing_returns_not_found() {
         let store = MemoryStore::new();
         let task_id = SessionId::new();
-        let name = format!("w-{task_id}");
+        let name = format!("adhoc/{task_id}");
 
         let err = store.get_actor(&name).await.unwrap_err();
 
@@ -4582,22 +4582,22 @@ mod tests {
     async fn auth_tokens_add_and_get() {
         let store = MemoryStore::new();
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None)
             .await
             .unwrap();
 
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
     }
 
     #[tokio::test]
     async fn auth_tokens_get_empty() {
         let store = MemoryStore::new();
-        let hashes = store.get_auth_token_hashes("u-nobody").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/nobody").await.unwrap();
         assert!(hashes.is_empty());
     }
 
@@ -4605,16 +4605,19 @@ mod tests {
     async fn auth_tokens_delete_for_actor() {
         let store = MemoryStore::new();
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None)
             .await
             .unwrap();
-        store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
+        store
+            .delete_auth_tokens_for_actor("users/alice")
+            .await
+            .unwrap();
 
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert!(hashes.is_empty());
     }
 
@@ -4622,15 +4625,15 @@ mod tests {
     async fn auth_tokens_duplicate_insert_is_idempotent() {
         let store = MemoryStore::new();
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
 
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string()]);
     }
 
@@ -4656,7 +4659,7 @@ mod tests {
     async fn auth_tokens_by_hash_without_session_id_round_trips() {
         let store = MemoryStore::new();
         store
-            .add_auth_token("u-alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None)
             .await
             .unwrap();
 
@@ -4665,7 +4668,7 @@ mod tests {
             .await
             .unwrap()
             .expect("token row should exist");
-        assert_eq!(row.actor_name, "u-alice");
+        assert_eq!(row.actor_name, "users/alice");
         assert_eq!(row.session_id, None);
     }
 
@@ -4693,7 +4696,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None)
             .await
             .unwrap();
 

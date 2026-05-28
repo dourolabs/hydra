@@ -2625,7 +2625,7 @@ mod tests {
     use std::str::FromStr;
     use tempfile::tempdir;
 
-    const TEST_HYDRA_TOKEN: &str = "u-test:test-hydra-token";
+    const TEST_HYDRA_TOKEN: &str = "users/test:test-hydra-token";
 
     #[tokio::test]
     async fn list_repositories_fetches_config() -> Result<()> {

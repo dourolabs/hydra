@@ -533,5 +533,9 @@ pub async fn submit_form_action(
         Err(SubmitFormActionError::Store { issue_id, source }) => {
             Err(map_issue_error(source, Some(&issue_id)).into_response())
         }
+        Err(SubmitFormActionError::UnsupportedActor { actor_name }) => Err(ApiError::forbidden(
+            format!("actor '{actor_name}' cannot submit form actions"),
+        )
+        .into_response()),
     }
 }

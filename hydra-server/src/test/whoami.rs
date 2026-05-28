@@ -67,11 +67,11 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn whoami_returns_task_identity() -> anyhow::Result<()> {
+async fn whoami_returns_adhoc_identity_for_adhoc_actor() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task_id = SessionId::new();
     let (actor, auth_token) = Actor::new_from_actor_id(
-        ActorId::Session(task_id.clone()),
+        ActorId::Adhoc(task_id.clone()),
         Username::from("creator"),
         None,
     );
@@ -95,7 +95,7 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
 
     let body: WhoAmIResponse = response.json().await?;
     match body.actor {
-        ActorIdentity::Session {
+        ActorIdentity::Adhoc {
             session_id,
             creator,
         } => {
@@ -107,12 +107,12 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
             );
         }
         other => {
-            panic!("expected task identity, got {other:?}");
+            panic!("expected adhoc identity, got {other:?}");
         }
     }
 
-    // Sanity check: ActorId on the actor is Session-typed.
-    assert!(matches!(actor.actor_id, ActorId::Session(_)));
+    // Sanity check: ActorId on the actor is Adhoc-typed.
+    assert!(matches!(actor.actor_id, ActorId::Adhoc(_)));
 
     Ok(())
 }

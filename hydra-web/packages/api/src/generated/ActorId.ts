@@ -3,34 +3,17 @@
 /**
  * Typed identifier for the principal that performed an operation.
  *
- * Phase 1 of the actor-system overhaul
- * (`/designs/actor-system-overhaul.md`, §3.1) introduces five new
- * variants (`User`, `Agent`, `Adhoc`, `External`, `Legacy`) alongside
- * the existing four (`Username`, `Session`, `Issue`, `Service`). Call
- * sites flip over to the new variants incrementally in Phases 2–6;
- * the old variants are removed in a release-gated cleanup PR (§11
- * row 7) after a soak window with zero `Legacy` deserializations.
- *
  * Variants:
- * - **`User(Username)`** — replaces `Username` once call sites migrate.
+ * - **`User(Username)`** — a human user.
  * - **`Agent(AgentName)`** — first-class named agent (e.g. `pm`, `swe`).
  * - **`Adhoc(SessionId)`** — a session created outside the agent
  *   system. Canonical path is `adhoc/<session-id>` (clarification C2
- *   in the design — *not* `sessions/`).
+ *   in `/designs/actor-system-overhaul.md` — *not* `sessions/`).
  * - **`External { system, username }`** — an identity that lives in an
  *   external system (e.g. GitHub) and has no corresponding Hydra user.
- * - **`Legacy(String)`** — read-only deserialization catch-all for
- *   pre-migration `actor_ref` blobs. New writes must not produce this
- *   variant; it round-trips losslessly as a raw string so unmigrated
- *   rows aren't corrupted.
  */
 export type ActorId =
-  | { Username: string }
-  | { Session: string }
-  | { Issue: string }
-  | { Service: string }
   | { User: { name: string } }
   | { Agent: { name: string } }
   | { Adhoc: { session_id: string } }
-  | { External: { system: string; username: string } }
-  | string;
+  | { External: { system: string; username: string } };

@@ -91,9 +91,22 @@ async fn migration_roundtrip() -> Result<()> {
     assert_events_migration_edge_cases(&pool)
         .await
         .context("events migration edge-case partitioning assertions")?;
+    assert_actor_variant_cleanup(&pool)
+        .await
+        .context("actor_variant_cleanup rewrite assertions")?;
     assert_store_level_smoke(&pool)
         .await
         .context("§3.3 store / domain-level smoke")?;
+
+    // Re-run the migration plan to confirm the cleanup is idempotent —
+    // every classify rule treats post-cleanup shapes as no-ops, so a
+    // second pass must produce no extra writes.
+    postgres_v2::run_migrations(&pool, None)
+        .await
+        .context("re-apply migrations to confirm idempotency")?;
+    assert_actor_variant_cleanup(&pool)
+        .await
+        .context("actor_variant_cleanup idempotent second-pass assertions")?;
 
     Ok(())
 }
@@ -487,6 +500,248 @@ async fn assert_events_migration_edge_cases(pool: &PgPool) -> Result<()> {
     expect_session_event_count(pool, "s-afterone", 0).await?;
     expect_session_event_count(pool, "s-aftertwo", 1).await?;
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// actor_variant_cleanup rewrite assertions
+// ---------------------------------------------------------------------------
+//
+// The baseline at `20260603000000__pre_actor_variant_cleanup.sql` seeds
+// one row per pre-cleanup actor shape (Username, Session, Issue ±match,
+// Service ±valid, Legacy bare-string ±parseable, multi-key map,
+// already-typed). After the cleanup migration runs, every row's
+// `actor` / `actor_id` column must hold either the rewritten
+// post-cleanup wire shape or NULL.
+//
+// Round-2 store/domain-level smoke: deserializing the rewritten rows
+// through `PostgresStoreV2` exercises `ActorRef::deserialize` against
+// the migration's raw `serde_json::Value` output and catches serde
+// drift between the two.
+
+async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
+    // 1. Username -> User
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actuname",
+        Some(serde_json::json!({"User": {"name": "alice"}})),
+    )
+    .await?;
+    // 2. Session -> Adhoc
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actsess",
+        Some(serde_json::json!({"Adhoc": {"session_id": "s-sessone"}})),
+    )
+    .await?;
+    // 3. Issue with matching tasks_v2 row -> resolved User
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actiss",
+        Some(serde_json::json!({"User": {"name": "alice"}})),
+    )
+    .await?;
+    // 4. Issue without matching tasks_v2 row -> actor=NULL
+    expect_issue_actor_null(pool, "i-actissno").await?;
+    // 5. Service with valid AgentName -> Agent
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actsvcok",
+        Some(serde_json::json!({"Agent": {"name": "swe"}})),
+    )
+    .await?;
+    // 6. Service with invalid AgentName -> actor=NULL
+    expect_issue_actor_null(pool, "i-actsvcno").await?;
+    // 7. Legacy users/<x> -> User
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actlegu",
+        Some(serde_json::json!({"User": {"name": "alice"}})),
+    )
+    .await?;
+    // 8. Legacy agents/<x> -> Agent
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actlega",
+        Some(serde_json::json!({"Agent": {"name": "swe"}})),
+    )
+    .await?;
+    // 9. Legacy unparseable -> actor=NULL
+    expect_issue_actor_null(pool, "i-actlegx").await?;
+    // 10. Already-typed User -> no-op (still User)
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actuser",
+        Some(serde_json::json!({"User": {"name": "alice"}})),
+    )
+    .await?;
+    // 11. Multi-key actor_id -> actor=NULL
+    expect_issue_actor_null(pool, "i-actmulti").await?;
+
+    // actors_v2 — bare `actor_id` column rewrites
+    let row = sqlx::query(
+        "SELECT actor_id::text AS pl FROM metis.actors_v2 \
+         WHERE id = 'actu-aname' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read actors_v2.actor_id for actu-aname")?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode actor_id for actu-aname")?;
+    if got != Some(serde_json::json!({"User": {"name": "alice"}})) {
+        bail!("actors_v2(actu-aname).actor_id: expected User; got {got:?}");
+    }
+
+    let row = sqlx::query(
+        "SELECT actor_id::text AS pl FROM metis.actors_v2 \
+         WHERE id = 'actu-asvc' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read actors_v2.actor_id for actu-asvc")?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode actor_id for actu-asvc")?;
+    if got != Some(serde_json::json!({"Agent": {"name": "swe"}})) {
+        bail!("actors_v2(actu-asvc).actor_id: expected Agent; got {got:?}");
+    }
+
+    // conversation_events_v2 — Session inside Authenticated is rewritten to Adhoc.
+    let row = sqlx::query(
+        "SELECT actor::text AS pl FROM metis.conversation_events_v2 \
+         WHERE conversation_id = 'c-actclean' AND version_number = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read conversation_events_v2.actor for c-actclean")?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode conversation_events_v2.actor")?;
+    let expected = serde_json::json!({
+        "Authenticated": {
+            "actor_id": {"Adhoc": {"session_id": "s-cesessx"}}
+        }
+    });
+    if got != Some(expected.clone()) {
+        bail!("conversation_events_v2.actor: expected {expected}; got {got:?}");
+    }
+
+    // §3.3 smoke: read every non-NULLed row through the store and
+    // confirm `ActorRef::deserialize` accepts the rewritten payload.
+    use hydra_server::domain::actors::{ActorId, ActorRef as DomainActorRef};
+    let store = PostgresStoreV2::new(pool.clone());
+    for (issue_id, expected_actor_id) in [
+        (
+            "i-actuname",
+            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+        ),
+        (
+            "i-actsess",
+            Some(ActorId::Adhoc("s-sessone".parse().unwrap())),
+        ),
+        (
+            "i-actiss",
+            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+        ),
+        (
+            "i-actsvcok",
+            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+        ),
+        (
+            "i-actlegu",
+            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+        ),
+        (
+            "i-actlega",
+            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+        ),
+        (
+            "i-actuser",
+            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+        ),
+    ] {
+        let issue = store
+            .get_issue(&parse_issue_id(issue_id)?, false)
+            .await
+            .with_context(|| format!("store-level read of {issue_id}"))?;
+        let actor = issue.actor.with_context(|| {
+            format!("expected non-None actor on {issue_id} after cleanup; got None")
+        })?;
+        match (&actor, expected_actor_id.as_ref()) {
+            (DomainActorRef::Authenticated { actor_id, .. }, Some(expected))
+                if actor_id == expected => {}
+            other => bail!(
+                "{issue_id}: expected Authenticated(actor_id={expected_actor_id:?}); got {other:?}"
+            ),
+        }
+    }
+    for issue_id in ["i-actissno", "i-actsvcno", "i-actlegx", "i-actmulti"] {
+        let issue = store
+            .get_issue(&parse_issue_id(issue_id)?, false)
+            .await
+            .with_context(|| format!("store-level read of {issue_id}"))?;
+        if issue.actor.is_some() {
+            bail!(
+                "{issue_id}: expected actor=None (cleanup NULLed unrecoverable rows); got {:?}",
+                issue.actor
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn expect_issue_actor_actor_id(
+    pool: &PgPool,
+    issue_id: &str,
+    expected_actor_id: Option<serde_json::Value>,
+) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT actor::text AS pl FROM metis.issues_v2 \
+         WHERE id = $1 AND is_latest = TRUE",
+    )
+    .bind(issue_id)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("read issues_v2.actor for {issue_id}"))?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .with_context(|| format!("decode issues_v2.actor JSON for {issue_id}"))?;
+    let actor_id = got.as_ref().and_then(|v| {
+        v.get("Authenticated")
+            .and_then(|a| a.get("actor_id"))
+            .cloned()
+    });
+    if actor_id != expected_actor_id {
+        bail!(
+            "issue {issue_id}: expected Authenticated.actor_id={expected_actor_id:?}; got full actor={got:?}",
+        );
+    }
+    Ok(())
+}
+
+async fn expect_issue_actor_null(pool: &PgPool, issue_id: &str) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT actor IS NULL AS is_null FROM metis.issues_v2 \
+         WHERE id = $1 AND is_latest = TRUE",
+    )
+    .bind(issue_id)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("read issues_v2.actor IS NULL for {issue_id}"))?;
+    let is_null: bool = row.get("is_null");
+    if !is_null {
+        bail!("issue {issue_id}: expected actor IS NULL after cleanup");
+    }
     Ok(())
 }
 

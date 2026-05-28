@@ -50,8 +50,8 @@ async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Actor should exist in the store.
-    let actor = store.as_ref().get_actor("u-local").await?;
-    assert_eq!(actor.item.name(), "u-local");
+    let actor = store.as_ref().get_actor("users/local").await?;
+    assert_eq!(actor.item.name(), "users/local");
 
     Ok(())
 }
@@ -73,8 +73,8 @@ async fn setup_local_auth_is_idempotent() -> anyhow::Result<()> {
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // The actor in the store should still exist.
-    let actor = store.as_ref().get_actor("u-local").await?;
-    assert_eq!(actor.item.name(), "u-local");
+    let actor = store.as_ref().get_actor("users/local").await?;
+    assert_eq!(actor.item.name(), "users/local");
 
     Ok(())
 }
@@ -122,8 +122,8 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Actor should exist under the custom username.
-    let actor = store.as_ref().get_actor("u-alice").await?;
-    assert_eq!(actor.item.name(), "u-alice");
+    let actor = store.as_ref().get_actor("users/alice").await?;
+    assert_eq!(actor.item.name(), "users/alice");
 
     // User should also be stored under the custom username.
     let username = Username::from("alice");
@@ -154,7 +154,7 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
     assert!(!token_contents.is_empty());
 
     // The file contents should be a valid auth token registered in the store.
-    assert!(token_is_registered_for(store.as_ref(), "u-local", &token_contents).await);
+    assert!(token_is_registered_for(store.as_ref(), "users/local", &token_contents).await);
 
     // On Unix, verify the file permissions are 0o600.
     #[cfg(unix)]
@@ -200,7 +200,7 @@ async fn setup_local_auth_regenerates_token_on_reinit() -> anyhow::Result<()> {
 
     // The new token should be registered for the actor in the auth_tokens table.
     assert!(
-        token_is_registered_for(store.as_ref(), "u-local", &token_after_second).await,
+        token_is_registered_for(store.as_ref(), "users/local", &token_after_second).await,
         "actor should verify the newly generated token"
     );
 
@@ -208,7 +208,7 @@ async fn setup_local_auth_regenerates_token_on_reinit() -> anyhow::Result<()> {
     // rotates by deleting the actor's previous `auth_tokens` rows on
     // re-init.
     assert!(
-        !token_is_registered_for(store.as_ref(), "u-local", &token_after_first).await,
+        !token_is_registered_for(store.as_ref(), "users/local", &token_after_first).await,
         "previous token should be invalidated after re-init"
     );
 
@@ -223,7 +223,7 @@ async fn setup_local_auth_overwrites_stale_token_file() -> anyhow::Result<()> {
     let token_path = tmp_dir.path().join("auth-token");
 
     // Simulate a stale token file from a previous run.
-    std::fs::write(&token_path, "u-local:stale-token-value")?;
+    std::fs::write(&token_path, "users/local:stale-token-value")?;
 
     let mut config = test_app_config();
     config.auth = AuthConfig::Local {
@@ -239,12 +239,12 @@ async fn setup_local_auth_overwrites_stale_token_file() -> anyhow::Result<()> {
     // The token file should have been overwritten with a valid token.
     let token = std::fs::read_to_string(&token_path)?;
     assert_ne!(
-        token, "u-local:stale-token-value",
+        token, "users/local:stale-token-value",
         "stale token should be replaced"
     );
 
     assert!(
-        token_is_registered_for(store.as_ref(), "u-local", &token).await,
+        token_is_registered_for(store.as_ref(), "users/local", &token).await,
         "actor should verify the fresh token that replaced the stale one"
     );
 
@@ -284,7 +284,7 @@ async fn setup_local_auth_recreates_deleted_token_file() -> anyhow::Result<()> {
     assert!(!token.is_empty());
 
     assert!(
-        token_is_registered_for(store.as_ref(), "u-local", &token).await,
+        token_is_registered_for(store.as_ref(), "users/local", &token).await,
         "actor should verify the recreated token"
     );
 

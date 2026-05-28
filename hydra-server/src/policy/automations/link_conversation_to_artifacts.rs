@@ -142,17 +142,14 @@ impl Automation for LinkConversationToArtifactsAutomation {
             return Ok(());
         };
         match principal {
-            // `ActorId::Adhoc(sid)` matches the legacy `ActorId::Session(sid)`
-            // semantically (an ad-hoc session is just a session without a
-            // registered agent name). Both arms resolve the session and pull
-            // `conversation_id` / `spawned_from` off it.
-            ActorId::Session(session_id) | ActorId::Adhoc(session_id) => {
+            // Ad-hoc sessions resolve to their conversation_id / spawned_from.
+            ActorId::Adhoc(session_id) => {
                 Self::merge_session_conversations(ctx, &session_id, &mut conversation_ids).await;
             }
             // Agent-spawned actors carry their originating session id on
             // `ActorRef::Authenticated.session_id`. Walk the same chain that
             // `on_behalf_of` did to recover it, then resolve the session as
-            // in the Session/Adhoc arm.
+            // in the Adhoc arm.
             ActorId::Agent(_) => {
                 let Some(session_id) = actor.originating_session_id() else {
                     tracing::warn!(
@@ -163,20 +160,11 @@ impl Automation for LinkConversationToArtifactsAutomation {
                 };
                 Self::merge_session_conversations(ctx, session_id, &mut conversation_ids).await;
             }
-            ActorId::Issue(issue_id) => {
-                if let Some(cids) = Self::conversations_referencing_issue(ctx, &issue_id).await {
-                    conversation_ids.extend(cids);
-                }
-            }
-            // Human/service/user/external/legacy actors don't carry the
+            // Human user and external actors don't carry the
             // session-or-issue context needed to compute a conversation
             // set; callers wanting an explicit link should use
             // `POST /v1/relations`.
-            ActorId::Username(_)
-            | ActorId::Service(_)
-            | ActorId::User(_)
-            | ActorId::External { .. }
-            | ActorId::Legacy(_) => return Ok(()),
+            ActorId::User(_) | ActorId::External { .. } => return Ok(()),
         }
 
         for cid in conversation_ids {
@@ -232,21 +220,14 @@ mod tests {
 
     fn session_actor(session_id: &hydra_common::SessionId) -> ActorRef {
         ActorRef::Authenticated {
-            actor_id: ActorId::Session(session_id.clone()),
-            session_id: None,
-        }
-    }
-
-    fn issue_actor(issue_id: &IssueId) -> ActorRef {
-        ActorRef::Authenticated {
-            actor_id: ActorId::Issue(issue_id.clone()),
+            actor_id: ActorId::Adhoc(session_id.clone()),
             session_id: None,
         }
     }
 
     fn human_actor() -> ActorRef {
         ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice").into()),
+            actor_id: ActorId::User(Username::from("alice").into()),
             session_id: None,
         }
     }
@@ -616,43 +597,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn links_issue_transitively_via_issue_actor() {
-        let handles = test_utils::test_state_handles();
-        let cid = ConversationId::new();
-        let parent_issue_id = add_issue(&handles).await;
-        seed_conversation_references_issue(&handles, &cid, &parent_issue_id).await;
-
-        let (new_issue_id, _) = handles
-            .store
-            .add_issue(make_issue(), &issue_actor(&parent_issue_id))
-            .await
-            .unwrap();
-
-        let event = issue_created_event(new_issue_id.clone(), issue_actor(&parent_issue_id));
-        let automation = LinkConversationToArtifactsAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: handles.store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        let source: HydraId = cid.into();
-        let target: HydraId = new_issue_id.into();
-        let relations = handles
-            .store
-            .get_relationships(
-                Some(&source),
-                Some(&target),
-                Some(RelationshipType::RefersTo),
-            )
-            .await
-            .unwrap();
-        assert_eq!(relations.len(), 1);
-    }
-
-    #[tokio::test]
     async fn links_union_of_direct_and_transitive_conversations() {
         let handles = test_utils::test_state_handles();
         let c1 = ConversationId::new();
@@ -912,19 +856,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn links_issue_when_actor_is_nested_automation_wrapping_issue() {
+    async fn links_issue_when_actor_is_nested_automation_wrapping_session() {
         // Regression: traversal must work through multiple levels of
-        // Automation wrappers.
+        // Automation wrappers. Uses an adhoc-session inner actor so the
+        // automation resolves the conversation via the session row's
+        // `conversation_id` (set when the inner session is created).
         let handles = test_utils::test_state_handles();
         let cid = ConversationId::new();
-        let parent_issue_id = add_issue(&handles).await;
-        seed_conversation_references_issue(&handles, &cid, &parent_issue_id).await;
+        let session_id = add_session_to_store(&handles, None, Some(cid.clone())).await;
 
         let nested_actor = ActorRef::Automation {
             automation_name: "outer".into(),
             triggered_by: Some(Box::new(ActorRef::Automation {
                 automation_name: "inner".into(),
-                triggered_by: Some(Box::new(issue_actor(&parent_issue_id))),
+                triggered_by: Some(Box::new(session_actor(&session_id))),
             })),
         };
 

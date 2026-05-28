@@ -81,7 +81,6 @@ async fn resolve_auto_output_format(
     let whoami = client.whoami().await?;
     Ok(match whoami.actor {
         ActorIdentity::User { .. } => ResolvedOutputFormat::Pretty,
-        ActorIdentity::Session { .. } => ResolvedOutputFormat::Jsonl,
         _ => ResolvedOutputFormat::Jsonl,
     })
 }
@@ -131,7 +130,7 @@ mod tests {
             &HydraClientTimeouts::default(),
         )
         .expect("client");
-        let whoami = WhoAmIResponse::new(ActorIdentity::Session {
+        let whoami = WhoAmIResponse::new(ActorIdentity::Adhoc {
             session_id: SessionId::from_str("s-task").expect("task id"),
             creator: "test-creator".into(),
         });

@@ -49,7 +49,6 @@
 use super::{Backend, RustMigration};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use hydra_common::{ActorId, ActorRef};
 use std::collections::HashMap;
 
 /// The sqlx migration version this Rust step must run *after*. Both target
@@ -95,14 +94,42 @@ pub async fn run(backend: &Backend) -> Result<()> {
 
 /// Extract the session id from a stored `ActorRef` JSON value, if the
 /// actor is an authenticated session. Other actor shapes (service tokens,
-/// automation triggers) return `None`.
+/// automation triggers, user / agent / external actors) return `None`.
+///
+/// This reader is intentionally tolerant of BOTH the pre-cleanup
+/// (`{"Session":"s-..."}`) and post-cleanup
+/// (`{"Adhoc":{"session_id":"s-..."}}`) wire shapes for the inner
+/// `actor_id`. The events migration runs at version `20260601000000`,
+/// before the `actor_variant_cleanup` migration at `20260603000000`. On
+/// a fresh DB (CI / migration_roundtrip test) the events migration
+/// reads pre-cleanup rows; on a soaked deploy the previous boot
+/// already ran the events migration and cleanup hasn't rewritten its
+/// own rows — both interleavings must work.
+///
+/// We don't go through `hydra_common::ActorRef::deserialize` because
+/// post-cleanup `ActorId` no longer accepts the `{"Session":"..."}`
+/// shape; raw `serde_json::Value` inspection sidesteps the type
+/// dependency.
 fn session_id_from_actor_json(actor: &str) -> Option<String> {
-    let parsed: ActorRef = serde_json::from_str(actor).ok()?;
-    match parsed {
-        ActorRef::Authenticated {
-            actor_id: ActorId::Session(session_id),
-            ..
-        } => Some(session_id.as_ref().to_string()),
+    let value: serde_json::Value = serde_json::from_str(actor).ok()?;
+    let inner = value.get("Authenticated")?.get("actor_id")?;
+    extract_session_id(inner)
+}
+
+fn extract_session_id(actor_id: &serde_json::Value) -> Option<String> {
+    let map = actor_id.as_object()?;
+    if map.len() != 1 {
+        return None;
+    }
+    let (tag, payload) = map.iter().next()?;
+    match (tag.as_str(), payload) {
+        // Pre-cleanup wire shape.
+        ("Session", serde_json::Value::String(sid)) => Some(sid.clone()),
+        // Post-cleanup wire shape.
+        ("Adhoc", serde_json::Value::Object(obj)) => obj
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         _ => None,
     }
 }
@@ -641,7 +668,7 @@ mod tests {
     use super::*;
     use crate::store::sqlite_store::SqliteStore;
     use chrono::Duration;
-    use hydra_common::{ActorId, ActorRef, ConversationId, SessionId};
+    use hydra_common::{ConversationId, SessionId};
     use sqlx::SqlitePool;
 
     async fn fresh_pool() -> SqlitePool {
@@ -735,11 +762,14 @@ mod tests {
         actor_session: &SessionId,
         created_at: DateTime<Utc>,
     ) {
-        let actor = ActorRef::Authenticated {
-            actor_id: ActorId::Session(actor_session.clone()),
-            session_id: None,
-        };
-        let actor_json = serde_json::to_string(&actor).unwrap();
+        // Write the pre-cleanup `{"Session":"s-..."}` shape directly so
+        // `session_id_from_actor_json`'s dual-shape reader exercises
+        // the same path the migration_roundtrip baseline produces. The
+        // post-cleanup shape is exercised by the unit tests below.
+        let actor_json = serde_json::json!({
+            "Authenticated": { "actor_id": { "Session": actor_session.as_ref() } }
+        })
+        .to_string();
         let event_data = serde_json::json!({
             "type": "suspending",
             "reason": "test",
@@ -1173,5 +1203,69 @@ mod tests {
         assert_eq!(a_rows.len(), 1, "A owns the pre-A event: {a_rows:?}");
         assert!(b_rows.is_empty(), "B must not own anything: {b_rows:?}");
         assert_eq!(a_rows[0].1, "user_message");
+    }
+
+    // --- session_id_from_actor_json: both wire shapes must work ---
+
+    #[test]
+    fn session_id_reader_accepts_precleanup_session_shape() {
+        // `{"Authenticated":{"actor_id":{"Session":"s-abcdef"}}}` —
+        // what events migration sees on a fresh DB before the
+        // `actor_variant_cleanup` migration rewrites the row.
+        let raw = serde_json::json!({
+            "Authenticated": { "actor_id": { "Session": "s-abcdef" } }
+        })
+        .to_string();
+        assert_eq!(
+            super::session_id_from_actor_json(&raw),
+            Some("s-abcdef".to_string())
+        );
+    }
+
+    #[test]
+    fn session_id_reader_accepts_postcleanup_adhoc_shape() {
+        // `{"Authenticated":{"actor_id":{"Adhoc":{"session_id":"s-abcdef"}}}}`
+        // — the wire shape `actor_variant_cleanup` rewrites to. On a
+        // soaked deploy the events migration may run against rows
+        // that were rewritten by a prior cleanup pass.
+        let raw = serde_json::json!({
+            "Authenticated": {
+                "actor_id": { "Adhoc": { "session_id": "s-abcdef" } }
+            }
+        })
+        .to_string();
+        assert_eq!(
+            super::session_id_from_actor_json(&raw),
+            Some("s-abcdef".to_string())
+        );
+    }
+
+    #[test]
+    fn session_id_reader_returns_none_for_non_session_actors() {
+        // User / Agent / External / System / Automation actors don't
+        // belong to a single session — the reader must skip them.
+        for raw in [
+            r#"{"Authenticated":{"actor_id":{"User":{"name":"alice"}}}}"#,
+            r#"{"Authenticated":{"actor_id":{"Agent":{"name":"swe"}}}}"#,
+            r#"{"System":{"worker_name":"bg","on_behalf_of":null}}"#,
+        ] {
+            assert_eq!(super::session_id_from_actor_json(raw), None);
+        }
+    }
+
+    #[test]
+    fn session_id_reader_returns_none_for_malformed_input() {
+        // Anything that doesn't parse as JSON, or doesn't match the
+        // `Authenticated.actor_id.<tag>` shape, returns None.
+        assert_eq!(super::session_id_from_actor_json("not-json"), None);
+        assert_eq!(super::session_id_from_actor_json("{}"), None);
+        assert_eq!(
+            super::session_id_from_actor_json(r#"{"Authenticated":{"actor_id":{}}}"#),
+            None
+        );
+        assert_eq!(
+            super::session_id_from_actor_json(r#"{"Authenticated":{"actor_id":{"Session":42}}}"#),
+            None
+        );
     }
 }

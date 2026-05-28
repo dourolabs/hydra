@@ -5670,7 +5670,7 @@ mod tests {
             }),
             Some(FormResponse {
                 action_id: "approve".to_string(),
-                actor: ActorId::Username(Username::from("responder").into()),
+                actor: ActorId::User(Username::from("responder").into()),
                 values: HashMap::from([
                     ("name".to_string(), serde_json::json!("Jane Doe")),
                     ("notes".to_string(), serde_json::json!("Looks good")),
@@ -7360,47 +7360,53 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
 
         // GET — empty for unknown actor
-        let hashes = store.get_auth_token_hashes("u-nobody").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/nobody").await.unwrap();
         assert!(hashes.is_empty());
 
         // ADD — two tokens for alice
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None)
             .await
             .unwrap();
 
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
 
         // ADD — duplicate insert is idempotent
         store
-            .add_auth_token("u-alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None)
             .await
             .unwrap();
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert_eq!(hashes, vec!["hash1".to_string(), "hash2".to_string()]);
 
         // ADD — token for a different actor
-        store.add_auth_token("u-bob", "hash3", None).await.unwrap();
-        let bob_hashes = store.get_auth_token_hashes("u-bob").await.unwrap();
+        store
+            .add_auth_token("users/bob", "hash3", None)
+            .await
+            .unwrap();
+        let bob_hashes = store.get_auth_token_hashes("users/bob").await.unwrap();
         assert_eq!(bob_hashes, vec!["hash3".to_string()]);
 
         // DELETE — remove all tokens for alice
-        store.delete_auth_tokens_for_actor("u-alice").await.unwrap();
-        let hashes = store.get_auth_token_hashes("u-alice").await.unwrap();
+        store
+            .delete_auth_tokens_for_actor("users/alice")
+            .await
+            .unwrap();
+        let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
         assert!(hashes.is_empty());
 
         // Bob's tokens are unaffected
-        let bob_hashes = store.get_auth_token_hashes("u-bob").await.unwrap();
+        let bob_hashes = store.get_auth_token_hashes("users/bob").await.unwrap();
         assert_eq!(bob_hashes, vec!["hash3".to_string()]);
 
         // DELETE — non-existent actor should not error
         store
-            .delete_auth_tokens_for_actor("u-nobody")
+            .delete_auth_tokens_for_actor("users/nobody")
             .await
             .unwrap();
     }
@@ -7417,7 +7423,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None)
             .await
             .unwrap();
 
@@ -7434,7 +7440,7 @@ mod tests {
             .await
             .unwrap()
             .expect("user-login token should be found");
-        assert_eq!(row.actor_name, "u-alice");
+        assert_eq!(row.actor_name, "users/alice");
         assert_eq!(row.session_id, None);
 
         let missing = store.get_auth_token_by_hash("nope").await.unwrap();
@@ -7461,7 +7467,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .add_auth_token("u-alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None)
             .await
             .unwrap();
 

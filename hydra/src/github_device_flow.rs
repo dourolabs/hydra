@@ -70,7 +70,7 @@ pub async fn login_with_github_device_flow(
         .context("failed to fetch authenticated user")?;
     let actor_label = match whoami.actor {
         ActorIdentity::User { username } => username.to_string(),
-        ActorIdentity::Session { session_id, .. } => session_id.to_string(),
+        ActorIdentity::Adhoc { session_id, .. } => session_id.to_string(),
         _ => "unknown".to_string(),
     };
 

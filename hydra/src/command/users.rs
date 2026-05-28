@@ -113,8 +113,8 @@ async fn get_user(
                 .context("failed to fetch current user")?;
             match whoami.actor {
                 ActorIdentity::User { username } => username.to_string(),
-                ActorIdentity::Session { session_id, .. } => {
-                    bail!("current actor is a session ({session_id}), not a user; please specify a username")
+                ActorIdentity::Adhoc { session_id, .. } => {
+                    bail!("current actor is an ad-hoc session ({session_id}), not a user; please specify a username")
                 }
                 _ => {
                     bail!("current actor is not a user; please specify a username")
@@ -185,7 +185,7 @@ mod tests {
     use reqwest::Client as HttpClient;
     use serde_json::json;
 
-    const TEST_HYDRA_TOKEN: &str = "u-test:test-hydra-token";
+    const TEST_HYDRA_TOKEN: &str = "users/test:test-hydra-token";
 
     fn mock_client(server: &MockServer) -> HydraClient {
         HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())
@@ -240,10 +240,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_user_fails_when_actor_is_session() {
+    async fn get_user_fails_when_actor_is_adhoc_session() {
         let server = MockServer::start();
         let task_id = hydra_common::SessionId::new();
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Adhoc {
             session_id: task_id.clone(),
             creator: Username::from("test-creator"),
         });
@@ -258,8 +258,10 @@ mod tests {
 
         whoami_mock.assert();
         assert!(
-            error.to_string().contains("current actor is a session"),
-            "error should mention actor is a session: {error}"
+            error
+                .to_string()
+                .contains("current actor is an ad-hoc session"),
+            "error should mention actor is an ad-hoc session: {error}"
         );
     }
 

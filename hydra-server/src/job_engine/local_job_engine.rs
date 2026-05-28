@@ -822,7 +822,7 @@ mod tests {
 
     fn make_actor() -> (Actor, String) {
         Actor::new_from_actor_id(
-            ActorId::Session(SessionId::new()),
+            ActorId::Adhoc(SessionId::new()),
             Username::from("test-user"),
             None,
         )
