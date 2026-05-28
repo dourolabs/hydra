@@ -210,6 +210,13 @@ async fn run_pump(
                         // Token usage is tracked by the model wrapper and
                         // surfaced in `RunReport`; no relay-side action.
                     }
+                    Some(WorkerEvent::ToolUse { .. }) => {
+                        // ToolUse is consumed by the PR-3 dispatch layer
+                        // (forwarded as `SessionEvent::ToolUse`); the
+                        // legacy relay_adapter has no story for it and is
+                        // being retired in PR-3.
+                        tracing::trace!("relay_adapter: WorkerEvent::ToolUse ignored");
+                    }
                     Some(WorkerEvent::Raw { .. }) => {
                         tracing::trace!("relay_adapter: WorkerEvent::Raw ignored");
                     }

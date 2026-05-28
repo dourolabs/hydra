@@ -16,7 +16,16 @@ use tokio::{
     process::Command,
 };
 
-use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
+use crate::worker::report::{
+    MaterializeError, NativeResume, RunReport, SessionStateFormat, SessionStateRef, TokenUsage,
+};
+
+/// Native resume handle for Codex. Placeholder today: Codex resume is out of
+/// scope per `designs/sessions-worker-run-interface.md` §3.5, but the variant
+/// must exist so the dispatcher's [`NativeResume`] enum is uniform across
+/// wrappers and so a future implementation has a name to slot into.
+#[derive(Debug, Clone)]
+pub enum CodexResume {}
 
 /// Per-worker Codex wrapper. Holds all state that does not need to change
 /// between batch invocations (auth, on-disk config, output dir).
@@ -86,6 +95,15 @@ impl Codex {
             output_dir,
             bypass_sandbox: true,
         })
+    }
+
+    /// Attempt to materialize a resume blob into a native Codex resume
+    /// handle. Codex native resume is out of scope per
+    /// `designs/sessions-worker-run-interface.md` §3.5; this always returns
+    /// [`MaterializeError::NotImplemented`] and the dispatcher falls back to
+    /// transcript replay.
+    pub fn try_materialize(&self, _state_bytes: &[u8]) -> Result<NativeResume, MaterializeError> {
+        Err(MaterializeError::NotImplemented)
     }
 
     /// Run one `codex exec --json` invocation and return its `RunReport`.
@@ -590,5 +608,38 @@ mod tests {
             err_str.contains(ENV_OPENAI_API_KEY),
             "error should mention {ENV_OPENAI_API_KEY}; got: {err_str}"
         );
+    }
+
+    /// `try_materialize` on Codex is a stub today — every input shape (well
+    /// formed Claude payload, garbage bytes, empty) must surface
+    /// `NotImplemented` so the dispatcher uniformly falls back to transcript
+    /// replay. Constructed via `Codex { ... }` directly so the test doesn't
+    /// need to run `codex login`.
+    #[test]
+    fn codex_try_materialize_always_returns_not_implemented() {
+        let tmp = tempfile::tempdir().unwrap();
+        let codex = Codex {
+            model: None,
+            working_dir: tmp.path().to_path_buf(),
+            env: HashMap::new(),
+            _config_guard: None,
+            output_dir: tempfile::Builder::new()
+                .prefix("codex-session-test")
+                .tempdir()
+                .unwrap(),
+            bypass_sandbox: true,
+        };
+
+        for input in [
+            b"".as_ref(),
+            b"not json".as_ref(),
+            b"{\"version\":\"v1\",\"session_id\":\"x\"}".as_ref(),
+        ] {
+            let result = codex.try_materialize(input);
+            assert!(
+                matches!(result, Err(MaterializeError::NotImplemented)),
+                "expected NotImplemented for input {input:?}, got {result:?}"
+            );
+        }
     }
 }

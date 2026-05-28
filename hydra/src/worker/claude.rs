@@ -14,6 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
+    api::v1::conversations::SessionStatePayload,
     constants::{ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN},
     SessionId,
 };
@@ -26,7 +27,9 @@ use tokio::{
 };
 
 use super::claude_formatter::StreamFormatter;
-use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
+use crate::worker::report::{
+    MaterializeError, NativeResume, RunReport, SessionStateFormat, SessionStateRef, TokenUsage,
+};
 
 /// Grace period after the main process exits before killing the process group.
 const PROCESS_GROUP_GRACE_PERIOD: Duration = Duration::from_secs(5);
@@ -68,6 +71,11 @@ pub enum ClaudeEvent {
     },
     SystemInit {
         session_id: String,
+    },
+    /// A `tool_use` content block observed in an `assistant` stream-json line.
+    ToolUse {
+        tool_name: String,
+        payload: serde_json::Value,
     },
     Raw {
         value: serde_json::Value,
@@ -147,6 +155,33 @@ impl Claude {
             _mcp_tempdir: mcp_tempdir,
             idle_timeout,
         })
+    }
+
+    /// Attempt to materialize a resume blob into a native Claude resume
+    /// handle. Per design `sessions-worker-run-interface.md` §3.4–3.5:
+    ///
+    /// * deserialize the bytes as [`SessionStatePayload::V1`],
+    /// * write the embedded transcript to Claude's expected path
+    ///   (`~/.claude/projects/<encoded-cwd>/<UUID>.jsonl`),
+    /// * return `Ok(NativeResume::Claude(ClaudeResume::SessionId(uuid)))`.
+    ///
+    /// Returns [`MaterializeError::WrongFormat`] if the bytes do not parse as
+    /// this wrapper's payload (e.g. cross-model handoff from a Codex
+    /// session), and [`MaterializeError::IoError`] if writing the on-disk
+    /// transcript fails. The dispatcher treats both errors identically and
+    /// falls back to transcript replay.
+    pub fn try_materialize(&self, state_bytes: &[u8]) -> Result<NativeResume, MaterializeError> {
+        let payload: SessionStatePayload =
+            serde_json::from_slice(state_bytes).map_err(|_| MaterializeError::WrongFormat)?;
+        let SessionStatePayload::V1 {
+            session_id,
+            transcript,
+        } = payload;
+        if let Some(bytes) = transcript {
+            let target = transcript_path(&self.home_dir, &self.working_dir, &session_id);
+            write_transcript_atomic(&target, &bytes)?;
+        }
+        Ok(NativeResume::Claude(ClaudeResume::SessionId(session_id)))
     }
 
     /// Run a one-shot, non-interactive Claude invocation and return the
@@ -687,6 +722,7 @@ pub(crate) fn extract_assistant_text(line: &str) -> Option<String> {
 /// Each line may produce:
 /// * `SystemInit` (if `type=system && subtype=init`),
 /// * `Assistant` (if `type=assistant` and any text blocks),
+/// * `ToolUse` (one per `tool_use` content block in an assistant line),
 /// * `Usage` (if the line carries `message.usage`),
 /// * `Raw` (catch-all for anything else parseable as JSON).
 fn parse_claude_events(line: &str) -> Vec<ClaudeEvent> {
@@ -721,6 +757,27 @@ fn parse_claude_events(line: &str) -> Vec<ClaudeEvent> {
             if let Some(text) = extract_assistant_text(line) {
                 if !text.is_empty() {
                     events.push(ClaudeEvent::Assistant { text });
+                }
+            }
+            if let Some(content) = value
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                for chunk in content {
+                    if chunk.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let tool_name = chunk
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool")
+                        .to_string();
+                    let payload = chunk
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    events.push(ClaudeEvent::ToolUse { tool_name, payload });
                 }
             }
             if let Some(usage) = value.get("message").and_then(|m| m.get("usage")) {
@@ -1109,5 +1166,132 @@ mod tests {
             installed.exists(),
             "transcript should be installed at {installed:?}"
         );
+    }
+
+    async fn claude_for_test(home: &Path, cwd: &Path) -> Claude {
+        let mut env = HashMap::new();
+        env.insert(ENV_ANTHROPIC_API_KEY.to_string(), "sk-test".to_string());
+        Claude::new(
+            None,
+            cwd.to_path_buf(),
+            home.to_path_buf(),
+            env,
+            None,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn try_materialize_round_trips_session_state_payload_v1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        // The exact bytes the suspend-side uploader (`build_session_state_payload`
+        // in relay_adapter.rs) produces for a running Claude session.
+        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n".to_vec();
+        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+            session_id: "abc-uuid".to_string(),
+            transcript: Some(transcript.clone()),
+        };
+        let bytes = serde_json::to_vec(&payload).unwrap();
+
+        let native = claude.try_materialize(&bytes).expect("materialize ok");
+        match native {
+            NativeResume::Claude(ClaudeResume::SessionId(uuid)) => {
+                assert_eq!(uuid, "abc-uuid");
+            }
+            other => panic!("expected NativeResume::Claude(SessionId), got {other:?}"),
+        }
+
+        // The transcript must have been installed at Claude's expected path.
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(
+            installed.exists(),
+            "transcript should be installed at {installed:?}"
+        );
+        let on_disk = std::fs::read(&installed).unwrap();
+        assert_eq!(on_disk, transcript);
+    }
+
+    #[tokio::test]
+    async fn try_materialize_without_transcript_still_returns_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+            session_id: "abc-uuid".to_string(),
+            transcript: None,
+        };
+        let bytes = serde_json::to_vec(&payload).unwrap();
+
+        let native = claude.try_materialize(&bytes).expect("materialize ok");
+        assert!(matches!(
+            native,
+            NativeResume::Claude(ClaudeResume::SessionId(ref s)) if s == "abc-uuid"
+        ));
+        // No transcript was provided so nothing should be installed on disk.
+        let installed = transcript_path(&home, &cwd, "abc-uuid");
+        assert!(!installed.exists());
+    }
+
+    #[tokio::test]
+    async fn try_materialize_returns_wrong_format_for_garbage_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let claude = claude_for_test(&home, &cwd).await;
+
+        let result = claude.try_materialize(b"not json at all");
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+
+        // Also: well-formed JSON that isn't a SessionStatePayload.
+        let result = claude.try_materialize(b"{\"unrelated\":42}");
+        assert!(matches!(result, Err(MaterializeError::WrongFormat)));
+    }
+
+    #[test]
+    fn parse_claude_events_assistant_with_tool_use_emits_tool_use() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tool_1","name":"Bash","input":{"command":"ls -la","description":"List files"}}]}}"#;
+        let events = parse_claude_events(line);
+        let tool_use = events
+            .iter()
+            .find_map(|e| match e {
+                ClaudeEvent::ToolUse { tool_name, payload } => Some((tool_name, payload)),
+                _ => None,
+            })
+            .expect("expected a ToolUse event");
+        assert_eq!(tool_use.0, "Bash");
+        assert_eq!(
+            tool_use.1.get("command").and_then(|v| v.as_str()),
+            Some("ls -la")
+        );
+        assert_eq!(
+            tool_use.1.get("description").and_then(|v| v.as_str()),
+            Some("List files")
+        );
+    }
+
+    #[test]
+    fn parse_claude_events_assistant_with_text_and_tool_use_emits_both() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/x"}}]}}"#;
+        let events = parse_claude_events(line);
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ClaudeEvent::Assistant { text } if text == "hi")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ClaudeEvent::ToolUse { tool_name, .. } if tool_name == "Read")));
     }
 }
