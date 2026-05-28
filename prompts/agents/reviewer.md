@@ -105,7 +105,7 @@ Skip this step if step 2 found no escalation history with human responses.
 
 **If in doubt, escalate.**
 
-**Escalation history check**: Before escalating, review the history from step 2. If a prior escalation for the same concern was already approved, do NOT re-escalate for that reason — only escalate NEW concerns. If a prior escalation ended with status `failed` (human asked for changes), note this in the review and consider requesting changes instead.
+**Escalation history check**: Before escalating, look at the escalation history from step 2 but **scope it to escalations whose attached patch is the exact patch you are reviewing right now** (typically prior revisions of this same patch). Escalations on the parent issue's design doc, plan, sibling PRs, or any other patch do NOT count, even when their approval looks like it covers the same area — **design approval never covers implementation escalation, and a sibling PR's approval never covers this PR**. Within that patch-scoped history: if a prior escalation was already approved for the same concern, do NOT re-escalate for that reason — only escalate NEW concerns. If a prior escalation on this same patch ended with status `failed` (human asked for changes), note this in the review and consider requesting changes instead.
 
 ### Never Escalate
 
