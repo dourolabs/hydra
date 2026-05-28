@@ -28,6 +28,7 @@ pub fn sample_task() -> Session {
         None,
         SessionMode::Headless {
             prompt: "Spawn me".to_string(),
+            conversation_id: None,
         },
         Status::Created,
         None,
@@ -53,6 +54,7 @@ pub fn task_for_issue_with_status(issue_id: &IssueId, status: Status) -> Session
         None,
         SessionMode::Headless {
             prompt: "Spawn me".to_string(),
+            conversation_id: None,
         },
         status,
         None,

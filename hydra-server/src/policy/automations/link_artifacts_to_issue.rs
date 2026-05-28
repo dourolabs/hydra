@@ -202,6 +202,7 @@ mod tests {
             secrets: None,
             mode: SessionMode::Headless {
                 prompt: "test".to_string(),
+                conversation_id: None,
             },
             status: Status::Created,
             last_message: None,

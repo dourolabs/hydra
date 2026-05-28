@@ -98,6 +98,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "0".to_string(),
+                conversation_id: None,
             },
             Status::Created,
             None,

@@ -930,6 +930,7 @@ mod tests {
             None,
             SessionMode::Headless {
                 prompt: "test prompt".to_string(),
+                conversation_id: None,
             },
             Status::Created,
             None,

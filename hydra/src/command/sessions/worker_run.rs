@@ -71,7 +71,7 @@ pub async fn run(
         .transpose()
         .context("failed to serialize MCP config")?;
     let (prompt, interactive) = match &session.mode {
-        SessionMode::Headless { prompt } => (prompt.clone(), None),
+        SessionMode::Headless { prompt, .. } => (prompt.clone(), None),
         SessionMode::Interactive {
             conversation_id,
             idle_timeout_secs,
